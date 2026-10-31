@@ -286,9 +286,23 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   (`presentation/geometry_cache.rs`, `src/geometry-cache.ts`, `scene_codec`): what
   the core builders return, read back bit for bit with the same `Arc` sharing, so the
   draws and GPU resources match a built model's (`geometry-cache-check.mjs`). Its
-  files are keyed by the content version and graphics backend, so a model must depend
-  on nothing outside `crates/core` (or that input joins the key), and a change to the
-  file layout bumps `scene_codec::FORMAT_VERSION`. A builder's process-wide store of
+  files are keyed by the geometry version (`geometryVersion` in
+  `scripts/content-version.mjs`, stamped as `SLOPPY_GEOMETRY_VERSION`) and the
+  graphics backend. The key hashes exactly the sources a `--cfg sloppy_geometry_only`
+  build of sloppy-core compiles (read from its dep-info), which holds only the cached
+  builders (`build_scenery`, `tank_model_variant`), the codec and what they reach;
+  everything else is inside `beyond_geometry!` (`crates/core/src/lib.rs`). Add to it
+  sloppy-core's manifest and resolved crates, the compiler, the profiles and target
+  flags and the page's build profile; a gameplay change keeps players' caches. The
+  vehicles give the simulation its hitboxes, so the key must stay complete: a model
+  that comes to reach outside the set fails `pnpm run rust:geometry` (part of
+  `check:rust-lint`), and that check refuses a set that grows back into the simulation,
+  the balance (`sim::data`; models read `sim::model_data`) or `net`; cut the edge
+  instead (models take their enums from `sim::kinds`, not `sim::types`). Builders may
+  read no state other code sets beyond their own keyed stores, and a store's value
+  depends only on its key (the vertex materials are keyed by the whole painted
+  material, so the order models build in cannot change one). A change to the file
+  layout bumps `scene_codec::FORMAT_VERSION`. A builder's process-wide store of
   shared meshes or materials is a named `Cache` or `SharedOnce` (`Cache::private()`
   when keyed by addresses), never a bare static, or models built after a read-back
   stop sharing with it (`scene_codec::fresh_processes_share_alike` counts them). The

@@ -35,13 +35,14 @@
 // server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell
 // also carries the release and commit Battle Setup shows, as the desktop app does, and
 // its content version goes to `src/generated/shell/content-version` for the page's
-// `/health` (`scripts/page-health.ts`).
+// `/health` (`scripts/page-health.ts`). The page's geometry cache keys its files by
+// `SLOPPY_GEOMETRY_VERSION` (`geometryVersion`), which changes only with the models.
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contentVersion } from "./content-version.mjs";
+import { contentVersion, geometryVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -90,6 +91,7 @@ const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
 const stamps = {
   SLOPPY_CONTENT_VERSION: version,
+  SLOPPY_GEOMETRY_VERSION: await geometryVersion(profile),
   SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
   SLOPPY_COMMIT: dirty ? `${commit}-dirty` : commit,
 };

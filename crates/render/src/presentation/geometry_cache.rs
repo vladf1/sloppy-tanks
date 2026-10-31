@@ -4,10 +4,13 @@
 //!
 //! Files (`sloppy_core::scene_codec`) hold what the core builders return, before
 //! presentation splits or batches it: `build_scenery`'s root and every vehicle model.
-//! Their key is the content version (the core sources, their crates and the
-//! compiler, `scripts/content-version.mjs`) and the graphics backend, which build
-//! separate binaries; reading checks it, so a release that changes no model keeps
-//! its files. Reading gives back the same values and the same `Arc` sharing, within
+//! Their key is the geometry version (`geometryVersion` in
+//! `scripts/content-version.mjs`: the sources the cached builders compile, proven by a
+//! build of sloppy-core with nothing else, with their crates, compiler, profiles and
+//! flags) and the graphics backend, which build separate binaries; reading checks it,
+//! so a release that changes no model keeps its files, and one that does cannot read
+//! them. The vehicles give the simulation its hitboxes (`tank_hull`), so no file may
+//! outlive the code that made it. Reading gives back the same values and the same `Arc` sharing, within
 //! the files and with the builders' stores (`models::shared_values`), so batching,
 //! uploads and draw counts come out as for a built model.
 //!
@@ -22,7 +25,9 @@ use std::cell::RefCell;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use sloppy_core::models::{MapTheme, Scenery, build_scenery, built_tank_models, offer_tank_models};
-use sloppy_core::net::protocol::CONTENT_VERSION;
+/// The build's geometry version (`SLOPPY_GEOMETRY_VERSION`, stamped by
+/// `scripts/build-wasm.mjs`).
+const GEOMETRY_VERSION: Option<&str> = option_env!("SLOPPY_GEOMETRY_VERSION");
 use sloppy_core::scene::Node;
 
 /// The file of a theme's scenery.
@@ -36,15 +41,14 @@ fn scenery_file(theme: MapTheme) -> &'static str {
 
 const VEHICLES: &str = "vehicles";
 
-/// Files this build reads and writes: the content version (core sources, crates,
-/// compiler) and the graphics backend.
+/// Files this build reads and writes: the geometry version and the graphics backend.
 fn version() -> String {
     let backend = if cfg!(feature = "webgl") {
         "webgl"
     } else {
         "webgpu"
     };
-    format!("{CONTENT_VERSION}/{backend}")
+    format!("{}/{backend}", GEOMETRY_VERSION.unwrap_or_default())
 }
 
 /// What a file's header must say: its version and name.
@@ -52,10 +56,10 @@ fn key(file: &str) -> String {
     format!("{}/{file}", version())
 }
 
-/// Builds without a content version (tests, `cargo run`) cannot tell their files
+/// Builds without a geometry version (tests, `cargo run`) cannot tell their files
 /// apart, so they keep none.
 fn enabled() -> bool {
-    CONTENT_VERSION != "test-content"
+    GEOMETRY_VERSION.is_some()
 }
 
 /// How long a build stepped over frames waits for a file the page is still reading
