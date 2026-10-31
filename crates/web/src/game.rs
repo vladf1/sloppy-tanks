@@ -135,7 +135,7 @@ use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::GraphicsSetting;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 use wasm_bindgen::prelude::*;
 
 mod debug;
@@ -247,7 +247,7 @@ impl RecordStorage for BrowserStorage {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 pub struct Game {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
@@ -290,7 +290,7 @@ pub struct Game {
     last_result: Vec<f32>,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 impl Game {
     /// Create the renderer on `canvas`, build the chosen arena and begin
     /// preparing it. Rejects when the renderer cannot start.

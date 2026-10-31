@@ -92,7 +92,7 @@ use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::GraphicsSetting;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
@@ -160,7 +160,7 @@ struct PendingArena {
     state: RenderState,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 pub struct NetGame {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
@@ -196,7 +196,7 @@ pub struct NetGame {
     network_sampler: NetworkSampler,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 impl NetGame {
     /// Create the renderer on `canvas` and the room session (not yet connected).
     /// Rejects when the renderer cannot start or the configuration is invalid.

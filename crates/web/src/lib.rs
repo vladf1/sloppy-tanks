@@ -81,12 +81,12 @@ pub use records::set_records_file;
 /// One connection's binary room messages as the JSON protocol sent them (see
 /// `sloppy_core::net::wire_view`), for the Node checks that follow a room's state
 /// (`scripts/state-mirror.mjs`). The page itself never needs it.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 #[derive(Default)]
 pub struct WireView(sloppy_core::net::wire_view::WireView);
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 impl WireView {
     #[wasm_bindgen::prelude::wasm_bindgen(constructor)]
@@ -106,7 +106,7 @@ impl WireView {
 /// The generated textures the arena of Battle Setup map `map` will have the page bake
 /// (`bake_texture` keys). The page may start them as soon as the engine has loaded,
 /// before the arena is built and claims them (`Game::claim_texture_bake`).
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn map_texture_bakes(map: &str) -> Vec<String> {
     use sloppy_core::sim::map_options::MapId;

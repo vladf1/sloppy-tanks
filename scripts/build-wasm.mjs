@@ -64,7 +64,7 @@ const SHELL_WEBGL = {
 const ENGINE = {
   package: "sloppy-web",
   binary: "sloppy_web",
-  features: ["--features", "webgpu"],
+  features: ["--features", "webgpu,js-api"],
   dir: "src/generated/engine",
   outName: "engine",
 };

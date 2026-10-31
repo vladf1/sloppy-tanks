@@ -65,7 +65,7 @@ use sloppy_core::sim::{
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 use wasm_bindgen::prelude::*;
 
 use super::{Game, js_error, parse};
@@ -213,7 +213,7 @@ macro_rules! apply {
     };
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 impl Game {
     /// Switch passes, lights and effect pools off for a same-page A/B measurement:
     /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
