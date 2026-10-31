@@ -320,11 +320,21 @@ fn far_rise(x: f64, z: f64) -> f64 {
 /// Slope colours of the mountains: forest below, scree and rock above it, snow
 /// on the peaks, each band broken by noise so no contour line shows.
 fn range_color(x: f64, y: f64, z: f64) -> [f64; 3] {
+    // Linear once rather than for each of the ridge's and ranges' vertices.
+    static BANDS: OnceLock<[[f64; 3]; 6]> = OnceLock::new();
+    let [
+        dark_forest,
+        light_forest,
+        meadow,
+        dark_rock,
+        light_rock,
+        snow,
+    ] = *BANDS.get_or_init(|| {
+        [0x3f5f3b, 0x56774a, 0x6f9150, 0x7d8682, 0x9a9a8e, 0xeef1ea].map(hex_to_linear)
+    });
     let n = lattice_noise(x * 0.09, z * 0.09);
-    let forest = lerp_color(hex_to_linear(0x3f5f3b), hex_to_linear(0x56774a), n);
-    let meadow = hex_to_linear(0x6f9150);
-    let rock = lerp_color(hex_to_linear(0x7d8682), hex_to_linear(0x9a9a8e), n);
-    let snow = hex_to_linear(0xeef1ea);
+    let forest = lerp_color(dark_forest, light_forest, n);
+    let rock = lerp_color(dark_rock, light_rock, n);
     let mut color = lerp_color(meadow, forest, smoothstep(y, 4.0, 12.0));
     let treeline = 30.0 + n * 10.0;
     color = lerp_color(color, rock, smoothstep(y, treeline, treeline + 8.0));

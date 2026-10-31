@@ -7,6 +7,7 @@
 //! meets real blades instead of a painted edge. Tufts keep off cover, pickups and
 //! spawn pads.
 
+use std::cell::RefCell;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
@@ -237,8 +238,26 @@ fn vegetable_beds() -> Vec<Instance> {
     heads
 }
 
+/// An instance's linear colour from its sRGB palette entry. The meadow paints tens
+/// of thousands of tufts from a few small palettes, and each conversion takes three
+/// libm `pow`s (slow in the page's Wasm), so each entry is converted once.
 fn instance_color(hex: u32) -> Option<[f32; 3]> {
-    Some(hex_to_linear(hex).map(|c| c as f32))
+    /// More entries than every palette holds: beyond it, colours convert each time.
+    const KEPT: usize = 64;
+    thread_local! {
+        static CONVERTED: RefCell<Vec<(u32, [f32; 3])>> = const { RefCell::new(Vec::new()) };
+    }
+    let convert = || hex_to_linear(hex).map(|c| c as f32);
+    CONVERTED.with_borrow_mut(|converted| {
+        if let Some(&(_, color)) = converted.iter().find(|(entry, _)| *entry == hex) {
+            return Some(color);
+        }
+        let color = convert();
+        if converted.len() < KEPT {
+            converted.push((hex, color));
+        }
+        Some(color)
+    })
 }
 
 /// Where arena tufts must not grow: cover footprints (so blades never poke through
