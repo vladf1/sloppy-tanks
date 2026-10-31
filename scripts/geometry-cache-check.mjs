@@ -85,6 +85,8 @@ async function visit(context, map, errors, cached) {
 
 /** Warm visits of each kind per map, alternating which goes first. */
 const ROUNDS = Number(process.env.SLOPPY_ROUNDS ?? 3);
+/** How much more Wasm heap a cached visit may peak at than a built one (above). */
+const READ_HEAP_SLACK = 2 ** 20;
 const median = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = sorted.length >> 1;
@@ -129,12 +131,14 @@ for (const map of MAPS) {
     }
     // The heap's peak (it never shrinks) moves by a few MiB from visit to visit with
     // when textures and bakes land beside the scenery's batches, so the medians of
-    // interleaved visits compare: reading back must not need more of it.
+    // interleaved visits compare: reading back must not need more of it, give or take
+    // READ_HEAP_SLACK (the harbor, whose scenery is the smallest, reads back about 0.6 MiB
+    // above its built median; the regression this guards against was 6.7 MiB).
     const builtHeap = median(built.map((visited) => visited.memory));
     const readHeap = median(read.map((visited) => visited.memory));
     const heaps = (visits) => visits.map((visited) => mib(visited.memory)).join(", ");
     assert.ok(
-      readHeap <= builtHeap,
+      readHeap <= builtHeap + READ_HEAP_SLACK,
       `${map}: a larger Wasm heap read back (${heaps(read)} MiB) than built (${heaps(built)})`,
     );
     const ms = (file) => median(read.map((visited) => visited.files[file].readMs)).toFixed(1);
