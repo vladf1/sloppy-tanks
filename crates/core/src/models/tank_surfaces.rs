@@ -635,15 +635,25 @@ pub(super) fn release_vehicle_weathering() {
 }
 
 /// [`weathered`] for `mesh`, from the shared meshes when there are any.
+/// What every part of one livery weathers with.
+#[derive(Clone, Copy)]
+struct Weathering<'a> {
+    grime: Grime,
+    values: &'a PaintValues,
+    shared: Option<&'a SharedWeathering>,
+}
+
 fn weathered_mesh(
     mesh: &Arc<Mesh>,
     world: DMat4,
     base: Option<u32>,
     finish: Finish,
-    grime: Grime,
-    values: &PaintValues,
     (lift, soot): (f64, Option<Soot>),
-    shared: Option<&SharedWeathering>,
+    Weathering {
+        grime,
+        values,
+        shared,
+    }: Weathering,
 ) -> Arc<Mesh> {
     let build = || {
         Arc::new(weathered(
@@ -729,6 +739,11 @@ fn repaint(node: &mut Node, parent: DMat4, paint: &mut Repaint, (lift, soot): (f
         shared,
         ..
     } = *paint;
+    let weathering = Weathering {
+        grime: livery.grime,
+        values,
+        shared,
+    };
     let world = parent * node.local_matrix();
     let lift = if node.name == part::TURRET {
         values.turret
@@ -778,10 +793,8 @@ fn repaint(node: &mut Node, parent: DMat4, paint: &mut Repaint, (lift, soot): (f
                             world,
                             Some(drawable.material.color.0),
                             finish,
-                            livery.grime,
-                            values,
                             (lift, soot),
-                            shared,
+                            weathering,
                         ),
                         finish_material(finish),
                     ),
@@ -791,10 +804,8 @@ fn repaint(node: &mut Node, parent: DMat4, paint: &mut Repaint, (lift, soot): (f
                             world,
                             None,
                             Finish::Matte,
-                            livery.grime,
-                            values,
                             (1.0, soot),
-                            shared,
+                            weathering,
                         ),
                         gear_material(&drawable.material),
                     ),
