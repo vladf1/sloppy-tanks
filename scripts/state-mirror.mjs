@@ -1,4 +1,4 @@
-// A plain-JSON mirror of one room's replicated scene for the Node multiplayer checks,
+// A plain-JSON mirror of one room's replicated scene for the multiplayer checks,
 // which watch a browser's or a bot's socket frames. The server sends state as binary
 // frames (`crates/core/src/net/replication.rs`) that `wire-view.mjs` turns back into the
 // JSON shapes this applies: a `full` baseline (`{ roomEpoch, roundId, seq,

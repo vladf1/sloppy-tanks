@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { onTestFinished, test } from "bun:test";
 import { pathToFileURL } from "node:url";
 import { generateDesktopIcon, verifyDesktopIcon } from "../scripts/generate-desktop-icon.mjs";
 
@@ -24,9 +24,9 @@ function iconEntries(path = verifyDesktopIcon()) {
   return entries;
 }
 
-test("Mac icon generation runs without platform commands and produces verifiable assets", async (t) => {
+test("Mac icon generation runs without platform commands and produces verifiable assets", async () => {
   const directory = mkdtempSync(join(tmpdir(), "sloppy-desktop-icon-generate-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
   const destination = pathToFileURL(directory + "/");
   await generateDesktopIcon(destination);
   const path = verifyDesktopIcon({
@@ -91,9 +91,9 @@ test("small Mac icons preserve corner and shadow coverage when downscaled", asyn
   }
 });
 
-test("icon provenance tolerates comment edits and identifies each mismatched input", (t) => {
+test("icon provenance tolerates comment edits and identifies each mismatched input", () => {
   const directory = mkdtempSync(join(tmpdir(), "sloppy-desktop-icon-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
   for (const folder of ["scripts", "public/icons", "assets/desktop"]) {
     mkdirSync(join(directory, folder), { recursive: true });
   }

@@ -1,5 +1,5 @@
 // Draws the Home Screen icons in public/icons/: the favicon's blue Bruiser
-// (public/favicon.svg, `pnpm run generate:favicon`) on the menu's navy, rendered by Chrome.
+// (public/favicon.svg, `bun run generate:favicon`) on the menu's navy, rendered by Chrome.
 // Home screens mask the square themselves and fill transparency with black, so each icon
 // is an opaque full square.
 import { readFile } from "node:fs/promises";

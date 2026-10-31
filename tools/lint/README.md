@@ -1,16 +1,10 @@
 # Lint toolchain
 
-The game compiles with **TypeScript 7.0.2** (root `package.json`). TypeScript
-ESLint 8.70 only supports compiler APIs below TypeScript 6.1, so this isolated
-package pins TypeScript 6.0.3 for parsing and type-aware lint analysis. It never
-compiles the game.
+`bun check` checks the game. TypeScript ESLint 8.70 uses TypeScript compiler
+APIs below 6.1, so this isolated package pins TypeScript 6.0.3 for parsing and
+type-aware lint analysis. It never compiles or checks the game build.
 
-The root `postinstall` runs `pnpm --dir tools/lint install --frozen-lockfile`, so both lockfiles
-belong in version control. This avoids unsupported peer overrides while keeping
-TypeScript 7 builds.
-
-`eslint.config.mjs` applies the recommended JavaScript and TypeScript rules
-everywhere and type-aware checks to `src/`. Prettier owns formatting. If newer
-TypeScript syntax is rejected by the linter, update this toolchain deliberately
-rather than suppressing its compatibility checks. See the
-[typed-linting documentation](https://typescript-eslint.io/getting-started/typed-linting/).
+The root `postinstall` runs `bun install --cwd tools/lint --frozen-lockfile`.
+The root and lint `bun.lock` files belong in version control. ESLint runs through Bun with the
+same recommended JavaScript, TypeScript and type-aware rules; Prettier owns
+formatting. Update this package deliberately if new syntax needs parser support.

@@ -1,11 +1,11 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
 // `artifacts/desktop/`, or the same app for iPad into `artifacts/ipad/`.
 //
-//   node scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
-//   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
-//   node scripts/build-desktop.mjs             # whichever this machine is
-//   node scripts/build-desktop.mjs --ipad              # Sloppy Tanks.app and an .ipa for iPads
-//   node scripts/build-desktop.mjs --ipad-simulator    # the app for Xcode's iPad simulators
+//   bun scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
+//   bun scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
+//   bun scripts/build-desktop.mjs             # whichever this machine is
+//   bun scripts/build-desktop.mjs --ipad              # Sloppy Tanks.app and an .ipa for iPads
+//   bun scripts/build-desktop.mjs --ipad-simulator    # the app for Xcode's iPad simulators
 //
 // Add `--install` to an iPad build to install and open it on the first connected iPad
 // (`SLOPPY_IOS_DEVICE` names another device) or on a booted iPad simulator (one is

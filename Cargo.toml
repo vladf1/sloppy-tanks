@@ -109,7 +109,7 @@ opt-level = 3
 [profile.server.package.wide]
 opt-level = 3
 
-# The desktop app (crates/desktop, `pnpm run desktop`) downloads once, so all of it is
+# The desktop app (crates/desktop, `bun run desktop`) downloads once, so all of it is
 # optimized for speed. Release's per-package overrides carry over and outrank `"*"`,
 # hence the physics crates are named again.
 [profile.desktop]
@@ -154,7 +154,7 @@ debug = "line-tables-only"
 opt-level = 2
 debug = false
 
-# The pilot engine for the bots Worker (`pnpm run pilot:build`). The download size that
+# The pilot engine for the bots Worker (`bun run pilot:build`). The download size that
 # release's fat LTO buys does not matter in a Worker, while its link took ~40 s of every
 # build: without LTO, the dependencies compile once and stay cached, so a pilot change
 # rebuilds in ~2 s and a core change in ~23 s instead of ~45 s (4 cores). Eight pilots

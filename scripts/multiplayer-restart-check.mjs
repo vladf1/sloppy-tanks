@@ -22,7 +22,7 @@ async function startServer() {
     () => false,
   );
   assert.ok(!busy, `port ${PORT} is already in use; set SLOPPY_RESTART_PORT`);
-  // The native server `pnpm run server:build` produces.
+  // The native server `bun run server:build` produces.
   server = spawn("target/server/sloppy-server", [], {
     env: { ...process.env, PORT: String(PORT) },
     stdio: ["ignore", "pipe", "pipe"],

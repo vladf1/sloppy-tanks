@@ -1,4 +1,4 @@
-// Types for the labs glue when `pnpm run wasm:labs` has not run: `pnpm run build` and
+// Types for the labs glue when `bun run wasm:labs` has not run: `bun run build` and
 // CI's type check build only the game engines. Once built, TypeScript resolves the real
 // `src/generated/engine-labs/engine.d.ts` instead. Only the calls TypeScript makes are
 // declared.

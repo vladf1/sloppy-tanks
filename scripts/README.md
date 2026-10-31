@@ -1,6 +1,6 @@
 # Scripts
 
-Browser checks, measurements and asset tools. None of these run in CI: `pnpm run
+Browser checks, measurements and asset tools. None of these run in CI: `bun run
 check` covers formatting, lint, types, the site and server builds, clippy and the Rust
 and page-shell tests. A passing gate does not verify controls, menu transitions,
 rendering or cleanup, so run the matching browser check when changing those paths.
@@ -20,9 +20,9 @@ Invoke the repository skill as `$ui-parity-gauntlet` in Codex or
 entry points stay in this repository, with no global skill installation.
 
 ```sh
-pnpm run check:desktop-ui -- --round first
+bun run check:desktop-ui -- --round first
 # After fixing the critic's findings, reuse the frozen reference:
-pnpm run check:desktop-ui -- --round second
+bun run check:desktop-ui -- --round second
 ```
 
 Run on a Mac with Metal and installed Chrome. The default sizes are 1280×800 and
@@ -56,35 +56,35 @@ The stages also run separately:
 
 ```sh
 SLOPPY_UI_SNAPSHOTS=artifacts/performance/desktop-ui/native cargo test --locked -p sloppy-desktop --profile desktop snapshots -- --ignored
-node scripts/desktop-ui-capture.mjs --native artifacts/performance/desktop-ui/native --out artifacts/performance/desktop-ui/reference
-node scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artifacts/performance/desktop-ui/reference artifacts/performance/desktop-ui/review
+bun scripts/desktop-ui-capture.mjs --native artifacts/performance/desktop-ui/native --out artifacts/performance/desktop-ui/reference
+bun scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artifacts/performance/desktop-ui/reference artifacts/performance/desktop-ui/review
 ```
 
 ## Browser checks
 
-Start `pnpm run dev` and pass the URL it prints. Every check drives installed
+Start `bun run dev` and pass the URL it prints. Every check drives installed
 Google Chrome headless with an isolated profile, so no window takes focus; set
 `SLOPPY_HEADED=1` to watch a check in a visible window. `webkit-startup-check`
 drives Playwright's own WebKit build (Safari's engine, with WebGPU) instead; install
-it once with `pnpm exec playwright install webkit`. Each check exits non-zero
+it once with `bun x --bun playwright install webkit`. Each check exits non-zero
 on failure and writes screenshots and results to the ignored `artifacts/performance/`.
 
 ```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/hud-feedback-check.mjs
 ```
 
 Checks play on the WebGPU engine where the browser has it. `SLOPPY_WEBGL=1` hides
 WebGPU from their pages, so the same checks run on the WebGL2 engine through the
 page's own fallback. Checks that play it (`SLOPPY_WEBGL=1`, a `?webgl` URL and
-`webgl-check.mjs`) first rebuild that engine, which `pnpm run wasm` leaves alone,
+`webgl-check.mjs`) first rebuild that engine, which `bun run wasm` leaves alone,
 when their URL is a local dev server:
 
 ```sh
-SLOPPY_WEBGL=1 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
+SLOPPY_WEBGL=1 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
 ```
 
-`pnpm run check:browser` runs every check below except `touch-loading-check`, one
+`bun run check:browser` runs every check below except `touch-loading-check`, one
 after another, in a few minutes. Run it for startup, menu, input or rendering
 changes. Browser checks keep only what needs a browser (real pointer, wheel,
 keyboard and touch input, DOM and CSS, sounds, GPU rendering); rules the simulation
@@ -134,7 +134,7 @@ the production build splits the touch UI into separate files; it needs no dev
 server:
 
 ```sh
-node scripts/touch-loading-check.mjs
+bun scripts/touch-loading-check.mjs
 ```
 
 The dev server also serves interactive fixtures, listed on the dev site's
@@ -178,7 +178,7 @@ buttons reaches the engine with the next frame's input, so checks wait a frame.
 
 The render lab, effects lab and tank previews use the labs build of the engine
 (`RenderLab`, `EffectsLab`; the `labs` feature of `sloppy-web`), which the game never
-loads: build it with `pnpm run wasm:labs` (into `src/generated/engine-labs/`),
+loads: build it with `bun run wasm:labs` (into `src/generated/engine-labs/`),
 then open the page on the dev server.
 
 | Page or script                                          | Shows or checks                                                                                         |
@@ -210,21 +210,21 @@ the engine's tests (`crates/core/tests/integration/net_match_host.rs`, `net_play
 `crates/server/tests/`); these checks cover what only a browser or a real socket
 shows. Room state travels in binary WebSocket frames, deltas against what the client
 already holds; `wire-view.mjs` decodes them through the engine Wasm (one `WireView`
-per socket, so run `pnpm run wasm` first) into the JSON `full` and `snapshot` shapes.
+per socket, so run `bun run wasm` first) into the JSON `full` and `snapshot` shapes.
 Checks that follow a room's state apply those with `state-mirror.mjs`, which also
 asserts the snapshot stream stays contiguous.
 
-`pnpm run check:multiplayer-loading` builds and plays a production copy. It rejects
-multiplayer requests, sockets or UI in single-player, traffic-bot or Node-only code in
+`bun run check:multiplayer-loading` builds and plays a production copy. It rejects
+multiplayer requests, sockets or UI in single-player, traffic-bot or server tooling in
 any browser chunk, and any Wasm beyond one engine build, downloaded once, when opening
 a room. `tests/multiplayer-client-imports.test.ts` guards the import boundary in
-`pnpm test` and prints the offending import chain.
+`bun run test` and prints the offending import chain.
 It also checks that a room link opens Battle Setup rather than a room page, that
 multiplayer's extracted stylesheet loads only once a room is entered, that inactive
 menu actions stay hidden, and that the menu fits desktop viewports.
 
-`pnpm run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
-plus a third for a late join. Run Vite and the local server first (`pnpm run
+`bun run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
+plus a third for a late join. Run Vite and the local server first (`bun run
 server:dev`), or set `SLOPPY_SERVER` to a deployed server's address from the directory. The host creates a
 humans-only room on Battle Setup and the others open its room link, which selects
 the room there. It covers literal names, room rules shown as text to guests and during
@@ -243,7 +243,7 @@ sliders for all three in a room, to feel the controls at a changing delay while 
 buffer and the share of frames that ran past the newest snapshot. Browser
 diagnostics exist only in dev builds.
 
-`node scripts/multiplayer-latency-matrix.mjs` measures how a room feels across those
+`bun scripts/multiplayer-latency-matrix.mjs` measures how a room feels across those
 conditions (round trips of 0, 50, 100 and 200 ms, then 100 ms with jitter and with
 stalls; `SLOPPY_MATRIX_CONDITIONS` picks some). For each, two Chrome players join a
 room with Normal bots on `SLOPPY_MATRIX_MAP` (default village) and for
@@ -251,7 +251,7 @@ room with Normal bots on `SLOPPY_MATRIX_MAP` (default village) and for
 short bursts through the dev `controls` hook. It records both players' Stats for nerds
 feel and network readings and the server's wire bytes per player under
 `artifacts/performance/multiplayer/latency-matrix/<SLOPPY_MATRIX_LABEL>/`. It starts its
-own server on `SLOPPY_MATRIX_PORT` (default 8791), so run `pnpm run server:build` and
+own server on `SLOPPY_MATRIX_PORT` (default 8791), so run `bun run server:build` and
 Vite first and pass Vite's URL as `SLOPPY_URL`; `SLOPPY_MATRIX_SERVER=wss://1-2-3-4.nip.io`
 plays on that machine over the real network instead (the `rtt0` condition adds no delay),
 and `SLOPPY_MATRIX_REPEAT` runs each condition several times. Results vary with the bots'
@@ -270,11 +270,11 @@ to multiplayer transitions. Both write desktop screenshots and results under
 `artifacts/performance/player-ux/`:
 
 ```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/player-feedback-check.mjs
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/player-preferences-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/player-feedback-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/player-preferences-check.mjs
 ```
 
-`node --import tsx scripts/multiplayer-room-browser-check.mjs` checks random/saved
+`bun scripts/multiplayer-room-browser-check.mjs` checks random/saved
 names, responsive room listings, immediate creation on the selected map, Auto
 teams, live player kills, join notifications, configurable match duration, late join,
 received-update stats, polling cleanup and empty-room removal. For both the reload
@@ -286,25 +286,25 @@ Use `SLOPPY_URL` for either the local Vite URL or the public dev site,
 separate evidence. Buttons and room selection
 use physical coordinate clicks.
 
-With Vite and the local server running, `node scripts/phone-multiplayer-check.mjs` plays
+With Vite and the local server running, `bun scripts/phone-multiplayer-check.mjs` plays
 phones' one-action Multiplayer tab: a phone that sees no open room creates one on its map
 with bots, and a second phone, starting on single player, has that room picked with its
 map shown, joins through a reload, and gets the phone camera, controls and short room
 menu. Each phone's room list keeps only the rooms the check made, so other rooms on the
 server cannot change the pick.
 
-`node scripts/multiplayer-restart-check.mjs` starts an isolated native server
+`bun scripts/multiplayer-restart-check.mjs` starts an isolated native server
 (`target/server/sloppy-server`) on port 8790, or `SLOPPY_RESTART_PORT`, kills and
 restarts it during a round
 (a crash, not a graceful stop) and checks that the connection dialog shows, that the
 browser returns to a fresh lobby and prepares another map, and that a graceful stop
 then shows the room-closed dialog with its way back to Battle Setup. Run
-`pnpm run server:build` first and run Vite.
-`node scripts/multiplayer-public-check.mjs` verifies the published dev
+`bun run server:build` first and run Vite.
+`bun scripts/multiplayer-public-check.mjs` verifies the published dev
 client (`SLOPPY_PUBLIC_URL`) with two players plus its test directory, fixture and
 build metadata.
 
-`pnpm run server:check:players` runs 4 real player sockets for 15 seconds per map,
+`bun run server:check:players` runs 4 real player sockets for 15 seconds per map,
 including combat, reconnect and results. The traffic bots' `BotPlayer`
 (`bots/bot-player.ts`) drives each socket; the check mirrors every snapshot to prove
 the stream is contiguous and enforces full-state, snapshot-batch and sustained byte
@@ -325,22 +325,22 @@ comfort or account billing capacity; impact-to-feedback excludes projectile flig
 
 ## Measurements
 
-These are manual evidence, not regression gates. Keep them out of `pnpm run
+These are manual evidence, not regression gates. Keep them out of `bun run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
 
 | Command                                                                                  | Measures                                                                               |
 | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `node scripts/profile.mjs before` / `after`                                              | Matched runtime comparison with CPU profiles                                           |
-| `node scripts/frame-pacing-check.mjs`                                                    | First gameplay frame and seeded combat on every map, without discarding a warm-up      |
-| `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
+| `bun scripts/profile.mjs before` / `after`                                               | Matched runtime comparison with CPU profiles                                           |
+| `bun scripts/frame-pacing-check.mjs`                                                     | First gameplay frame and seeded combat on every map, without discarding a warm-up      |
+| `bun run benchmark:loading -- <label>`                                                   | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
 | `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and encoding per room timer interval     |
 | `cargo run --release -p sloppy-server --example snapshot_bandwidth`                      | Room bytes raw and on the wire, deflate, decode and projectile share; state parity     |
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
 | `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |
 | `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
-| `pnpm run validate`                                                                      | Ten seeded headless matches and reset checks                                           |
-| `node scripts/benchmarks/host-download-benchmark.mjs`                                    | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
+| `bun run validate`                                                                       | Ten seeded headless matches and reset checks                                           |
+| `bun scripts/benchmarks/host-download-benchmark.mjs`                                     | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
@@ -384,7 +384,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
   the human and scoreboard blocks. Compare matching seeds and output hashes from
   saved baseline/candidate executables in alternating order. These instrumented
   native timings do not measure browser render CPU or FPS.
-- `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
+- `bun run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 
 CPU submission times are not GPU timings, and local frame rates are not
@@ -393,7 +393,7 @@ guarantees for other devices.
 ## Assets, build and deployment
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
-  run through the pnpm commands in the root README's Assets section.
+  run through the Bun commands in the root README's Assets section.
   `encode-webp.ts` is their shared encoder (lossless for data tiles, lossy for noisy
   colour artwork such as the drum), `texture-noise.ts` their seeded
   value noise, and `asset-data.ts` holds the pickup colors and atlas layout they paint
@@ -401,14 +401,14 @@ guarantees for other devices.
   `src/game/ammo-options.ts` (the engine's own copies are in `crates/core`; change
   both together).
 - `generate-previews.mjs` renders the tank selection previews from the game's vehicle
-  models with the labs engine (`tools/tank-surface-check.html`; `pnpm run generate:previews`
+  models with the labs engine (`tools/tank-surface-check.html`; `bun run generate:previews`
   builds that engine first) and packs `public/previews/tanks.webp`.
   `SLOPPY_PREVIEWS_OUT` writes a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and
   each tank is drawn over black and over white to recover its coverage; a soft
   contact shadow, the track footprint projected through the same view, is painted
   under each tank.
-- `generate-desktop-icon.mjs` (`pnpm run generate:desktop-icon`, on any OS) derives
+- `generate-desktop-icon.mjs` (`bun run generate:desktop-icon`, on any OS) derives
   `assets/desktop/mac-app.icns` from the web app's tank icon; `generate:app-icons`
   regenerates it after the web icons. The checked-in icon and its
   source hashes let desktop packaging copy it without invoking Cargo or installing

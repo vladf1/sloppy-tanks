@@ -43,7 +43,7 @@ if (spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).status !== 0) {
   process.exit(1);
 }
 if (!process.argv.includes("--no-build")) {
-  const build = spawnSync("pnpm", ["run", "build"], { stdio: "inherit" });
+  const build = spawnSync("bun", ["run", "build"], { stdio: "inherit" });
   if (build.status !== 0) process.exit(build.status ?? 1);
 }
 

@@ -8,7 +8,7 @@ import { encodePixelsWebp } from "./encode-webp";
 // bake knows the arena layout, roads, cottages and fields, so this only runs it and
 // stores the pixels losslessly (every channel is data, not colour):
 //
-//   node --import tsx scripts/generate-village-ground.ts
+//   bun scripts/generate-village-ground.ts
 const size = 512;
 const scratch = mkdtempSync(path.join(tmpdir(), "village-ground-"));
 try {

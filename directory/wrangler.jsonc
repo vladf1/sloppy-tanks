@@ -1,5 +1,5 @@
 {
-  "$schema": "../node_modules/wrangler/config-schema.json",
+  "$schema": "../tools/deploy/node_modules/wrangler/config-schema.json",
   "name": "sloppy-tanks-directory",
   "account_id": "b49a59dfb5edf913223ad13eeab8d740",
   // No newer than the pinned wrangler's local runtime supports, so `wrangler dev` runs it.

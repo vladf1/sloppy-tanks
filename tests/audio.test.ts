@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { AudioSystem } from "../src/game/audio";
 import type { EventBatch } from "../src/game/engine-api";

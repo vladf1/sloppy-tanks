@@ -7,16 +7,16 @@
  * playout buffer, late batches, snapshot CPU) and the server's wire bytes per player, under
  * `artifacts/performance/multiplayer/latency-matrix/<label>/`.
  *
- * It starts its own server (`target/server/sloppy-server`, `pnpm run server:build`) on
+ * It starts its own server (`target/server/sloppy-server`, `bun run server:build`) on
  * `SLOPPY_MATRIX_PORT` (default 8791) so its byte counts hold only this run; run Vite and
  * pass its URL as `SLOPPY_URL`. `SLOPPY_MATRIX_SERVER=wss://1-2-3-4.nip.io` plays on that
  * remote server over the real network instead (its `/stats` then counts every room it
  * holds), and `SLOPPY_MATRIX_REPEAT` runs each condition that many times. `SLOPPY_MATRIX_PARAMS` adds page parameters to both players
  * (`dodge=0` compares without "dodger first", `shooter=0` without "shooter first"). Manual evidence, not a gate: keep it out of
- * `pnpm run check`.
+ * `bun run check`.
  *
  *   SLOPPY_URL=http://127.0.0.1:5174/sloppy-tanks/ SLOPPY_MATRIX_LABEL=baseline \
- *     node scripts/multiplayer-latency-matrix.mjs
+ *     bun scripts/multiplayer-latency-matrix.mjs
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { importChain, moduleGraph } from "./import-graph";
 
 const CLIENT = "src/net/client.ts";
@@ -54,7 +54,7 @@ const SHELL = new Set([
   ].map((name) => `src/net/${name}.ts`),
 ]);
 /** Audio is the one library a room page loads. */
-const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?howler[@\\/]/;
+const LIBRARIES = /[\\/]node_modules[\\/](\.bun[\\/])?howler[@\\/]/;
 const staticGraph = (entry: string) => moduleGraph(entry, /generated\/engine(-webgl)?\/|\?url$/);
 
 for (const entry of [CLIENT, ROOM_BROWSER]) {

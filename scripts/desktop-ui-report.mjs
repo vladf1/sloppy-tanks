@@ -5,7 +5,7 @@ import { basename, relative, resolve } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 
 const [native, reference, destination] = process.argv.slice(2).map((path) => resolve(path));
-assert.ok(destination, "Usage: node scripts/desktop-ui-report.mjs <native> <reference> <report>");
+assert.ok(destination, "Usage: bun scripts/desktop-ui-report.mjs <native> <reference> <report>");
 await mkdir(destination, { recursive: true });
 const escape = (text) => text.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
 const capture = JSON.parse(await readFile(resolve(reference, "capture.json"), "utf8"));

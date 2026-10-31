@@ -1,7 +1,7 @@
 // The Rust engine for the page, single player and room alike: the wasm-bindgen glue
 // and its hashed binary. There are two builds: the WebGPU engine
-// (`src/generated/engine/`, `pnpm run wasm`) and a WebGL2 fallback
-// (`src/generated/engine-webgl/`, `pnpm run wasm:webgl`). A page loads one: the
+// (`src/generated/engine/`, `bun run wasm`) and a WebGL2 fallback
+// (`src/generated/engine-webgl/`, `bun run wasm:webgl`). A page loads one: the
 // fallback only where the browser offers no WebGPU adapter (or `?webgl` asks for it),
 // so WebGPU browsers never download WebGL code; its glue is a separate chunk imported
 // on demand.

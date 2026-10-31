@@ -2,7 +2,7 @@
  * The pilots Worker (`pilots.wrangler.jsonc`): players run by the bot brain
  * (`crates/pilot` as Wasm), one squad of up to eight a region. It has no public address;
  * the bots Worker's control page and API reach it over their `PILOTS` service binding.
- * It deploys on its own (`pnpm run pilots:deploy`) because its engine is game code,
+ * It deploys on its own (`bun run pilots:deploy`) because its engine is game code,
  * stamped with the content version the servers it plays on must run.
  */
 
@@ -28,7 +28,7 @@ import {
   type Environment,
   type Region,
 } from "./regions";
-// Built by scripts/build-pilot.mjs, which `pnpm run pilots:deploy` runs first.
+// Built by scripts/build-pilot.mjs, which `bun run pilots:deploy` runs first.
 import pilotModule from "./generated/sloppy_pilot.wasm";
 
 interface Env extends DirectoryEnv {

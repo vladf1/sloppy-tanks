@@ -12,7 +12,7 @@
 // and the WebGL one too only when its glue is missing (Vite resolves its import) or its
 // API no longer matches (tsc checks both against the page). `--webgl` builds the WebGL
 // engine alone, for `?webgl` and the browser checks that play it; `--all` builds both,
-// as `pnpm run build` does. Two builds run at once, the WebGL one in its own target
+// as `bun run build` does. Two builds run at once, the WebGL one in its own target
 // directory (`target/webgl`) so neither waits on the other's Cargo lock.
 //
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
@@ -26,7 +26,7 @@
 //
 // `--labs` adds the development labs (`RenderLab`, `EffectsLab`, the `labs` feature of
 // `sloppy-web`) and writes their glue to `src/generated/engine-labs/` instead, so a lab
-// build never replaces the production engine that the game, `pnpm run build` and the dev
+// build never replaces the production engine that the game, `bun run build` and the dev
 // server load.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";

@@ -2,7 +2,7 @@
 // the engine and are covered by `crates/web/src/battle_report.rs`; the recap's statistics,
 // feats and personal bests by `crates/core/tests/integration/round_recap.rs`. This checks
 // how the page lays the report out.
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { recapMarkup, scoreboardMarkup } from "../src/game/round-recap";
 import type { BattleReport, RecapState, ReportTile, ScoreboardRow } from "../src/game/engine-api";

@@ -6,7 +6,7 @@
 // (cycled when shorter than the pair count). The key file lists which capture each side
 // came from and belongs to whoever runs the comparison, not the judge.
 //
-//   node scripts/showcase-pairs.mjs --a dirA --b dirB --out dirPairs --key key.json \
+//   bun scripts/showcase-pairs.mjs --a dirA --b dirB --out dirPairs --key key.json \
 //     [--order abba...] [--shots village-hero,quarry-action]
 import fs from "node:fs";
 import path from "node:path";

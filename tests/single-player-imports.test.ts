@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { importChain, moduleGraph } from "./import-graph";
 
 const ENTRY = "src/main.ts";
@@ -44,7 +44,7 @@ const SHELL = new Set([
   ].map((name) => `src/game/${name}.ts`),
 ]);
 /** Audio, and the development-only tuning panel, are the libraries single player loads. */
-const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?(howler|tweakpane|@tweakpane)[@\\/]/;
+const LIBRARIES = /[\\/]node_modules[\\/](\.bun[\\/])?(howler|tweakpane|@tweakpane)[@\\/]/;
 
 test("single player reaches only the shell and the Rust engine", async () => {
   // The generated engine glue is checked by building it; multiplayer code has its own

@@ -5,7 +5,7 @@
 // draws). Phones and the Tesla in-car browser are the audience's weak end; a polish pass
 // must stay inside this. Exits non-zero when any still is over.
 //
-//   node scripts/showcase-budget.mjs --candidate dir/report.json \
+//   bun scripts/showcase-budget.mjs --candidate dir/report.json \
 //     --baseline artifacts/aaa/baseline/report.json [--baseline more/report.json]
 import fs from "node:fs";
 import { parseArgs } from "node:util";

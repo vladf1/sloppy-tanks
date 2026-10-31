@@ -23,7 +23,7 @@ const hasDirectory = readdirSync(assets)
   .some((name) => readFileSync(new URL(name, assets), "utf8").includes(DIRECTORY_URL));
 if (!index.includes('id="tab-multiplayer"') || !hasDirectory) {
   throw new Error(
-    "dist-dev has no multiplayer entry or dev directory URL; rebuild with pnpm run build:dev",
+    "dist-dev has no multiplayer entry or dev directory URL; rebuild with bun run build:dev",
   );
 }
 
@@ -31,13 +31,14 @@ if (!index.includes('id="tab-multiplayer"') || !hasDirectory) {
 // game/network sources, so publish the dev server from this checkout first. It runs on
 // its own machines, which follow the server image's :dev tag, so this never touches
 // production's. The publish waits until every dev server reports this checkout's build.
-run("node", ["scripts/server.mjs", "publish", "--dev"]);
+run(process.execPath, ["scripts/server.mjs", "publish", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
-run("node", ["deploy/dev-site/precompress.mjs"]);
+run(process.execPath, ["deploy/dev-site/precompress.mjs"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
-run("wrangler", [
+run(process.execPath, [
+  "tools/deploy/wrangler.mjs",
   "deploy",
   "--config",
   "deploy/dev-site/wrangler.jsonc",

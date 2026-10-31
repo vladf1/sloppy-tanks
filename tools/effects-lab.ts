@@ -4,7 +4,7 @@
 // and an amplified difference image (references: `lab-references.ts`, `scripts/README.md`
 // Labs). The Three side drew its cosmetic randomness from its own stream, so only the
 // overall match is meaningful.
-// Build the labs engine with `pnpm run wasm:labs`, then open
+// Build the labs engine with `bun run wasm:labs`, then open
 // /sloppy-tanks/tools/effects-lab.html on the dev server.
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.

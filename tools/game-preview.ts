@@ -1,6 +1,6 @@
 // Game preview: single-player Sloppy Tanks on the Rust engine (simulation,
 // presentation and the wgpu renderer), with minimal keyboard and mouse input and
-// no menus or HUD. Build the engine with `pnpm run wasm`, then open
+// no menus or HUD. Build the engine with `bun run wasm`, then open
 // /sloppy-tanks/tools/game-preview.html on the dev server.
 // `?map=village|harbor|quarry|stress-test|superstress`, `?seed=424242`,
 // `?autoplay`, `?fp` (start in first person), `?zoom=34`.
@@ -28,7 +28,7 @@ let toggleView = false;
 let fire = false;
 
 function bindInput(): void {
-  addEventListener("keydown", (event) => {
+  window.addEventListener("keydown", (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const digit = /^(Digit|Numpad)([1-5])$/.exec(event.code);
     if (digit) {
@@ -53,8 +53,8 @@ function bindInput(): void {
       keys.add(event.code);
     }
   });
-  addEventListener("keyup", (event) => keys.delete(event.code));
-  addEventListener("blur", () => {
+  window.addEventListener("keyup", (event) => keys.delete(event.code));
+  window.addEventListener("blur", () => {
     keys.clear();
     fire = false;
   });
@@ -69,7 +69,7 @@ function bindInput(): void {
     if (event.button === 0) fire = true;
     if (event.button === 2) mines++;
   });
-  addEventListener("pointerup", (event) => {
+  window.addEventListener("pointerup", (event) => {
     if (event.button === 0) fire = false;
   });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
@@ -140,7 +140,9 @@ async function main(): Promise<void> {
   if (params.has("reflections")) game.debug_set_reflections(Number(params.get("reflections")));
   game.start();
   if (params.has("fp")) game.toggle_first_person();
-  addEventListener("resize", () => game.resize(innerWidth, innerHeight, devicePixelRatio, false));
+  window.addEventListener("resize", () =>
+    game.resize(innerWidth, innerHeight, devicePixelRatio, false),
+  );
   let frames = 0;
   document.body.dataset.state = "playing";
   canvas.focus();

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { initialGameOptions, loadGameOptions } from "../src/game/game-options";
 import { withLocalStorage, withStorage } from "./local-storage";
 

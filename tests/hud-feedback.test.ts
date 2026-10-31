@@ -2,7 +2,7 @@
 // the battle's outcome (`crates/web/src/feedback.rs`, `hud.rs` and `battle_report.rs`,
 // tested there); the page lays them out.
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { cssColor, damageEdgePoint, damageRingPlacement } from "../src/game/hud-feedback";
 
 test("the damage ring wraps the tank overhead and opens to the screen edge in first person", () => {

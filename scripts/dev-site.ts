@@ -3,7 +3,7 @@ import type { Plugin } from "vite";
 // Deliberate allowlist: do not publish source directories or Node-only test runners.
 export const devPages = [
   {
-    // Renders with the labs engine: the dev build needs `pnpm run wasm -- --labs`.
+    // Renders with the labs engine: the dev build needs `bun run wasm:labs`.
     path: "tools/tank-surface-check.html",
     title: "Tank surfaces",
     detail: "Vehicle textures and materials, drawn by the engine's renderer",

@@ -19,7 +19,7 @@ chips, grime and scuffs). The
 corrugation is modelled, so the tile carries none. Regenerate it with:
 
 ```sh
-node --import tsx scripts/generate-harbor-textures.ts
+bun scripts/generate-harbor-textures.ts
 ```
 
 ## Runtime encoding

@@ -8,12 +8,12 @@
 // count give the same battle on a build that leaves gameplay alone, so two builds'
 // stills line up shot for shot.
 //
-//   node scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
+//   bun scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
 //     [--shots follow,hero,vista,overview,action,strip,first-person,death,destruction,pickups,
 //      menu,respawn,settings,recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
 //
 // It serves this checkout's `src/generated/engine/` through its own Vite dev server on a
-// free port (run `pnpm run wasm` first), so parallel checkouts never share a port.
+// free port (run `bun run wasm` first), so parallel checkouts never share a port.
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";

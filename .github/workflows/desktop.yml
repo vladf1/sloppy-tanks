@@ -2,7 +2,7 @@
 # the Apple silicon app (zipped and as an installer package), the Windows executable and
 # the iPad app for Xcode's simulators through `scripts/build-desktop.mjs`, uploaded as
 # this run's artifacts. iPad builds for devices need a provisioning profile, so they are
-# made on a developer's Mac (`pnpm run ipad`). Linux CI (check.yml)
+# made on a developer's Mac (`bun run ipad`). Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
 # libraries there.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
@@ -25,6 +25,7 @@ on:
       - "Cargo.*"
       - ".cargo/**"
       - "rust-toolchain.toml"
+      - ".bun-version"
       - "scripts/build-desktop.mjs"
       - "scripts/generate-desktop-icon.mjs"
       - "scripts/content-version.mjs"
@@ -53,7 +54,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-macos-check
-          node-dependencies: "false"
+          js-dependencies: "false"
       - run: cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
       - run: cargo test --locked --profile desktop-check -p sloppy-desktop
       # The renderer's and the engine API's desktop-only modules build only with their
@@ -69,7 +70,7 @@ jobs:
         with:
           # Step-level profile overrides are not visible when setup hashes the cache.
           cargo-cache: desktop-macos-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
+          js-dependencies: "false"
       - name: Signing keychain
         if: github.event_name != 'pull_request'
         env:
@@ -96,7 +97,7 @@ jobs:
             printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
             echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
           fi
-      - run: node scripts/build-desktop.mjs --mac
+      - run: bun scripts/build-desktop.mjs --mac
         env:
           # PR artifacts favor compile time; main/local builds retain release's fat LTO.
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
@@ -140,12 +141,12 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: ipad-simulator-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
+          js-dependencies: "false"
       # The iOS targets stay out of rust-toolchain.toml, which is part of the content
       # version; the build script adds its own, and clippy needs the simulator's first.
       - run: rustup target add aarch64-apple-ios-sim
       - run: cargo clippy --locked --profile desktop-check --target aarch64-apple-ios-sim -p sloppy-desktop --all-targets -- -D warnings
-      - run: node scripts/build-desktop.mjs --ipad-simulator
+      - run: bun scripts/build-desktop.mjs --ipad-simulator
         env:
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
           CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
@@ -163,8 +164,8 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-windows-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
-      - run: node scripts/build-desktop.mjs --windows
+          js-dependencies: "false"
+      - run: bun scripts/build-desktop.mjs --windows
         env:
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
           CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
@@ -204,7 +205,7 @@ jobs:
           skip-decompress: true
       - name: Publish the builds
         run: |
-          version="$(node -p 'require("./package.json").version')"
+          version="$(jq -r .version package.json)"
           commit="${GITHUB_SHA::7}"
           tag="desktop-v$version-$commit"
           mkdir release

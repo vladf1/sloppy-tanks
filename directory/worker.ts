@@ -14,7 +14,7 @@
  * seen in the last 45 s with no timers, alarms or in-memory state: the object hibernates between
  * requests, which keeps its duration billing near zero. There is no authentication.
  *
- * Deploy with `pnpm run directory:deploy`.
+ * Deploy with `bun run directory:deploy`.
  */
 import { DurableObject } from "cloudflare:workers";
 import {

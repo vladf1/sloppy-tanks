@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 # The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
 doctest = false
 
-# The native command line: pilots on this machine's network (`pnpm run pilot -- …`).
+# The native command line: pilots on this machine's network (`bun run pilot -- …`).
 [[bin]]
 name = "sloppy-pilot"
 path = "src/main.rs"

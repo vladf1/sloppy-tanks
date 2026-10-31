@@ -18,7 +18,7 @@ Single-player must pay minimal cost for multiplayer support. Load the multiplaye
 | Game mode          | Team Battle; up to 8 players, at most 6 per team; bots fill the 12 seats                                                                                  | Preserves the existing six-versus-six roster. Players choose a team with room and a player-legal tank.                                                                                                  |
 | Latency handling   | Remote entities interpolated behind an adaptive 37–250 ms playout buffer; local aim immediate; own hull predicted (protocol 4, see "Own-hull prediction") | Remote motion, deaths and effects stay on one consistent delayed timeline, while driving responds at once; the server stays authoritative and corrects the prediction.                                  |
 | Portability        | Room logic in the shared Rust core (`MatchHost`), separate from any transport                                                                             | The server wraps it per room in a `RoomSession`, and deterministic tests drive it without sockets. Replacing the custom replication protocol with Colyseus would still be a separate project.           |
-| Cost               | A small VPS at a flat monthly price                                                                                                                       | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `pnpm run server:stats`.                                                    |
+| Cost               | A small VPS at a flat monthly price                                                                                                                       | No per-request or duration billing. The limits are one CPU, 1 GB of memory and the plan's monthly transfer; watch them with `bun run server:stats`.                                                     |
 
 Not planned for v1: WebTransport, accounts or public matchmaking, co-op Solo Assault, the full per-player battle report (v1 shows a scoreboard) and persisted live-match recovery.
 
@@ -66,15 +66,15 @@ hit it when the player's own present reached the hit, prediction corrections by 
 server or the predictor saw first (blast, tank, crate, solid debris, cover, late input), and
 the main-thread time spent applying snapshots. `scripts/multiplayer-latency-matrix.mjs`
 records them for two scripted players in a room with bots under each dev transport delay
-([scripts guide](../scripts/README.md)); it is manual evidence, outside `pnpm run check`.
+([scripts guide](../scripts/README.md)); it is manual evidence, outside `bun run check`.
 
 Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame for the seeded map/destruction fixtures, with a provisional 512 KB/s per-client sustained budget for the manual player load check. These are message-size ceilings with wide headroom (binary baselines and frames are about a tenth of the former JSON), not measured throughput guarantees or billing limits. Keep byte measurements and all outliers in ignored artifacts.
 
-Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-loading`, `pnpm run check:multiplayer`, and the [player harness](../crates/server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `pnpm run test:rust`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
+Run `bun run check`, `bun run check:browser`, `bun run check:multiplayer-loading`, `bun run check:multiplayer`, and the [player harness](../crates/server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `bun run test:rust`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 
-- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. Watch `tickAvgMs`, `debtMs`, memory and loop delay (`loopDelayP99Ms`) in `pnpm run server:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
+- **Capacity:** one VPS with one CPU and 1 GB of memory runs every room in one process. Watch `tickAvgMs`, `debtMs`, memory and loop delay (`loopDelayP99Ms`) in `bun run server:stats` as rooms and bot fill grow, and record real peaks rather than extrapolating.
 - **Bandwidth:** snapshots are binary field deltas under permessage-deflate (`crates/core/src/net/replication.rs`), sent every tick: about 9 KB/s per client on the wire in a standard room with bots since protocol 7, which made the hull and nearby bodies fixed point and lets moving fields carry on by their last change (12–15 KB/s before it, about 6 KB/s when snapshots went out at 20 Hz). The Stress Grid (10–17 KB/s) and the Scrap Yard (up to about 45 KB/s) were measured at 20 Hz and cost roughly twice that now. That counts against the VPS plan's monthly transfer.
 - **Placement:** every room runs where the VPS is, so friends far from it pay that distance in RTT. Record per-player RTT in playtests.
 - **Restarts:** rooms are not persisted. A deploy or restart ends every live match with a room-reset notice; a crash leaves clients to reconnect into a fresh lobby.
@@ -181,7 +181,7 @@ Choose from the playtest results:
 | A deployment/runtime restart loses in-memory state                        | Distinct room epochs and a clear return to lobby; avoid planned deployments during playtests                                                                    |
 | The refactor changes single-player results or leaks balance across rooms  | Fresh baseline comparisons, unchanged Solo rules, per-simulation settings and interleaved-room tests                                                            |
 | Wire traffic or client queues are larger than estimated                   | Measure actual encoded traffic/full states; bound queues and resync/disconnect slow clients                                                                     |
-| The VPS runs out of CPU, memory or monthly transfer                       | Watch `pnpm run server:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan                                                 |
+| The VPS runs out of CPU, memory or monthly transfer                       | Watch `bun run server:stats` and the minute summaries; bound rooms, compress traffic, or move to a larger plan                                                  |
 | Friends far from the VPS get high RTT                                     | Record per-player RTT; pick the VPS region for the expected players, or add hosts in other regions                                                              |
 
 ## Gameplay defaults and decisions still requiring evidence

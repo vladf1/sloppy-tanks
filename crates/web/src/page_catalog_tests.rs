@@ -4,7 +4,7 @@
 //! tables), written from the Rust that owns it to `tests/fixtures/page-catalog.json`.
 //! `tests/page-catalog.test.ts` checks the page's copies against that file, so the two
 //! cannot drift. Rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate change, then
-//! `pnpm run format` (Prettier owns the file's layout).
+//! `bun run format` (Prettier owns the file's layout).
 
 use serde_json::{Value, json};
 use sloppy_core::net::client::{MAX_BUFFERED_BYTES, POLL_MS};
