@@ -14,7 +14,7 @@ const option = (name, fallback) => {
 };
 const native = resolve(option("--native", "artifacts/performance/desktop-ui/native"));
 const output = resolve(option("--out", "artifacts/performance/desktop-ui/reference"));
-const reference = option("--reference", "https://sloppy-tanks.fridman.me/");
+const reference = option("--reference", "https://sloppytanks.com/");
 await mkdir(output, { recursive: true });
 const fixtures = await Promise.all(
   (await readdir(native))

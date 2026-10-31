@@ -6,6 +6,10 @@
   "main": "redirect.mjs",
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "www.sloppytanks.com", "custom_domain": true }],
+  "routes": [
+    { "pattern": "www.sloppytanks.com", "custom_domain": true },
+    // The address production had on GitHub Pages, which old links and bookmarks use.
+    { "pattern": "sloppy-tanks.fridman.me", "custom_domain": true },
+  ],
   "vars": { "SITE_ORIGIN": "https://sloppytanks.com" },
 }

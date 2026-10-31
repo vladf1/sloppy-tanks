@@ -2,7 +2,7 @@
 
 Resolve paths from the current Git checkout instead of assuming a historical
 worktree or a developer's home directory. The default reference is
-`https://sloppy-tanks.fridman.me/` unless the user selects another build.
+`https://sloppytanks.com/` unless the user selects another build.
 
 ## Find the existing harness
 

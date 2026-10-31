@@ -6,7 +6,7 @@ description: Match Sloppy Tanks native UI to the production web app through repe
 # UI Parity Gauntlet
 
 Run the work in the current session. Default to the production web app at
-`https://sloppy-tanks.fridman.me/` and the native shell in `crates/desktop`.
+`https://sloppytanks.com/` and the native shell in `crates/desktop`.
 Use the selected interface as the acceptance
 reference: **faithful reproduction**, not a contest to make a different design
 look better. Default to execution unless the user asks only for a plan or prompt.

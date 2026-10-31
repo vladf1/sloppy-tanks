@@ -12,7 +12,7 @@ import { gameServers } from "./servers.mjs";
  * dev site; SLOPPY_SERVER_URL checks another server,
  * such as a local one, and SLOPPY_PAGE_URL the page beside it. */
 const HEALTH_TIMEOUT_MS = 10_000;
-const PRODUCTION_PAGE_URL = "https://sloppy-tanks.fridman.me/";
+const PRODUCTION_PAGE_URL = "https://sloppytanks.com/";
 const DEV_PAGE_URL = "https://sloppy-tanks-dev.fridman.me/";
 const dev = process.argv.includes("--dev");
 // The address players use, as they reach it.

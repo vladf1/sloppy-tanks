@@ -11,9 +11,9 @@ const ACCEPT_ENCODING = "br, gzip";
 const CURL = ["--fail", "--silent", "--show-error", "--ipv4", "--http2"];
 const deployments = [
   {
-    id: "github-pages",
-    name: "GitHub Pages",
-    origin: "https://sloppy-tanks.fridman.me",
+    id: "production",
+    name: "Cloudflare Workers (production)",
+    origin: "https://sloppytanks.com",
   },
   {
     id: "cloudflare-workers",

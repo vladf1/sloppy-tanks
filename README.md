@@ -148,7 +148,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 
 The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
 
-Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
+Multiplayer is available on the [production site](https://sloppytanks.com/?multiplayer)
 and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer), each with its own
 game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
@@ -324,13 +324,16 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 ## Deployment
 
-A GitHub Pages workflow publishes on pushes to `main`, after the quality gate passes: the
-pull-request check workflow's parallel jobs, which together run everything in
-`pnpm run check` and build the site.
-It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, the
-repository's Pages custom domain (a DNS-only CNAME to `vladf1.github.io` in
-fridman.me's Cloudflare zone). The old
-address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
+The deploy workflow (`.github/workflows/deploy.yml`) publishes on pushes to `main`, after
+the quality gate passes: the pull-request check workflow's parallel jobs, which together
+run everything in `pnpm run check` and build the site.
+It builds `dist/` with `DEPLOY_BASE=/` and publishes it to the Cloudflare Worker
+`sloppy-tanks` at <https://sloppytanks.com/>, hosted like the dev site (below) without
+its `noindex`: `deploy/site/production.wrangler.jsonc`, deployed with the repository's
+`CLOUDFLARE_API_TOKEN` secret. A second Worker, `sloppy-tanks-redirect`
+(`deploy/site/redirect.wrangler.jsonc`), sends <https://www.sloppytanks.com/> and the
+former GitHub Pages address <https://sloppy-tanks.fridman.me/> there with their path and
+query. Both hostnames are Worker custom domains, so Cloudflare keeps their DNS records. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `VITE_DIRECTORY_URL` to the production server directory, so the page
@@ -350,11 +353,11 @@ matches this checkout and warns when the live page cannot join it. Both report t
 build at `/health`: release version (`version`), protocol, content version, commit,
 local-change state and build time, and the server also its server build. The release
 version is `MAJOR.MINOR.PATCH.BUILD`, such as `1.1.0.628`: `version` in package.json,
-bumped by hand, and the Pages workflow's run number, which GitHub increments on every
+bumped by hand, and the deploy workflow's run number, which GitHub increments on every
 deploy from main (local and pull request builds have only the first three parts).
 Battle Setup shows it with the commit. The page's `/health` is a static
-`health/index.html` that GitHub Pages serves after a redirect to `/health/`
-(<https://sloppy-tanks.fridman.me/health>). The server's release, commit and time are
+`health/index.html` that the Worker serves after a redirect to `/health/`
+(<https://sloppytanks.com/health>). The server's release, commit and time are
 those of the first main build that shipped its server build, so they predate the
 page's when later commits left the server unchanged. After merging changes to any of them, run
 `pnpm run server:update` (or let auto-update pull it); until then, players on the
@@ -389,13 +392,15 @@ and `?stall=` (milliseconds of simulated transport delay), `&latencySlider` show
 that change them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
 comparison.
 
-The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
+The dev game is at <https://sloppy-tanks-dev.fridman.me/> (also
+<https://dev.sloppytanks.com/>) and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
 The provider URL is <https://sloppy-tanks-dev.vova145.workers.dev/>. Its `/health`
 reports the same build details as production's, including whether local changes were present.
 The build goes to `dist-dev/` with the `/` base; production builds and deployments
-stay separate. The hostname is the Worker's custom domain: Wrangler keeps its DNS
-record in fridman.me's Cloudflare zone, and all other records stay as they are.
+stay separate. The hostnames are the Worker's custom domains: Wrangler keeps their DNS
+records in the fridman.me and sloppytanks.com Cloudflare zones, and all other records
+stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, `noindex` everywhere). Only the engine binaries run its script,

@@ -7,16 +7,16 @@ import { releaseVersion } from "./release-version.mjs";
 /**
  * `health/index.html`: the page's build as JSON, the static counterpart of the
  * multiplayer server's `/health`. Static hosts serve it at `/health` (after a redirect
- * to `/health/` on GitHub Pages) as `text/html`, which JSON readers ignore. The
+ * to `/health/`) as `text/html`, which JSON readers ignore. The
  * page can join a server only when `protocol` and `contentVersion` match its; `version`
  * is the release version players see.
  */
-// HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
+// HTML collapses the indentation, and the static host types the file by its name, so
 // a string value carries a style element that keeps it. Browsers show it as `""`.
 const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
 
 export interface PageBuild {
-  /** `1.1.0.628` on main, with the Pages workflow's run number (`SLOPPY_BUILD_NUMBER`). */
+  /** `1.1.0.628` on main, with the deploy workflow's run number (`SLOPPY_BUILD_NUMBER`). */
   release: string;
   commit: string;
   dirty: boolean;

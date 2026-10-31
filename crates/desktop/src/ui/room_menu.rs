@@ -448,7 +448,7 @@ fn room_menu(
             "copy room invite",
         ) {
             ui.ctx().copy_text(format!(
-                "https://sloppy-tanks.fridman.me/?room={}",
+                "https://sloppytanks.com/?room={}",
                 menu.room
             ));
             menu.copied = COPIED_SECONDS;
