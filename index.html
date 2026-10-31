@@ -296,15 +296,20 @@
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
          the chosen build's glue and binary download (a browser with WebGPU starts on
-         that build while it looks for an adapter); the binary streams into its
-         instance while the loading view counts its bytes, and the files the shell takes
-         from the page download beside it. The shell then fetches the textures from the
-         site beside this page and tells the page how it goes
-         (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
-         `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
+         that build while it looks for an adapter). The binary comes in two halves
+         (scripts/split-wasm.mjs): the menu half streams into its instance while the
+         loading view counts its bytes, and the files the shell takes from the page
+         download beside it; Battle Setup then shows while the engine half downloads
+         behind it, and that half joins the instance (crates/desktop/src/split.rs). The
+         shell fetches the textures from the site beside this page and tells the page
+         how it goes (crates/desktop/src/page.rs). Marks for the measurements:
+         `sloppy:boot`, `sloppy:downloaded`, `sloppy:shell-started` and
+         `sloppy:engine-started` here, then the shell's. -->
     <script type="module">
       import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
+      import webgpuEngine from "/src/generated/shell/sloppy-tanks_engine.wasm?url";
       import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+      import webglEngine from "/src/generated/shell-webgl/sloppy-tanks-webgl_engine.wasm?url";
       import webgpuShaders from "/src/generated/shaders/webgpu.json?url";
       import webglShaders from "/src/generated/shaders/webgl.json?url";
       import { startGeometryCache } from "/src/geometry-cache.ts";
@@ -393,9 +398,13 @@
       addEventListener("unhandledrejection", (event) => trapped(event.reason));
 
       /** Fetch `url` and count its `bytes` in the loading view as the response streams;
-       * `complete` settles on whether every byte came. `signal` drops it. */
-      const download = async (url, bytes, signal) => {
+       * `complete` settles on whether every byte came. `signal` drops it. `nearlyDone` runs
+       * once about a round trip's worth of bytes is left (and at the end), so a download
+       * queued behind this one starts as this one ends. */
+      const download = async (url, bytes, signal, nearlyDone = () => {}) => {
+        const asked = performance.now();
         const response = await fetch(url, { signal });
+        const roundTrip = performance.now() - asked;
         if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
         // A compressed response's length is not what it delivers (vite.config.ts).
         const total =
@@ -409,11 +418,15 @@
         const reader = response.clone().body.getReader();
         const complete = (async () => {
           let received = 0;
+          const started = performance.now();
           for (let chunk; !(chunk = await reader.read()).done;) {
             received += chunk.value.byteLength;
             say(`Downloading the game… ${megabytes(received)}${of} MB`);
             if (total) bar.style.width = `${Math.min(100, (100 * received) / total)}%`;
+            const rate = received / Math.max(1, performance.now() - started);
+            if (total && total - received <= rate * roundTrip) nearlyDone();
           }
+          nearlyDone();
           performance.mark("sloppy:downloaded");
           delete view.dataset.progress;
           bar.style.width = "";
@@ -476,12 +489,17 @@
       }
 
       // The shader stages the chosen build draws, generated with it (pnpm run wasm,
-      // crates/render/src/shader/tables.rs): they download beside the binary and stay
-      // here as `sloppyShaders`, from which the renderer reads one stage at a time.
-      const shaderTables = async (url) => {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-        return response.json();
+      // crates/render/src/shader/tables.rs): only the engine half draws with them, so they
+      // download beside it, and stay here as `sloppyShaders`, from which the renderer
+      // reads one stage at a time. The first call starts the download.
+      const shaderTables = (url) => {
+        let tables;
+        return () =>
+          (tables ??= (async () => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+            return response.json();
+          })());
       };
 
       // The shell bakes generated textures in workers that run its module (bakes.rs),
@@ -491,8 +509,33 @@
         const worker = new Worker(new URL("/src/bake-worker.ts", import.meta.url), {
           type: "module",
         });
-        worker.postMessage({ glue: glueUrl });
+        worker.postMessage({ glue: glueUrl, engine: engineModule });
         return worker;
+      };
+
+      // The engine half of the shell's binary (scripts/split-wasm.mjs): the menu half shows
+      // Battle Setup while this downloads and compiles behind it, then it is instantiated
+      // over the menu half's exports and `sloppyEngine` tells the shell to hand the window
+      // to the engine (crates/desktop/src/split.rs). Battle Setup's status line follows
+      // `sloppyEngineProgress`; bake workers instantiate the same module beside theirs.
+      let engineModule, engineCompiled;
+      /** Start fetching and compiling the engine half at `url` (`bytes` long), once. */
+      const engineHalf = (url, bytes, signal) => () => {
+        engineCompiled ??= (async () => {
+          const response = await fetch(url, { signal });
+          if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+          const reader = response.clone().body.getReader();
+          (async () => {
+            let received = 0;
+            for (let chunk; !(chunk = await reader.read()).done;) {
+              received += chunk.value.byteLength;
+              if (bytes) window.sloppyEngineProgress = received / bytes;
+            }
+          })().catch(() => {});
+          engineModule = await WebAssembly.compileStreaming(response);
+          return engineModule;
+        })();
+        return engineCompiled;
       };
 
       if (typeof WebAssembly !== "object") {
@@ -500,33 +543,41 @@
       } else {
         say("Loading game…");
         const forceWebgl = new URLSearchParams(location.search).has("webgl");
-        const [webgpuBytes, webglBytes] = (
+        // Each build's menu half, then its engine half (vite.config.ts).
+        const [webgpuBytes, webgpuEngineBytes, webglBytes, webglEngineBytes] = (
           document.querySelector('meta[name="sloppy-shell-bytes"]')?.content ?? ""
         )
           .split(",")
           .map(Number);
-        const webglBuild = () => [
-          import("/src/shell-glue-webgl.ts"),
-          download(webglBinary, webglBytes),
-          shaderTables(webglShaders),
-        ];
+        // The engine half and its shaders start as the menu half nearly has (`download`).
+        let engine, shaders;
+        const engineFiles = () => (shaders(), engine());
+        const webglBuild = () => {
+          engine = engineHalf(webglEngine, webglEngineBytes);
+          shaders = shaderTables(webglShaders);
+          return [
+            import("/src/shell-glue-webgl.ts"),
+            download(webglBinary, webglBytes, undefined, engineFiles),
+          ];
+        };
         // A browser with WebGPU nearly always gives an adapter, but asking takes a while
         // (a cold WebKit spends 75 ms starting its GPU process at the first read of
         // `navigator.gpu`), so the WebGPU build downloads meanwhile and gives way to the
         // WebGL build only when no adapter comes. `in` does not read the property.
-        let glue, binary, shaders;
+        let glue, binary;
         if (!forceWebgl && "gpu" in navigator) {
           const dropped = new AbortController();
           glue = import("/src/shell-glue.ts");
-          binary = download(webgpuBinary, webgpuBytes, dropped.signal);
+          engine = engineHalf(webgpuEngine, webgpuEngineBytes, dropped.signal);
           shaders = shaderTables(webgpuShaders);
+          binary = download(webgpuBinary, webgpuBytes, dropped.signal, engineFiles);
           if (!(await navigator.gpu.requestAdapter().catch(() => null))) {
             dropped.abort();
-            for (const unused of [glue, binary, shaders]) unused.catch(() => {});
-            [glue, binary, shaders] = webglBuild();
+            for (const unused of [glue, binary]) unused.catch(() => {});
+            [glue, binary] = webglBuild();
           }
         } else {
-          [glue, binary, shaders] = webglBuild();
+          [glue, binary] = webglBuild();
         }
         let init, response, complete;
         try {
@@ -540,17 +591,14 @@
             Promise.all(fonts).catch((error) => {
               throw new Error(`The game's fonts did not download: ${message(error)}`);
             }),
-            shaders.catch((error) => {
-              throw new Error(`The game's shaders did not download: ${message(error)}`);
-            }),
           ]);
-          globalThis.sloppyShaders = await shaders;
         } catch (error) {
           unloaded(message(error));
         }
+        let exports;
         if (init) {
           try {
-            await init({ module_or_path: response });
+            exports = await init({ module_or_path: response });
             performance.mark("sloppy:shell-started");
           } catch (error) {
             if (!(await complete)) {
@@ -565,6 +613,18 @@
               // An exception in its start, or a binary from another build (a stale cache).
               fail("", undefined, { detail: `The game could not start: ${message(error)}` });
             }
+          }
+        }
+        if (exports) {
+          try {
+            globalThis.sloppyShaders = await shaders().catch((error) => {
+              throw new Error(`The game's shaders did not download: ${message(error)}`);
+            });
+            await WebAssembly.instantiate(await engine(), { primary: exports });
+            performance.mark("sloppy:engine-started");
+            window.sloppyEngine = true;
+          } catch (error) {
+            unloaded(`The game's engine did not load: ${message(error)}`);
           }
         }
       }

@@ -54,7 +54,7 @@ use webgl as backend;
 use webgpu as backend;
 
 pub use crate::presentation::theme::Atmosphere;
-pub use backend::RenderTarget;
+pub use backend::{GpuCanvas, RenderTarget};
 pub use context::GRAPHICS_API;
 pub use inspect::InstanceState;
 pub use pools::PoolId;
@@ -1079,7 +1079,12 @@ impl Renderer {
         asset_base: String,
         msaa: bool,
     ) -> Result<Renderer, String> {
-        let (gpu, canvas) = Gpu::new(canvas, msaa).await?;
+        Self::on(GpuCanvas::open(canvas).await?, asset_base, msaa)
+    }
+
+    /// `new` on a device and canvas already opened (the page's menu drew on them first).
+    pub fn on(opened: GpuCanvas, asset_base: String, msaa: bool) -> Result<Renderer, String> {
+        let (gpu, canvas) = Gpu::on(opened, msaa)?;
         let pipelines = Pipelines::new(&gpu);
         let textures = TextureStore::new(&gpu, asset_base);
         let sun_shadow = SunShadow::default();

@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 #[cfg(not(feature = "webgl"))]
 use egui_wgpu::ScreenDescriptor;
+#[cfg(all(target_arch = "wasm32", feature = "split"))]
+use sloppy_render::gpu::GpuCanvas;
 use sloppy_render::gpu::Renderer;
 #[cfg(not(feature = "webgl"))]
 use sloppy_render::wgpu;
@@ -22,21 +24,40 @@ type Painter = egui_glow::Painter;
 #[cfg(not(feature = "webgl"))]
 fn painter(renderer: &Renderer) -> Result<Painter, String> {
     let (device, _) = renderer.device();
-    Ok(egui_wgpu::Renderer::new(
-        device,
-        renderer.surface_format(),
-        Default::default(),
-    ))
+    Ok(wgpu_painter(device, renderer.surface_format()))
+}
+
+/// The painter on an opened canvas's device (the page's menu, before the renderer).
+#[cfg(all(not(feature = "webgl"), target_arch = "wasm32", feature = "split"))]
+fn canvas_painter(canvas: &GpuCanvas) -> Result<Painter, String> {
+    Ok(wgpu_painter(&canvas.device, canvas.surface_format()))
+}
+
+#[cfg(not(feature = "webgl"))]
+fn wgpu_painter(device: &wgpu::Device, format: wgpu::TextureFormat) -> Painter {
+    egui_wgpu::Renderer::new(device, format, Default::default())
 }
 
 /// The painter on the renderer's WebGL2 context, through a glow handle of its own.
+#[cfg(feature = "webgl")]
+fn painter(renderer: &Renderer) -> Result<Painter, String> {
+    glow_painter(renderer.webgl_context())
+}
+
+/// The painter on an opened canvas's WebGL2 context (the page's menu, before the
+/// renderer).
+#[cfg(all(feature = "webgl", feature = "split"))]
+fn canvas_painter(canvas: &GpuCanvas) -> Result<Painter, String> {
+    glow_painter(canvas.webgl_context())
+}
+
 #[cfg(feature = "webgl")]
 #[expect(
     clippy::arc_with_non_send_sync,
     reason = "egui_glow takes its context in an Arc; a page has one thread"
 )]
-fn painter(renderer: &Renderer) -> Result<Painter, String> {
-    let gl = egui_glow::glow::Context::from_webgl2_context(renderer.webgl_context());
+fn glow_painter(context: web_sys::WebGl2RenderingContext) -> Result<Painter, String> {
+    let gl = egui_glow::glow::Context::from_webgl2_context(context);
     egui_glow::Painter::new(Arc::new(gl), "", None, false).map_err(|error| error.to_string())
 }
 
@@ -64,8 +85,33 @@ impl Overlay {
     /// The overlay over `renderer`'s frames. In a page the canvas then shows each frame
     /// once the overlay has drawn over it, not as soon as the scene is drawn.
     pub fn new(window: Arc<Window>, renderer: &mut Renderer) -> Result<Self, String> {
+        let painter = painter(renderer)?;
+        let mut overlay = Self::with_painter(window, painter);
+        overlay.take_over(renderer);
+        Ok(overlay)
+    }
+
+    /// The overlay on a canvas no renderer has yet: the page's Battle Setup before the
+    /// engine half of its binary arrives (`menu.rs`). The renderer later takes the canvas
+    /// over, and this overlay with it ([`Self::take_over`]).
+    #[cfg(all(target_arch = "wasm32", feature = "split"))]
+    pub fn on_canvas(window: Arc<Window>, canvas: &GpuCanvas) -> Result<Self, String> {
+        Ok(Self::with_painter(window, canvas_painter(canvas)?))
+    }
+
+    /// Draw over `renderer`'s frames, on the device or context it shares with this
+    /// overlay's painter. In a page the canvas then shows each frame once the overlay has
+    /// drawn over it, not as soon as the scene is drawn.
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        expect(unused_variables, clippy::unused_self)
+    )]
+    pub fn take_over(&mut self, renderer: &mut Renderer) {
         #[cfg(target_arch = "wasm32")]
         renderer.present_late();
+    }
+
+    fn with_painter(window: Arc<Window>, painter: Painter) -> Self {
         let context = egui::Context::default();
         crate::ui::theme::install(&context);
         // A page's system is its browser's to say: Cmd is a Mac's command key (egui-winit
@@ -91,7 +137,6 @@ impl Overlay {
             None,
             None,
         );
-        let painter = painter(renderer)?;
         #[cfg(target_arch = "wasm32")]
         let text_entry = {
             use winit::platform::web::WindowExtWebSys;
@@ -99,7 +144,7 @@ impl Overlay {
                 .canvas()
                 .and_then(|canvas| crate::text_entry::TextEntry::new(canvas, mac))
         };
-        Ok(Self {
+        Self {
             context,
             input,
             painter,
@@ -108,7 +153,7 @@ impl Overlay {
             text_entry,
             #[cfg(target_arch = "wasm32")]
             pointer: None,
-        })
+        }
     }
 
     /// Hand a window event to egui; true when egui used it (a click on a button, typing
@@ -336,6 +381,42 @@ impl Overlay {
         let pixels_per_point = self.pixels_per_point(renderer.size().0, &painted);
         let painter = &mut self.painter;
         renderer.present([red, green, blue], |(width, height)| {
+            painter.paint_and_update_textures(
+                [width, height],
+                pixels_per_point,
+                &painted.primitives,
+                &mut painted.textures,
+            );
+        });
+    }
+
+    /// Show `painted` on an opened canvas no renderer has yet (the page's menu), cleared
+    /// to the backdrop.
+    #[cfg(all(not(feature = "webgl"), target_arch = "wasm32", feature = "split"))]
+    pub fn present_on(&mut self, canvas: &mut GpuCanvas, mut painted: Painted) {
+        let target = canvas.size();
+        self.update_textures(&mut painted, &canvas.device, &canvas.queue);
+        let [red, green, blue, _] = crate::ui::theme::BACKDROP.to_normalized_gamma_f32();
+        let clear = wgpu::Color {
+            r: f64::from(red),
+            g: f64::from(green),
+            b: f64::from(blue),
+            a: 1.0,
+        };
+        canvas.present(clear, |device, queue, view| {
+            self.paint(&painted, device, queue, view, target);
+        });
+        self.free_textures(&mut painted);
+    }
+
+    /// Show `painted` on an opened WebGL canvas no renderer has yet (the page's menu),
+    /// cleared to the backdrop.
+    #[cfg(all(feature = "webgl", feature = "split"))]
+    pub fn present_on(&mut self, canvas: &mut GpuCanvas, mut painted: Painted) {
+        let [red, green, blue, _] = crate::ui::theme::BACKDROP.to_normalized_gamma_f32();
+        let pixels_per_point = self.pixels_per_point(canvas.size().0, &painted);
+        let painter = &mut self.painter;
+        canvas.present([red, green, blue], |(width, height)| {
             painter.paint_and_update_textures(
                 [width, height],
                 pixels_per_point,

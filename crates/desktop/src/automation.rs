@@ -31,7 +31,8 @@ pub struct State {
     pub frame: u64,
     /// The shell's clock for this frame, milliseconds.
     pub now: f64,
-    /// `"single"` or `"room"`: which engine has the window.
+    /// `"single"` or `"room"`: which engine has the window; `"menu"` while a page shows
+    /// Battle Setup before the engine half of its binary has arrived (`menu.rs`).
     pub engine: &'static str,
     /// A round is on screen (not Battle Setup).
     pub in_round: bool,
@@ -66,6 +67,9 @@ pub struct State {
     pub error: Option<String>,
     /// The saved choices.
     pub prefs: Value,
+    /// Single player's team for the player, Battle Setup's tanks' colour: `"blue"` or
+    /// `"red"`.
+    pub team: Option<&'static str>,
     /// The room: its code and the room menu's phase.
     pub room: Option<Value>,
     /// The frame's parts in milliseconds (`frame_log::FrameParts`), single player's: the engine's
@@ -287,6 +291,14 @@ pub fn widgets(context: &egui::Context, update: &egui::accesskit::TreeUpdate) ->
             })
         })
         .collect()
+}
+
+/// A team as checks name it.
+pub fn team_name(team: sloppy_core::sim::Team) -> &'static str {
+    match team {
+        sloppy_core::sim::Team::Blue => "blue",
+        sloppy_core::sim::Team::Red => "red",
+    }
 }
 
 /// A frame's phase as checks name it.
