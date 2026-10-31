@@ -198,6 +198,9 @@ pub struct GameConfig {
     pub game_mode: Option<GameMode>,
     /// The human's tank drives itself (`?autoplay`).
     pub autoplay: bool,
+    /// Build the arena at the first `prepare` rather than in `create`, so a shell can
+    /// paint its menu first: the village took most of the time before Battle Setup.
+    pub defer_arena: bool,
 }
 
 /// A choice by its name; a name this build does not know reads as none, as
@@ -263,6 +266,8 @@ pub struct Game {
     frame_index: u64,
     /// Warmed and first frames drawn; false while pipelines compile.
     prepared: bool,
+    /// The arena's view is still to be built (`GameConfig::defer_arena`).
+    arena_due: bool,
     /// Pipelines created since the arena began preparing, and Battle Setup's line for
     /// the latest step.
     prepare_compiled: u32,
@@ -899,7 +904,9 @@ impl Game {
         });
         let sim = Simulation::new(seed, setup);
         let state = sim.render_state(None);
-        view.build_scenery(&state.map_theme);
+        if !config.defer_arena {
+            view.build_scenery(&state.map_theme);
+        }
         let mut game = Game {
             sim,
             view,
@@ -915,6 +922,7 @@ impl Game {
             completed_rounds: 0,
             frame_index: 0,
             prepared: true,
+            arena_due: config.defer_arena,
             prepare_compiled: 0,
             loading: None,
             events: Vec::new(),
@@ -930,7 +938,11 @@ impl Game {
             last_result: vec![0.0; frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
-        game.reset_view();
+        if config.defer_arena {
+            game.prepared = false;
+        } else {
+            game.reset_view();
+        }
         Ok(game)
     }
 
@@ -954,6 +966,18 @@ impl Game {
     pub fn prepare(&mut self, budget: u32) -> Result<PrepareStatus, PageError> {
         if self.prepared {
             return Ok(PREPARED);
+        }
+        if self.arena_due {
+            // The arena alone fills this step, under the shell's "Building the arena…";
+            // its pipelines compile from the next.
+            self.reset_view();
+            return Ok(PrepareStatus {
+                compiled: 0,
+                remaining: 1,
+                textures_pending: 0,
+                gpu_pending: false,
+                ready: false,
+            });
         }
         let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
         self.prepare_compiled += status.compiled;
@@ -1161,6 +1185,7 @@ impl Game {
     /// Rebuild the presentation for the simulation's current world and begin
     /// preparing it.
     fn reset_view(&mut self) {
+        self.arena_due = false;
         self.fill_state();
         self.view.reset(&self.state);
         self.sim.set_wreck_view(Some(self.view.wreck_view()));

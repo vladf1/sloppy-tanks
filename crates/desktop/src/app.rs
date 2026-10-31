@@ -471,6 +471,9 @@ struct Session {
     minimized: bool,
     /// The window took the last frame.
     frame_shown: bool,
+    /// Battle Setup has been presented once: the arena, which the engine leaves to its
+    /// first preparation step, builds only after it, so the menu shows first.
+    menu_shown: bool,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
@@ -685,6 +688,7 @@ impl Session {
             human_team: None,
             game_mode: Some(options.game_mode),
             autoplay,
+            defer_arena: true,
         };
         let view = ViewConfig {
             seed,
@@ -724,6 +728,7 @@ impl Session {
             occluded: false,
             minimized: false,
             frame_shown: true,
+            menu_shown: false,
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
@@ -1028,6 +1033,9 @@ impl Session {
 
     /// One step of preparing the wanted arena behind Battle Setup.
     fn prepare(&mut self) -> Result<(), String> {
+        if !self.menu_shown {
+            return Ok(());
+        }
         let wanted = self.wanted_options();
         if wanted != self.prepared_options {
             // The rebuild holds this thread for a moment: the player's new choice, or
@@ -1318,6 +1326,7 @@ impl Session {
         self.frame_shown = self.game.renderer().frame_shown();
         self.parts.present = now_ms() - present_start;
         if self.frame_shown {
+            self.menu_shown = true;
             crate::page::frame_presented();
             if automation::enabled() {
                 let state = self.automation_state();
