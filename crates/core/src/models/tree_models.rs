@@ -29,7 +29,7 @@ use crate::geometry::math::{
     hex_to_linear, lerp_color, multiply_hex, quat_from_euler, quat_from_euler_yxz, quat_rotate_z,
     smoothstep, transform_point,
 };
-use crate::geometry::{CylinderGeometry, Mesh, node_bounds};
+use crate::geometry::{CylinderGeometry, Mesh, narrow, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
 use crate::sim::math::Random;
 use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
@@ -590,31 +590,42 @@ fn card_tint(rng: &mut Random) -> [f64; 3] {
 /// crown and out of each card's clump, vertex colors carry the card's tint dimmed
 /// by the skylight its position receives.
 fn foliage_mesh(cards: &[&Card], shape: &CrownShape, tint: [f64; 3]) -> Mesh {
-    let mut positions = Vec::with_capacity(cards.len() * 18);
-    let mut normals = Vec::with_capacity(cards.len() * 18);
-    let mut uvs = Vec::with_capacity(cards.len() * 12);
+    let mut positions = Vec::with_capacity(cards.len() * 6);
+    let mut normals = Vec::with_capacity(cards.len() * 6);
+    let mut uvs = Vec::with_capacity(cards.len() * 6);
     let mut colors = Vec::with_capacity(cards.len() * 6);
     for card in cards {
         let [u0, v0, u1, v1] = card.cell;
         let corner_uvs = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
         let [a, b, _, d] = card.corners;
         let face = (b - a).cross(d - a).normalize_or(DVec3::Y);
-        for index in [0, 1, 2, 0, 2, 3] {
-            let p = card.corners[index];
+        // Each corner shaded once: the card's two triangles share two of them.
+        let shaded = card.corners.map(|p| {
             let (outward, depth, height) = shape.locate(p);
             let face = if face.dot(outward) < 0.0 { -face } else { face };
             let bulge = (p - card.clump).normalize_or(outward);
             let normal = (outward * 0.62 + bulge * 0.26 + face * 0.12).normalize();
             let light = CrownShape::light(depth, height);
-            positions.extend_from_slice(&[p.x, p.y, p.z]);
-            normals.extend_from_slice(&[normal.x, normal.y, normal.z]);
-            uvs.extend_from_slice(&corner_uvs[index]);
-            colors.push([0, 1, 2].map(|k| (card.tint[k] * tint[k] * light) as f32));
+            (
+                narrow(normal),
+                [0, 1, 2].map(|k| (card.tint[k] * tint[k] * light) as f32),
+            )
+        });
+        for index in [0, 1, 2, 0, 2, 3] {
+            let (normal, color) = shaded[index];
+            positions.push(narrow(card.corners[index]));
+            normals.push(normal);
+            uvs.push(corner_uvs[index].map(|v| v as f32));
+            colors.push(color);
         }
     }
-    let mut mesh = Mesh::from_f64(&positions, &normals, &uvs, None);
-    mesh.colors = colors;
-    mesh
+    Mesh {
+        positions,
+        normals,
+        uvs,
+        colors,
+        ..Mesh::default()
+    }
 }
 
 /// Where new boughs and cards go: straight into the crown, or into a shedding group.
@@ -666,9 +677,9 @@ impl Crown {
         };
         for card in 0..crossed {
             let angle = (f64::from(card) * PI) / f64::from(crossed);
-            let corner = |x: f64, z: f64| {
-                transform_point(&transform, DVec3::new(x * angle.cos(), x * angle.sin(), z))
-            };
+            let (cos, sin) = (angle.cos(), angle.sin());
+            let corner =
+                |x: f64, z: f64| transform_point(&transform, DVec3::new(x * cos, x * sin, z));
             self.card(
                 bough,
                 Card {
