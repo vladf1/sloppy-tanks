@@ -349,6 +349,14 @@ impl<C: Finishes> Kit<C> {
     /// smooth normals around the axis and hard edges between profile segments.
     /// Profile points run from back to front; a radius of zero closes an end.
     pub(super) fn turned(&mut self, coat: C, profile: &[DVec2], sides: u32, placement: DMat4) {
+        // Every profile segment turns through the same angles: their cosines and
+        // sines, once.
+        let turns: Vec<(f64, f64)> = (0..=sides)
+            .map(|s| {
+                let angle = f64::from(s) / f64::from(sides) * PI * 2.0;
+                (angle.cos(), angle.sin())
+            })
+            .collect();
         for pair in profile.windows(2) {
             let (a, b) = (pair[0], pair[1]);
             let d = b - a;
@@ -357,13 +365,12 @@ impl<C: Finishes> Kit<C> {
             }
             // Outward when the profile runs forward along the outer wall.
             let normal = DVec2::new(d.y, -d.x).normalize();
-            for k in 0..sides {
-                let angles = [k, k + 1].map(|s| f64::from(s) / f64::from(sides) * PI * 2.0);
+            for k in 0..sides as usize {
+                let angles = [turns[k], turns[k + 1]];
                 let corner =
-                    |p: DVec2, angle: f64| DVec3::new(p.x * angle.cos(), p.x * angle.sin(), p.y);
-                let normal_at = |angle: f64| {
-                    DVec3::new(normal.x * angle.cos(), normal.x * angle.sin(), normal.y)
-                };
+                    |p: DVec2, (cos, sin): (f64, f64)| DVec3::new(p.x * cos, p.x * sin, p.y);
+                let normal_at =
+                    |(cos, sin): (f64, f64)| DVec3::new(normal.x * cos, normal.x * sin, normal.y);
                 let points = [
                     corner(a, angles[0]),
                     corner(a, angles[1]),
