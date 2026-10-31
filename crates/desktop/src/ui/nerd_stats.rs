@@ -116,11 +116,12 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
         .show(context, |ui| {
             let rect = Rect::from_min_size(ui.cursor().min, vec2(panel_width, height));
             let painter = ui.painter().clone();
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                &painter,
                 rect,
                 [12.0; 4],
                 &[(0.0, hexa(0x11264a, 0.94)), (1.0, hexa(0x08142a, 0.95))],
-            ));
+            );
             painter.rect_stroke(
                 rect,
                 12,

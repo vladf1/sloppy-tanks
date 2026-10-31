@@ -412,18 +412,15 @@ fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool)
         } else {
             (hex(0xff5367), hex(0xb01b33))
         };
-        painter.add(paint::rounded_vgradient(
-            rect,
-            corners,
-            &[(0.0, light), (1.0, deep)],
-        ));
+        paint::rounded_vgradient(painter, rect, corners, &[(0.0, light), (1.0, deep)]);
         if *yours {
             let rim = [corners[0], corners[1], 0.0, 0.0];
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                painter,
                 Rect::from_min_size(rect.min, vec2(rect.width(), 3.0)),
                 rim,
                 &[(0.0, GOLD), (1.0, GOLD)],
-            ));
+            );
         }
         let score_y = if tag.is_some() {
             upper
@@ -443,11 +440,7 @@ fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool)
             let width = paint::text_width(painter, tag, tag_font.clone(), 1.2) + 10.0;
             let badge = Rect::from_center_size(pos2(rect.center().x, lower), vec2(width, 15.0));
             let ink = if *yours {
-                painter.add(paint::rounded_vgradient(
-                    badge,
-                    [3.0; 4],
-                    &[(0.0, GOLD_HOT), (1.0, GOLD)],
-                ));
+                paint::rounded_vgradient(painter, badge, [3.0; 4], &[(0.0, GOLD_HOT), (1.0, GOLD)]);
                 hex(0x10213a)
             } else {
                 painter.rect_filled(badge, 3, hexa(0xffffff, 0.18));
@@ -467,11 +460,12 @@ fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool)
         if index == 0 {
             // The clock between the plates, or after a solo run's only plate.
             let clock = Rect::from_min_size(pos2(x, top), vec2(clock_width, height));
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                painter,
                 clock,
                 if solo { RIGHT_ROUND } else { SQUARE },
                 &[(0.0, hex(0x0f2140)), (1.0, hex(0x07111f))],
-            ));
+            );
             let time_y = if objective.is_some() {
                 upper
             } else {
@@ -512,7 +506,7 @@ fn phone_key(painter: &Painter, rect: Rect, corners: [f32; 4], lit: bool) {
     } else {
         [(0.0, hexa(0x13284a, 0.9)), (1.0, hexa(0x08142a, 0.95))]
     };
-    painter.add(paint::rounded_vgradient(rect, corners, &stops));
+    paint::rounded_vgradient(painter, rect, corners, &stops);
     painter.rect_stroke(
         rect,
         radius,
@@ -770,20 +764,23 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         if tablet {
             let corner = TABLET_SCORE_CORNER;
             let plate = Rect::from_min_size(pos2(x, top), vec2(width, height));
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                painter,
                 plate,
                 outer([corner, 0.0, corner, 0.0]),
                 &[(0.0, light), (1.0, deep)],
-            ));
-            painter.add(paint::rounded_vgradient(
+            );
+            paint::rounded_vgradient(
+                painter,
                 Rect::from_min_size(plate.min, vec2(width, height * 0.46)),
                 outer([corner, 0.0, 0.0, 0.0]),
                 &[(0.0, hexa(0xffffff, 0.2)), (1.0, hexa(0xffffff, 0.0))],
-            ));
+            );
             if yours {
                 // Deep enough that the band keeps the corner's full rounding.
                 let band = 24.0;
-                painter.add(paint::rounded_vgradient(
+                paint::rounded_vgradient(
+                    painter,
                     Rect::from_min_size(plate.min, vec2(width, band)),
                     outer([corner, 0.0, 0.0, 0.0]),
                     &[
@@ -793,7 +790,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
                         (16.0 / band, hexa(0xffcf38, 0.0)),
                         (1.0, hexa(0xffcf38, 0.0)),
                     ],
-                ));
+                );
             }
         } else {
             let mut outline = team_plate(x, width, height, team == 0);
@@ -1080,11 +1077,12 @@ fn toolbar(
                 paint::labelled(&response, true, tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
-                    painter.add(paint::rounded_vgradient(
+                    paint::rounded_vgradient(
+                        &painter,
                         cell.shrink(2.0),
                         [7.0; 4],
                         &[(0.0, GOLD_HOT), (1.0, GOLD)],
-                    ));
+                    );
                 } else if response.hovered() {
                     painter.rect_filled(cell.shrink(1.0), 7, hexa(0xffffff, 0.08));
                 }

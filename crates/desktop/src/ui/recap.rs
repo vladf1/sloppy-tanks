@@ -330,11 +330,7 @@ pub fn results(
                         EARLY_TAG_HEIGHT,
                     ),
                 );
-                painter.add(paint::rounded_vgradient(
-                    tag,
-                    [5.0; 4],
-                    &[(0.0, GOLD_HOT), (1.0, GOLD)],
-                ));
+                paint::rounded_vgradient(painter, tag, [5.0; 4], &[(0.0, GOLD_HOT), (1.0, GOLD)]);
                 paint::text(
                     painter,
                     tag.center(),

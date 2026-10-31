@@ -56,10 +56,36 @@ pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
 
 /// A vertical gradient through `stops` filling `rect` with its corners rounded by
 /// `radius` (north-west, north-east, south-west, south-east), as one mesh: a gradient
-/// laid over a rounded fill leaves bands where the two differ near the corners.
-pub fn rounded_vgradient(rect: Rect, radius: [f32; 4], stops: &[(f32, Color32)]) -> Shape {
-    const ARC_STEPS: usize = 8;
-    let [nw, ne, sw, se] = radius.map(|r| r.min(rect.width() / 2.0).min(rect.height() / 2.0));
+/// laid over a rounded fill leaves bands where the two differ near the corners. Its
+/// rounded corners fade out over a physical pixel, as egui feathers its own fills, where
+/// unfeathered triangles leave stairs; its level and upright edges stay crisp, as
+/// [`gradient_polygon`]'s do, so rects that share one (the HUD's plates and clock) leave
+/// no seam between them.
+pub fn rounded_vgradient(
+    painter: &Painter,
+    rect: Rect,
+    radius: [f32; 4],
+    stops: &[(f32, Color32)],
+) {
+    let feather = 1.0 / painter.pixels_per_point();
+    painter.add(rounded_vgradient_mesh(rect, radius, stops, feather));
+}
+
+/// The mesh of [`rounded_vgradient`], its corners faded out over `feather` points.
+fn rounded_vgradient_mesh(
+    rect: Rect,
+    radius: [f32; 4],
+    stops: &[(f32, Color32)],
+    feather: f32,
+) -> Mesh {
+    // Rows per corner, turning the arc by equal angles so its chords stay short where
+    // it meets a level edge.
+    const ARC_STEPS: usize = 12;
+    // A corner too small to fade inside itself is drawn square.
+    let [nw, ne, sw, se] = radius.map(|r| {
+        let r = r.min(rect.width() / 2.0).min(rect.height() / 2.0);
+        if r > feather { r } else { 0.0 }
+    });
     // How far a corner of radius `r` pulls the edge in at `depth` into its band.
     let inset = |r: f32, depth: f32| {
         if depth >= r {
@@ -68,7 +94,8 @@ pub fn rounded_vgradient(rect: Rect, radius: [f32; 4], stops: &[(f32, Color32)])
             r - (r * r - (r - depth) * (r - depth)).max(0.0).sqrt()
         }
     };
-    let color_at = |share: f32| {
+    let color_at = |y: f32| {
+        let share = (y - rect.top()) / rect.height().max(f32::EPSILON);
         let mut previous = stops[0];
         for &stop in stops {
             if share <= stop.0 {
@@ -83,32 +110,105 @@ pub fn rounded_vgradient(rect: Rect, radius: [f32; 4], stops: &[(f32, Color32)])
         .iter()
         .map(|(share, _)| rect.top() + rect.height() * share)
         .collect();
-    let top_band = nw.max(ne);
-    let bottom_band = sw.max(se);
     for step in 0..=ARC_STEPS {
-        let t = step as f32 / ARC_STEPS as f32;
-        ys.push(rect.top() + top_band * t);
-        ys.push(rect.bottom() - bottom_band * t);
+        let angle = std::f32::consts::FRAC_PI_2 * step as f32 / ARC_STEPS as f32;
+        let depth = 1.0 - angle.cos();
+        ys.extend([nw, ne].map(|r| rect.top() + r * depth));
+        ys.extend([sw, se].map(|r| rect.bottom() - r * depth));
     }
     ys.retain(|y| (rect.top()..=rect.bottom()).contains(y));
     ys.sort_by(f32::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+    let rows: Vec<(Pos2, Pos2)> = ys
+        .iter()
+        .map(|&y| {
+            let from_top = y - rect.top();
+            let from_bottom = rect.bottom() - y;
+            let left = rect.left() + inset(nw, from_top).max(inset(sw, from_bottom));
+            let right = rect.right() - inset(ne, from_top).max(inset(se, from_bottom));
+            (pos2(left, y), pos2(right, y))
+        })
+        .collect();
+    // The outline runs down the left side and back up the right.
+    let outline: Vec<Pos2> = rows
+        .iter()
+        .map(|row| row.0)
+        .chain(rows.iter().rev().map(|row| row.1))
+        .collect();
+    let shifts = curve_feather(&outline, feather);
+    let count = rows.len();
     let mut mesh = Mesh::default();
-    for (index, &y) in ys.iter().enumerate() {
-        let from_top = y - rect.top();
-        let from_bottom = rect.bottom() - y;
-        let left = rect.left() + inset(nw, from_top).max(inset(sw, from_bottom));
-        let right = rect.right() - inset(ne, from_top).max(inset(se, from_bottom));
-        let color = color_at((y - rect.top()) / rect.height().max(f32::EPSILON));
-        mesh.colored_vertex(pos2(left, y), color);
-        mesh.colored_vertex(pos2(right, y), color);
-        if index > 0 {
-            let base = (index as u32 - 1) * 2;
-            mesh.add_triangle(base, base + 1, base + 2);
-            mesh.add_triangle(base + 1, base + 3, base + 2);
-        }
+    // Each row as its inner left and right vertices in the gradient's colour, then the
+    // two faded out beyond them.
+    for (index, &(left, right)) in rows.iter().enumerate() {
+        let left_shift = shifts[index];
+        let right_shift = shifts[2 * count - 1 - index];
+        let inner_left = left - left_shift;
+        let inner_right = right - right_shift;
+        mesh.colored_vertex(inner_left, color_at(inner_left.y));
+        mesh.colored_vertex(inner_right, color_at(inner_right.y));
+        mesh.colored_vertex(left + left_shift, Color32::TRANSPARENT);
+        mesh.colored_vertex(right + right_shift, Color32::TRANSPARENT);
     }
-    Shape::mesh(mesh)
+    for index in 1..count as u32 {
+        let (above, below) = (4 * (index - 1), 4 * index);
+        mesh.add_triangle(above, above + 1, below);
+        mesh.add_triangle(above + 1, below + 1, below);
+        // The fades down the left side (inner, outer) and the right.
+        mesh.add_triangle(above, above + 2, below + 2);
+        mesh.add_triangle(above, below + 2, below);
+        mesh.add_triangle(above + 1, below + 1, below + 3);
+        mesh.add_triangle(above + 1, below + 3, above + 3);
+    }
+    // Across the top and bottom rows, where a pill's arcs meet.
+    let last = 4 * (count as u32).saturating_sub(1);
+    for row in [0, last] {
+        mesh.add_triangle(row, row + 2, row + 3);
+        mesh.add_triangle(row, row + 3, row + 1);
+    }
+    mesh
+}
+
+/// How far each point of a closed, convex, smooth `outline` moves out for its outer
+/// fade (and in for its solid edge): half of `feather` along its normal where the
+/// outline curves (both its edges slanted), as egui feathers a path, and nothing on a
+/// level or upright edge or where one meets a curve, so those stay crisp.
+fn curve_feather(outline: &[Pos2], feather: f32) -> Vec<Vec2> {
+    let count = outline.len();
+    let clockwise = (0..count)
+        .map(|index| {
+            let a = outline[index] - outline[0];
+            let b = outline[(index + 1) % count] - outline[0];
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f32>()
+        >= 0.0;
+    // The edge from `index` to the next point that differs from it, `step` (1 or
+    // `count - 1`) points at a time: a pill's level edge has no length.
+    let edge = |index: usize, step: usize| {
+        (1..count)
+            .map(|offset| outline[(index + offset * step) % count] - outline[index])
+            .find(|along| along.length_sq() > 1e-8)
+            .unwrap_or(Vec2::ZERO)
+    };
+    let outward = |along: Vec2| {
+        let normal = vec2(along.y, -along.x).normalized();
+        if clockwise { normal } else { -normal }
+    };
+    let slanted = |along: Vec2| along.x.abs() > 0.01 && along.y.abs() > 0.01;
+    (0..count)
+        .map(|index| {
+            let after = edge(index, 1);
+            let before = -edge(index, count - 1);
+            if !slanted(before) || !slanted(after) {
+                return Vec2::ZERO;
+            }
+            // A miter, as egui's paths have: the edges' mean normal, lengthened so
+            // each edge's fade keeps its width.
+            let normal = (outward(before) + outward(after)) / 2.0;
+            normal / normal.length_sq().max(0.5) * (feather / 2.0)
+        })
+        .collect()
 }
 
 /// A horizontal gradient over `rect` through `stops` (share of the width, colour).
@@ -336,11 +436,7 @@ pub fn glass(
     bottom: Color32,
     edge: Color32,
 ) {
-    painter.add(rounded_vgradient(
-        rect,
-        [radius; 4],
-        &[(0.0, top), (1.0, bottom)],
-    ));
+    rounded_vgradient(painter, rect, [radius; 4], &[(0.0, top), (1.0, bottom)]);
     painter.rect_stroke(
         rect,
         radius.round() as u8,
@@ -460,11 +556,12 @@ pub fn kbd(painter: &Painter, center: Pos2, label: &str, size: f32) -> Rect {
 pub fn kbd_in(painter: &Painter, rect: Rect, label: &str, size: f32) {
     let font = bold_font(size);
     painter.rect_filled(rect.translate(vec2(0.0, 1.0)), 4, hex(0x050c18));
-    painter.add(rounded_vgradient(
+    rounded_vgradient(
+        painter,
         rect.shrink(0.5),
         [4.0; 4],
         &[(0.0, hex(0x3d659e)), (1.0, hex(0x1f3b66))],
-    ));
+    );
     painter.rect_stroke(
         rect,
         4,
@@ -772,7 +869,8 @@ fn lettered_button(
             let highlight = mix(top, Color32::WHITE, 0.6);
             let ledge_top = 1.0 - if pressed { 1.0 } else { 3.0 } / height;
             let edge = 0.5 / height;
-            painter.add(rounded_vgradient(
+            rounded_vgradient(
+                painter,
                 rect,
                 [10.0; 4],
                 &[
@@ -784,7 +882,7 @@ fn lettered_button(
                     (ledge_top, ledge),
                     (1.0, ledge),
                 ],
-            ));
+            );
         }
         ButtonStyle::Secondary | ButtonStyle::Danger => {
             painter.rect_filled(rect, 10, hexa(0xffffff, if hovered { 0.09 } else { 0.035 }));

@@ -532,11 +532,7 @@ pub(super) fn controls_card(painter: &Painter, origin: Pos2, width: f32, columns
     }
     let tip_y = origin.y + padding.y + rows as f32 * line + 12.0 + 11.5;
     let tip = Rect::from_min_size(pos2(origin.x + padding.x, tip_y - 11.5), vec2(35.0, 23.0));
-    painter.add(paint::rounded_vgradient(
-        tip,
-        [4.0; 4],
-        &[(0.0, GOLD_HOT), (1.0, GOLD)],
-    ));
+    paint::rounded_vgradient(painter, tip, [4.0; 4], &[(0.0, GOLD_HOT), (1.0, GOLD)]);
     paint::text(
         painter,
         tip.center(),
@@ -1197,11 +1193,7 @@ fn setting_choice<T: Copy + PartialEq>(
         let selected = *chosen == *value;
         paint::labelled_choice(&response, true, selected, &format!("{id}: {label}"));
         if selected {
-            painter.add(paint::rounded_vgradient(
-                rect,
-                [7.0; 4],
-                &[(0.0, GOLD_HOT), (1.0, GOLD)],
-            ));
+            paint::rounded_vgradient(painter, rect, [7.0; 4], &[(0.0, GOLD_HOT), (1.0, GOLD)]);
             painter.line_segment(
                 [
                     pos2(rect.left() + 7.0, rect.bottom() - 1.0),

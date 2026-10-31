@@ -296,7 +296,8 @@ pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovere
     if selected {
         painter.rect_filled(rect.expand(4.0), 14, hexa(0xffcf38, 0.08));
         let base = hex(0x22477a);
-        painter.add(paint::rounded_vgradient(
+        paint::rounded_vgradient(
+            painter,
             rect,
             [10.0; 4],
             &[
@@ -304,7 +305,7 @@ pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovere
                 (0.6, base),
                 (1.0, base),
             ],
-        ));
+        );
     } else {
         painter.rect_filled(rect, 10, card_fill(hovered));
     }
@@ -968,7 +969,8 @@ fn sheet_glass(painter: &Painter, frame: Rect) {
     // Its soft drop shadow (`0 40px 140px #000c`) and the faint blue glow round it.
     painter.add(soft_shadow(frame, 16, [0, 40], 200, hexa(0, 0.7)));
     painter.add(soft_shadow(frame, 16, [0, 0], 170, hexa(0x2a6fd0, 0.13)));
-    painter.add(paint::rounded_vgradient(
+    paint::rounded_vgradient(
+        painter,
         frame,
         [16.0; 4],
         &[
@@ -976,7 +978,7 @@ fn sheet_glass(painter: &Painter, frame: Rect) {
             (0.6, hexa(0x091629, 0.94)),
             (1.0, hexa(0x070f1f, 0.96)),
         ],
-    ));
+    );
     painter.rect_stroke(
         frame,
         16,
@@ -1020,7 +1022,8 @@ fn tray(painter: &Painter, rect: Rect, open_left: bool, open_right: bool) {
         se: 16,
     };
     painter.add(soft_shadow(rect, radius, [0, 10], 45, hexa(0, 0.4)));
-    painter.add(paint::rounded_vgradient(
+    paint::rounded_vgradient(
+        painter,
         rect,
         [radius.nw, radius.ne, radius.sw, radius.se].map(f32::from),
         &[
@@ -1028,7 +1031,7 @@ fn tray(painter: &Painter, rect: Rect, open_left: bool, open_right: bool) {
             (0.45, hex(0x11294d)),
             (1.0, hex(0x0d2242)),
         ],
-    ));
+    );
     painter.rect_stroke(
         rect,
         radius,
@@ -1166,11 +1169,12 @@ fn play_tab(
             Vec2::splat(size),
         );
         if open {
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                painter,
                 badge,
                 [9.0; 4],
                 &[(0.0, super::theme::GOLD_HOT), (1.0, GOLD)],
-            ));
+            );
         } else {
             painter.rect_filled(badge, 9, hexa(0xffffff, 0.05));
         }
@@ -1237,55 +1241,86 @@ fn tab_line_fits(painter: &Painter, width: f32, (_, name, line): (bool, &str, &s
         <= width - 2.0 * WIDE_TAB.padding_left - badge
 }
 
-/// The play tabs' person, or two people (the page's 24-unit tab icons), drawn in `rect`.
+/// The play tabs' person, or two people (the page's 24-unit tab icons), drawn in `rect`
+/// with the page's round line caps.
 fn player_icon(painter: &Painter, rect: Rect, multiplayer: bool, ink: Color32) {
     let unit = rect.width() / 24.0;
     let at = |x: f32, y: f32| rect.min + vec2(x, y) * unit;
     let stroke = Stroke::new(1.8 * unit, ink);
-    let curve = |points: [Pos2; 4]| {
-        Shape::CubicBezier(egui::epaint::CubicBezierShape::from_points_stroke(
-            points,
-            false,
-            Color32::TRANSPARENT,
-            stroke,
-        ))
+    let head = |x: f32, y: f32, r: f32| icon_ring(painter, at(x, y), r * unit, stroke);
+    // Each `c` of the path, flattened and joined into one line.
+    let shoulders = |curves: &[[Pos2; 4]]| {
+        let mut points: Vec<Pos2> = Vec::new();
+        for &curve in curves {
+            let bezier = egui::epaint::CubicBezierShape::from_points_stroke(
+                curve,
+                false,
+                Color32::TRANSPARENT,
+                stroke,
+            );
+            let flat = bezier.flatten(Some(ICON_TOLERANCE));
+            let skip = usize::from(points.last() == flat.first());
+            points.extend(flat.into_iter().skip(skip));
+        }
+        icon_line(painter, points, stroke);
     };
     if multiplayer {
-        painter.circle_stroke(at(9.0, 8.0), 3.5 * unit, stroke);
-        painter.add(curve([
-            at(2.0, 20.0),
-            at(2.0, 16.1),
-            at(5.1, 13.8),
-            at(9.0, 13.8),
-        ]));
-        painter.add(curve([
-            at(9.0, 13.8),
-            at(12.9, 13.8),
-            at(16.0, 16.1),
-            at(16.0, 20.0),
-        ]));
-        painter.circle_stroke(at(17.0, 7.0), 3.0 * unit, stroke);
-        painter.add(curve([
+        head(9.0, 8.0, 3.5);
+        shoulders(&[
+            [at(2.0, 20.0), at(2.0, 16.1), at(5.1, 13.8), at(9.0, 13.8)],
+            [
+                at(9.0, 13.8),
+                at(12.9, 13.8),
+                at(16.0, 16.1),
+                at(16.0, 20.0),
+            ],
+        ]);
+        head(17.0, 7.0, 3.0);
+        shoulders(&[[
             at(16.5, 12.6),
             at(19.7, 12.8),
             at(22.0, 14.9),
             at(22.0, 18.5),
-        ]));
+        ]]);
     } else {
-        painter.circle_stroke(at(12.0, 8.0), 4.0 * unit, stroke);
-        painter.add(curve([
-            at(4.0, 21.0),
-            at(4.0, 16.6),
-            at(7.6, 14.0),
-            at(12.0, 14.0),
-        ]));
-        painter.add(curve([
-            at(12.0, 14.0),
-            at(16.4, 14.0),
-            at(20.0, 16.6),
-            at(20.0, 21.0),
-        ]));
+        head(12.0, 8.0, 4.0);
+        shoulders(&[
+            [at(4.0, 21.0), at(4.0, 16.6), at(7.6, 14.0), at(12.0, 14.0)],
+            [
+                at(12.0, 14.0),
+                at(16.4, 14.0),
+                at(20.0, 16.6),
+                at(20.0, 21.0),
+            ],
+        ]);
     }
+}
+
+/// How far a flattened icon curve may stray from the true one, in points.
+const ICON_TOLERANCE: f32 = 0.02;
+
+/// Points round a small icon ring: egui strokes a circle this small as a 16-gon.
+const ICON_RING_POINTS: usize = 48;
+
+/// An open icon line through `points` with `stroke-linecap: round`: a disc half the
+/// stroke wide at each end, where egui's lines stop square.
+fn icon_line(painter: &Painter, points: Vec<Pos2>, stroke: Stroke) {
+    let ends = [points.first().copied(), points.last().copied()];
+    painter.add(Shape::line(points, stroke));
+    for end in ends.into_iter().flatten() {
+        painter.circle_filled(end, stroke.width / 2.0, stroke.color);
+    }
+}
+
+/// An icon's stroked circle, with enough points to stay round at its small size.
+fn icon_ring(painter: &Painter, center: Pos2, radius: f32, stroke: Stroke) {
+    let points = (0..ICON_RING_POINTS)
+        .map(|index| {
+            let angle = std::f32::consts::TAU * index as f32 / ICON_RING_POINTS as f32;
+            center + radius * vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    painter.add(Shape::closed_line(points, stroke));
 }
 
 /// Strength bars for a difficulty: one, two or three lit in its colour, muted unless it

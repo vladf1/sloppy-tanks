@@ -1200,11 +1200,12 @@ fn field_label(painter: &Painter, column: Rect, label: &str) -> Rect {
 /// edge (`box-shadow: inset 0 2px 6px`).
 fn field_well(painter: &Painter, rect: Rect, hovered: bool) {
     painter.rect_filled(rect, 9, hexa(0x050d1c, 0.8));
-    painter.add(paint::rounded_vgradient(
+    paint::rounded_vgradient(
+        painter,
         Rect::from_min_size(rect.min, vec2(rect.width(), 8.0)),
         [9.0, 9.0, 0.0, 0.0],
         &[(0.0, hexa(0x000000, 0.45)), (1.0, Color32::TRANSPARENT)],
-    ));
+    );
     let edge = if hovered {
         hexa(0x9fd0ff, 0.45)
     } else {
@@ -1481,11 +1482,12 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
         let painter = ui.painter();
         let color = team_color([Team::Blue, Team::Red][side]);
         painter.rect_filled(rect, TEAM_RADIUS, hexa(0x050d1c, 0.8));
-        painter.add(paint::rounded_vgradient(
+        paint::rounded_vgradient(
+            painter,
             Rect::from_min_size(rect.min, vec2(rect.width(), 46.0)),
             [TEAM_RADIUS, TEAM_RADIUS, 0.0, 0.0],
             &[(0.0, paint::fade(color, 0.14)), (1.0, Color32::TRANSPARENT)],
-        ));
+        );
         team_stripe(painter, rect, color);
         // The header's name and its seats share a baseline (`align-items: baseline`).
         paint::text(
@@ -1604,11 +1606,12 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 vec2(224.0, 44.0 + players.len() as f32 * 27.0),
             );
             let painter = ui.painter();
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                painter,
                 rect,
                 [12.0; 4],
                 &[(0.0, hexa(0x11264a, 0.94)), (1.0, hexa(0x08142a, 0.95))],
-            ));
+            );
             painter.rect_stroke(
                 rect,
                 12,
@@ -1706,11 +1709,12 @@ fn respawn(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 }
                 + 18.0;
             let rect = Rect::from_min_size(ui.cursor().min, vec2(width, height));
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                &painter,
                 rect,
                 [16.0; 4],
                 &[(0.0, hexa(0x172d4f, 0.94)), (1.0, hexa(0x0b1930, 0.96))],
-            ));
+            );
             painter.rect_stroke(
                 rect,
                 16,
