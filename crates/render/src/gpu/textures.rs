@@ -210,7 +210,15 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // file's path under `public/` to its URL (the plain file on the dev server). Pages
 // without one, the tools and fixtures, fetch the path under their asset base.
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(inline_js = r#"export function assetUrl(base, path) {
+#[wasm_bindgen(inline_js = r#"export function uploadsImageData() {
+  return !/\bFirefox\//.test(navigator.userAgent);
+}
+
+export function imageDataBitmap(image) {
+  return createImageBitmap(image, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+}
+
+export function assetUrl(base, path) {
   return globalThis.sloppyAssets?.[path] ?? base + path;
 }
 
@@ -292,6 +300,10 @@ extern "C" {
     fn texture_bitmap(url: &str, flip: bool) -> js_sys::Promise;
     #[wasm_bindgen(js_name = prefetchTexture)]
     fn prefetch_texture(url: &str);
+    #[wasm_bindgen(js_name = uploadsImageData)]
+    fn uploads_image_data() -> bool;
+    #[wasm_bindgen(js_name = imageDataBitmap)]
+    fn image_data_bitmap(image: &ImageData) -> js_sys::Promise;
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -476,6 +488,27 @@ impl TextureStore {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
             };
+            // Firefox's WebGPU takes no `ImageData` as an upload's source (its
+            // `GPUCopyExternalImageSourceInfo` names only bitmaps, images and canvases), so
+            // there generated pixels first become a bitmap, exact without premultiplying
+            // or converting colour, and come back as one. A page cannot ask the queue
+            // whether it takes `ImageData` without a call that panics inside wgpu.
+            #[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
+            if let Ok(Pixels::Image(image)) = &result
+                && !uploads_image_data()
+            {
+                let bitmap = image_data_bitmap(image);
+                let loaded = self.loaded.clone();
+                wasm_bindgen_futures::spawn_local(async move {
+                    let result = JsFuture::from(bitmap)
+                        .await
+                        .and_then(|bitmap| bitmap.dyn_into())
+                        .map(Pixels::Bitmap)
+                        .map_err(|error| format!("{key:?}: {}", js_message(&error)));
+                    loaded.push(Loaded { key, result });
+                });
+                continue;
+            }
             entry.loading = false;
             match result {
                 Err(message) => {
