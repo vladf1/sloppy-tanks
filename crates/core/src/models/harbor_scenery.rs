@@ -52,7 +52,8 @@ impl Default for HarborScenery {
 /// apron, its row of the shared label sheet drawn by the browser (see
 /// `effects_scenery::HARBOR_LABEL_TEXTURE`), so every label merges into one draw.
 fn paint_label(group: &mut Node, text: &'static str, x: f64, z: f64, width: f64, depth: f64) {
-    static MATERIAL: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("harbor_scenery::MATERIAL");
     let material = MATERIAL
         .get_or_init(|| {
             Arc::new(Material {
@@ -77,7 +78,7 @@ fn paint_label(group: &mut Node, text: &'static str, x: f64, z: f64, width: f64,
 /// pad of both teams is two draws. Heights and footprints are the decks
 /// `effects::spawn_pad_decks` lays decals and mines on.
 fn spawn_pad(details: &mut Node, team: Team, x: f64, z: f64) {
-    static PADS: Cache<(u32, bool), Mesh> = Cache::new();
+    static PADS: Cache<(u32, bool), Mesh> = Cache::new("harbor_scenery::PADS");
     let color = TEAM_COLORS[team.index()];
     // The ring's uv is offset by `PAD_LIGHT_FLAG`, which the effect reads as the
     // light strip, so deck and ring share one material.
@@ -560,7 +561,8 @@ fn on_quay_face(details: &mut Node, group: Node, x: f64, z: f64, yaw: f64) {
 /// A cone fender on the quay face: the rubber cone, its steel frontal panel with
 /// pads and yellow trim, and the chains that hang it from the wall top.
 fn fender(details: &mut Node, x: f64, z: f64, yaw: f64) {
-    static CONE: std::sync::OnceLock<Arc<crate::geometry::Mesh>> = std::sync::OnceLock::new();
+    static CONE: crate::models::shared_values::SharedOnce<crate::geometry::Mesh> =
+        crate::models::shared_values::SharedOnce::new("harbor_scenery::CONE");
     let cone = CONE
         .get_or_init(|| Arc::new(crate::geometry::cylinder_geometry(0.42, 0.62, 0.8, 12)))
         .clone();
@@ -763,7 +765,8 @@ fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
 /// galvanised pole, a headframe platform and three floodlights aimed down at
 /// `toward` (a unit vector on the ground toward the apron), and the beacon on top.
 fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], toward: [f64; 2]) {
-    static POLE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    static POLE: crate::models::shared_values::SharedOnce<Mesh> =
+        crate::models::shared_values::SharedOnce::new("harbor_scenery::POLE");
     let pole = POLE
         .get_or_init(|| Arc::new(cylinder_geometry(0.12, 0.24, LAMP_HEIGHT, 8)))
         .clone();

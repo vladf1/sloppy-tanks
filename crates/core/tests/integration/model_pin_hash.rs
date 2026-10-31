@@ -125,6 +125,13 @@ impl Pin {
     }
 }
 
+/// One model tree's hash.
+pub fn node_pin(node: &Node) -> u64 {
+    let mut pin = Pin::new();
+    pin.node(node);
+    pin.0
+}
+
 /// A theme's whole scenery.
 pub fn scenery_pin(theme: MapTheme) -> u64 {
     let mut pin = Pin::new();

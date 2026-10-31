@@ -24,7 +24,8 @@ const ROCK_CREASE: f64 = PI / 5.0;
 /// `sandstoneMaterial()`: one shared material for every rock, bench and rubble
 /// mesh. `map` is the sandstone photo the effect samples triplanar in world space.
 pub fn sandstone_material() -> Arc<Material> {
-    static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("quarry_surfaces::sandstone_material");
     MATERIAL
         .get_or_init(|| {
             Arc::new(Material {
@@ -46,9 +47,9 @@ pub fn sandstone_material() -> Arc<Material> {
 }
 
 /// Quarried rocks by size, variant and what they stand on.
-static ROCKS: Cache<([u64; 3], u32, RockSetting), Mesh> = Cache::new();
+static ROCKS: Cache<([u64; 3], u32, RockSetting), Mesh> = Cache::new("quarry_surfaces::ROCKS");
 /// Sand skirts of rocks by footprint and variant.
-static SKIRTS: Cache<([u64; 2], u32), Mesh> = Cache::new();
+static SKIRTS: Cache<([u64; 2], u32), Mesh> = Cache::new("quarry_surfaces::SKIRTS");
 
 /// Collision ring levels of `quarry_rock_shape`, toe to cap rim, and its sides.
 const SHAPE_LEVELS: [f64; 7] = [0.0, 0.07, 0.28, 0.44, 0.72, 0.88, 1.0];
@@ -1396,7 +1397,8 @@ fn stones_from(pebble: &Mesh, stones: &[RubbleStone]) -> Mesh {
 /// The drift material of rock footings: soil-coloured sand with world-space grit,
 /// blended over the ground ([`SAND_DRIFT`]).
 pub fn sand_drift_material() -> Arc<Material> {
-    static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("quarry_surfaces::sand_drift_material");
     MATERIAL
         .get_or_init(|| {
             Arc::new(Material {

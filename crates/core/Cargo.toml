@@ -14,4 +14,5 @@ doctest = false
 rapier3d.workspace = true
 glam.workspace = true
 serde.workspace = true
+bytemuck.workspace = true
 serde_json.workspace = true
