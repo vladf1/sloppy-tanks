@@ -68,6 +68,8 @@ impl Overlay {
         renderer.present_late();
         let context = egui::Context::default();
         crate::ui::theme::install(&context);
+        #[cfg(target_arch = "wasm32")]
+        crate::browser_glyphs::install(&context);
         // A page's system is its browser's to say: Cmd is a Mac's command key (egui-winit
         // reads it for the canvas's shortcuts, the text entry for its own).
         #[cfg(target_arch = "wasm32")]

@@ -23,6 +23,8 @@ mod assets;
 mod audio;
 mod automation;
 mod bakes;
+#[cfg(target_arch = "wasm32")]
+mod browser_glyphs;
 mod directory;
 mod frame_log;
 mod hardware_keys;
