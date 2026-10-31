@@ -174,6 +174,8 @@ pub struct SceneryModel {
     /// The village chimney smoke: an instanced wisp quad (see
     /// [`smoke_instances`]).
     pub smoke: Option<Node>,
+    /// Read back from the page's geometry cache rather than built.
+    pub read_back: bool,
 }
 
 /// An animated scenery subtree, found by its child-index path from the root.
@@ -283,7 +285,7 @@ fn is_water(node: &Node) -> bool {
 /// extra levels, which show plain pads and floors instead.
 pub fn scenery(theme: Theme) -> Option<SceneryModel> {
     let map_theme = theme.map_theme()?;
-    let mut scenery = super::geometry_cache::scenery(map_theme);
+    let (mut scenery, read_back) = super::geometry_cache::scenery(map_theme);
     scenery.update(0.0);
     let source = scenery.root();
     let mut root = source.clone();
@@ -335,6 +337,7 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
         movers,
         water,
         smoke,
+        read_back,
     })
 }
 

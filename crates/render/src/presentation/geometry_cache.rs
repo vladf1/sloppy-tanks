@@ -72,14 +72,14 @@ thread_local! {
 /// The vehicle models came from the page this session: nothing to write.
 static VEHICLES_READ: AtomicBool = AtomicBool::new(false);
 
-/// A theme's scenery: read back when the page has its file, otherwise built and kept
-/// to write once the arena is ready.
-pub fn scenery(theme: MapTheme) -> Scenery {
+/// A theme's scenery, and whether it was read back: read back when the page has its
+/// file, otherwise built and kept to write once the arena is ready.
+pub fn scenery(theme: MapTheme) -> (Scenery, bool) {
     let file = scenery_file(theme);
     if enabled()
         && let Some(root) = page::take(file, &key(file))
     {
-        return Scenery::from_root(theme, root);
+        return (Scenery::from_root(theme, root), true);
     }
     let started = page::now();
     let scenery = build_scenery(theme);
@@ -89,7 +89,7 @@ pub fn scenery(theme: MapTheme) -> Scenery {
         // shares these meshes until then.
         PENDING.with_borrow_mut(|pending| pending.push((file, scenery.root().clone())));
     }
-    scenery
+    (scenery, false)
 }
 
 /// Whether a build stepped over frames should wait for the page to read `theme`'s
