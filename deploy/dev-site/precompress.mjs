@@ -9,14 +9,17 @@ const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
 const assetDirectory = new URL("../../dist-dev/assets/", import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
+const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
+  .filter((name) => name.endsWith(".ttf"))
+  .map((name) => `fonts/${name}`);
 
-if (wasmFiles.length === 0) {
+if (wasmFiles.length === 0 || fontFiles.length === 0) {
   throw new Error("Build dist-dev before preparing Worker assets");
 }
 
-// The engines compress at once on zlib's thread pool, so the wait is the largest file's.
+// The files compress at once on zlib's thread pool, so the wait is the largest one's.
 await Promise.all(
-  wasmFiles.map(async (file) => {
+  [...wasmFiles, ...fontFiles].map(async (file) => {
     const original = await readFile(new URL(file, assetDirectory));
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {

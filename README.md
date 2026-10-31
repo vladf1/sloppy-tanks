@@ -398,10 +398,10 @@ record in fridman.me's Cloudflare zone, and all other records stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, where every file has a content-hashed name, so a returning visit requests
-only the page itself; `noindex` everywhere). Only the Wasm binaries run its script,
-`deploy/dev-site/worker.mjs`. Cloudflare compresses static assets as it serves them,
-which gives a multi-megabyte binary a later first byte and a larger file than Brotli at
-quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies beside each `.wasm`
-(`deploy/dev-site/precompress.mjs`, a few seconds), and the script sends the one the
-client accepts, marked `no-transform`. Range requests, and clients that accept neither, get the
-original file.
+only the page itself; `noindex` everywhere). Only the Wasm binaries and the shell's
+fonts run its script, `deploy/dev-site/worker.mjs`. Cloudflare compresses static assets
+as it serves them, which gives a multi-megabyte binary a later first byte and a larger
+file than Brotli at quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies
+beside each `.wasm` and `.ttf` (`deploy/dev-site/precompress.mjs`, a few seconds), and
+the script sends the one the client accepts, marked `no-transform`. Range requests, and
+clients that accept neither, get the original file.
