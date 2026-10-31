@@ -3711,6 +3711,7 @@ dependencies = [
  "image",
  "js-sys",
  "naga",
+ "serde_json",
  "sloppy-core",
  "tiny-skia 0.12.0",
  "wasm-bindgen",

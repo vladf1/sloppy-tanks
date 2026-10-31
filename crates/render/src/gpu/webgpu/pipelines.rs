@@ -34,10 +34,15 @@ use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, StageSources, occlusion_source, output_source,
-    shadow_cutout_stages, shadow_merged_source, sky_source, water_source,
+    BlendMode, FixedShader, InstanceSource, Pass, PipelineKey, ShaderKey, StageSources,
+    occlusion_scale, variant_stages,
 };
 use crate::shadow_merge::ShadowVertex;
+
+// The occlusion shader was built for the depth its pass reads.
+const _: () = assert!(
+    OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE == occlusion_scale(InstanceSource::Storage)
+);
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     0 => Float32x3,
@@ -359,7 +364,7 @@ fn source<'a>(
 ) -> &'a StageSources {
     sources
         .entry(shader)
-        .or_insert_with(|| StageSources::variant(&shader, effects))
+        .or_insert_with(|| variant_stages(&shader, effects))
 }
 
 pub(super) fn pipeline_layout(
@@ -424,30 +429,27 @@ impl Pipelines {
         let bloom_layout = pipeline_layout(device, "bloom", &[&layouts.bloom]);
         let occlusion_layout = pipeline_layout(device, "occlusion", &[&layouts.occlusion]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let (output, sky) = (output_source(), sky_source());
-        let occlusion = occlusion_source(true, OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE);
-        let merged = shadow_merged_source();
         let mut specs = vec![
-            (output_spec(canvas_format), &output),
-            (sky_spec(gpu.samples), &sky),
+            (output_spec(canvas_format), FixedShader::Output),
+            (sky_spec(gpu.samples), FixedShader::Sky),
         ];
         for spec in bloom_specs(gpu.bloom_format) {
-            specs.push((spec, &output));
+            specs.push((spec, FixedShader::Output));
         }
-        specs.push((occlusion_spec(), &occlusion));
-        specs.push((occlusion_blur_spec(), &output));
-        specs.push((backdrop_spec(canvas_format), &output));
+        specs.push((occlusion_spec(), FixedShader::Occlusion));
+        specs.push((occlusion_blur_spec(), FixedShader::Output));
+        specs.push((backdrop_spec(canvas_format), FixedShader::Output));
         for &side in &SHADOW_MERGED_SIDES {
-            specs.push((shadow_merged_spec(side, false), &merged));
+            specs.push((shadow_merged_spec(side, false), FixedShader::ShadowMerged));
         }
         let mut jobs: Vec<_> = specs
             .into_iter()
-            .map(|(spec, source)| {
-                let stages = spec.stages(source);
+            .map(|(spec, shader)| {
+                let stages = spec.stages(shader);
                 (spec, stages)
             })
             .collect();
-        let cutout = shadow_cutout_stages();
+        let cutout = shadow_merged_spec(Side::Front, true).stages(FixedShader::ShadowCutout);
         for &side in &SHADOW_MERGED_SIDES {
             jobs.push((shadow_merged_spec(side, true), cutout.clone()));
         }
@@ -542,11 +544,10 @@ impl Pipelines {
     /// are compiling: called once an arena has water.
     pub fn start_water(&mut self, gpu: &Gpu) {
         if self.water.is_none() && self.water_jobs.is_none() {
-            let water = water_source();
             let jobs = [water_spec(gpu.samples), water_depth_spec()]
                 .into_iter()
                 .map(|spec| {
-                    let stages = spec.stages(&water);
+                    let stages = spec.stages(FixedShader::Water);
                     (spec, stages)
                 })
                 .collect();
