@@ -96,12 +96,16 @@ struct Tilt {
 }
 
 impl Tilt {
-    fn apply(self, point: Pos2) -> Pos2 {
+    /// The transform as a function of a point, its trigonometry worked out once.
+    fn transform(self) -> impl Fn(Pos2) -> Pos2 {
         let [centre_x, centre_y] = self.centre;
-        let y = point.y - centre_y;
-        let x = point.x - centre_x + self.skew_x.to_radians().tan() * y;
+        let skew = self.skew_x.to_radians().tan();
         let (sin, cos) = self.rotate.to_radians().sin_cos();
-        pos2(centre_x + cos * x - sin * y, centre_y + sin * x + cos * y)
+        move |point| {
+            let y = point.y - centre_y;
+            let x = point.x - centre_x + skew * y;
+            pos2(centre_x + cos * x - sin * y, centre_y + sin * x + cos * y)
+        }
     }
 }
 
@@ -693,6 +697,7 @@ fn rasterize(source: &Source) -> ColorImage {
         (height * source.scale).ceil() as usize,
     ];
     let mut rgba = vec![[0.0f32; 4]; size[0] * size[1]];
+    let tilt = source.tilt.map(Tilt::transform);
     for layer in source.layers {
         let mut polygons = parse(layer.path);
         let even_odd = matches!(layer.paint, Paint::EvenOdd);
@@ -715,41 +720,90 @@ fn rasterize(source: &Source) -> ColorImage {
                     .into_iter()
                     .map(|point| {
                         let point = point + offset;
-                        let point = source.tilt.map_or(point, |tilt| tilt.apply(point));
+                        let point = tilt.as_ref().map_or(point, |tilt| tilt(point));
                         pos2((point.x - x) * source.scale, (point.y - y) * source.scale)
                     })
                     .collect()
             })
             .collect();
         let mut coverage = fill_coverage(&transformed, even_odd, size);
-        if blur > 0.0 {
+        // A layer covers nothing outside its outline's bounds, unless blurred.
+        let [columns, rows] = if blur > 0.0 {
             gaussian_blur(&mut coverage, size, blur / 2.0 * source.scale);
-        }
+            [0..size[0], 0..size[1]]
+        } else {
+            bounds(&transformed, size)
+        };
         let color = [
             ((layer.color >> 16) & 0xff) as f32 / 255.0,
             ((layer.color >> 8) & 0xff) as f32 / 255.0,
             (layer.color & 0xff) as f32 / 255.0,
         ];
-        for (pixel, alpha) in rgba.iter_mut().zip(coverage) {
-            let alpha = alpha.min(1.0) * opacity;
-            if alpha <= 0.0 {
-                continue;
+        for row in rows {
+            let start = row * size[0];
+            let texels = start + columns.start..start + columns.end;
+            for (pixel, &alpha) in rgba[texels.clone()].iter_mut().zip(&coverage[texels]) {
+                blend(pixel, color, alpha.min(1.0) * opacity);
             }
-            // Straight-alpha "over".
-            let out = alpha + pixel[3] * (1.0 - alpha);
-            for channel in 0..3 {
-                pixel[channel] = (color[channel] * alpha
-                    + pixel[channel] * pixel[3] * (1.0 - alpha))
-                    / out.max(1e-6);
-            }
-            pixel[3] = out;
         }
     }
-    let bytes: Vec<u8> = rgba
+    let pixels = rgba
         .iter()
-        .flat_map(|pixel| pixel.map(|channel| (channel.clamp(0.0, 1.0) * 255.0).round() as u8))
+        .map(|&[red, green, blue, alpha]| match to_byte(alpha) {
+            // What `from_rgba_unmultiplied` makes of any colour without opacity.
+            0 => Color32::TRANSPARENT,
+            alpha => {
+                Color32::from_rgba_unmultiplied(to_byte(red), to_byte(green), to_byte(blue), alpha)
+            }
+        })
         .collect();
-    ColorImage::from_rgba_unmultiplied(size, &bytes)
+    ColorImage::new(size, pixels)
+}
+
+/// Paint `color` at `alpha` over `pixel`: straight-alpha "over".
+fn blend(pixel: &mut [f32; 4], color: [f32; 3], alpha: f32) {
+    if alpha <= 0.0 {
+        return;
+    }
+    // Fully covered: what the blend below gives exactly, without its divisions.
+    if alpha == 1.0 {
+        *pixel = [color[0], color[1], color[2], 1.0];
+        return;
+    }
+    let out = alpha + pixel[3] * (1.0 - alpha);
+    for channel in 0..3 {
+        pixel[channel] =
+            (color[channel] * alpha + pixel[channel] * pixel[3] * (1.0 - alpha)) / out.max(1e-6);
+    }
+    pixel[3] = out;
+}
+
+/// `(channel.clamp(0.0, 1.0) * 255.0).round() as u8`, exactly: Wasm has no instruction
+/// for `f32::round`, whose library call took a fifth of the logo's rasterizing, while a
+/// truncation is one and the fraction it leaves is exact.
+fn to_byte(channel: f32) -> u8 {
+    let scaled = channel.clamp(0.0, 1.0) * 255.0;
+    let whole = scaled as u8;
+    whole + u8::from(scaled - f32::from(whole) >= 0.5)
+}
+
+/// The texel columns and rows `polygons` can cover, with a texel to spare each side
+/// for crossings that round past an end.
+fn bounds(polygons: &[Vec<Pos2>], size: [usize; 2]) -> [std::ops::Range<usize>; 2] {
+    let points = polygons.iter().flatten();
+    let min = points
+        .clone()
+        .fold(pos2(f32::INFINITY, f32::INFINITY), |min, &point| {
+            min.min(point)
+        });
+    let max = points.fold(pos2(f32::NEG_INFINITY, f32::NEG_INFINITY), |max, &point| {
+        max.max(point)
+    });
+    let texel = |value: f32, size: usize| (value.max(0.0) as usize).min(size);
+    [
+        texel(min.x.floor() - 1.0, size[0])..texel(max.x.ceil() + 1.0, size[0]),
+        texel(min.y.floor() - 1.0, size[1])..texel(max.y.ceil() + 1.0, size[1]),
+    ]
 }
 
 /// Sub-rows per texel row: vertical antialiasing (horizontal coverage is exact).
@@ -851,8 +905,14 @@ fn gaussian_blur(coverage: &mut [f32], size: [usize; 2], deviation: f32) {
     }
 }
 
-/// Average each value over the `2 * radius + 1` around it, with a running sum.
+/// Average each value over the `2 * radius + 1` around it, with a running sum. Those
+/// whose window holds only the zeros before the first value average to zero exactly,
+/// so the sum starts where that value enters.
 fn box_blur_row(values: &mut [f32], radius: usize, line: &mut Vec<f32>) {
+    let Some(first) = values.iter().position(|&value| value != 0.0) else {
+        return;
+    };
+    let values = &mut values[first.saturating_sub(radius)..];
     line.clear();
     line.extend_from_slice(values);
     let share = 1.0 / (2 * radius + 1) as f32;
@@ -869,8 +929,12 @@ fn box_blur_row(values: &mut [f32], radius: usize, line: &mut Vec<f32>) {
 }
 
 /// `box_blur_row` down every column at once, a row at a time, so that the running
-/// sums stay in cache.
+/// sums stay in cache; it too starts with the first row whose window holds a value.
 fn box_blur_columns(values: &mut [f32], width: usize, radius: usize) {
+    let Some(first) = values.iter().position(|&value| value != 0.0) else {
+        return;
+    };
+    let values = &mut values[(first / width).saturating_sub(radius) * width..];
     let source = values.to_vec();
     let rows: Vec<&[f32]> = source.chunks_exact(width).collect();
     let share = 1.0 / (2 * radius + 1) as f32;
@@ -1212,6 +1276,20 @@ mod tests {
         };
         assert!(at(12.0, 5.5) > 200);
         assert!(at(12.0, 8.8) < 40);
+    }
+
+    #[test]
+    fn bytes_round_like_f32_round() {
+        let round = |channel: f32| (channel.clamp(0.0, 1.0) * 255.0).round() as u8;
+        // Every value near each rounding boundary, then a sweep, and the out-of-range.
+        let near_halves = (0..=255).flat_map(|byte| {
+            let half = (byte as f32 + 0.5) / 255.0;
+            (-64..=64).map(move |ulps| f32::from_bits(half.to_bits().wrapping_add_signed(ulps)))
+        });
+        let sweep = (0..=100_000).map(|step| step as f32 / 100_000.0);
+        for channel in near_halves.chain(sweep).chain([-1.0, 2.0, f32::NAN]) {
+            assert_eq!(to_byte(channel), round(channel), "{channel:e}");
+        }
     }
 
     #[test]
