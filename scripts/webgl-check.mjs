@@ -1,6 +1,7 @@
 // The page's choice of graphics backend and its fallbacks: a normal load downloads only
-// the WebGPU shell; `?webgl`, a browser without WebGPU and an adapter that refuses all
-// load only the WebGL2 one; a device that fails after an adapter reloads once into
+// the WebGPU shell; `?webgl` and a browser without WebGPU load only the WebGL2 one, and
+// so does an adapter that refuses all, after dropping the WebGPU shell it started on
+// while it asked (`dropped`); a device that fails after an adapter reloads once into
 // `?webgl`; and with neither backend the loading view says why, with no reload loop.
 // Each case plays a round on the backend it ends on (Stats for nerds' Graphics API).
 import assert from "node:assert/strict";
@@ -46,7 +47,14 @@ const CASES = [
   { name: "normal", stage: "normal", query: "", wasm: ["sloppy-tanks_bg"], api: "WebGPU" },
   { name: "forced WebGL", stage: "normal", query: "webgl", wasm: ["webgl_bg"], api: "WebGL" },
   { name: "no WebGPU", stage: "noWebgpu", query: "", wasm: ["webgl_bg"], api: "WebGL" },
-  { name: "no adapter", stage: "noAdapter", query: "", wasm: ["webgl_bg"], api: "WebGL" },
+  {
+    name: "no adapter",
+    stage: "noAdapter",
+    query: "",
+    wasm: ["webgl_bg"],
+    dropped: ["sloppy-tanks_bg"],
+    api: "WebGL",
+  },
   {
     name: "device fails",
     stage: "deviceFails",
@@ -65,7 +73,7 @@ const CASES = [
 
 const browser = await launchChrome();
 try {
-  for (const { name, stage, query, wasm, api } of CASES) {
+  for (const { name, stage, query, wasm, dropped = [], api } of CASES) {
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       deviceScaleFactor: 1,
@@ -99,7 +107,17 @@ try {
       wasm.map(() => 1),
       `${name}: downloads ${downloads.join(", ")}`,
     );
-    assert.equal(downloads.length, wasm.length, `${name}: downloads ${downloads.join(", ")}`);
+    // A dropped build's request may or may not have gone out before it was aborted.
+    const started = dropped.map((part) => downloads.filter((file) => file.includes(part)).length);
+    assert.ok(
+      started.every((count) => count <= 1),
+      `${name}: downloads ${downloads.join(", ")}`,
+    );
+    assert.equal(
+      downloads.length,
+      wasm.length + started.reduce((sum, count) => sum + count, 0),
+      `${name}: downloads ${downloads.join(", ")}`,
+    );
     if (api) {
       assert.equal(shell, "ready", `${name}: the shell started`);
       await untilState(page, (state) => state.ready, { what: `${name}: the arena` });

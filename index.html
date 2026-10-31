@@ -295,7 +295,8 @@
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
-         the chosen build's glue and binary download; the binary streams into its
+         the chosen build's glue and binary download (a browser with WebGPU starts on
+         that build while it looks for an adapter); the binary streams into its
          instance while the loading view counts its bytes, and the files the shell takes
          from the page download beside it. The shell then fetches the textures from the
          site beside this page and tells the page how it goes
@@ -387,9 +388,9 @@
       addEventListener("unhandledrejection", (event) => trapped(event.reason));
 
       /** Fetch `url` and count its `bytes` in the loading view as the response streams;
-       * `complete` settles on whether every byte came. */
-      const download = async (url, bytes) => {
-        const response = await fetch(url);
+       * `complete` settles on whether every byte came. `signal` drops it. */
+      const download = async (url, bytes, signal) => {
+        const response = await fetch(url, { signal });
         if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
         // A compressed response's length is not what it delivers (vite.config.ts).
         const total =
@@ -478,19 +479,32 @@
       } else {
         say("Loading game…");
         const forceWebgl = new URLSearchParams(location.search).has("webgl");
-        const adapter =
-          !forceWebgl && navigator.gpu && (await navigator.gpu.requestAdapter().catch(() => null));
         const [webgpuBytes, webglBytes] = (
           document.querySelector('meta[name="sloppy-shell-bytes"]')?.content ?? ""
         )
           .split(",")
           .map(Number);
-        const glue = adapter
-          ? import("/src/generated/shell/sloppy-tanks.js")
-          : import("/src/generated/shell-webgl/sloppy-tanks-webgl.js");
-        const binary = adapter
-          ? download(webgpuBinary, webgpuBytes)
-          : download(webglBinary, webglBytes);
+        const webglBuild = () => [
+          import("/src/generated/shell-webgl/sloppy-tanks-webgl.js"),
+          download(webglBinary, webglBytes),
+        ];
+        // A browser with WebGPU nearly always gives an adapter, but asking takes a while
+        // (a cold WebKit spends 75 ms starting its GPU process at the first read of
+        // `navigator.gpu`), so the WebGPU build downloads meanwhile and gives way to the
+        // WebGL build only when no adapter comes. `in` does not read the property.
+        let glue, binary;
+        if (!forceWebgl && "gpu" in navigator) {
+          const dropped = new AbortController();
+          glue = import("/src/generated/shell/sloppy-tanks.js");
+          binary = download(webgpuBinary, webgpuBytes, dropped.signal);
+          if (!(await navigator.gpu.requestAdapter().catch(() => null))) {
+            dropped.abort();
+            for (const unused of [glue, binary]) unused.catch(() => {});
+            [glue, binary] = webglBuild();
+          }
+        } else {
+          [glue, binary] = webglBuild();
+        }
         let init, response, complete;
         try {
           [{ default: init }, { response, complete }] = await Promise.all([
