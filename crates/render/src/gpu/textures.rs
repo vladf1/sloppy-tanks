@@ -1,4 +1,4 @@
-//! Textures: `public/` files fetched and decoded by the browser
+//! Textures: `public/` files fetched and decoded by the browser in workers
 //! (`createImageBitmap`), plus pixels generated at runtime, which arrive as a JS
 //! `ImageData`; the backend uploads both straight from the browser object
 //! (`copyExternalImageToTexture`, `texSubImage2D`), so generated pixels never need a
@@ -189,50 +189,92 @@ struct Loaded {
 }
 
 /// WebGL cannot flip an `ImageBitmap` while uploading it, so that build decodes
-/// files the reference flips upside down instead (`fetch_bitmap`).
+/// files the reference flips upside down instead (`texture_bitmap`).
 #[cfg(target_arch = "wasm32")]
 const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 
-// Texture files decode in an image element (`HTMLImageElement.decode`), which every
-// browser does off the main thread: WebKit decoded `createImageBitmap(blob)` on it, one
-// file after another, about 80 ms of a village start once the arena was built. The
-// bitmap made from the decoded image has the same texels. The page does not start them
-// early: begun beside the binary they took its bandwidth, and begun once it had
-// downloaded they arrived before the arena needed them on all but slow links.
+// Texture files download and decode in a few workers (`createImageBitmap` of the
+// file's blob, unpremultiplied and without colour conversion), which hand the page the
+// bitmap. On the main thread every way cost it the decode: Chrome decoded a bitmap of a
+// decoded `<img>` again (about 80 ms for the village's textures), and uploading the
+// `<img>` itself was as slow there and premultiplied alpha in WebKit; WebKit decoded
+// `createImageBitmap(blob)` on the main thread, one file after another. A worker's
+// bitmap has the same texels, and WebKit uploads it in about two thirds of the time
+// a bitmap of an `<img>` took. The page does not start them early: begun beside the
+// binary they took its bandwidth, and begun once it had downloaded they arrived before
+// the arena needed them on all but slow links.
 //
 // A built game page names its runtime files by content hash, so browsers keep them for
 // good: its manifest (`globalThis.sloppyAssets`, from `scripts/hashed-assets.ts`) maps a
 // file's path under `public/` to its URL (the plain file on the dev server). Pages
 // without one, the tools and fixtures, fetch the path under their asset base.
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(inline_js = "export function assetUrl(base, path) {
+#[wasm_bindgen(inline_js = r#"export function assetUrl(base, path) {
   return globalThis.sloppyAssets?.[path] ?? base + path;
 }
-export function textureImage(url) {
-  const image = new Image();
-  image.src = url;
-  return image.decode().then(() => image);
-}")]
+
+const DECODER = `onmessage = async ({ data: { id, url, flip } }) => {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(response.status + " " + response.statusText);
+    const bitmap = await createImageBitmap(await response.blob(), {
+      premultiplyAlpha: "none",
+      colorSpaceConversion: "none",
+      ...(flip ? { imageOrientation: "flipY" } : {}),
+    });
+    postMessage({ id, bitmap }, [bitmap]);
+  } catch (error) {
+    postMessage({ id, error: String(error?.message ?? error) });
+  }
+};`;
+// WebKit decodes one file at a time in each worker; four finish the village's files
+// about when an `<img>` for each did, and eight were no faster.
+const DECODERS = 4;
+const decoders = [];
+const waiting = new Map();
+let nextId = 0;
+let decoderUrl;
+
+function decoder() {
+  const idle = decoders.find((entry) => entry.pending === 0);
+  if (idle || decoders.length === DECODERS) {
+    return idle ?? decoders.reduce((a, b) => (b.pending < a.pending ? b : a));
+  }
+  decoderUrl ??= URL.createObjectURL(new Blob([DECODER], { type: "text/javascript" }));
+  const entry = { worker: new Worker(decoderUrl), pending: 0 };
+  entry.worker.onmessage = ({ data }) => {
+    entry.pending--;
+    const { resolve, reject } = waiting.get(data.id);
+    waiting.delete(data.id);
+    if (data.error) reject(new Error(data.error));
+    else resolve(data.bitmap);
+  };
+  decoders.push(entry);
+  return entry;
+}
+
+export function textureBitmap(url, flip) {
+  return new Promise((resolve, reject) => {
+    const id = nextId++;
+    const entry = decoder();
+    entry.pending++;
+    waiting.set(id, { resolve, reject });
+    // The worker's base is its blob URL, so it fetches an absolute one.
+    entry.worker.postMessage({ id, url: new URL(url, document.baseURI).href, flip });
+  });
+}"#)]
 extern "C" {
     #[wasm_bindgen(js_name = assetUrl)]
     fn asset_url(base: &str, path: &str) -> String;
-    #[wasm_bindgen(js_name = textureImage)]
-    fn texture_image(url: &str) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = textureBitmap)]
+    fn texture_bitmap(url: &str, flip: bool) -> js_sys::Promise;
 }
 
 #[cfg(target_arch = "wasm32")]
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
-    let window = web_sys::window().ok_or("no window")?;
-    let image: web_sys::HtmlImageElement = JsFuture::from(texture_image(url)).await?.dyn_into()?;
-    let options = web_sys::ImageBitmapOptions::new();
-    options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
-    options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
-    if flip_y && FLIP_BITMAPS_ON_DECODE {
-        options.set_image_orientation(web_sys::ImageOrientation::FlipY);
-    }
-    let bitmap = window
-        .create_image_bitmap_with_html_image_element_and_image_bitmap_options(&image, &options)?;
-    JsFuture::from(bitmap).await?.dyn_into()
+    JsFuture::from(texture_bitmap(url, flip_y && FLIP_BITMAPS_ON_DECODE))
+        .await?
+        .dyn_into()
 }
 
 pub struct TextureStore {
