@@ -1,7 +1,8 @@
 // The page's choice of graphics backend and its fallbacks: a normal load downloads only
 // the WebGPU shell (its menu and engine halves); `?webgl` and a browser without WebGPU load only the WebGL2 one, and
 // so does an adapter that refuses all, after dropping the WebGPU shell it started on
-// while it asked (`dropped`); a device that fails after an adapter reloads once into
+// while it asked (`dropped`), even when it refuses only once that shell's engine half is
+// on its way; a device that fails after an adapter reloads once into
 // `?webgl`; and with neither backend the loading view says why, with no reload loop.
 // Each case plays a round on the backend it ends on (Stats for nerds' Graphics API).
 import assert from "node:assert/strict";
@@ -26,6 +27,18 @@ const STAGED = {
   },
   noAdapter: () => {
     GPU.prototype.requestAdapter = async () => null;
+  },
+  // No adapter, answered only once the menu half is in: the WebGPU engine half has begun
+  // downloading (and maybe compiling) by then, and must not stand in for WebGL's.
+  lateNoAdapter: () => {
+    GPU.prototype.requestAdapter = () =>
+      new Promise((resolve) => {
+        const answer = () =>
+          performance.getEntriesByName("sloppy:downloaded").length
+            ? resolve(null)
+            : setTimeout(answer, 5);
+        answer();
+      });
   },
   deviceFails: () => {
     GPUAdapter.prototype.requestDevice = async () => {
@@ -53,6 +66,14 @@ const CASES = [
   {
     name: "no adapter",
     stage: "noAdapter",
+    query: "",
+    wasm: WEBGL,
+    dropped: WEBGPU,
+    api: "WebGL",
+  },
+  {
+    name: "late no adapter",
+    stage: "lateNoAdapter",
     query: "",
     wasm: WEBGL,
     dropped: WEBGPU,

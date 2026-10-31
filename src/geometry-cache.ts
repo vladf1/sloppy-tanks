@@ -94,7 +94,11 @@ export function startGeometryCache(): void {
   const ask = (request: WorkerRequest, transfer: Transferable[] = []) => {
     worker ??= new Worker(new URL("./geometry-worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
-      waiting.get(`${data.op}:${data.name}`)?.(data);
+      // Dropped once answered: the reply holds the file's bytes until the shell takes them.
+      const key = `${data.op}:${data.name}`;
+      const resolve = waiting.get(key);
+      waiting.delete(key);
+      resolve?.(data);
     };
     const reply = new Promise<WorkerReply>((resolve) =>
       waiting.set(`${request.op}:${request.name}`, resolve),

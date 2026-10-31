@@ -518,24 +518,31 @@
       // over the menu half's exports and `sloppyEngine` tells the shell to hand the window
       // to the engine (crates/desktop/src/split.rs). Battle Setup's status line follows
       // `sloppyEngineProgress`; bake workers instantiate the same module beside theirs.
-      let engineModule, engineCompiled;
-      /** Start fetching and compiling the engine half at `url` (`bytes` long), once. */
-      const engineHalf = (url, bytes, signal) => () => {
-        engineCompiled ??= (async () => {
-          const response = await fetch(url, { signal });
-          if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
-          const reader = response.clone().body.getReader();
-          (async () => {
-            let received = 0;
-            for (let chunk; !(chunk = await reader.read()).done;) {
-              received += chunk.value.byteLength;
-              if (bytes) window.sloppyEngineProgress = received / bytes;
-            }
-          })().catch(() => {});
-          engineModule = await WebAssembly.compileStreaming(response);
-          return engineModule;
-        })();
-        return engineCompiled;
+      let engineModule;
+      /** Start fetching and compiling the engine half at `url` (`bytes` long), once. Each
+       * build's half compiles on its own: a WebGPU half dropped for the WebGL build must not
+       * stand in for that build's. */
+      const engineHalf = (url, bytes, signal) => {
+        let compiled;
+        return () => {
+          if (compiled) return compiled;
+          compiled = (async () => {
+            const response = await fetch(url, { signal });
+            if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+            const reader = response.clone().body.getReader();
+            (async () => {
+              let received = 0;
+              for (let chunk; !(chunk = await reader.read()).done;) {
+                received += chunk.value.byteLength;
+                if (bytes) window.sloppyEngineProgress = received / bytes;
+              }
+            })().catch(() => {});
+            return WebAssembly.compileStreaming(response);
+          })();
+          // A dropped build's half is never awaited: its abort is no error of the page's.
+          compiled.catch(() => {});
+          return compiled;
+        };
       };
 
       if (typeof WebAssembly !== "object") {
@@ -620,7 +627,8 @@
             globalThis.sloppyShaders = await shaders().catch((error) => {
               throw new Error(`The game's shaders did not download: ${message(error)}`);
             });
-            await WebAssembly.instantiate(await engine(), { primary: exports });
+            engineModule = await engine();
+            await WebAssembly.instantiate(engineModule, { primary: exports });
             performance.mark("sloppy:engine-started");
             window.sloppyEngine = true;
           } catch (error) {

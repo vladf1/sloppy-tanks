@@ -203,28 +203,38 @@ const builds = process.argv.includes("--labs")
 // The page's shell draws shader variants the build generated rather than assembling them
 // (crates/render/src/shader/tables.rs): before it builds, the native `shader-tables`
 // generator writes every variant either backend can ask for into `src/generated/shaders/`,
-// which index.html fetches beside the binary. It runs again only once Cargo rebuilt it,
-// which a change to the renderer's sources does (about 3 s).
+// which index.html fetches beside the binary. It writes only the tables of the backends
+// this run builds, so another backend's binary keeps the tables it was built with, and runs
+// again only once Cargo rebuilt it, which a change to the renderer's sources does (about
+// 3 s).
 const SHADER_TABLES = "src/generated/shaders";
 
-async function shaderTables() {
+async function shaderTables(backends) {
   await run("cargo", ["build", "--locked", "-p", "sloppy-render", "--features", "shader-tables"]);
   const target = process.env.CARGO_TARGET_DIR ?? "target";
   const generator = `${target}/debug/shader-tables${process.platform === "win32" ? ".exe" : ""}`;
   const at = (path) => resolve(root, path);
-  const stamp = at(`${SHADER_TABLES}/generator`);
   const built = String(statSync(at(generator)).mtimeMs);
-  const current = ["webgpu.json", "webgl.json", "generator"].every((file) =>
-    existsSync(at(`${SHADER_TABLES}/${file}`)),
+  // Each backend's stamp names the generator that wrote its tables.
+  const stamp = (backend) => at(`${SHADER_TABLES}/${backend}.generator`);
+  const stale = backends.filter(
+    (backend) =>
+      !existsSync(at(`${SHADER_TABLES}/${backend}.json`)) ||
+      !existsSync(stamp(backend)) ||
+      readFileSync(stamp(backend), "utf8") !== built,
   );
-  if (current && readFileSync(stamp, "utf8") === built) return;
-  await run(at(generator), [SHADER_TABLES]);
-  await writeFile(stamp, built);
+  if (stale.length === 0) return;
+  await run(at(generator), [SHADER_TABLES, ...stale]);
+  for (const backend of stale) await writeFile(stamp(backend), built);
 }
 // ---------------------------------------------------------------------------------------
 
 try {
-  if (builds.includes(SHELL) || builds.includes(SHELL_WEBGL)) await shaderTables();
+  const backends = [
+    ...(builds.includes(SHELL) ? ["webgpu"] : []),
+    ...(builds.includes(SHELL_WEBGL) ? ["webgl"] : []),
+  ];
+  if (backends.length > 0) await shaderTables(backends);
   for (const target of builds) {
     await build(target);
   }
