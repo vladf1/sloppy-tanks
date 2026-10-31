@@ -50,15 +50,21 @@ impl Pin {
     }
 
     fn vector(&mut self, v: DVec3) {
-        v.to_array().map(|c| self.double(c));
+        for c in v.to_array() {
+            self.double(c);
+        }
     }
 
     fn quaternion(&mut self, q: DQuat) {
-        q.to_array().map(|c| self.double(c));
+        for c in q.to_array() {
+            self.double(c);
+        }
     }
 
     fn matrix(&mut self, m: &DMat4) {
-        m.to_cols_array().map(|c| self.double(c));
+        for c in m.to_cols_array() {
+            self.double(c);
+        }
     }
 
     fn text(&mut self, text: &str) {

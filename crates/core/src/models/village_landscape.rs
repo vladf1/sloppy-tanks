@@ -402,85 +402,151 @@ const VALLEY_SEGMENTS: u32 = 112;
 /// Height of a triangulated height grid at (x, z), exactly as its mesh draws it:
 /// cells of `cell` metres from `origin`, split along the diagonal from their
 /// (low x, high z) corner to their (high x, low z) corner like `PlaneGeometry`
-/// and [`far_ranges`].
+/// and [`far_ranges`]. `corner(i, j)` is the height of the grid's corner `i`
+/// cells along x and `j` along z.
 fn grid_surface(
     x: f64,
     z: f64,
     origin: [f64; 2],
     cell: [f64; 2],
-    height: impl Fn(f64, f64) -> f64,
+    mut corner: impl FnMut(f64, f64) -> f64,
 ) -> f64 {
     let (gx, gz) = ((x - origin[0]) / cell[0], (z - origin[1]) / cell[1]);
     let (ix, iz) = (gx.floor(), gz.floor());
     let (u, v) = (gx - ix, gz - iz);
-    let corner = |i: f64, j: f64| {
-        height(
-            origin[0] + (ix + i) * cell[0],
-            origin[1] + (iz + j) * cell[1],
-        )
-    };
-    let (b, d) = (corner(0.0, 1.0), corner(1.0, 0.0));
+    let (b, d) = (corner(ix, iz + 1.0), corner(ix + 1.0, iz));
     if u + v <= 1.0 {
-        let a = corner(0.0, 0.0);
+        let a = corner(ix, iz);
         a + (d - a) * u + (b - a) * v
     } else {
-        let c = corner(1.0, 1.0);
+        let c = corner(ix + 1.0, iz + 1.0);
         c + (b - c) * (1.0 - u) + (d - c) * (1.0 - v)
     }
 }
 
-/// The drawn ground under the backdrop at (x, z): the highest of the valley
-/// terrain, the northern ridge and the distant ranges where each lies, as their
-/// meshes interpolate it (a tree planted on the true height would hang off a
-/// crest the mesh cuts across).
-pub fn backdrop_ground(x: f64, z: f64) -> f64 {
-    let mut ground = f64::NEG_INFINITY;
-    if x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF {
-        let cell = VALLEY_HALF * 2.0 / f64::from(VALLEY_SEGMENTS);
-        ground = ground.max(grid_surface(
-            x,
-            z,
-            [-VALLEY_HALF; 2],
-            [cell; 2],
-            valley_height,
-        ));
-    }
-    let [width, depth] = RIDGE_SIZE;
-    if x.abs() < width / 2.0 && (z - RIDGE_Z).abs() < depth / 2.0 {
-        let cell = [
-            width / f64::from(RIDGE_SEGMENTS[0]),
-            depth / f64::from(RIDGE_SEGMENTS[1]),
-        ];
-        ground = ground.max(grid_surface(
-            x,
-            z,
-            [-width / 2.0, RIDGE_Z - depth / 2.0],
-            cell,
-            |x, z| valley_height(x, z) + mountain_rise(x, z),
-        ));
-    }
-    if ground == f64::NEG_INFINITY || x.abs() > VALLEY_HALF - 8.0 || z.abs() > VALLEY_HALF - 8.0 {
-        let far = grid_surface(x, z, [-RANGES_HALF; 2], [RANGES_CELL; 2], |x, z| {
-            valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z)
-        });
-        ground = ground.max(far - if ground > f64::NEG_INFINITY { 1.5 } else { 0.0 });
-    }
-    ground
+/// One height grid of the backdrop, its corner heights kept once computed.
+struct CornerGrid {
+    origin: [f64; 2],
+    cell: [f64; 2],
+    /// Corners along x (cells + 1); rows run along z.
+    columns: usize,
+    heights: Vec<Option<f64>>,
+    height: fn(f64, f64) -> f64,
 }
 
-/// Where a trunk can stand on the backdrop: the lowest drawn ground around its
-/// base, a little deeper, so it never hangs over a slope; `None` on faces too
-/// steep for a tree.
-fn trunk_footing(x: f64, z: f64) -> Option<f64> {
-    let reach = 1.1;
-    let around = [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)]
-        .map(|(dx, dz)| backdrop_ground(x + dx, z + dz));
-    let low = around.iter().copied().fold(backdrop_ground(x, z), f64::min);
-    let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let slope = (high - low) / (reach * 2.0);
-    // Trees keep to ground they could root in; on a slope the trunk sinks
-    // deeper, so its downhill side never shows daylight under it.
-    (slope < MAX_TREE_SLOPE).then_some(low - 0.3 - slope * 0.5)
+impl CornerGrid {
+    fn new(origin: [f64; 2], cell: [f64; 2], cells: [u32; 2], height: fn(f64, f64) -> f64) -> Self {
+        let columns = cells[0] as usize + 1;
+        Self {
+            origin,
+            cell,
+            columns,
+            heights: vec![None; columns * (cells[1] as usize + 1)],
+            height,
+        }
+    }
+
+    /// [`grid_surface`] of this grid: a corner's height is the same whenever it is
+    /// asked for, so each is computed once.
+    fn surface(&mut self, x: f64, z: f64) -> f64 {
+        let (origin, cell, columns, height) = (self.origin, self.cell, self.columns, self.height);
+        let heights = &mut self.heights;
+        grid_surface(x, z, origin, cell, |i, j| {
+            let at = |i: f64, j: f64| height(origin[0] + i * cell[0], origin[1] + j * cell[1]);
+            let index = (i >= 0.0 && j >= 0.0 && i < columns as f64)
+                .then(|| j as usize * columns + i as usize)
+                .filter(|&index| index < heights.len());
+            match index {
+                Some(index) => *heights[index].get_or_insert_with(|| at(i, j)),
+                None => at(i, j),
+            }
+        })
+    }
+}
+
+fn ridge_height(x: f64, z: f64) -> f64 {
+    valley_height(x, z) + mountain_rise(x, z)
+}
+
+fn far_height(x: f64, z: f64) -> f64 {
+    valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z)
+}
+
+/// The drawn ground under the backdrop: the valley terrain, the northern ridge
+/// and the distant ranges as their meshes interpolate them. The forest asks for
+/// it five times round every trunk, and neighbouring trees share cells, so the
+/// grids keep the corner heights they have computed.
+struct BackdropGround {
+    valley: CornerGrid,
+    ridge: CornerGrid,
+    far: CornerGrid,
+}
+
+impl BackdropGround {
+    fn new() -> Self {
+        let valley_cell = VALLEY_HALF * 2.0 / f64::from(VALLEY_SEGMENTS);
+        let [width, depth] = RIDGE_SIZE;
+        let ranges_cells = (RANGES_HALF * 2.0 / RANGES_CELL) as u32;
+        Self {
+            valley: CornerGrid::new(
+                [-VALLEY_HALF; 2],
+                [valley_cell; 2],
+                [VALLEY_SEGMENTS; 2],
+                valley_height,
+            ),
+            ridge: CornerGrid::new(
+                [-width / 2.0, RIDGE_Z - depth / 2.0],
+                [
+                    width / f64::from(RIDGE_SEGMENTS[0]),
+                    depth / f64::from(RIDGE_SEGMENTS[1]),
+                ],
+                RIDGE_SEGMENTS,
+                ridge_height,
+            ),
+            far: CornerGrid::new(
+                [-RANGES_HALF; 2],
+                [RANGES_CELL; 2],
+                [ranges_cells; 2],
+                far_height,
+            ),
+        }
+    }
+
+    /// The drawn ground at (x, z): the highest of the valley terrain, the
+    /// northern ridge and the distant ranges where each lies, as their meshes
+    /// interpolate it (a tree planted on the true height would hang off a crest
+    /// the mesh cuts across).
+    fn at(&mut self, x: f64, z: f64) -> f64 {
+        let mut ground = f64::NEG_INFINITY;
+        if x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF {
+            ground = ground.max(self.valley.surface(x, z));
+        }
+        let [width, depth] = RIDGE_SIZE;
+        if x.abs() < width / 2.0 && (z - RIDGE_Z).abs() < depth / 2.0 {
+            ground = ground.max(self.ridge.surface(x, z));
+        }
+        if ground == f64::NEG_INFINITY || x.abs() > VALLEY_HALF - 8.0 || z.abs() > VALLEY_HALF - 8.0
+        {
+            let far = self.far.surface(x, z);
+            ground = ground.max(far - if ground > f64::NEG_INFINITY { 1.5 } else { 0.0 });
+        }
+        ground
+    }
+
+    /// Where a trunk can stand on the backdrop: the lowest drawn ground around its
+    /// base, a little deeper, so it never hangs over a slope; `None` on faces too
+    /// steep for a tree.
+    fn trunk_footing(&mut self, x: f64, z: f64) -> Option<f64> {
+        let reach = 1.1;
+        let around = [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)]
+            .map(|(dx, dz)| self.at(x + dx, z + dz));
+        let low = around.iter().copied().fold(self.at(x, z), f64::min);
+        let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let slope = (high - low) / (reach * 2.0);
+        // Trees keep to ground they could root in; on a slope the trunk sinks
+        // deeper, so its downhill side never shows daylight under it.
+        (slope < MAX_TREE_SLOPE).then_some(low - 0.3 - slope * 0.5)
+    }
 }
 
 /// The steepest backdrop ground a tree grows on (rise over run).
@@ -510,14 +576,21 @@ fn nudge_for_family(x: f64, z: f64, h: f64, want: impl Fn(u32) -> bool) -> (f64,
 const FOREST_SECTORS: f64 = 8.0;
 
 /// The background forest, one group of trees per batching cell.
-#[derive(Default)]
 struct Forest {
     cells: BTreeMap<(i64, i64), Node>,
+    ground: BackdropGround,
 }
 
 impl Forest {
+    fn new() -> Self {
+        Self {
+            cells: BTreeMap::new(),
+            ground: BackdropGround::new(),
+        }
+    }
+
     fn plant(&mut self, shape: TreeShape) -> bool {
-        let Some(footing) = trunk_footing(shape.x, shape.z) else {
+        let Some(footing) = self.ground.trunk_footing(shape.x, shape.z) else {
             return false;
         };
         let distant = shape.x.abs().max(shape.z.abs()) > DISTANT_TREES;
@@ -633,7 +706,7 @@ fn grove(
 
 fn backdrop(group: &mut Node) {
     let mut rng = Random::new(8274.0);
-    let mut forest = Forest::default();
+    let mut forest = Forest::new();
     let mut rocks = Node::group("");
     let stone = Arc::new(icosahedron_geometry(1.0, 0));
     let stone_materials = [0x879087, 0xa4aa92, 0x717f76].map(|color| {
@@ -668,7 +741,7 @@ fn backdrop(group: &mut Node) {
         rock.set_rotation_euler(pitch, yaw, 0.0);
         // On the drawn ground: the coarse terrain mesh cuts below `valley_height`
         // across the steep creek bank, where a stone set on the true height hovers.
-        put(&mut rocks, rock, x, backdrop_ground(x, z) + size * 0.06, z);
+        put(&mut rocks, rock, x, forest.ground.at(x, z) + size * 0.06, z);
     }
     // The forest grows in groves of every age, so the hills read as woods with
     // clearings and depth rather than ranks of one tree. Mountain groves are all
