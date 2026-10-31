@@ -31,6 +31,19 @@ export default defineConfig({
     startupHtml(base),
     pageHealth(),
     {
+      // Vite content-hashes every file in /assets/, so the site's Worker
+      // (deploy/site/) may let browsers cache those for good; HTML and unversioned
+      // public files keep its default revalidation.
+      name: "site-headers",
+      generateBundle() {
+        this.emitFile({
+          type: "asset",
+          fileName: "_headers",
+          source: "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n",
+        });
+      },
+    },
+    {
       // Start the engine binary's one real request in <head>, in parallel with the
       // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari
       // never hands a <link rel=preload as=fetch> response to a later fetch(), so a

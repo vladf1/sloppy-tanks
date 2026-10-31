@@ -1,14 +1,15 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
-  "name": "sloppy-tanks-dev",
+  "name": "sloppy-tanks",
   "account_id": "b49a59dfb5edf913223ad13eeab8d740",
   "compatibility_date": "2026-10-17",
   "main": "worker.mjs",
-  "workers_dev": true,
+  // The site answers only at its domain; redirect.wrangler.jsonc sends the others here.
+  "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "sloppy-tanks-dev.fridman.me", "custom_domain": true }],
+  "routes": [{ "pattern": "sloppytanks.com", "custom_domain": true }],
   "assets": {
-    "directory": "../../dist-dev",
+    "directory": "../../dist",
     "binding": "ASSETS",
     "run_worker_first": ["/assets/*.wasm"],
     "html_handling": "auto-trailing-slash",

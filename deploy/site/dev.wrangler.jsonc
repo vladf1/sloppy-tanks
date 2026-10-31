@@ -1,0 +1,20 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sloppy-tanks-dev",
+  "account_id": "b49a59dfb5edf913223ad13eeab8d740",
+  "compatibility_date": "2026-10-17",
+  "main": "worker.mjs",
+  "workers_dev": true,
+  "preview_urls": false,
+  "routes": [
+    { "pattern": "sloppy-tanks-dev.fridman.me", "custom_domain": true },
+    { "pattern": "dev.sloppytanks.com", "custom_domain": true },
+  ],
+  "assets": {
+    "directory": "../../dist-dev",
+    "binding": "ASSETS",
+    "run_worker_first": ["/assets/*.wasm"],
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "single-page-application",
+  },
+}

@@ -375,7 +375,7 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
 can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
 token that can write packages (`crates/server/README.md` shows how with `gh`). The
-Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+Worker's account, name and domain come from `deploy/site/dev.wrangler.jsonc`,
 independent of the local Git branch. No Git commit or push is required.
 `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
@@ -399,9 +399,9 @@ record in fridman.me's Cloudflare zone, and all other records stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, `noindex` everywhere). Only the engine binaries run its script,
-`deploy/dev-site/worker.mjs`. Cloudflare compresses static assets as it serves them,
+`deploy/site/worker.mjs`. Cloudflare compresses static assets as it serves them,
 which gives the 3.7 MB engine a later first byte and a larger file than Brotli at
 quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies beside each `.wasm`
-(`deploy/dev-site/precompress.mjs`, a few seconds), and the script sends the one the
+(`deploy/site/precompress.mjs`, a few seconds), and the script sends the one the
 client accepts, marked `no-transform`. Range requests, and clients that accept neither, get the
 original file.

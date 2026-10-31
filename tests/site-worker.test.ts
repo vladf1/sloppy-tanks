@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import worker, { preferredEncoding } from "../deploy/dev-site/worker.mjs";
+import redirect from "../deploy/site/redirect.mjs";
+import worker, { preferredEncoding } from "../deploy/site/worker.mjs";
 
 test("encoding negotiation honors supported encodings, quality and exclusions", () => {
   assert.equal(preferredEncoding("gzip, deflate, br, zstd"), "br");
@@ -130,4 +131,12 @@ test("HTML and canonical redirects pass through to the static asset service unch
       }
     }
   }
+});
+
+test("the site's other hostnames redirect to its origin with the path and query", () => {
+  const response = redirect.fetch(new Request("https://www.example.test/health/?room=abc"), {
+    SITE_ORIGIN: "https://example.test",
+  });
+  assert.equal(response.status, 301);
+  assert.equal(response.headers.get("Location"), "https://example.test/health/?room=abc");
 });

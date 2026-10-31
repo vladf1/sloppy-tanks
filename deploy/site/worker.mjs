@@ -1,4 +1,4 @@
-// The dev site's Worker. Static assets serve everything except the engine binaries,
+// The site's Worker, for the dev site and production. Static assets serve everything except the engine binaries,
 // which `run_worker_first` routes here: Cloudflare compresses those on every request,
 // so precompress.mjs stores Brotli and gzip copies at deploy time and this script sends
 // the one the client accepts.
