@@ -11,7 +11,7 @@
   "observability": { "enabled": true },
   "vars": {
     // The same directory and environment as bots/wrangler.jsonc (a test keeps them equal).
-    "DIRECTORY_URL": "https://sloppy-tanks-directory.fridman.me",
+    "DIRECTORY_URL": "https://directory.sloppytanks.com",
     "SERVER_ENVIRONMENT": "production",
   },
 }

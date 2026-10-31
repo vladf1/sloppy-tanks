@@ -8,7 +8,7 @@ import {
   recordRoomFrames,
   until,
 } from "./multiplayer-helpers.mjs";
-const base = process.env.SLOPPY_PUBLIC_URL ?? "https://sloppy-tanks-dev.fridman.me/";
+const base = process.env.SLOPPY_PUBLIC_URL ?? "https://dev.sloppytanks.com/";
 const output = "artifacts/performance/multiplayer/public";
 await mkdir(output, { recursive: true });
 const browser = await launchChrome();

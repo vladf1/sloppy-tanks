@@ -8,7 +8,7 @@ use sloppy_core::net::protocol::{
 use crate::orders::{Mission, Orders, parse_kind, parse_personality, parse_skill};
 
 /// The production directory (`DIRECTORY_URL` in `scripts/servers.mjs`).
-pub const DEFAULT_DIRECTORY: &str = "https://sloppy-tanks-directory.fridman.me";
+pub const DEFAULT_DIRECTORY: &str = "https://directory.sloppytanks.com";
 
 pub const USAGE: &str = "\
 Usage: sloppy-pilot (--room CODE | --create MAP) [options]

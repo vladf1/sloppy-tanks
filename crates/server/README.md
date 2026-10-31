@@ -8,7 +8,7 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
 browser engine runs. Production and the dev site each run it on their own Vultr
 machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
-the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
+the server directory (https://directory.sloppytanks.com) lists them.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
@@ -17,7 +17,7 @@ pnpm run dev               # in another terminal; open ?multiplayer on the print
 
 The client uses `ws://127.0.0.1:8787` locally. `pnpm run server:check:players`
 runs real player sockets on all maps against a running server;
-`SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me` tests production's.
+`SLOPPY_SERVER_URL=wss://<server>` (a URL the directory lists) tests that one.
 `pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects
 a remote server for that browser check. For sustained traffic from other
 regions, the traffic bots (a separate Cloudflare Worker) join open rooms on
@@ -114,7 +114,7 @@ core) and `rssMB` with the host's `cpus` and `hostMemoryMB` (absent for the firs
 seconds), and `rooms`, every room including extra levels. It shares `/rooms`'s CORS headers and rate limit.
 
 With `DIRECTORY_URL` set to the directory's base address
-(`https://sloppy-tanks-directory.fridman.me`) and `SERVER_ENVIRONMENT` to the environment
+(`https://directory.sloppytanks.com`) and `SERVER_ENVIRONMENT` to the environment
 that lists the server (`production` or `dev`), the server PUTs the same listing, without
 `url`, to `/servers?environment=` there as JSON. A room entering or leaving the list
 (its first player joining, its last leaving, or the room ending) sends it at once.

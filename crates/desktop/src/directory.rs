@@ -13,7 +13,7 @@ use sloppy_core::net::room_list::{ServerList, split_address};
 /// The production directory, unless the build names another (`SLOPPY_DIRECTORY_URL`).
 pub const DEFAULT_DIRECTORY: &str = match option_env!("SLOPPY_DIRECTORY_URL") {
     Some(url) => url,
-    None => "https://sloppy-tanks-directory.fridman.me",
+    None => "https://directory.sloppytanks.com",
 };
 /// The environment whose servers the app lists.
 const ENVIRONMENT: &str = "production";

@@ -164,12 +164,10 @@ mod tests {
     #[test]
     fn announces_under_its_environment_and_ignores_an_empty_directory() {
         let dev = |url| settings(&[("DIRECTORY_URL", url), ("SERVER_ENVIRONMENT", "dev")]);
-        let directory = dev("https://sloppy-tanks-directory.fridman.me/")
-            .unwrap()
-            .directory;
+        let directory = dev("https://directory.sloppytanks.com/").unwrap().directory;
         assert_eq!(
             directory.map(|url| url.to_string()).as_deref(),
-            Some("https://sloppy-tanks-directory.fridman.me/servers?environment=dev")
+            Some("https://directory.sloppytanks.com/servers?environment=dev")
         );
         assert!(dev("http://127.0.0.1:8790").unwrap().directory.is_some());
         // Provisioning writes an empty value for machines that must not announce themselves.
