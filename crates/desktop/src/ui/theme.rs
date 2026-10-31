@@ -2,7 +2,8 @@
 //! a steel hairline, gold for what is selected, blue and red for the teams, Impact for
 //! display type and the platform's UI face for the rest, like the page's system-ui. A
 //! page cannot read the system's fonts, so there the build embeds its own
-//! (`public/fonts/`): Anton (OFL) for Impact and Roboto (Apache 2.0) for the UI face.
+//! (`public/fonts/`): Anton (OFL), widened to Impact's width by `scripts/widen-anton.py`,
+//! for Impact and Roboto (Apache 2.0) for the UI face.
 
 use std::borrow::Cow;
 
@@ -67,7 +68,7 @@ fn embedded_font(family: &str, style: FontStyle) -> Option<(Vec<u8>, FontTweak)>
         ("system-ui" | "sans-serif", false) => ("fonts/Roboto-Regular.ttf", FontTweak::default()),
         ("system-ui" | "sans-serif", true) => ("fonts/Roboto-Bold.ttf", FontTweak::default()),
         ("Impact", _) => {
-            let mut bytes = font_file("fonts/Anton-Regular.ttf")?;
+            let mut bytes = font_file("fonts/Anton-Wide.ttf")?;
             set_line_box(
                 &mut bytes,
                 IMPACT_ASCENT / ANTON_SCALE,
@@ -231,8 +232,8 @@ mod tests {
     #[test]
     fn the_embedded_anton_takes_impacts_line_box() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../public/fonts/Anton-Regular.ttf");
-        let mut bytes = std::fs::read(path).expect("public/fonts holds Anton");
+            .join("../../public/fonts/Anton-Wide.ttf");
+        let mut bytes = std::fs::read(path).expect("public/fonts holds Anton Wide");
         set_line_box(
             &mut bytes,
             IMPACT_ASCENT / ANTON_SCALE,

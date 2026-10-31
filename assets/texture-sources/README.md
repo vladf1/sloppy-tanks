@@ -60,10 +60,20 @@ inputs. Normal desktop builds only verify and copy it, without running an image
 generator or compiling a Rust example. Desktop-only assets stay outside `public/`
 so web deployments do not carry them.
 
+## Display font
+
+The page draws its headings in `public/fonts/Anton-Wide.ttf`, which
+`scripts/widen-anton.py` (fontTools) makes from Anton (`assets/fonts/Anton-Regular.ttf`,
+SIL Open Font License 1.1, its license beside both). The page set its headings in Impact,
+which may not be redistributed; Anton is narrower, so the script stretches its outlines,
+advances and kerning by 11% (Impact's letters over Anton's across the interface's
+uppercase strings), gives the space Impact's width and drops the hinting. The native apps
+draw the system's Impact. Rerun `python3 scripts/widen-anton.py` after changing the fit.
+
 ## Battle Setup logo
 
 The logo's letters (`LOGO_SLOPPY` and `LOGO_TANKS` in `crates/desktop/src/ui/icons.rs`)
-are path data baked from Anton (`public/fonts/Anton-Regular.ttf`, SIL Open Font License
+are path data baked from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License
 1.1, its license beside it) by `scripts/generate-logo-outlines.ts`. The page set the
 logo in Impact, whose outlines may not be redistributed; until the vector logo it was
 `public/previews/logo.webp`, a 3x capture of the production page's `.setup-brand`.

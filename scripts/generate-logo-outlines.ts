@@ -3,11 +3,11 @@ import { readFileSync, writeFileSync } from "node:fs";
 // Bakes Battle Setup's logo, SLOPPY over TANKS, into path data for the desktop shell's
 // icon rasterizer (`LOGO_SLOPPY` and `LOGO_TANKS` in `crates/desktop/src/ui/icons.rs`).
 // The page drew the words in Impact, which may not be redistributed; these are Anton's
-// outlines (SIL OFL, `public/fonts/`), each letter stretched into the box Impact's took
+// outlines (SIL OFL, `assets/fonts/`), each letter stretched into the box Impact's took
 // in the page's `.setup-brand`, so the logo keeps its old shape on every platform.
 // Run `node --import tsx scripts/generate-logo-outlines.ts` after changing the fit.
 
-const FONT = new URL("../public/fonts/Anton-Regular.ttf", import.meta.url);
+const FONT = new URL("../assets/fonts/Anton-Regular.ttf", import.meta.url);
 const TARGET = new URL("../crates/desktop/src/ui/icons.rs", import.meta.url);
 
 /** A word's letters and the ink box of each: left, top, right, bottom. */
