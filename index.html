@@ -470,9 +470,16 @@
         }
       }
 
-      // The shell bakes generated textures in workers that run its module (bakes.rs).
-      window.sloppyBakeWorker = () =>
-        new Worker(new URL("/src/bake-worker.ts", import.meta.url), { type: "module" });
+      // The shell bakes generated textures in workers that run its module (bakes.rs),
+      // with the glue the page loaded (`glueUrl`, set once it has).
+      let glueUrl;
+      window.sloppyBakeWorker = () => {
+        const worker = new Worker(new URL("/src/bake-worker.ts", import.meta.url), {
+          type: "module",
+        });
+        worker.postMessage({ glue: glueUrl });
+        return worker;
+      };
 
       if (typeof WebAssembly !== "object") {
         fail("This browser cannot run WebAssembly.", OLD_BROWSER);
@@ -485,7 +492,7 @@
           .split(",")
           .map(Number);
         const webglBuild = () => [
-          import("/src/generated/shell-webgl/sloppy-tanks-webgl.js"),
+          import("/src/shell-glue-webgl.ts"),
           download(webglBinary, webglBytes),
         ];
         // A browser with WebGPU nearly always gives an adapter, but asking takes a while
@@ -495,7 +502,7 @@
         let glue, binary;
         if (!forceWebgl && "gpu" in navigator) {
           const dropped = new AbortController();
-          glue = import("/src/generated/shell/sloppy-tanks.js");
+          glue = import("/src/shell-glue.ts");
           binary = download(webgpuBinary, webgpuBytes, dropped.signal);
           if (!(await navigator.gpu.requestAdapter().catch(() => null))) {
             dropped.abort();
@@ -507,7 +514,7 @@
         }
         let init, response, complete;
         try {
-          [{ default: init }, { response, complete }] = await Promise.all([
+          [{ default: init, glueUrl }, { response, complete }] = await Promise.all([
             glue.catch((error) => {
               throw new Error(`The game's code did not load: ${message(error)}`);
             }),

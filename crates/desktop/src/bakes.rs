@@ -160,7 +160,6 @@ mod page {
                 let request = js_sys::Object::new();
                 for (name, value) in [
                     ("module", wasm_bindgen::module()),
-                    ("webgl", cfg!(feature = "webgl").into()),
                     ("key", key.into()),
                     ("band", band.into()),
                     ("bands", count.into()),

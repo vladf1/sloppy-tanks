@@ -48,7 +48,7 @@ export default defineConfig({
   // Preview launchers assign a free port through PORT; Vite does not read it itself.
   server: { port: Number(process.env.PORT) || undefined },
   plugins: [baseRedirect(base), pageHealth(), shellSizes(), hashedAssets()],
-  // The bake worker (src/bake-worker.ts) imports its build's glue on demand.
+  // The bake worker (src/bake-worker.ts) imports the page's glue on demand.
   worker: { format: "es" },
   build: {
     rolldownOptions: {

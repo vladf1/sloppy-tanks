@@ -1,23 +1,33 @@
 // A worker that bakes one band of a generated texture for the shell
 // (`crates/desktop/src/bakes.rs`), off the page's main thread: it runs its own instance
 // of the module the page compiled, whose `main` returns at once in a worker, and calls
-// only its `bake_texture`. The page starts it (`sloppyBakeWorker` in `index.html`).
+// only its `bake_texture`. The page starts it (`sloppyBakeWorker` in `index.html`) and
+// first tells it where its build's glue is (`shell-glue.ts`), which the page has
+// downloaded already.
+
+import type * as Glue from "./shell-glue.ts";
+
+interface GlueAddress {
+  glue: string;
+}
 
 interface BakeRequest {
   /** The page's compiled shell, so the worker downloads and compiles nothing. */
   module: WebAssembly.Module;
-  /** Whether `module` is the WebGL build, whose glue it needs. */
-  webgl: boolean;
   key: string;
   band: number;
   bands: number;
 }
 
-onmessage = async ({ data }: MessageEvent<BakeRequest>) => {
+let glueUrl = "";
+
+onmessage = async ({ data }: MessageEvent<GlueAddress | BakeRequest>) => {
+  if ("glue" in data) {
+    glueUrl = data.glue;
+    return;
+  }
   try {
-    const glue = data.webgl
-      ? await import("./generated/shell-webgl/sloppy-tanks-webgl.js")
-      : await import("./generated/shell/sloppy-tanks.js");
+    const glue: typeof Glue = await import(/* @vite-ignore */ glueUrl);
     await glue.default({ module_or_path: data.module });
     const pixels = glue.bake_texture(data.key, data.band, data.bands);
     if (!pixels) {
