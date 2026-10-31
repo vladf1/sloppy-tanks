@@ -11,18 +11,35 @@ use sloppy_core::sim::map_options::MapId;
 
 use crate::model_pin_hash::{covers_pin, scenery_pin, vehicles_pin};
 
-/// A pin for the build profile: native debug and release builds of the same
-/// sources differ in the last bits of the village and quarry scenery and the
-/// village's covers (already at 4ba8be26, before any of these speed-ups).
-fn profile_pin(debug: u64, release: u64) -> u64 {
-    if cfg!(debug_assertions) {
-        debug
-    } else {
-        release
-    }
+/// Where a model's pin was recorded: an operating system and architecture
+/// (`std::env::consts`) and whether it was a debug build.
+type Platform = (&'static str, &'static str, bool);
+
+const MAC_DEBUG: Platform = ("macos", "aarch64", true);
+const MAC_RELEASE: Platform = ("macos", "aarch64", false);
+const LINUX_DEBUG: Platform = ("linux", "x86_64", true);
+
+/// The pin recorded for this platform and build, if any. Scenery that turns angles
+/// takes `f64::sin` and its kin from the system's math library natively, whose last
+/// bits differ between macOS and Linux, and between debug and release builds of the
+/// same sources (already at 4ba8be26, before any of these speed-ups). CI pins Linux
+/// debug; a platform with no pin reports its hash rather than failing.
+fn platform_pin(pins: &[(Platform, u64)]) -> Option<u64> {
+    let here = (
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(debug_assertions),
+    );
+    pins.iter()
+        .find(|(platform, _)| *platform == here)
+        .map(|(_, pin)| *pin)
 }
 
-fn assert_pin(what: &str, actual: u64, expected: u64) {
+fn assert_pin(what: &str, actual: u64, expected: impl Into<Option<u64>>) {
+    let Some(expected) = expected.into() else {
+        eprintln!("{what}: no pin for this platform; it hashes to {actual:#018x}");
+        return;
+    };
     assert_eq!(
         actual, expected,
         "{what} changed: pin {actual:#018x}, expected {expected:#018x}"
@@ -34,7 +51,11 @@ fn village_scenery_is_pinned() {
     assert_pin(
         "village scenery",
         scenery_pin(MapTheme::Village),
-        profile_pin(0x0c52_66a4_1d6d_b740, 0x7901_2edf_0bc1_2087),
+        platform_pin(&[
+            (MAC_DEBUG, 0x0c52_66a4_1d6d_b740),
+            (MAC_RELEASE, 0x7901_2edf_0bc1_2087),
+            (LINUX_DEBUG, 0x6d2c_f9f2_ced0_803d),
+        ]),
     );
 }
 
@@ -43,7 +64,11 @@ fn harbor_scenery_is_pinned() {
     assert_pin(
         "harbor scenery",
         scenery_pin(MapTheme::Harbor),
-        0x2579_221d_91e9_5548,
+        platform_pin(&[
+            (MAC_DEBUG, 0x2579_221d_91e9_5548),
+            (MAC_RELEASE, 0x2579_221d_91e9_5548),
+            (LINUX_DEBUG, 0x74b5_1f76_a06d_eec8),
+        ]),
     );
 }
 
@@ -52,7 +77,11 @@ fn quarry_scenery_is_pinned() {
     assert_pin(
         "quarry scenery",
         scenery_pin(MapTheme::Quarry),
-        profile_pin(0x6f4e_b490_6e1a_2a5c, 0xd801_da82_bd8f_1a73),
+        platform_pin(&[
+            (MAC_DEBUG, 0x6f4e_b490_6e1a_2a5c),
+            (MAC_RELEASE, 0xd801_da82_bd8f_1a73),
+            (LINUX_DEBUG, 0xc802_df47_24a5_af6b),
+        ]),
     );
 }
 
@@ -66,7 +95,11 @@ fn village_covers_are_pinned() {
     assert_pin(
         "village covers",
         covers_pin(MapId::Village),
-        profile_pin(0xdf29_d15a_f4a0_ae39, 0x9511_c809_8f19_b1e4),
+        platform_pin(&[
+            (MAC_DEBUG, 0xdf29_d15a_f4a0_ae39),
+            (MAC_RELEASE, 0x9511_c809_8f19_b1e4),
+            (LINUX_DEBUG, 0xdbe1_f1ac_5041_349e),
+        ]),
     );
 }
 
