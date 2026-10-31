@@ -221,7 +221,8 @@ fn into_atlas(node: &mut Node, sway: bool) {
         {
             let (left, width, tile) = kind.atlas_column();
             let [r, g, b] = hex_to_linear(drawable.material.color.0).map(|c| c as f32);
-            let mut mesh = (*drawable.mesh).clone();
+            // Batched and tinted meshes are the tree's own: convert them in place.
+            let mesh = Arc::make_mut(&mut drawable.mesh);
             for uv in &mut mesh.uvs {
                 let u = f64::from(uv[0]).clamp(0.0, 1.0);
                 let texel = left + TREE_ATLAS_INSET + u * (width - 2.0 * TREE_ATLAS_INSET);
@@ -235,7 +236,6 @@ fn into_atlas(node: &mut Node, sway: bool) {
             } else {
                 mesh.colors = vec![[r, g, b]; mesh.positions.len()];
             }
-            drawable.mesh = Arc::new(mesh);
             drawable.material = atlas.clone();
         }
         stack.extend(node.children.iter_mut());
@@ -959,9 +959,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
             let center = node_bounds(bough, world).center() - offset;
             for child in &mut bough.children {
                 if let Some(drawable) = &mut child.drawable {
-                    let mut mesh = (*drawable.mesh).clone();
-                    mesh.translate(-center.x, -center.y, -center.z);
-                    drawable.mesh = Arc::new(mesh);
+                    Arc::make_mut(&mut drawable.mesh).translate(-center.x, -center.y, -center.z);
                 }
             }
             bough.position = center;
