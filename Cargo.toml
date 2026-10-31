@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/render", "crates/web", "crates/server", "crates/desktop"]
+members = [
+    "crates/core",
+    "crates/render",
+    "crates/web",
+    "crates/server",
+    "crates/desktop",
+    "crates/pilot",
+]
 
 [workspace.package]
 edition = "2024"
@@ -146,3 +153,14 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# The pilot engine for the bots Worker (`pnpm run pilot:build`). The download size that
+# release's fat LTO buys does not matter in a Worker, while its link took ~40 s of every
+# build: without LTO, the dependencies compile once and stay cached, so a pilot change
+# rebuilds in ~2 s and a core change in ~23 s instead of ~45 s (4 cores). Eight pilots
+# measured the same CPU either way (about 60 ms per pilot-second, three alternating runs
+# each in Node), for a 2.7 MB module instead of 2.5 MB.
+[profile.pilot]
+inherits = "release"
+lto = false
+codegen-units = 16
