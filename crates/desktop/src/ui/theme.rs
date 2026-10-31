@@ -261,8 +261,8 @@ mod tests {
             weight: 400,
             italic: false,
         };
-        let anton = embedded_font(&collection, "Impact", style)
-            .expect("the collection has a display face");
+        let anton =
+            embedded_font(&collection, "Impact", style).expect("the collection has a display face");
         let mut fonts = FontDefinitions::default();
         fonts.font_data.insert("anton".into(), anton.into());
         fonts.families.insert(display(), vec!["anton".into()]);
