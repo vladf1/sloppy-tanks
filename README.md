@@ -116,7 +116,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 
 ```sh
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
-pnpm run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/
+pnpm run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/, its shader tables into src/generated/shaders/
 pnpm run wasm:fast      # the same built for compile time, to check how a change looks (never to time or deploy)
 pnpm run wasm:engine    # the sloppy-web engine into src/generated/engine/ (fixtures, game preview, WireView)
 pnpm run wasm:all       # both
@@ -364,7 +364,9 @@ updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
 with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
-the fonts, sounds and tank previews `index.html` downloads with it. Those files keep
+the fonts, sounds and tank previews `index.html` downloads with it. Its shader stages come
+as a hashed JSON file of their own, one per graphics backend, which `pnpm run wasm`
+generates (`crates/render/src/shader/tables.rs`). Those files keep
 their plain paths under `public/` for the tools and fixtures, and the build also emits
 each under a content-hashed name in `assets/`, with a manifest in the game page that
 the page and renderer resolve them through (`scripts/hashed-assets.ts`), so returning

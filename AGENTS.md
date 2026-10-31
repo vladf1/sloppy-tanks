@@ -126,7 +126,7 @@ whether Kache was on when reporting build times.
 
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
-pnpm run wasm                         # the page (the egui shell) into src/generated/shell/; rerun after Rust/WGSL edits
+pnpm run wasm                         # the page (the egui shell) and its shader tables into src/generated/; rerun after Rust/WGSL edits
 pnpm run wasm:fast                    # the same, built for compile time: for checking how a change looks
 pnpm run wasm:engine                  # the sloppy-web engine for the fixtures, game preview and WireView
 cargo test --workspace --exclude sloppy-desktop --test integration navigation::   # one area of the core tests (add --release for seeded matches)
@@ -309,7 +309,8 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `Frame`, `Pipelines`, `PageBuffers`, `MaterialBinding`, `InstanceStore`,
   `Uploader`) whose GPU objects free themselves on drop. Keep shared logic out of
   the backends and add no trait or wgpu-like layer between them. The WebGL backend
-  translates the same WGSL with naga (`shader::glsl`) and sets GL state only
+  draws the GLSL ES the build translated from the same WGSL with naga (`shader::glsl`,
+  `shader/tables.rs`) and sets GL state only
   through its cache (`gpu/webgl/context.rs`), except the shell's egui overlay, which
   draws with its own glow handle after the output pass, before `Gl::reclaim` resets the
   cache to its first record; uploads go through
@@ -329,8 +330,18 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both.
   Shaders are handwritten WGSL; custom model effects register
-  an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
+  an `EffectDefinition`. The specializer (`shader/assembly.rs`, the `specializer`
+  feature) assembles each variant from the templates; the desktop apps and the engine
+  build run it when a pipeline first asks, but the page's shell carries neither it nor
+  the WGSL nor naga: `pnpm run wasm` first runs the native `shader-tables` generator,
+  which writes every variant the page's registry can produce, stages split and WebGL's
+  translated, into `src/generated/shaders/`, and `index.html` fetches its backend's
+  file beside the binary (`shader/tables.rs`). A new effect, key flag or fixed shader
+  must be reachable there (`generate::variant_keys`, `fixed_stage_list`); the page
+  stops with an error on a key the tables lack or on tables from other sources or
+  another registry. The native `shader`/`registry` tests validate every
+  variant with naga and translate it to WebGL's GLSL ES 3.00 and pin the tables to the
+  specializer byte for byte, but a browser can
   still reject a pipeline: inspect console
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
