@@ -2,6 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { baseRedirect } from "./scripts/base-redirect.ts";
+import { hashedAssets } from "./scripts/hashed-assets.ts";
 import { pageHealth } from "./scripts/page-health.ts";
 
 const base = process.env.DEPLOY_BASE || "/sloppy-tanks/";
@@ -46,7 +47,7 @@ export default defineConfig({
   base,
   // Preview launchers assign a free port through PORT; Vite does not read it itself.
   server: { port: Number(process.env.PORT) || undefined },
-  plugins: [baseRedirect(base), pageHealth(), shellSizes()],
+  plugins: [baseRedirect(base), pageHealth(), shellSizes(), hashedAssets()],
   // The bake worker (src/bake-worker.ts) imports its build's glue on demand.
   worker: { format: "es" },
   build: {

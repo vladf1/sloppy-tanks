@@ -373,7 +373,8 @@ impl UiState {
 /// Draw every screen for this frame and return what the player chose.
 pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Action> {
     let mut actions = Vec::new();
-    let art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
+    let mut art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
+    art.refresh(context);
     if !view.in_round {
         setup::battle_setup(context, state, &art, view, &mut actions);
         state.rooms.remember_tab();

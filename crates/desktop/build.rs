@@ -1,15 +1,15 @@
 //! Embeds the game's runtime files from `public/` (textures, sounds, the menu's tank
-//! previews and the icon) as a sorted table `src/assets.rs` looks paths up in, on
-//! Windows gives the executable its icon, and on iOS a Mac-sized main-thread stack.
+//! previews and the icon) in the native apps as a sorted table `src/assets.rs` looks
+//! paths up in, on Windows gives the executable its icon, and on iOS a Mac-sized
+//! main-thread stack. A page embeds none: its files have content-hashed names that
+//! browsers keep across releases, where the Wasm downloads again with each one, and
+//! `index.html` fetches them beside the Wasm (`scripts/hashed-assets.ts`).
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 /// The `public/` folders the native game reads.
 const EMBEDDED: &[&str] = &["textures", "audio", "previews", "icons"];
-/// In a page the renderer fetches the textures from the site like the page's engine, and
-/// the interface brings its own fonts (a page cannot read the system's).
-const EMBEDDED_IN_PAGE: &[&str] = &["audio", "previews", "fonts"];
 
 fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -19,23 +19,19 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect(&path, files);
-        } else if path.extension().is_some_and(|extension| {
-            matches!(extension.to_str(), Some("webp" | "mp3" | "png" | "ttf"))
-        }) {
+        } else if path
+            .extension()
+            .is_some_and(|extension| matches!(extension.to_str(), Some("webp" | "mp3" | "png")))
+        {
             files.push(path);
         }
     }
 }
 
-fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
-    let public = manifest
-        .join("../../public")
-        .canonicalize()
-        .expect("public/ exists");
+/// Write the table of `EMBEDDED`'s files to `OUT_DIR/assets.rs`.
+fn embed(public: &Path, out: &Path) {
     let mut files = Vec::new();
-    let page = std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
-    for folder in if page { EMBEDDED_IN_PAGE } else { EMBEDDED } {
+    for folder in EMBEDDED {
         let directory = public.join(folder);
         println!("cargo:rerun-if-changed={}", directory.display());
         collect(&directory, &mut files);
@@ -43,7 +39,7 @@ fn main() {
     let mut entries: Vec<(String, PathBuf)> = files
         .into_iter()
         .map(|path| {
-            let relative = path.strip_prefix(&public).expect("under public/");
+            let relative = path.strip_prefix(public).expect("under public/");
             let key = relative
                 .components()
                 .map(|part| part.as_os_str().to_string_lossy())
@@ -63,8 +59,22 @@ fn main() {
         .expect("writing a String");
     }
     table.push_str("];\n");
-    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     std::fs::write(out.join("assets.rs"), table).expect("OUT_DIR is writable");
+}
+
+fn main() {
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
+    let public = manifest
+        .join("../../public")
+        .canonicalize()
+        .expect("public/ exists");
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
+    let page = std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    // Otherwise Cargo reruns this for any change in the package, a page's build too.
+    println!("cargo:rerun-if-changed=build.rs");
+    if !page {
+        embed(&public, &out);
+    }
 
     // iOS gives an app's main thread a 1 MB stack where macOS gives 8 MB, and the
     // engine's start-up (`Session::start` through `Game::create` to `Presentation::new`)

@@ -496,10 +496,11 @@ pub fn draw(
     let mut actions = Vec::new();
     menu.copied = (menu.copied - dt).max(0.0);
     menu.copy_answered();
-    let art = state
+    let mut art = state
         .art
         .take()
         .unwrap_or_else(|| super::icons::Art::new(context));
+    art.refresh(context);
     if menu.joining {
         joining(context, menu, &art, &mut actions);
     } else {

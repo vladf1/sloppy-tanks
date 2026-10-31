@@ -1,5 +1,5 @@
 //! Battle sounds: the sounds `sloppy-web` plans for each event batch
-//! ([`sloppy_web::sounds`]), played from the embedded MP3s.
+//! ([`sloppy_web::sounds`]), played from the game's MP3s (`assets.rs`).
 
 use std::io::Cursor;
 use std::time::Duration;
@@ -11,6 +11,8 @@ use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Panning
 
 use sloppy_web::events::EventBatch;
 use sloppy_web::sounds::{PlannedSound, Sound};
+
+use crate::assets::Asset;
 
 /// Room for every sound's whole pool at once, with the stopping voices a steal leaves fading.
 const SOUND_CAPACITY: usize = 256;
@@ -40,10 +42,19 @@ fn decibels(gain: f64) -> Decibels {
     }
 }
 
+/// A sound's decoded file.
+enum Clip {
+    Ready(Box<StaticSoundData>),
+    /// A page is still downloading the file: looked for again at each play.
+    Loading,
+    /// Missing, or it failed to decode.
+    Silent,
+}
+
 pub struct Audio {
     manager: AudioManager<DefaultBackend>,
-    /// Decoded once, in `Sound::ALL` order; `None` where a file failed to decode.
-    sounds: Vec<Option<StaticSoundData>>,
+    /// Decoded once, in `Sound::ALL` order.
+    sounds: Vec<Clip>,
     /// Each sound's voices still playing, oldest first.
     voices: Vec<Vec<StaticSoundHandle>>,
 }
@@ -81,7 +92,10 @@ impl Audio {
 
     fn start(&mut self, planned: PlannedSound) {
         let index = planned.sound as usize;
-        let Some(data) = &self.sounds[index] else {
+        if matches!(self.sounds[index], Clip::Loading) {
+            self.sounds[index] = decode(planned.sound);
+        }
+        let Clip::Ready(data) = &self.sounds[index] else {
             return;
         };
         let data = data
@@ -102,12 +116,16 @@ impl Audio {
     }
 }
 
-fn decode(sound: Sound) -> Option<StaticSoundData> {
+fn decode(sound: Sound) -> Clip {
     let path = format!("audio/{}.mp3", sound.name());
-    let bytes = crate::assets::file(&path)?;
+    let bytes = match crate::assets::load(&path) {
+        Asset::Ready(bytes) => bytes,
+        Asset::Loading => return Clip::Loading,
+        Asset::Missing => return Clip::Silent,
+    };
     StaticSoundData::from_cursor(Cursor::new(bytes))
         .map_err(|error| report!("Cannot decode {path}: {error}"))
-        .ok()
+        .map_or(Clip::Silent, |data| Clip::Ready(Box::new(data)))
 }
 
 #[cfg(test)]
@@ -117,7 +135,7 @@ mod tests {
     #[test]
     fn every_sound_is_embedded_and_decodes() {
         for sound in Sound::ALL {
-            assert!(decode(sound).is_some(), "{}", sound.name());
+            assert!(matches!(decode(sound), Clip::Ready(_)), "{}", sound.name());
             assert_eq!(Sound::ALL[sound as usize], sound);
         }
     }

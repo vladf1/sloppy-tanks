@@ -4,6 +4,8 @@
 //! page cannot read the system's fonts, so there the build embeds its own
 //! (`public/fonts/`): Anton (OFL) for Impact and Roboto (Apache 2.0) for the UI face.
 
+use std::borrow::Cow;
+
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontTweak, Stroke};
 use sloppy_core::sim::Team;
 use sloppy_render::system_fonts::{FontStyle, system_font};
@@ -57,14 +59,15 @@ const ANTON_SCALE: f32 = 0.975;
 const IMPACT_ASCENT: f32 = 2066.0 / 2048.0;
 const IMPACT_DESCENT: f32 = 432.0 / 2048.0;
 
-/// The embedded face for `family` in `style`, where the build carries one (a page's),
-/// with how to draw it in that family's place.
+/// The game's own face for `family` in `style`, where it has one (a page's, which
+/// `index.html` fetches before the shell starts), with how to draw it in that family's
+/// place.
 fn embedded_font(family: &str, style: FontStyle) -> Option<(Vec<u8>, FontTweak)> {
     let (file, tweak) = match (family, style.weight >= 600) {
         ("system-ui" | "sans-serif", false) => ("fonts/Roboto-Regular.ttf", FontTweak::default()),
         ("system-ui" | "sans-serif", true) => ("fonts/Roboto-Bold.ttf", FontTweak::default()),
         ("Impact", _) => {
-            let mut bytes = crate::assets::file("fonts/Anton-Regular.ttf")?.to_vec();
+            let mut bytes = font_file("fonts/Anton-Regular.ttf")?;
             set_line_box(
                 &mut bytes,
                 IMPACT_ASCENT / ANTON_SCALE,
@@ -78,7 +81,11 @@ fn embedded_font(family: &str, style: FontStyle) -> Option<(Vec<u8>, FontTweak)>
         }
         _ => return None,
     };
-    Some((crate::assets::file(file)?.to_vec(), tweak))
+    Some((font_file(file)?, tweak))
+}
+
+fn font_file(path: &str) -> Option<Vec<u8>> {
+    crate::assets::load(path).ready().map(Cow::into_owned)
 }
 
 /// Give the TrueType font in `bytes` a line box `ascent` em above the baseline and

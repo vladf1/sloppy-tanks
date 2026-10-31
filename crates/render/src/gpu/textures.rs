@@ -201,8 +201,16 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // src/main.ts) and leaves them in a map by URL; the store takes each over once, so
 // every browser downloads a file once. A URL the page did not start, or whose early
 // decode failed, is decoded here.
+//
+// A built game page names its runtime files by content hash, so browsers keep them for
+// good: its manifest (`globalThis.sloppyAssets`, from `scripts/hashed-assets.ts`) maps a
+// file's path under `public/` to its URL (the plain file on the dev server). Pages
+// without one, the tools and fixtures, fetch the path under their asset base.
 #[cfg(target_arch = "wasm32")]
-#[wasm_bindgen(inline_js = "export function textureImage(url) {
+#[wasm_bindgen(inline_js = "export function assetUrl(base, path) {
+  return globalThis.sloppyAssets?.[path] ?? base + path;
+}
+export function textureImage(url) {
   const images = globalThis.sloppyTextureImages;
   const early = images?.get(url);
   images?.delete(url);
@@ -214,6 +222,8 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
   return early ? early.catch(decode) : decode();
 }")]
 extern "C" {
+    #[wasm_bindgen(js_name = assetUrl)]
+    fn asset_url(base: &str, path: &str) -> String;
     #[wasm_bindgen(js_name = textureImage)]
     fn texture_image(url: &str) -> js_sys::Promise;
 }
@@ -279,7 +289,7 @@ impl TextureStore {
         match &key.source {
             #[cfg(target_arch = "wasm32")]
             TextureSource::File(path) => {
-                let url = format!("{}{}", self.asset_base, path);
+                let url = asset_url(&self.asset_base, path);
                 let loaded = self.loaded.clone();
                 wasm_bindgen_futures::spawn_local(async move {
                     let result = fetch_bitmap(&url, key.flip_y)

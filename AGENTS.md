@@ -454,6 +454,12 @@ offline.
   under `assets/texture-sources/`. Regenerate checked-in WebP/audio assets
   only for an intentional artwork or sound change, and use the documented
   encoders rather than hand-editing generated binaries.
+- The game page fetches its runtime files under content-hashed names that browsers
+  keep for good (`scripts/hashed-assets.ts`): the renderer's textures through the
+  page's manifest, and the fonts, sounds and previews that `index.html` downloads
+  beside the Wasm for the shell (`crates/desktop/src/assets.rs`), which the native
+  apps embed instead. Do not embed files in the page's Wasm, which downloads again
+  with every release, nor fetch a runtime file by its plain path from the game page.
 - Production is GitHub Pages at the custom domain `sloppy-tanks.fridman.me`; its
   workflow builds with `DEPLOY_BASE=/`, and `fridman.me/sloppy-tanks/` redirects
   there. Local builds and the dev server keep the default `/sloppy-tanks/` base.

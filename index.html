@@ -296,8 +296,9 @@
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
          the chosen build's glue and binary download; the binary streams into its
-         instance while the loading view counts its bytes. The shell then fetches the
-         textures from the site beside this page and tells the page how it goes
+         instance while the loading view counts its bytes, and the files the shell takes
+         from the page download beside it. The shell then fetches the textures from the
+         site beside this page and tells the page how it goes
          (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
          `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
     <script type="module">
@@ -436,6 +437,38 @@
         }
       }
 
+      // The runtime files under content-hashed names that browsers keep across releases
+      // (scripts/hashed-assets.ts): the renderer resolves texture paths through
+      // `sloppyAssets`. The fonts, sounds and Battle Setup's previews download beside the
+      // binary, which downloads again with every release, into `sloppyFiles` for the
+      // shell (crates/desktop/src/assets.rs): each its download, then its bytes, or null
+      // once it failed. The fonts must be there before the shell starts; the previews
+      // and sounds may come late, so they leave the bandwidth to the binary.
+      const assets = (globalThis.sloppyAssets = JSON.parse(
+        document.getElementById("sloppy-assets")?.textContent || "{}",
+      ));
+      const files = (globalThis.sloppyFiles = {});
+      const fetchFile = async (path, priority) => {
+        try {
+          const response = await fetch(assets[path], { priority });
+          if (!response.ok) throw new Error(`HTTP ${response.status} for ${assets[path]}`);
+          files[path] = new Uint8Array(await response.arrayBuffer());
+        } catch (error) {
+          files[path] = null;
+          throw error;
+        }
+      };
+      const fonts = [];
+      for (const path of Object.keys(assets)) {
+        if (path.startsWith("fonts/")) {
+          fonts.push((files[path] = fetchFile(path, "high")));
+        } else if (/^(audio|previews)\//.test(path)) {
+          files[path] = fetchFile(path, "low").catch((error) =>
+            console.warn(`${path} did not download: ${message(error)}`),
+          );
+        }
+      }
+
       // The shell bakes generated textures in workers that run its module (bakes.rs).
       window.sloppyBakeWorker = () =>
         new Worker(new URL("/src/bake-worker.ts", import.meta.url), { type: "module" });
@@ -466,6 +499,9 @@
             }),
             binary.catch((error) => {
               throw new Error(`The game did not download: ${message(error)}`);
+            }),
+            Promise.all(fonts).catch((error) => {
+              throw new Error(`The game's fonts did not download: ${message(error)}`);
             }),
           ]);
         } catch (error) {

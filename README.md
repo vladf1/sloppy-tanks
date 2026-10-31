@@ -353,9 +353,13 @@ still need that update to take effect; client-only files (`crates/render`,
 updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
-with the engine, menus and sounds), emitted as a hashed asset, and the textures it fetches
-from `textures/` beside the page. Hosts should serve it as `application/wasm` with gzip or
-Brotli compression.
+with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
+the fonts, sounds and tank previews `index.html` downloads with it. Those files keep
+their plain paths under `public/` for the tools and fixtures, and the build also emits
+each under a content-hashed name in `assets/`, with a manifest in the game page that
+the page and renderer resolve them through (`scripts/hashed-assets.ts`), so returning
+visitors download none of them again until it changes. Hosts should serve the Wasm as
+`application/wasm` with gzip or Brotli compression.
 
 ### Local dev deployment
 
@@ -383,7 +387,8 @@ stay separate. The hostname is the Worker's custom domain: Wrangler keeps its DN
 record in fridman.me's Cloudflare zone, and all other records stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
-`/assets/`, `noindex` everywhere). Only the Wasm binaries run its script,
+`/assets/`, where every file has a content-hashed name, so a returning visit requests
+only the page itself; `noindex` everywhere). Only the Wasm binaries run its script,
 `deploy/dev-site/worker.mjs`. Cloudflare compresses static assets as it serves them,
 which gives a multi-megabyte binary a later first byte and a larger file than Brotli at
 quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies beside each `.wasm`

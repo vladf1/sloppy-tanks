@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use sloppy_core::sim::{Team, VehicleKind};
 
+use crate::assets::Asset;
+
 /// How a layer of an icon is painted.
 #[derive(Clone, Copy)]
 enum Paint {
@@ -489,17 +491,35 @@ const PREVIEW_SIZE: [f32; 2] = [560.0, 300.0];
 /// The textures the screens draw: icons by name and the tank sheet.
 pub struct Art {
     icons: HashMap<&'static str, TextureHandle>,
-    tanks: Option<TextureHandle>,
+    tanks: Preview,
 }
 
-/// A preview image embedded under `public/` as an egui texture.
-fn preview(context: &egui::Context, path: &str, name: &str) -> Option<TextureHandle> {
-    let image = image::load_from_memory(crate::assets::file(path)?).ok()?;
+/// A preview image of `public/`, which a page may still be downloading: the screens
+/// draw without it meanwhile (and for good if it never comes).
+enum Preview {
+    Shown(TextureHandle),
+    Loading,
+    Missing,
+}
+
+/// The preview image at `path` as an egui texture.
+fn preview(context: &egui::Context, path: &str, name: &str) -> Preview {
+    let bytes = match crate::assets::load(path) {
+        Asset::Ready(bytes) => bytes,
+        Asset::Loading => return Preview::Loading,
+        Asset::Missing => return Preview::Missing,
+    };
+    let Ok(image) = image::load_from_memory(&bytes) else {
+        return Preview::Missing;
+    };
     let image = image.into_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     let pixels = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    Some(context.load_texture(name, pixels, TextureOptions::LINEAR))
+    Preview::Shown(context.load_texture(name, pixels, TextureOptions::LINEAR))
 }
+
+const TANK_SHEET: &str = "previews/tanks.webp";
+const TANK_SHEET_NAME: &str = "tank previews";
 
 impl Art {
     pub fn new(context: &egui::Context) -> Self {
@@ -517,7 +537,14 @@ impl Art {
             .collect();
         Self {
             icons,
-            tanks: preview(context, "previews/tanks.webp", "tank previews"),
+            tanks: preview(context, TANK_SHEET, TANK_SHEET_NAME),
+        }
+    }
+
+    /// Take up a preview that has arrived since the last frame.
+    pub fn refresh(&mut self, context: &egui::Context) {
+        if matches!(self.tanks, Preview::Loading) {
+            self.tanks = preview(context, TANK_SHEET, TANK_SHEET_NAME);
         }
     }
 
@@ -587,7 +614,9 @@ impl Art {
         scale: f32,
         mirrored: bool,
     ) {
-        let Some(texture) = &self.tanks else { return };
+        let Preview::Shown(texture) = &self.tanks else {
+            return;
+        };
         // The sheet has the player's tanks; a Humvee shows as the middle one.
         let (column, origin) = match kind {
             VehicleKind::Scout => (0.0, [64.0, 38.0]),
