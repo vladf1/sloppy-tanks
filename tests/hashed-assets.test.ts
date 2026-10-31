@@ -5,9 +5,7 @@ import { hashedName, runtimeFiles } from "../scripts/hashed-assets";
 test("the page's runtime files are the shell's and the renderer's, not the licences", () => {
   const files = runtimeFiles();
   for (const path of [
-    "fonts/Anton-Wide.ttf",
-    "fonts/Roboto-Regular.ttf",
-    "fonts/Roboto-Bold.ttf",
+    "fonts/interface.ttc",
     "previews/tanks.webp",
     "audio/shot.mp3",
     "textures/houses/brick.webp",

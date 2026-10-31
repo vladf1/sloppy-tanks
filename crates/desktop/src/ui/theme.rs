@@ -2,11 +2,12 @@
 //! a steel hairline, gold for what is selected, blue and red for the teams, Impact for
 //! display type and the platform's UI face for the rest, like the page's system-ui. A
 //! page cannot read the system's fonts, so there the build embeds its own
-//! (`public/fonts/`): Anton (OFL), widened to Impact's width by `scripts/widen-anton.py`,
-//! for Impact and Roboto (Apache 2.0) for the UI face.
+//! (`public/fonts/interface.ttc`, made by `scripts/build-fonts.py`): Anton (OFL), widened
+//! to Impact's width, for Impact and Roboto (Apache 2.0) for the UI face.
 
-use std::borrow::Cow;
+use std::sync::Arc;
 
+use egui::epaint::text::Blob;
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontTweak, Stroke};
 use sloppy_core::sim::Team;
 use sloppy_render::system_fonts::{FontStyle, system_font};
@@ -60,49 +61,66 @@ const ANTON_SCALE: f32 = 0.975;
 const IMPACT_ASCENT: f32 = 2066.0 / 2048.0;
 const IMPACT_DESCENT: f32 = 432.0 / 2048.0;
 
-/// The game's own face for `family` in `style`, where it has one (a page's, which
-/// `index.html` fetches before the shell starts), with how to draw it in that family's
-/// place.
-fn embedded_font(family: &str, style: FontStyle) -> Option<(Vec<u8>, FontTweak)> {
-    let (file, tweak) = match (family, style.weight >= 600) {
-        ("system-ui" | "sans-serif", false) => ("fonts/Roboto-Regular.ttf", FontTweak::default()),
-        ("system-ui" | "sans-serif", true) => ("fonts/Roboto-Bold.ttf", FontTweak::default()),
-        ("Impact", _) => {
-            let mut bytes = font_file("fonts/Anton-Wide.ttf")?;
-            set_line_box(
-                &mut bytes,
-                IMPACT_ASCENT / ANTON_SCALE,
-                IMPACT_DESCENT / ANTON_SCALE,
-            )?;
-            let tweak = FontTweak {
-                scale: ANTON_SCALE,
-                ..FontTweak::default()
-            };
-            return Some((bytes, tweak));
-        }
-        _ => return None,
-    };
-    Some((font_file(file)?, tweak))
+/// The page's faces, in one collection file (`scripts/build-fonts.py`) at these indices.
+const FONT_COLLECTION: &str = "fonts/interface.ttc";
+const ANTON_FACE: u32 = 0;
+const ROBOTO_FACE: u32 = 1;
+const ROBOTO_BOLD_FACE: u32 = 2;
+
+/// The game's own collection (a page's, which `index.html` fetches before the shell
+/// starts), with Anton given Impact's line box. Its faces share these bytes.
+fn embedded_collection() -> Option<Blob> {
+    font_collection(crate::assets::load(FONT_COLLECTION).ready()?.into_owned())
 }
 
-fn font_file(path: &str) -> Option<Vec<u8>> {
-    crate::assets::load(path).ready().map(Cow::into_owned)
+/// The collection file in `bytes` with Anton given Impact's line box.
+fn font_collection(mut bytes: Vec<u8>) -> Option<Blob> {
+    set_line_box(
+        &mut bytes,
+        ANTON_FACE,
+        IMPACT_ASCENT / ANTON_SCALE,
+        IMPACT_DESCENT / ANTON_SCALE,
+    )?;
+    Some(Arc::new(bytes))
 }
 
-/// Give the TrueType font in `bytes` a line box `ascent` em above the baseline and
-/// `descent` em below it with no gap, in every table a reader may take it from (`hhea`,
-/// and `OS/2`'s typographic and Windows metrics). `None` when a table is missing.
-fn set_line_box(bytes: &mut [u8], ascent: f32, descent: f32) -> Option<()> {
+/// The collection's face for `family` in `style`, where it has one, with how to draw it
+/// in that family's place.
+fn embedded_font(collection: &Blob, family: &str, style: FontStyle) -> Option<FontData> {
+    let face = |index| FontData::from_blob(Arc::clone(collection), index);
+    match (family, style.weight >= 600) {
+        ("system-ui" | "sans-serif", false) => Some(face(ROBOTO_FACE)),
+        ("system-ui" | "sans-serif", true) => Some(face(ROBOTO_BOLD_FACE)),
+        ("Impact", _) => Some(face(ANTON_FACE).tweak(FontTweak {
+            scale: ANTON_SCALE,
+            ..FontTweak::default()
+        })),
+        _ => None,
+    }
+}
+
+/// Give face `face` of the TrueType collection in `bytes` a line box `ascent` em above
+/// the baseline and `descent` em below it with no gap, in every table a reader may take
+/// it from (`hhea`, and `OS/2`'s typographic and Windows metrics). `None` when a table
+/// is missing. The tables are the face's own: no other face of the collection shares
+/// Anton's metrics.
+fn set_line_box(bytes: &mut [u8], face: u32, ascent: f32, descent: f32) -> Option<()> {
     let read =
         |bytes: &[u8], at: usize| Some(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]));
+    let read_u32 = |bytes: &[u8], at: usize| {
+        Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?) as usize)
+    };
+    // The collection header lists each face's table directory, whose offsets count from
+    // the start of the file.
+    if bytes.get(..4)? != b"ttcf" {
+        return None;
+    }
+    let directory = read_u32(bytes, 12 + 4 * face as usize)?;
     let table = |bytes: &[u8], tag: &[u8; 4]| {
-        let count = usize::from(read(bytes, 4)?);
+        let count = usize::from(read(bytes, directory + 4)?);
         (0..count).find_map(|index| {
-            let entry = 12 + 16 * index;
-            (bytes.get(entry..entry + 4)? == tag).then(|| {
-                let offset = bytes.get(entry + 8..entry + 12)?;
-                Some(u32::from_be_bytes(offset.try_into().ok()?) as usize)
-            })?
+            let entry = directory + 12 + 16 * index;
+            (bytes.get(entry..entry + 4)? == tag).then(|| read_u32(bytes, entry + 8))?
         })
     };
     let units = f32::from(read(bytes, table(bytes, b"head")? + 18)?);
@@ -130,12 +148,12 @@ fn set_line_box(bytes: &mut [u8], ascent: f32, descent: f32) -> Option<()> {
 /// Fonts and visuals for the whole interface.
 pub fn install(context: &egui::Context) {
     let mut fonts = FontDefinitions::default();
+    let collection = embedded_collection();
     let mut add = |name: &str, family: &str, style: FontStyle| {
-        if let Some((bytes, tweak)) = system_font(family, style)
-            .map(|(bytes, _)| (bytes, FontTweak::default()))
-            .or_else(|| embedded_font(family, style))
+        if let Some(mut data) = system_font(family, style)
+            .map(|(bytes, _)| FontData::from_owned(bytes))
+            .or_else(|| embedded_font(collection.as_ref()?, family, style))
         {
-            let mut data = FontData::from_owned(bytes).tweak(tweak);
             for axis in data.variation_axes() {
                 if axis.tag == egui::epaint::text::Tag::new(b"wght") {
                     data.tweak.coords.push(axis.tag, f32::from(style.weight));
@@ -235,23 +253,18 @@ mod tests {
     #[test]
     fn the_embedded_anton_takes_impacts_line_box() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../public/fonts/Anton-Wide.ttf");
-        let mut bytes = std::fs::read(path).expect("public/fonts holds Anton Wide");
-        set_line_box(
-            &mut bytes,
-            IMPACT_ASCENT / ANTON_SCALE,
-            IMPACT_DESCENT / ANTON_SCALE,
-        )
-        .expect("Anton has head, hhea and OS/2 tables");
-        let mut fonts = FontDefinitions::default();
-        let tweak = FontTweak {
-            scale: ANTON_SCALE,
-            ..FontTweak::default()
+            .join("../../public")
+            .join(FONT_COLLECTION);
+        let bytes = std::fs::read(path).expect("public/fonts holds the collection");
+        let collection = font_collection(bytes).expect("the collection has Anton's tables");
+        let style = FontStyle {
+            weight: 400,
+            italic: false,
         };
-        fonts.font_data.insert(
-            "anton".into(),
-            FontData::from_owned(bytes).tweak(tweak).into(),
-        );
+        let anton = embedded_font(&collection, "Impact", style)
+            .expect("the collection has a display face");
+        let mut fonts = FontDefinitions::default();
+        fonts.font_data.insert("anton".into(), anton.into());
         fonts.families.insert(display(), vec!["anton".into()]);
         let context = egui::Context::default();
         context.set_fonts(fonts);

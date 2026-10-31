@@ -10,7 +10,7 @@
   "assets": {
     "directory": "../../dist-dev",
     "binding": "ASSETS",
-    "run_worker_first": ["/assets/*.wasm", "/assets/fonts/*.ttf"],
+    "run_worker_first": ["/assets/*.wasm", "/assets/fonts/*.ttc"],
     "html_handling": "auto-trailing-slash",
     "not_found_handling": "single-page-application",
   },

@@ -62,13 +62,16 @@ so web deployments do not carry them.
 
 ## Display font
 
-The page draws its headings in `public/fonts/Anton-Wide.ttf`, which
-`scripts/widen-anton.py` (fontTools) makes from Anton (`assets/fonts/Anton-Regular.ttf`,
-SIL Open Font License 1.1, its license beside both). The page set its headings in Impact,
+The page draws its headings in Anton Wide, which `scripts/build-fonts.py` (fontTools)
+makes from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License 1.1, its
+license beside both) and packs with Roboto Regular and Bold (`assets/fonts/`, Apache
+2.0) into `public/fonts/interface.ttc`, one download that Brotli makes 12% smaller than
+the three files apart. The page set its headings in Impact,
 which may not be redistributed; Anton is narrower, so the script stretches its outlines,
 advances and kerning by 11% (Impact's letters over Anton's across the interface's
 uppercase strings), gives the space Impact's width and drops the hinting. The native apps
-draw the system's Impact. Rerun `python3 scripts/widen-anton.py` after changing the fit.
+draw the system's Impact. Rerun
+`uv run --with fonttools python scripts/build-fonts.py` after changing the fit.
 
 ## Battle Setup logo
 

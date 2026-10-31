@@ -1,4 +1,8 @@
-"""Anton widened to Impact's width, for the page's display type (`public/fonts/Anton-Wide.ttf`).
+"""The page's fonts in one collection (`public/fonts/interface.ttc`): Anton widened to
+Impact's width for the display type, then Roboto Regular and Bold for the UI face, the
+order `crates/desktop/src/ui/theme.rs` takes them in. One file is one download, and
+Brotli finds what the Roboto weights share once they are in one stream (12% smaller
+than the three files apart).
 
 The page drew its headings in Impact, which may not be redistributed; the egui page draws
 Anton (SIL OFL 1.1) in its place. Anton is a condensed face: drawn at the shell's
@@ -8,17 +12,18 @@ space is a third wider. This stretches every outline, advance and kerning value 
 by `WIDTH` and gives the space Impact's advance, so headings take production's width.
 Hinting is dropped: its programs were written for the unstretched outlines.
 
-Run with fontTools (`pip install fonttools`):
-    python3 scripts/widen-anton.py
+Run with fontTools:
+    uv run --with fonttools python scripts/build-fonts.py
 """
 
 from pathlib import Path
 
 from fontTools.ttLib import TTFont
+from fontTools.ttLib.ttCollection import TTCollection
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE = ROOT / "assets/fonts/Anton-Regular.ttf"
-TARGET = ROOT / "public/fonts/Anton-Wide.ttf"
+SOURCES = ROOT / "assets/fonts"
+TARGET = ROOT / "public/fonts/interface.ttc"
 
 # Impact's letters over Anton's at the shell's scale (above), rounded.
 WIDTH = 1.11
@@ -85,8 +90,8 @@ def rename(font: TTFont) -> None:
             record.string = f"{FAMILY.replace(' ', '')}-Regular;{WIDTH}"
 
 
-def main() -> None:
-    font = TTFont(SOURCE)
+def anton_wide() -> TTFont:
+    font = TTFont(SOURCES / "Anton-Regular.ttf", recalcTimestamp=False)
     widen_outlines(font)
     if "GPOS" in font:
         widen_positioning(font["GPOS"].table)
@@ -95,7 +100,18 @@ def main() -> None:
     if "DSIG" in font:
         del font["DSIG"]
     rename(font)
-    font.save(TARGET)
+    return font
+
+
+def main() -> None:
+    collection = TTCollection()
+    collection.fonts = [
+        anton_wide(),
+        TTFont(SOURCES / "Roboto-Regular.ttf", recalcTimestamp=False),
+        TTFont(SOURCES / "Roboto-Bold.ttf", recalcTimestamp=False),
+    ]
+    # The sources' own timestamps, so a rerun writes the same bytes.
+    collection.save(TARGET, shareTables=True)
     print(f"{TARGET.relative_to(ROOT)}: {TARGET.stat().st_size} bytes")
 
 

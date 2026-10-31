@@ -402,6 +402,6 @@ only the page itself; `noindex` everywhere). Only the Wasm binaries and the shel
 fonts run its script, `deploy/dev-site/worker.mjs`. Cloudflare compresses static assets
 as it serves them, which gives a multi-megabyte binary a later first byte and a larger
 file than Brotli at quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies
-beside each `.wasm` and `.ttf` (`deploy/dev-site/precompress.mjs`, a few seconds), and
+beside each `.wasm` and the font collection (`deploy/dev-site/precompress.mjs`, a few seconds), and
 the script sends the one the client accepts, marked `no-transform`. Range requests, and
 clients that accept neither, get the original file.

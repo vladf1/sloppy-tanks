@@ -10,7 +10,7 @@ const gzipAsync = promisify(gzip);
 const assetDirectory = new URL("../../dist-dev/assets/", import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
 const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
-  .filter((name) => name.endsWith(".ttf"))
+  .filter((name) => name.endsWith(".ttc"))
   .map((name) => `fonts/${name}`);
 
 if (wasmFiles.length === 0 || fontFiles.length === 0) {

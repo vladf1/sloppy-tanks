@@ -54,10 +54,10 @@ test("Wasm variants preserve bytes, metadata and conditional responses", async (
   }
 });
 
-test("fonts are precompressed too, served as fonts", async () => {
+test("the font collection is precompressed too, served as fonts", async () => {
   let path = "";
   const response = await worker.fetch(
-    new Request("https://example.test/assets/fonts/Anton-Wide.ttf", {
+    new Request("https://example.test/assets/fonts/interface.ttc", {
       headers: { "Accept-Encoding": "br, gzip" },
     }),
     {
@@ -71,9 +71,9 @@ test("fonts are precompressed too, served as fonts", async () => {
       },
     },
   );
-  assert.equal(path, "/assets/fonts/Anton-Wide.ttf.br");
+  assert.equal(path, "/assets/fonts/interface.ttc.br");
   assert.equal(response.headers.get("Content-Encoding"), "br");
-  assert.equal(response.headers.get("Content-Type"), "font/ttf");
+  assert.equal(response.headers.get("Content-Type"), "font/collection");
 });
 
 test("range requests and missing compressed variants fall back without mislabeling HTML", async () => {
