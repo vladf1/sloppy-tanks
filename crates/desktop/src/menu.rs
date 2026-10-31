@@ -68,8 +68,6 @@ impl Menu {
             rooms: std::mem::take(&mut shell.rooms),
             ..UiState::default()
         };
-        // A page waits for no event: the first frame wakes it.
-        shell.window.request_redraw();
         Ok(Self {
             shell,
             canvas,

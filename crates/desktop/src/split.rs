@@ -104,7 +104,15 @@ impl ApplicationHandler for Page {
             return;
         };
         self.stage = match new_shell(event_loop, options) {
-            Ok(shell) => Stage::Opening(Task::on_main_thread(Menu::open(shell))),
+            Ok(shell) => {
+                let window = shell.window.clone();
+                Stage::Opening(Task::on_main_thread(async move {
+                    let menu = Menu::open(shell).await;
+                    // A page waits for no event: this one takes the answer, either way.
+                    window.request_redraw();
+                    menu
+                }))
+            }
             Err(error) => {
                 startup_failed(&error);
                 Stage::Failed
