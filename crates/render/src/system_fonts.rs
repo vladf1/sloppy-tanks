@@ -28,7 +28,15 @@ const FONT_DIRECTORIES: &[&str] = &[
     "/System/Library/Fonts/CoreUI",
     "/System/Library/Fonts/WebFonts",
 ];
-#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "ios")))]
+/// A page has no font files to read.
+#[cfg(target_arch = "wasm32")]
+const FONT_DIRECTORIES: &[&str] = &[];
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "ios",
+    target_arch = "wasm32"
+)))]
 const FONT_DIRECTORIES: &[&str] = &["/usr/share/fonts/truetype/msttcorefonts"];
 
 /// Candidate file names (macOS's first, then Windows', then iOS's) for `family` in

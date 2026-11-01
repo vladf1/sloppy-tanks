@@ -1,7 +1,7 @@
 //! Port of `concrete-surfaces.ts`: the weathered concrete shared by every
 //! perimeter wall, footing and plinth, with UVs repeating every four metres.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::geometry::{Mesh, rounded_box_geometry};
 use crate::scene::{Material, Node, Side, TextureRef};
@@ -13,14 +13,15 @@ const CONCRETE_TILE: f64 = 4.0;
 const CONCRETE_RADIUS: f64 = 0.06;
 pub const CONCRETE_TEXTURE: &str = "textures/walls/weathered-concrete.webp";
 
-static GEOMETRIES: Cache<[u64; 3], Mesh> = Cache::new();
+static GEOMETRIES: Cache<[u64; 3], Mesh> = Cache::new("concrete_surfaces::GEOMETRIES");
 
 /// The shared concrete material: the photo is both albedo and bump. Walls cast
 /// shadows from their sun-facing side (`shadowSide = FrontSide`): the default
 /// back-face depth let the bias light a sliver of ground along each wall's
 /// shaded foot.
 pub fn concrete_material() -> Arc<Material> {
-    static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("concrete_surfaces::MATERIAL");
     MATERIAL
         .get_or_init(|| {
             let texture = TextureRef {
@@ -55,7 +56,7 @@ pub fn concrete_wall(w: f64, h: f64, d: f64) -> Node {
     shadowed(mesh, concrete_material())
 }
 
-static BARRIERS: Cache<[u64; 3], Mesh> = Cache::new();
+static BARRIERS: Cache<[u64; 3], Mesh> = Cache::new("concrete_surfaces::BARRIERS");
 
 /// The precast barrier's cross-section as (fraction of its half thickness,
 /// fraction of its height): a plinth at full thickness, the safety-shape slope

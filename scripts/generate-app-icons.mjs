@@ -2,6 +2,7 @@
 // (public/favicon.svg, `bun run generate:favicon`) on the menu's navy, rendered by Chrome.
 // Home screens mask the square themselves and fill transparency with black, so each icon
 // is an opaque full square.
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
@@ -41,4 +42,11 @@ try {
 } finally {
   await browser.close();
 }
+// Chrome's screenshots are stored loosely; oxipng recompresses them losslessly (the
+// 512 icon from about 103 KB to 60), pixel for pixel the same.
+execFileSync(
+  "oxipng",
+  ["-o", "max", "--zopfli", "--strip", "safe", ...ICONS.map(({ file }) => `public/icons/${file}`)],
+  { cwd: new URL("..", import.meta.url).pathname, stdio: "inherit" },
+);
 await generateDesktopIcon();

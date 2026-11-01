@@ -6,6 +6,6 @@ write_files:
   - path: /etc/sloppy-tanks/server.env
     content: |
       SERVER_ENVIRONMENT=dev
-      DIRECTORY_URL=https://sloppy-tanks-directory.fridman.me
+      DIRECTORY_URL=https://directory.sloppytanks.com
 runcmd:
   - curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash

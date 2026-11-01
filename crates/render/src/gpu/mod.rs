@@ -404,9 +404,9 @@ struct FrameUniform {
     cloud_tiles: [f32; 4],
 }
 
-/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
-/// upscale from the scene's size to the canvas's. The backend fills in the row
-/// mapping (`settings.y`, `settings.z`).
+/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade, the
+/// upscale from the scene's size to the canvas's and the dialog backdrop's blur. The
+/// backend fills in the row mapping (`settings.y`, `settings.z`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct OutputUniform {
@@ -421,6 +421,45 @@ struct OutputUniform {
     highlights: [f32; 4],
     detail: [f32; 4],
     curve: [f32; 4],
+    backdrop: [f32; 4],
+    backdrop_offsets: [f32; 4],
+    backdrop_weights: [f32; 4],
+}
+
+/// The page's dialog backdrop, `backdrop-filter: blur(2px) saturate(0.9)`: the arena
+/// behind pause, the results, Settings and a room's menu blurs by a Gaussian of this
+/// standard deviation in CSS pixels, then keeps this share of its saturation (CSS
+/// `saturate()`).
+pub const BACKDROP_BLUR_CSS_PX: f32 = 2.0;
+const BACKDROP_SATURATION: f32 = 0.9;
+/// The widest backdrop blur, in canvas pixels, whose taps read every texel pair.
+const BACKDROP_EXACT_SIGMA: f32 = 3.0;
+
+/// The backdrop blur's weights for one of its separable passes (`backdrop_blur` in
+/// `output.wgsl`): the centre texel's, and for each of the bilinear taps either side
+/// the distance in texels and weight of the texel pair it reads, so two texels cost
+/// one tap. Four pairs reach eight texels, over 2.8 standard deviations of a blur up
+/// to [`BACKDROP_EXACT_SIGMA`]; a wider one (a 2x canvas: 4 pixels) spreads the same
+/// taps over a coarser grid, which a blur hides. The weights sum to one.
+fn backdrop_kernel(sigma: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    let stride = (sigma / BACKDROP_EXACT_SIGMA).max(1.0);
+    let sigma = sigma / stride;
+    let gaussian = |x: f32| (-0.5 * (x / sigma).powi(2)).exp();
+    let mut offsets = [0.0; 4];
+    let mut weights = [0.0; 4];
+    for (pair, (offset, weight)) in offsets.iter_mut().zip(&mut weights).enumerate() {
+        let near = (2 * pair + 1) as f32;
+        let (a, b) = (gaussian(near), gaussian(near + 1.0));
+        *weight = a + b;
+        *offset = stride * (near * a + (near + 1.0) * b) / (a + b);
+    }
+    let total = 1.0 + 2.0 * weights.iter().sum::<f32>();
+    let centre = 1.0 / total;
+    (
+        [centre, BACKDROP_SATURATION, 0.0, 0.0],
+        offsets,
+        weights.map(|weight| weight / total),
+    )
 }
 
 /// The cast shadow's blocker search (`standard.wgsl` `search_casters`): the steepest
@@ -582,9 +621,9 @@ struct ClassEntry {
     /// Whether its shadow and occlusion-depth draws need its own material bound
     /// ([`ShaderKey::reads_own_material`]); most depth-only casters do not. WebGL
     /// reads it from the linked program instead.
-    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    #[cfg_attr(feature = "webgl", allow(dead_code))]
     shadow_material: bool,
-    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    #[cfg_attr(feature = "webgl", allow(dead_code))]
     depth_material: bool,
     /// Parts using this class that cast shadows.
     casters: u32,
@@ -658,6 +697,8 @@ struct FixedPipelines<P> {
     /// Screen-space ambient occlusion, and its blur for the output pass.
     occlusion: P,
     occlusion_blur: P,
+    /// The dialog backdrop's blur passes, into the canvas's format.
+    backdrop: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -665,7 +706,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        7 + self.shadow_merged.len()
+        8 + self.shadow_merged.len()
     }
 }
 
@@ -679,6 +720,10 @@ enum BloomPass {
     /// The occlusion's blur for the output pass (`FixedPipelines::occlusion_blur`),
     /// which shares the stage.
     OcclusionBlur = 3,
+    /// The dialog backdrop's blur along the rows of the output pass's picture, then
+    /// down its columns and desaturated into the canvas (`FixedPipelines::backdrop`).
+    BackdropRows = 4,
+    BackdropColumns = 5,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -959,6 +1004,8 @@ pub struct Renderer {
     features: TierFeatures,
     /// Scene pixels per canvas pixel along each axis; the output pass upsamples.
     render_scale: f32,
+    /// The scene's size at full render scale against the canvas's (`set_scene_cap`).
+    scene_cap: f32,
     /// The sun shadow map edge the arena asked for, before the tier's cap.
     requested_shadow_size: u32,
     /// A development multiplier on the scene's size, to make the GPU the bottleneck
@@ -967,6 +1014,9 @@ pub struct Renderer {
     /// The quality controller asked for a canvas pacing reset that the next frame
     /// free of queued ones performs.
     pacing_reset_due: bool,
+    /// The dialog backdrop's blur in canvas pixels of standard deviation; 0 while no
+    /// dialog blurs the arena.
+    backdrop_blur: f32,
     /// Development switches a measurement flips within one page (`debug_set_off`).
     pub debug_off: DebugOff,
 }
@@ -984,6 +1034,8 @@ pub struct DebugOff {
     pub atmosphere: bool,
     /// The ground's macro relief, tone and bounce (`ground_macro`).
     pub ground: bool,
+    /// The dialog backdrop's blur: the arena shows sharp behind a dialog.
+    pub backdrop: bool,
     /// Custom effects whose draws the main view skips; "lit" and "unlit" name
     /// the plain standard and basic materials, "shadowed" every receiver.
     pub effects: Vec<String>,
@@ -1078,9 +1130,11 @@ impl Renderer {
             tier: Tier::High,
             features: Tier::High.features(),
             render_scale: 1.0,
+            scene_cap: 1.0,
             requested_shadow_size: sun_shadow.map_size,
             scene_load: 1.0,
             pacing_reset_due: false,
+            backdrop_blur: 0.0,
             debug_off: DebugOff::default(),
             frame,
             gpu,
@@ -1106,9 +1160,16 @@ impl Renderer {
         self.frame.scene_size()
     }
 
+    /// Draw the scene at most `cap` scene pixels per canvas pixel at full render scale
+    /// (the scene's pixel ratio over the canvas's): the menus over it need a sharper
+    /// canvas than the scene is worth. Takes effect at the next resize.
+    pub fn set_scene_cap(&mut self, cap: f32) {
+        self.scene_cap = cap.clamp(0.05, 1.0);
+    }
+
     /// The scene's size for a canvas of `canvas` pixels at the render scale.
     fn scene_size_for(&self, canvas: (u32, u32)) -> (u32, u32) {
-        let scale = f64::from(self.render_scale * self.scene_load);
+        let scale = f64::from(self.scene_cap * self.render_scale * self.scene_load);
         let side = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
         (side(canvas.0), side(canvas.1))
     }
@@ -1131,6 +1192,19 @@ impl Renderer {
     /// The tier and render scale in effect.
     pub fn quality(&self) -> (Tier, f32) {
         (self.tier, self.render_scale)
+    }
+
+    /// Blur the arena behind a dialog by a Gaussian of `sigma` canvas pixels
+    /// ([`BACKDROP_BLUR_CSS_PX`] times the canvas's pixel ratio) and desaturate it, as
+    /// the page's dialog backdrop did; 0 shows it sharp, and costs nothing. It takes
+    /// effect at the next canvas frame, with or without a new scene: a dialog's first
+    /// frame shows it blurred.
+    pub fn set_backdrop_blur(&mut self, sigma: f32) {
+        if sigma != self.backdrop_blur {
+            self.backdrop_blur = sigma;
+            let uniform = self.output_uniform();
+            self.frame.write_output(&self.gpu, uniform);
+        }
     }
 
     /// The largest texture edge the GPU offers.
@@ -1280,6 +1354,17 @@ impl Renderer {
     /// see [`image_data`]). Materials using it pick it up on the next frame.
     pub fn set_generated_texture(&mut self, name: &'static str, image: ImageData) {
         self.textures.set_generated(name, image);
+    }
+
+    /// Fetch the texture files of `paths` not yet loaded ahead of the models that will
+    /// ask for them ([`TextureStore::prefetch`]).
+    pub fn prefetch_textures(&mut self, paths: &[&'static str]) {
+        self.textures.prefetch(paths);
+    }
+
+    /// Report what the last prefetch missed ([`TextureStore::end_prefetch`]).
+    pub fn end_texture_prefetch(&mut self) {
+        self.textures.end_prefetch();
     }
 
     /// Textures still loading; wait for 0 before the warm-up frame.
@@ -1721,7 +1806,28 @@ impl Renderer {
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, true, false);
+        let merge = self.merge_for(&prepared, true);
+        let pending = PendingModel { prepared, merge };
+        self.add_pending_scenery(pending, lifetime)
+    }
+
+    /// The CPU half of [`Self::add_scenery`], as [`Self::prepare_pending_model`] is of
+    /// `add_model`: a caller building an arena over frames uploads it in a later one.
+    /// It takes the scenery: its meshes go once the batches hold their copies, before
+    /// the shadow merge copies the casters again, so a theme's 20 MB of source
+    /// geometry and every merge of it never all sit in the Wasm heap at once.
+    pub fn prepare_pending_scenery(&mut self, root: Node) -> PendingModel {
+        let prepared = prepare_scenery(&root, &mut self.interner);
+        drop(root);
+        let merge = self.merge_for(&prepared, true);
+        PendingModel { prepared, merge }
+    }
+
+    /// Upload scenery [`Self::prepare_pending_scenery`] prepared, as `add_scenery`
+    /// would have.
+    pub fn add_pending_scenery(&mut self, pending: PendingModel, lifetime: Lifetime) -> InstanceId {
+        let PendingModel { prepared, merge } = pending;
+        let model = self.register_merged(prepared, merge, lifetime, true, false);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
             .expect("model just registered");
@@ -1946,10 +2052,11 @@ impl Renderer {
         self.frame.gpu_idle(&self.gpu)
     }
 
-    /// Natively, show the frame `render` drew once `overlay` has drawn the window's
-    /// menus and HUD over it (with the device, the queue and the frame's view).
-    /// Without a new frame it draws over the last scene again, or before any on `clear`.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Natively, and in the browser once [`Self::present_late`] asked for it, show the
+    /// frame `render` drew once `overlay` has drawn the window's menus and HUD over it
+    /// (with the device, the queue and the frame's view). Without a new frame it draws
+    /// over the last scene again, or before any on `clear`.
+    #[cfg(not(feature = "webgl"))]
     pub fn present(
         &mut self,
         clear: wgpu::Color,
@@ -1959,20 +2066,49 @@ impl Renderer {
             .present(&self.gpu, &self.pipelines, clear, overlay);
     }
 
+    /// The browser's canvas shows each frame [`Self::present`] shows, with what the
+    /// shell drew over it, rather than as soon as `render` drew it: the desktop shell's
+    /// egui menus and HUD in a page.
+    #[cfg(target_arch = "wasm32")]
+    pub fn present_late(&mut self) {
+        self.frame.late_present = true;
+    }
+
+    /// On WebGL, show the frame `render` drew (or before any, the canvas cleared to
+    /// `clear`) once `overlay` has drawn the shell's menus and HUD over it into the
+    /// canvas, given at its size in pixels; see [`Self::present_late`].
+    #[cfg(feature = "webgl")]
+    pub fn present(&mut self, clear: [f32; 3], overlay: impl FnOnce((u32, u32))) {
+        self.frame
+            .present(&self.gpu, &self.pipelines, clear, overlay);
+    }
+
+    /// A WebGL canvas takes every frame.
+    #[cfg(feature = "webgl")]
+    pub fn frame_shown(&self) -> bool {
+        true
+    }
+
+    /// The canvas's WebGL2 context, for the shell's overlay to draw with.
+    #[cfg(feature = "webgl")]
+    pub fn webgl_context(&self) -> web_sys::WebGl2RenderingContext {
+        self.gpu.raw_context()
+    }
+
     /// Whether the window took the last frame; a covered window takes none.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn frame_shown(&self) -> bool {
         self.frame.shown
     }
 
     /// The window surface's texture format, which an overlay draws in.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.gpu.canvas_format
     }
 
     /// The device and queue, for an overlay's own resources.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn device(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.gpu.device, &self.gpu.queue)
     }
@@ -2364,7 +2500,7 @@ impl Renderer {
         }
     }
 
-    /// The output pass's exposure, bloom, occlusion, grade and upscale.
+    /// The output pass's exposure, bloom, occlusion, grade, upscale and backdrop blur.
     fn output_uniform(&self) -> OutputUniform {
         let a = &self.atmosphere;
         let on = a.enabled;
@@ -2379,6 +2515,12 @@ impl Renderer {
         let [lr, lg, lb] = grade.lift;
         let [gr, gg, gb] = grade.gamma;
         let [nr, ng, nb] = grade.gain;
+        let (backdrop, backdrop_offsets, backdrop_weights) =
+            if self.backdrop_blur > 0.0 && !self.debug_off.backdrop {
+                backdrop_kernel(self.backdrop_blur)
+            } else {
+                ([0.0; 4], [0.0; 4], [0.0; 4])
+            };
         OutputUniform {
             settings: [
                 self.environment.exposure * if on { a.exposure } else { 1.0 },
@@ -2418,6 +2560,9 @@ impl Renderer {
             } else {
                 tone_curve(&Tone::ACES)
             },
+            backdrop,
+            backdrop_offsets,
+            backdrop_weights,
         }
     }
 
@@ -2503,7 +2648,8 @@ impl Renderer {
         views[REFLECTION_VIEW].quality[3] = 1.0;
         views[SHADOW_VIEW].quality[3] = 1.0;
         self.frame.write_views(&self.gpu, &views);
-        self.frame.write_output(&self.gpu, self.output_uniform());
+        let output = self.output_uniform();
+        self.frame.write_output(&self.gpu, output);
         if self.occlusion_on() {
             self.frame
                 .write_occlusion(&self.gpu, &self.occlusion_uniform());

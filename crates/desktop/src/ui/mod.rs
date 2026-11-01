@@ -2,6 +2,7 @@
 //! state (`src/game/ui.ts` and its parts). They never change the game themselves:
 //! each returns the [`Action`]s the player chose, which the app applies.
 
+pub mod backdrop;
 pub mod hud;
 pub mod icons;
 pub mod menus;
@@ -55,6 +56,8 @@ pub enum Action {
     RoomRejoin,
     /// BATTLE SETUP once the connection ended, with the reason to show there.
     RoomSetup(String),
+    /// RELOAD once the connection ended where only a new page recovers (a page's).
+    Reload,
     /// Team (`None`: the side with fewer humans) and tank for the next battle.
     RoomChoose {
         team: Option<Team>,
@@ -143,6 +146,9 @@ pub struct UiState {
     pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).
     pub cockpit: bool,
+    /// First person waits for a click on the arena to lock the cursor again (Esc freed
+    /// it): the cockpit says how to take it back.
+    pub aim_hint: bool,
     /// The hull's clockwise screen angle (the compass).
     pub hull_angle: f64,
     /// The player's tank on screen (NDC, y up), for the damage ring.
@@ -167,10 +173,10 @@ pub struct UiState {
     pub round: u32,
     /// The icons and tank renders, made on the first frame.
     pub art: Option<icons::Art>,
-    /// The touch controls this frame, while the player can act on a touch screen.
+    /// The touch controls this frame, while any show on a touch screen.
     pub touch: Option<touch::TouchView>,
-    /// Seconds the touch controls have shown since they last appeared, for the fire
-    /// hint.
+    /// Seconds the player's touch controls have shown since they last appeared, for the
+    /// fire hint.
     pub touch_shown: f64,
 }
 
@@ -230,7 +236,7 @@ impl UiState {
             self.damage_ring = None;
         }
         self.trail_hull_ghost(dt);
-        self.touch_shown = if self.touch.is_some() {
+        self.touch_shown = if self.touch.is_some_and(|touch| touch.acting) {
             self.touch_shown + dt
         } else {
             0.0
@@ -367,9 +373,11 @@ impl UiState {
 /// Draw every screen for this frame and return what the player chose.
 pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Action> {
     let mut actions = Vec::new();
-    let art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
+    let mut art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
+    art.refresh(context);
     if !view.in_round {
         setup::battle_setup(context, state, &art, view, &mut actions);
+        state.rooms.remember_tab();
     } else {
         match view.phase {
             MatchPhase::Paused => menus::pause(context, state, &art, view, &mut actions),

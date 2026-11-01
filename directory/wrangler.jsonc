@@ -8,7 +8,7 @@
   // Game servers and the page reach the directory only through its custom domain.
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{ "pattern": "sloppy-tanks-directory.fridman.me", "custom_domain": true }],
+  "routes": [{ "pattern": "directory.sloppytanks.com", "custom_domain": true }],
   "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "Directory" }] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] },

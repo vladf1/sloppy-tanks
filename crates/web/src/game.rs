@@ -32,8 +32,9 @@
 //!   play as an endless team battle) and needs `prepare_step` again. Returns
 //!   whether it rebuilt.
 //! - `prepare_step(budget) -> Float64Array [compiled, remaining, texturesPending,
-//!   done, gpuPending]`: creates up to `budget` pipelines per call as their
-//!   background compiles finish; once nothing remains and textures have loaded it
+//!   done, gpuPending]`: while an arena that `set_options` or `restart` began is
+//!   building, builds a piece of it per call; then creates up to `budget` pipelines
+//!   per call as their background compiles finish; once nothing remains and textures have loaded it
 //!   warms every variant, then draws the first frames and reports `done = 1`.
 //!   `gpuPending = 1` while only the GPU is working (background compiles or the
 //!   warm-up): poll on a short timer then rather than a task.
@@ -99,8 +100,9 @@ use crate::frame_slot::{self, phase_code};
 use crate::hud::{EffectTimers, Hud, Loading, Scoreboard, simulation_hud};
 use crate::nerd_rows::{GameStats, SceneStats, StatsSection, game_sections};
 use crate::page::{
-    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
-    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
+    BakedPixels, CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED,
+    PageError, PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result,
+    queue_event,
 };
 use crate::recap::{RoundRecap, round_recap};
 use crate::sounds::SoundPlanner;
@@ -133,7 +135,7 @@ use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::GraphicsSetting;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 use wasm_bindgen::prelude::*;
 
 mod debug;
@@ -197,6 +199,9 @@ pub struct GameConfig {
     pub game_mode: Option<GameMode>,
     /// The human's tank drives itself (`?autoplay`).
     pub autoplay: bool,
+    /// Build the arena at the first `prepare` rather than in `create`, so a shell can
+    /// paint its menu first: the village took most of the time before Battle Setup.
+    pub defer_arena: bool,
 }
 
 /// A choice by its name; a name this build does not know reads as none, as
@@ -242,7 +247,7 @@ impl RecordStorage for BrowserStorage {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 pub struct Game {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
@@ -260,7 +265,8 @@ pub struct Game {
     auto_rounds: bool,
     completed_rounds: u32,
     frame_index: u64,
-    /// Warmed and first frames drawn; false while pipelines compile.
+    /// Warmed and first frames drawn; false while the arena builds and its pipelines
+    /// compile.
     prepared: bool,
     /// Pipelines created since the arena began preparing, and Battle Setup's line for
     /// the latest step.
@@ -270,6 +276,8 @@ pub struct Game {
     /// The sounds drained events play, on the frame clock.
     sounds: SoundPlanner,
     canvas: CanvasSize,
+    /// A dialog the page blurred the arena behind is open (`set_backdrop_blur`).
+    backdrop_blur: bool,
     times: FrameTimes,
     graphics: Graphics,
     /// The human's tank as the HUD reads it, refilled from the simulation each read.
@@ -282,7 +290,7 @@ pub struct Game {
     last_result: Vec<f32>,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 impl Game {
     /// Create the renderer on `canvas`, build the chosen arena and begin
     /// preparing it. Rejects when the renderer cannot start.
@@ -333,21 +341,9 @@ impl Game {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 
-    /// The pixels of a claimed bake, baked on the shell's threads.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
-        self.view.supply_texture(key, rgba).map_err(js_error)
-    }
-
     /// Bake a claimed texture on the main thread after all (the worker failed).
     pub fn release_texture_bake(&mut self, key: &str) {
         self.view.release_texture_bake(key);
-    }
-
-    /// The renderer, for the desktop shell's overlay and presentation.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
-        &mut self.view.renderer
     }
 
     /// Begin the round: GO, or PLAY AGAIN after results.
@@ -355,6 +351,8 @@ impl Game {
         if self.sim.match_state.phase == MatchPhase::Results {
             self.sim.reset(None);
             self.reset_view();
+        } else if self.view.building() {
+            self.finish_view();
         }
         self.commands.clear();
         self.sim.start();
@@ -388,12 +386,13 @@ impl Game {
         }
     }
 
-    /// A fresh world behind Battle Setup (phase `ready`); prepare again.
+    /// A fresh world behind Battle Setup (phase `ready`); prepare again, which builds
+    /// its arena.
     pub fn restart(&mut self) {
         self.commands.clear();
         self.sim.reset(None);
         self.options = game_choices(&self.sim);
-        self.reset_view();
+        self.begin_view();
     }
 
     /// END BATTLE from the pause menu.
@@ -586,6 +585,7 @@ impl Game {
         self.canvas.apply(&mut self.view);
         self.graphics
             .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+        self.set_backdrop_blur(self.backdrop_blur);
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
@@ -865,6 +865,16 @@ impl Game {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl Game {
+    /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
+    pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// The renderer, for the desktop shell's overlay and presentation.
+    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
+        &mut self.view.renderer
+    }
+
     /// `create` with the view and the game's configuration as values.
     pub async fn create_with(
         canvas: RenderTarget,
@@ -897,7 +907,9 @@ impl Game {
         });
         let sim = Simulation::new(seed, setup);
         let state = sim.render_state(None);
-        view.build_scenery(&state.map_theme);
+        if !config.defer_arena {
+            view.build_scenery(&state.map_theme);
+        }
         let mut game = Game {
             sim,
             view,
@@ -918,6 +930,7 @@ impl Game {
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             canvas,
+            backdrop_blur: false,
             shell,
             times: FrameTimes::default(),
             graphics,
@@ -927,12 +940,16 @@ impl Game {
             last_result: vec![0.0; frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
-        game.reset_view();
+        if config.defer_arena {
+            game.begin_view();
+        } else {
+            game.reset_view();
+        }
         Ok(game)
     }
 
-    /// Apply Battle Setup choices; rebuilds the arena when they changed and returns
-    /// whether it did.
+    /// Apply Battle Setup choices; when they changed, begins rebuilding the arena
+    /// (`prepare` builds it) and returns true.
     pub fn set_game_options(&mut self, options: &GameOptions) -> bool {
         let options = *options;
         if options == self.options && game_choices(&self.sim) == options {
@@ -942,15 +959,33 @@ impl Game {
         options_setup(&options).apply(&mut self.sim);
         self.sim.reset(None);
         self.commands.clear();
-        self.reset_view();
+        self.begin_view();
         true
     }
 
+    /// The arena's views are still being built, a piece a `prepare` step.
+    pub fn building_arena(&self) -> bool {
+        self.view.building()
+    }
+
     /// Compile up to `budget` pipelines; once nothing remains, warm every variant and
-    /// draw the first frames.
+    /// draw the first frames. While the arena is still building, a step builds one
+    /// piece of it instead.
     pub fn prepare(&mut self, budget: u32) -> Result<PrepareStatus, PageError> {
         if self.prepared {
             return Ok(PREPARED);
+        }
+        if self.view.building() {
+            // Under the shell's "Building the arena…"; its pipelines compile once it
+            // is built.
+            self.build_piece();
+            return Ok(PrepareStatus {
+                compiled: 0,
+                remaining: 1,
+                textures_pending: 0,
+                gpu_pending: false,
+                ready: false,
+            });
         }
         let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
         self.prepare_compiled += status.compiled;
@@ -1072,6 +1107,15 @@ impl Game {
     pub fn gpu_ms(&self) -> Option<f64> {
         self.graphics.gpu_ms()
     }
+
+    /// Blur and desaturate the arena while a dialog is over it (pause, the results,
+    /// Settings), as the page's dialog backdrop did; from the next frame shown.
+    pub fn set_backdrop_blur(&mut self, on: bool) {
+        self.backdrop_blur = on;
+        self.view
+            .renderer
+            .set_backdrop_blur(self.canvas.backdrop_blur(on));
+    }
 }
 
 impl Game {
@@ -1146,13 +1190,34 @@ impl Game {
         }
     }
 
-    /// Rebuild the presentation for the simulation's current world and begin
+    /// Rebuild the presentation for the simulation's current world at once and begin
     /// preparing it.
     fn reset_view(&mut self) {
+        self.begin_view();
+        self.finish_view();
+    }
+
+    /// Finish building an arena [`Self::begin_view`] began, at once: a round starting
+    /// or drawing must not wait for the steps.
+    fn finish_view(&mut self) {
+        while !self.build_piece() {}
+    }
+
+    /// Build the arena's next piece; true once it is built. The simulation then learns
+    /// what the camera placed on the viewer sees, where its wrecks may linger.
+    fn build_piece(&mut self) -> bool {
+        let built = self.view.build_step(&self.state);
+        if built {
+            self.sim.set_wreck_view(Some(self.view.wreck_view()));
+        }
+        built
+    }
+
+    /// Begin rebuilding the presentation for the simulation's current world; `prepare`
+    /// steps build it a piece at a time, then prepare it.
+    fn begin_view(&mut self) {
         self.fill_state();
-        self.view.reset(&self.state);
-        self.sim.set_wreck_view(Some(self.view.wreck_view()));
-        self.view.begin_prepare(&self.state);
+        self.view.begin_build(&self.state);
         self.prepared = false;
         self.prepare_compiled = 0;
         self.loading = None;

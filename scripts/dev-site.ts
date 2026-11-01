@@ -3,7 +3,7 @@ import type { Plugin } from "vite";
 // Deliberate allowlist: do not publish source directories or Node-only test runners.
 export const devPages = [
   {
-    // Renders with the labs engine: the dev build needs `bun run wasm:labs`.
+    // Renders with the labs engine (`bun run wasm:labs`, which build:dev runs).
     path: "tools/tank-surface-check.html",
     title: "Tank surfaces",
     detail: "Vehicle textures and materials, drawn by the engine's renderer",
@@ -46,16 +46,13 @@ export function devSite(): Plugin {
         );
       },
     },
-    generateBundle() {
-      // Vite content-hashes every file in /assets/, so the dev host may cache those for
-      // good; HTML and unversioned public files keep its default revalidation.
-      this.emitFile({
-        type: "asset",
-        fileName: "_headers",
-        source:
-          "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n" +
-          "/*\n  X-Robots-Tag: noindex, nofollow\n",
-      });
+    generateBundle(_options, bundle) {
+      // The dev site is public but kept out of search results.
+      const headers = bundle["_headers"];
+      if (headers?.type !== "asset") {
+        throw new Error("The site's _headers asset is missing");
+      }
+      headers.source += "/*\n  X-Robots-Tag: noindex, nofollow\n";
     },
   };
 }

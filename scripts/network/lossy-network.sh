@@ -14,7 +14,7 @@ set -euo pipefail
 
 # The production and dev game servers the directory lists, whose wss traffic comes from
 # port 443.
-DIRECTORY=https://sloppy-tanks-directory.fridman.me
+DIRECTORY=https://directory.sloppytanks.com
 ANCHOR=com.apple/sloppy-lossy
 PIPE=4242
 # Exists while the script owns the pipe and anchor; holds its pf enable token.

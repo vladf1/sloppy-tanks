@@ -1,4 +1,4 @@
-name: Build and deploy to GitHub Pages
+name: Build and deploy
 
 on:
   push:
@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: production
   cancel-in-progress: false
 
 jobs:
-  # The whole quality gate (check.yml), whose site job also builds the Pages artifact
+  # The whole quality gate (check.yml), whose site job also builds the site
   # in parallel with the Rust jobs. Running it on main also saves the Cargo caches
   # that pull requests restore.
   check:
@@ -23,32 +23,45 @@ jobs:
       contents: read
       packages: write
     with:
-      # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
-      # its root; fridman.me/sloppy-tanks/ redirects there.
+      # sloppytanks.com serves the site at its root.
       deploy-base: /
       # The server directory and its production servers (DIRECTORY_URL in
       # scripts/servers.mjs; a test keeps the two equal). Game changes on main need the
       # server to run this commit's image (promote-server below), or players are told to
       # reload.
-      directory-url: https://sloppy-tanks-directory.fridman.me
+      directory-url: https://directory.sloppytanks.com
       server-environment: production
       # The build number players and /health see: this workflow's run number, which
       # GitHub increments on every run (a re-run keeps it).
       build-number: ${{ github.run_number }}
 
+  # The production Worker at sloppytanks.com, hosted like the dev site: precompressed
+  # engines and immutable /assets/. The redirect Worker sends www.sloppytanks.com and
+  # the old sloppy-tanks.fridman.me there.
   deploy:
     needs: check
     runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      # Wrangler runs on Node (tools/deploy/README.md); `bun run wrangler` installs it.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v8
+        with:
+          name: site
+          path: dist
+      - run: bun deploy/site/precompress.mjs dist
+      - name: Deploy the site and redirect Workers
+        run: |
+          bun run wrangler deploy --config deploy/site/production.wrangler.jsonc \
+            --message "Production build ${{ github.run_number }} (${GITHUB_SHA::7})"
+          bun run wrangler deploy --config deploy/site/redirect.wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   # After the site is live, point :production at this commit's server image. The VPS
   # pulls it on `bun run server:update`, or by itself when auto-update is on

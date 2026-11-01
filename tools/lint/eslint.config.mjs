@@ -28,18 +28,5 @@ export default tseslint.config(
       ],
     },
   },
-  {
-    files: ["src/**/*.ts"],
-    extends: [tseslint.configs.recommendedTypeChecked],
-    languageOptions: {
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: fileURLToPath(new URL("../..", import.meta.url)),
-      },
-    },
-    rules: { eqeqeq: ["error", "always"], "one-var": ["error", "never"] },
-  },
   prettier,
-  // After `prettier`, which turns curly off.
-  { files: ["src/**/*.ts"], rules: { curly: ["error", "all"] } },
 );

@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
-import { DIRECTORY_URL } from "./servers.mjs";
+import { readFileSync } from "node:fs";
 
 const repo = new URL("..", import.meta.url);
 
@@ -13,19 +12,6 @@ function run(command, args) {
 const info = JSON.parse(
   readFileSync(new URL("../dist-dev/health/index.html", import.meta.url), "utf8"),
 );
-// The dev site must always offer multiplayer. The tab is compiled into the inline
-// startup script only when the build has a server directory URL.
-const index = readFileSync(new URL("../dist-dev/index.html", import.meta.url), "utf8");
-const assets = new URL("../dist-dev/assets/", import.meta.url);
-// Code splitting decides which chunk carries the directory URL, so look in every script.
-const hasDirectory = readdirSync(assets)
-  .filter((name) => name.endsWith(".js"))
-  .some((name) => readFileSync(new URL(name, assets), "utf8").includes(DIRECTORY_URL));
-if (!index.includes('id="tab-multiplayer"') || !hasDirectory) {
-  throw new Error(
-    "dist-dev has no multiplayer entry or dev directory URL; rebuild with bun run build:dev",
-  );
-}
 
 // Clients and the server reject each other unless both were built from the same
 // game/network sources, so publish the dev server from this checkout first. It runs on
@@ -35,13 +21,13 @@ run(process.execPath, ["scripts/server.mjs", "publish", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
-run(process.execPath, ["deploy/dev-site/precompress.mjs"]);
+run(process.execPath, ["deploy/site/precompress.mjs", "dist-dev"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
 run(process.execPath, [
   "tools/deploy/wrangler.mjs",
   "deploy",
   "--config",
-  "deploy/dev-site/wrangler.jsonc",
+  "deploy/site/dev.wrangler.jsonc",
   "--message",
   `Dev build ${info.builtAt} (${build})`,
 ]);

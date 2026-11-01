@@ -11,51 +11,48 @@ const ACCEPT_ENCODING = "br, gzip";
 const CURL = ["--fail", "--silent", "--show-error", "--ipv4", "--http2"];
 const deployments = [
   {
-    id: "github-pages",
-    name: "GitHub Pages",
-    origin: "https://sloppy-tanks.fridman.me",
+    id: "production",
+    name: "Cloudflare Workers (production)",
+    origin: "https://sloppytanks.com",
   },
   {
     id: "cloudflare-workers",
     name: "Cloudflare Workers (dev site)",
-    origin: "https://sloppy-tanks-dev.fridman.me",
+    origin: "https://dev.sloppytanks.com",
   },
 ];
 
+/** The textures the page fetches for the village, the default map; the sounds, tank
+ * previews and fonts are inside the shell's Wasm. */
 const texturePaths = [
   "textures/barrels/painted-drum.webp",
   "textures/ground/dry-grass.webp",
   "textures/ground/packed-dirt.webp",
+  "textures/ground/village-ground.webp",
   "textures/houses/brick.webp",
   "textures/houses/clapboard.webp",
   "textures/houses/shingles.webp",
   "textures/houses/siding.webp",
   "textures/houses/stone.webp",
   "textures/pickups/atlas.webp",
+  "textures/tanks/armor-camo.webp",
+  "textures/tanks/armor-scorch.webp",
   "textures/tanks/armor-wear.webp",
+  "textures/trees/atlas.webp",
   "textures/trees/bark.webp",
   "textures/trees/birch.webp",
-  "textures/trees/conifer-spray.webp",
-  "textures/trees/leaf-sprigs.webp",
-  "textures/wood/timber.webp",
   "textures/trees/rings.webp",
   "textures/walls/weathered-concrete.webp",
   "textures/water/normals.webp",
+  "textures/wood/timber.webp",
 ];
-const audioPaths = [
-  "audio/explosion.mp3",
-  "audio/hit.mp3",
-  "audio/impact.mp3",
-  "audio/laser.mp3",
-  "audio/pickup.mp3",
-  "audio/promotion.mp3",
-  "audio/rubble-break.mp3",
-  "audio/shot-piercing.mp3",
-  "audio/shot-ricochet.mp3",
-  "audio/shot-rocket.mp3",
-  "audio/shot-spread.mp3",
-  "audio/shot.mp3",
-  "audio/wood-break.mp3",
+/** The page's two builds of the egui shell: `index.html` imports one by the browser's
+ * graphics, and its glue fetches its Wasm. A production build names them from the site's
+ * base (`assets/…`), the dev site's build from the importing file (`./…`). The glue is
+ * `shell-glue-*` since the boot script moved into the page, `sloppy-tanks-*` before. */
+const backends = [
+  { id: "webgpu", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-(?!webgl-)[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks_bg-[\w-]+\.wasm/ },
+  { id: "webgl", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-webgl-[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks-webgl_bg-[\w-]+\.wasm/ },
 ];
 
 function curlText(url) {
@@ -70,24 +67,49 @@ function urlFor(deployment, path) {
   return `${deployment.origin}/${path}`;
 }
 
+/** The first match of `pattern` in the file at `from`, as a path from the site's root;
+ * a `./` path is relative to `from`. */
+function found(text, pattern, what, deployment, from) {
+  const match = text.match(pattern);
+  if (!match) {
+    throw new Error(`Could not find ${what} in ${urlFor(deployment, from)}`);
+  }
+  return match[0].startsWith("./")
+    ? new URL(match[0], urlFor(deployment, from)).pathname.slice(1)
+    : match[0].replace(/^\/+/, "");
+}
+
+/** What one page load fetches on each backend: the HTML, its module (none where the boot
+ * script is inline), the backend's shell glue and Wasm, the favicon and the village's
+ * textures. */
 function discover(deployment) {
   const entry = urlFor(deployment, "");
   const html = curlText(entry);
-  const match = html.match(/import\((?:"|')([^"']+assets\/game-[^"']+\.js)(?:"|')\)/);
-  if (!match) {
-    throw new Error(`Could not find game chunk in ${entry}`);
-  }
-  const chunkResourcePath = match[1].replace(/^\/+/, "");
-  const chunkPath = `/${chunkResourcePath}`;
-  const paths = [
+  const module = html.match(/[^"']*assets\/main-[\w-]+\.js/)?.[0].replace(/^\/+/, "");
+  const main = module ?? "";
+  const mainText = module ? curlText(urlFor(deployment, main)) : html;
+  const shared = [
     { path: "", type: "html", label: "HTML entry" },
+    ...(module ? [{ path: main, type: "code", label: "Page module" }] : []),
     { path: "favicon.svg", type: "startup", label: "Favicon" },
-    { path: "previews/tanks.webp", type: "startup", label: "Tank preview atlas" },
-    { path: chunkResourcePath, type: "code", label: "Main game chunk" },
     ...texturePaths.map((path) => ({ path, type: "texture", label: path })),
-    ...audioPaths.map((path) => ({ path, type: "audio", label: path })),
   ];
-  return { htmlBytes: Buffer.byteLength(html), chunkPath, paths };
+  const loads = Object.fromEntries(
+    backends.map((backend) => {
+      const glue = found(mainText, backend.glue, `the ${backend.id} shell glue`, deployment, main);
+      const glueText = curlText(urlFor(deployment, glue));
+      const wasm = found(glueText, backend.wasm, `the ${backend.id} Wasm`, deployment, glue);
+      return [
+        backend.id,
+        [
+          ...shared,
+          { path: glue, type: "code", label: `Shell glue (${backend.id})` },
+          { path: wasm, type: "wasm", label: `Shell Wasm (${backend.id})` },
+        ],
+      ];
+    }),
+  );
+  return { htmlBytes: Buffer.byteLength(html), loads };
 }
 
 function requestResource(url, resource) {
@@ -217,20 +239,25 @@ function summarizeBatches(batches) {
 async function main() {
   const startedAt = new Date().toISOString();
   const discoveries = Object.fromEntries(deployments.map((deployment) => [deployment.id, discover(deployment)]));
+  // Every deployment's load on every backend, in an order alternated each round.
+  const loads = deployments.flatMap((deployment) =>
+    backends.map(({ id }) => ({ deployment, backend: id, key: `${deployment.id}/${id}` })),
+  );
   const results = {};
   for (let round = 0; round < RUNS; round++) {
-    const order = round % 2 === 0 ? deployments : deployments.toReversed();
-    for (const deployment of order) {
+    const order = round % 2 === 0 ? loads : loads.toReversed();
+    for (const { deployment, backend, key } of order) {
       const discovery = discoveries[deployment.id];
-      const resources = discovery.paths.map((resource) => ({ ...resource, url: urlFor(deployment, resource.path) }));
+      const resources = discovery.loads[backend].map((resource) => ({ ...resource, url: urlFor(deployment, resource.path) }));
       if (round === 0) {
         const identity = [];
         for (const resource of resources) {
           identity.push({ path: resource.path, bytes: await identityBytes(resource.url) });
         }
-        results[deployment.id] = {
+        results[key] = {
           id: deployment.id,
           name: deployment.name,
+          backend,
           entry: urlFor(deployment, ""),
           discovery,
           identity,
@@ -241,18 +268,18 @@ async function main() {
       const requestResults = await Promise.all(resources.map((resource) => requestResource(resource.url, resource)));
       const ended = performance.now();
       const failed = requestResults.filter((resource) => !resource.ok);
-      results[deployment.id].batches.push({
+      results[key].batches.push({
         run: round + 1,
-        orderInRound: order.indexOf(deployment),
+        orderInRound: order.findIndex((load) => load.key === key),
         startedAt: new Date().toISOString(),
         wallMs: ended - started,
         ok: failed.length === 0,
         failures: failed.map((resource) => ({ path: resource.path, error: resource.error, stderr: resource.stderr })),
         encodedBytes: sum(requestResults.map((resource) => Number(resource.size_download))),
-        identityBytes: sum(results[deployment.id].identity.map((resource) => resource.bytes)),
+        identityBytes: sum(results[key].identity.map((resource) => resource.bytes)),
         resources: requestResults,
       });
-      console.error(`${deployment.name}: run ${round + 1}/${RUNS} ${failed.length ? "FAILED" : "ok"} ${Math.round(ended - started)} ms`);
+      console.error(`${deployment.name} ${backend}: run ${round + 1}/${RUNS} ${failed.length ? "FAILED" : "ok"} ${Math.round(ended - started)} ms`);
     }
   }
   for (const result of Object.values(results)) {
@@ -261,14 +288,15 @@ async function main() {
   const artifact = {
     startedAt,
     finishedAt: new Date().toISOString(),
-    runsPerDeployment: RUNS,
+    runsPerLoad: RUNS,
+    backends: backends.map(({ id }) => id),
     transport: {
       client: "curl",
       addressFamily: "IPv4",
       httpVersionRequested: "HTTP/2",
       acceptEncoding: ACCEPT_ENCODING,
       localCache: "none: fresh curl process per resource request",
-      batchMode: "all resources requested concurrently; deployment order alternated each round",
+      batchMode: "one page load's resources per backend requested concurrently; deployment and backend order alternated each round",
       timingScope: "DNS, TCP, TLS, server wait, and body transfer as reported by curl",
       encodedBytes: "curl size_download with --raw and Accept-Encoding br, gzip; response body bytes on the wire",
       identityBytes: "one additional identity-encoding GET per resource, used only for payload-size baseline",

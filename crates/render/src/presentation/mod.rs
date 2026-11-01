@@ -15,6 +15,7 @@
 pub mod camera_rig;
 pub mod first_person;
 pub mod generated;
+pub mod geometry_cache;
 pub mod house_prep;
 pub mod house_rest;
 pub mod hud;

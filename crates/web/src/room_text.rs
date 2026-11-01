@@ -39,6 +39,8 @@ pub struct Ending {
     /// The button that leaves for Battle Setup, which the page names RELOAD where only a
     /// new page recovers.
     pub setup: &'static str,
+    /// That button reloads the page rather than return to Battle Setup.
+    pub reload: bool,
 }
 
 /// A player who joined the room or came back, as a kill feed line.
@@ -170,6 +172,7 @@ pub fn ending(cause: Option<EndCause>, text: String, shell: Shell) -> Ending {
         title,
         retry,
         setup: if reload { "RELOAD" } else { "BATTLE SETUP" },
+        reload,
     }
 }
 
@@ -358,6 +361,8 @@ mod tests {
     fn each_ending_offers_the_way_back_that_can_work() {
         let words = |cause, shell| {
             let ending = ending(cause, String::new(), shell);
+            // The button does what it says.
+            assert_eq!(ending.reload, ending.setup == "RELOAD");
             (ending.title, ending.retry, ending.setup)
         };
         let page = Shell::Page;

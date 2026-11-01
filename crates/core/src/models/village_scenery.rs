@@ -14,7 +14,7 @@ use super::village_atmosphere::{
     CHIMNEY_SMOKE_NODE, SmokeCover, set_chimney_smoke, village_atmosphere,
 };
 use super::village_landmarks::{WATERWHEEL, village_landmarks};
-use super::village_landscape::{valley_height, village_landscape};
+use super::village_landscape::{valley_height, village_landscape, with_lattice_corners};
 use super::village_vegetation::village_vegetation;
 
 /// Pine Village scenery, retained across matches (`VillageScenery`).
@@ -35,14 +35,22 @@ impl Default for VillageScenery {
 
 impl VillageScenery {
     pub fn new() -> Self {
-        let mut root = Node::group("pine-village-scenery");
-        let grass = create_terrain(&mut root);
-        root.children.push(village_landscape(grass));
-        root.children.push(village_vegetation());
-        root.children.push(village_atmosphere());
-        root.children.push(village_landmarks());
-        root.children.push(approach_details());
-        settle_paint(&mut root);
+        with_lattice_corners(|| {
+            let mut root = Node::group("pine-village-scenery");
+            let grass = create_terrain(&mut root);
+            root.children.push(village_landscape(grass));
+            root.children.push(village_vegetation());
+            root.children.push(village_atmosphere());
+            root.children.push(village_landmarks());
+            root.children.push(approach_details());
+            settle_paint(&mut root);
+            Self::from_root(root)
+        })
+    }
+
+    /// The scenery around a root built before (read back from a page's geometry
+    /// cache).
+    pub fn from_root(root: Node) -> Self {
         let wheel = node_path(&root, WATERWHEEL);
         Self { root, wheel }
     }

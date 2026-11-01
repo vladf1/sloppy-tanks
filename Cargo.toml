@@ -109,6 +109,18 @@ opt-level = 3
 [profile.server.package.wide]
 opt-level = 3
 
+# The page's Wasm while an agent or a person iterates on how something looks
+# (`bun run wasm:fast`): built for compile time, not size or speed. Release's per-package
+# overrides carry over, so the cached physics and render crates stay as they are; what an
+# edit recompiles, the shell and the crates it changed, skips LTO and splits into many
+# code units. Never deployed: `build`, `build:dev` and `check` build release. Measure
+# performance on release.
+[profile.wasm-fast]
+inherits = "release"
+opt-level = 1
+lto = false
+codegen-units = 256
+
 # The desktop app (crates/desktop, `bun run desktop`) downloads once, so all of it is
 # optimized for speed. Release's per-package overrides carry over and outrank `"*"`,
 # hence the physics crates are named again.

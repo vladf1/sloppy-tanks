@@ -4,6 +4,81 @@
 //! frame.
 
 use crate::scene::{Node, TextureSource};
+use crate::sim::maps::MapTheme;
+
+/// The texture files of `theme`'s scenery (`build_scenery`), which a page fetches as an
+/// arena's build begins rather than once that model, the build's costliest piece, has
+/// been built (a test keeps each list equal to what its scenery draws).
+pub fn scenery_texture_files(theme: MapTheme) -> &'static [&'static str] {
+    match theme {
+        MapTheme::Village => &[
+            "textures/ground/dry-grass.webp",
+            "textures/ground/packed-dirt.webp",
+            "textures/ground/village-ground.webp",
+            "textures/water/normals.webp",
+            "textures/trees/atlas.webp",
+            "textures/walls/weathered-concrete.webp",
+            "textures/houses/siding.webp",
+            "textures/houses/shingles.webp",
+            "textures/houses/clapboard.webp",
+            "textures/houses/stone.webp",
+            "textures/houses/brick.webp",
+        ],
+        MapTheme::Harbor => &[
+            "textures/water/normals.webp",
+            "textures/harbor/steel.webp",
+            "textures/harbor/dock.webp",
+            "textures/harbor/container-ribbed.webp",
+            "textures/harbor/container.webp",
+        ],
+        MapTheme::Quarry => &[
+            "textures/ground/packed-dirt.webp",
+            "textures/tanks/armor-wear.webp",
+            "textures/tanks/armor-camo.webp",
+            "textures/quarry/sandstone.webp",
+            "textures/walls/weathered-concrete.webp",
+            "textures/harbor/steel.webp",
+        ],
+    }
+}
+
+/// The texture files every round's build loads beside its scenery's: the vehicles,
+/// supplies, covers, wrecks and the debris they break into.
+const ROUND_TEXTURE_FILES: &[&str] = &[
+    "textures/tanks/armor-camo.webp",
+    "textures/tanks/armor-wear.webp",
+    "textures/tanks/armor-scorch.webp",
+    "textures/pickups/atlas.webp",
+    "textures/wood/timber.webp",
+    "textures/barrels/painted-drum.webp",
+    "textures/trees/bark.webp",
+    "textures/trees/rings.webp",
+    "textures/houses/siding.webp",
+    "textures/walls/weathered-concrete.webp",
+];
+
+/// The village's birches, the one cover a theme alone has.
+const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &["textures/trees/birch.webp"];
+
+/// Every texture file a round on `theme` loads while its arena builds, each once. The
+/// renderer reports a build that asks for a file this leaves out, or none for one it
+/// names.
+pub fn round_texture_files(theme: MapTheme) -> Vec<&'static str> {
+    let covers = match theme {
+        MapTheme::Village => VILLAGE_COVER_TEXTURE_FILES,
+        MapTheme::Harbor | MapTheme::Quarry => &[],
+    };
+    let mut files: Vec<&'static str> = Vec::new();
+    for &file in [scenery_texture_files(theme), ROUND_TEXTURE_FILES, covers]
+        .into_iter()
+        .flatten()
+    {
+        if !files.contains(&file) {
+            files.push(file);
+        }
+    }
+    files
+}
 
 /// Every texture drawn by `root` (visible or not), in first-use order without
 /// duplicates: material maps, bump maps, emissive maps and effect inputs

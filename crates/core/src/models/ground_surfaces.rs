@@ -2,11 +2,11 @@
 //! world-aligned ground UVs and the Pine Village ground, whose shader wears the
 //! village roads into the grass.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use crate::geometry::Mesh;
 use crate::scene::{Effect, Material, TextureRef, Wrap};
-use crate::sim::data::ARENA;
+use crate::sim::model_data::ARENA;
 
 use super::effects_scenery::MEADOW_SWAY;
 use super::village_ground::{VILLAGE_GROUND_BAKE, VILLAGE_GROUND_TEXTURE};
@@ -51,7 +51,8 @@ pub fn ground_material(kind: GroundKind) -> Material {
 /// [`village_ground_bake`], its third extra texture. Vertex colours multiply the
 /// grass (creek banks, far hills).
 pub fn village_ground_material() -> Arc<Material> {
-    static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("ground_surfaces::MATERIAL");
     MATERIAL
         .get_or_init(|| {
             let roads = village_roads();

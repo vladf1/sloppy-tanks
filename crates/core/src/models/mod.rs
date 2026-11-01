@@ -35,28 +35,39 @@
 
 mod batching;
 mod model_primitives;
+pub mod shared_values;
 
 // Vehicles.
 mod humvee_model;
 mod tank_details;
-mod tank_dimensions;
+beyond_geometry! {
+    mod tank_dimensions;
+}
 mod tank_kit;
 mod tank_model;
 mod tank_surfaces;
-mod wreck_model;
+beyond_geometry! {
+    mod wreck_model;
+}
 
 // Cover, trees and props.
-mod barrel_debris;
-mod barrel_surfaces;
-mod cover_model;
-mod crate_model;
-pub mod effects_props;
-mod flags;
+beyond_geometry! {
+    mod barrel_debris;
+    mod barrel_surfaces;
+    mod cover_model;
+    mod crate_model;
+    pub mod effects_props;
+    mod flags;
+}
 mod harbor_models;
-mod pickup_visuals;
+beyond_geometry! {
+    mod pickup_visuals;
+}
 mod quarry_barriers;
-mod timber_model;
-mod tower_model;
+beyond_geometry! {
+    mod timber_model;
+    mod tower_model;
+}
 mod tree_models;
 
 // Surfaces shared by cover and scenery.
@@ -76,7 +87,9 @@ mod harbor_backdrop;
 mod harbor_scenery;
 mod harbor_vessels;
 mod harbor_water;
-mod loading_assets;
+beyond_geometry! {
+    mod loading_assets;
+}
 mod quarry_benches;
 mod quarry_machinery;
 mod quarry_ramp;
@@ -102,25 +115,36 @@ pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint
 
 // Vehicles.
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
-pub use tank_dimensions::{TankDimensions, tank_dimensions};
-pub use tank_model::{release_tank_models, tank_model, tank_model_variant};
+beyond_geometry! {
+    pub use tank_dimensions::{TankDimensions, tank_dimensions};
+}
+pub use tank_model::{
+    built_tank_model_count, built_tank_models, offer_tank_models, release_tank_models, tank_model,
+    tank_model_variant,
+};
 pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
-pub use wreck_model::{WreckPart, WreckVent, wreck_model, wreck_vents};
+beyond_geometry! {
+    pub use wreck_model::{WreckPart, WreckVent, wreck_model, wreck_vents};
+}
 
 // Cover, trees and props.
-pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
-pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
-pub use crate_model::crate_piece_model;
-pub use effects_props::{aged_wreck_material, wreck_brightness};
-pub use flags::{FLAG_CLOTH_NODE, flags_model};
+beyond_geometry! {
+    pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
+    pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
+    pub use crate_model::crate_piece_model;
+    pub use effects_props::{aged_wreck_material, wreck_brightness};
+    pub use flags::{FLAG_CLOTH_NODE, flags_model};
+}
 pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
-pub use pickup_visuals::{
-    LOAD_SCALE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,
-    SUPPLY_SCALE, atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint,
-    pickup_pallet, pickup_parcel, pickup_signal, pickup_tile_offset,
-};
-pub use timber_model::{timber_debris_model, timber_part_model};
-pub use tower_model::tower_piece_model;
+beyond_geometry! {
+    pub use pickup_visuals::{
+        LOAD_SCALE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,
+        SUPPLY_SCALE, atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint,
+        pickup_pallet, pickup_parcel, pickup_signal, pickup_tile_offset,
+    };
+    pub use timber_model::{timber_debris_model, timber_part_model};
+    pub use tower_model::tower_piece_model;
+}
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,
     tree_foliage, tree_model, tree_part, trunk_fragment,
@@ -134,7 +158,9 @@ pub use water_surface::water_normals;
 
 // Map scenery.
 pub use harbor_scenery::HarborScenery;
-pub use loading_assets::node_textures;
+beyond_geometry! {
+    pub use loading_assets::{node_textures, round_texture_files, scenery_texture_files};
+}
 pub use quarry_relief::bake_quarry_ground;
 pub use quarry_scenery::{SpawnPadShape, quarry_spawn_pad_pieces};
 pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
@@ -179,9 +205,9 @@ pub mod part {
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].
-pub use crate::sim::types::Team;
+pub use crate::sim::kinds::Team;
 
-pub use crate::sim::types::VehicleKind;
+pub use crate::sim::kinds::VehicleKind;
 
 #[cfg(test)]
 mod tests;

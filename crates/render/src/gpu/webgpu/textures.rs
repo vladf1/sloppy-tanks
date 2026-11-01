@@ -13,7 +13,7 @@ use super::resources::MIPMAP_SOURCE_ENTRIES;
 use super::{Frame, Gpu, MaterialBinding};
 use crate::effects::bakes::TextureBake;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
-use crate::shader::{MIPMAP_WGSL, StageSources};
+use crate::shader::{FixedShader, StageSources};
 
 /// The format every texture bake draws.
 const BAKE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -112,7 +112,7 @@ impl Uploader {
         let pipeline_layout = pipeline_layout(device, "mipmap", &[&layout]);
         let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
         let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
-        let stages = srgb.stages(MIPMAP_WGSL);
+        let stages = srgb.stages(FixedShader::Mipmap);
         let compile = Background::start(device, &[(&srgb, &stages), (&linear, &stages)]);
         let placeholder = texture_2d(
             device,
@@ -157,7 +157,7 @@ impl Uploader {
         let device = &gpu.device;
         let state = self.bakes.entry(bake.key).or_insert_with(|| {
             let spec = bake_spec(bake);
-            let stages = spec.stages(&bake.source());
+            let stages = spec.stages(FixedShader::Bake(bake.key));
             let compile = Background::start(device, &[(&spec, &stages)]);
             BakePipeline::Compiling(spec, stages, compile)
         });

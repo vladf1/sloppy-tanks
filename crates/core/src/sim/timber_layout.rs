@@ -5,7 +5,6 @@ use std::f64::consts::PI;
 use serde::{Deserialize, Serialize};
 
 use super::math::{js_round, to_int32};
-use super::types::Cover;
 
 pub const TIMBER_HEALTH: f64 = 80.0;
 const BEAM_COUNT: usize = 4;
@@ -141,21 +140,6 @@ pub struct TimberWall<'a> {
     pub color: u32,
     pub hits: &'a [TimberHit],
     pub join: Option<TimberJoin>,
-}
-
-impl<'a> TimberWall<'a> {
-    pub fn of(cover: &'a Cover) -> Self {
-        Self {
-            x: cover.x,
-            z: cover.z,
-            w: cover.w,
-            h: cover.h,
-            d: cover.d,
-            color: cover.color,
-            hits: &cover.timber_hits,
-            join: cover.timber_join,
-        }
-    }
 }
 
 pub fn timber_damage_stage(hp: f64, max_hp: f64) -> u32 {

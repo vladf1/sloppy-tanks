@@ -37,6 +37,13 @@ the channels). It is baked from the arena layout in Rust and stored losslessly; 
 `bun scripts/generate-village-ground.ts` after changing the layout,
 roads, cottages or fields.
 
+## Home Screen icons
+
+`public/icons/` (`apple-touch-icon.png`, `icon-192.png`, `icon-512.png`) are drawn by
+`bun run generate:app-icons`: Chrome renders the favicon's tank on the menu's navy, and
+[oxipng](https://github.com/shssoichiro/oxipng) (`brew install oxipng`) then recompresses
+them losslessly. Keep them PNG: iOS takes only a PNG Home Screen icon.
+
 ## macOS app icon
 
 `assets/desktop/mac-app.icns` is generated from the existing `public/icons/icon-512.png`
@@ -52,6 +59,33 @@ the icon. Packaging and a page-shell test reject stale assets and name the chang
 inputs. Normal desktop builds only verify and copy it, without running an image
 generator or compiling a Rust example. Desktop-only assets stay outside `public/`
 so web deployments do not carry them.
+
+## Display font
+
+The page draws its headings in Anton Wide, which `scripts/build-fonts.py` (fontTools)
+makes from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License 1.1, its
+license beside both) and packs with Roboto Regular and Bold (`assets/fonts/`, Apache
+2.0) into `public/fonts/interface.ttc`, one download that Brotli makes 12% smaller than
+the three files apart. The page set its headings in Impact,
+which may not be redistributed; Anton is narrower, so the script stretches its outlines,
+advances and kerning by 11% (Impact's letters over Anton's across the interface's
+uppercase strings), gives the space Impact's width and drops the hinting. The native apps
+draw the system's Impact. Rerun
+`uv run --with fonttools python scripts/build-fonts.py` after changing the fit.
+
+## Battle Setup logo
+
+The logo's letters (`LOGO_SLOPPY` and `LOGO_TANKS` in `crates/desktop/src/ui/icons.rs`)
+are path data baked from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License
+1.1, its license beside it) by `scripts/generate-logo-outlines.ts`. The page set the
+logo in Impact, whose outlines may not be redistributed; until the vector logo it was
+`public/previews/logo.webp`, a 3x capture of the production page's `.setup-brand`.
+The generator stretches each Anton capital into the ink box its Impact letter took
+there (Impact's metrics as Chrome laid the logo out, registered against that capture
+to a tenth of a pixel) and grows the outlines by 0.75% of a letter's height, which
+matched Impact's heavier strokes best. The shell rasterizes the paths once at start
+with the page's tilt and `text-shadow`s, so no build embeds the font for the logo.
+Rerun `bun scripts/generate-logo-outlines.ts` after changing the fit.
 
 ## Encoding
 

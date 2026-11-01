@@ -1,13 +1,10 @@
 // Game preview: single-player Sloppy Tanks on the Rust engine (simulation,
 // presentation and the wgpu renderer), with minimal keyboard and mouse input and
-// no menus or HUD. Build the engine with `bun run wasm`, then open
+// no menus or HUD. Build the engine with `bun run wasm:engine`, then open
 // /sloppy-tanks/tools/game-preview.html on the dev server.
 // `?map=village|harbor|quarry|stress-test|superstress`, `?seed=424242`,
 // `?autoplay`, `?fp` (start in first person), `?zoom=34`.
-import { FRAME, INPUT, PHASES } from "../src/game/engine-api";
-import { nextPrepareStep } from "../src/game/task-yield";
-import init, { Game } from "../src/generated/engine/engine.js";
-import wasmUrl from "../src/generated/engine/engine_bg.wasm?url";
+import { FRAME, INPUT, PHASES, createGame, prepareArena } from "./game-engine";
 
 const ZOOM_STEP = 2;
 const PREPARE_BUDGET = 4;
@@ -111,31 +108,22 @@ function takeInput(): Float32Array {
 async function main(): Promise<void> {
   if (!navigator.gpu) throw new Error("WebGPU is required.");
   bindInput();
-  await init({ module_or_path: wasmUrl });
   const seed = params.has("seed") ? Number(params.get("seed")) : 424242;
   const map = params.get("map") ?? "village";
-  const game = await Game.create(
-    canvas,
-    JSON.stringify({
-      seed,
-      assetBase: import.meta.env.BASE_URL,
-      map,
-      extraLevels: true,
-      autoplay: params.has("autoplay"),
-      cssWidth: innerWidth,
-      cssHeight: innerHeight,
-      pixelRatio: devicePixelRatio,
-    }),
-  );
+  const game = await createGame(canvas, {
+    seed,
+    assetBase: import.meta.env.BASE_URL,
+    map,
+    extraLevels: true,
+    autoplay: params.has("autoplay"),
+    cssWidth: innerWidth,
+    cssHeight: innerHeight,
+    pixelRatio: devicePixelRatio,
+  });
   status.textContent = `Preparing ${map}…`;
-  let progress: Float64Array;
-  let gpuPending = false;
-  do {
-    await nextPrepareStep(gpuPending);
-    progress = game.prepare_step(PREPARE_BUDGET);
-    gpuPending = progress[4] === 1;
+  await prepareArena(game, PREPARE_BUDGET, (progress) => {
     status.textContent = `Preparing ${map}: ${progress[1]} pipelines, ${progress[2]} textures left`;
-  } while (!progress[3]);
+  });
   if (params.has("zoom")) game.debug_set_zoom(Number(params.get("zoom")));
   if (params.has("reflections")) game.debug_set_reflections(Number(params.get("reflections")));
   game.start();

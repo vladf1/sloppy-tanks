@@ -1,0 +1,56 @@
+// The game's engine (`sloppy-web`; `bun run wasm:engine` writes it to
+// `src/generated/engine/`) on a page of its own, without the shell: the game preview and
+// the `tests/*.browser.html` fixtures create and prepare its `Game` through here.
+import init, { Game } from "../src/generated/engine/engine.js";
+import wasmUrl from "../src/generated/engine/engine_bg.wasm?url";
+
+export type { Game };
+
+export { FRAME, INPUT, PHASES } from "./engine-tables";
+
+/** How often preparation polls a GPU that is still compiling pipelines in the background
+ * or running the warm-up. */
+const GPU_POLL_MS = 16;
+
+let loading: Promise<unknown> | undefined;
+
+/** Create the engine's single-player game on `canvas` from `Game.create`'s configuration. */
+export async function createGame(canvas: HTMLCanvasElement, config: object): Promise<Game> {
+  loading ??= init({ module_or_path: wasmUrl });
+  await loading;
+  return Game.create(canvas, JSON.stringify(config));
+}
+
+/** Resolve in a new message task, so the browser can paint first. Unlike a timer, a
+ * message task is not throttled while the tab is in the background. */
+function nextTask(): Promise<void> {
+  const { port1, port2 } = new MessageChannel();
+  return new Promise((resolve) => {
+    port1.onmessage = () => {
+      port1.close();
+      resolve();
+    };
+    port2.postMessage(null);
+  });
+}
+
+/** Compile the arena's pipelines `budget` at a time and wait for its textures, yielding
+ * between steps so the page paints; `progress` sees each `prepare_step` result. While
+ * only the GPU works it polls on a short timer, which can take seconds on a cold shader
+ * cache and should not spin the page. */
+export async function prepareArena(
+  game: Game,
+  budget: number,
+  progress?: (step: Float64Array) => void,
+): Promise<void> {
+  let gpuPending = false;
+  for (;;) {
+    await (gpuPending ? new Promise((resolve) => setTimeout(resolve, GPU_POLL_MS)) : nextTask());
+    const step = game.prepare_step(budget);
+    progress?.(step);
+    if (step[3]) {
+      return;
+    }
+    gpuPending = step[4] === 1;
+  }
+}

@@ -8,6 +8,9 @@
  * - `GET /servers?environment=production|dev` from the page (or anyone):
  *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.
  * - `GET /`: the overview page, static files in public/ that read these lists.
+ * - `POST /traces?id=<id>` from a page opened with `?trace`: its trace as text, at most
+ *   MAX_TRACE_BYTES, replacing that id's earlier upload; `GET /traces` lists the latest
+ *   MAX_TRACES, newest first. A debugging aid for devices with no inspector at hand.
  *
  * Each environment is one Durable Object with a SQL table of servers and their latest
  * announcements. Every request first deletes the rows older than ENTRY_TTL_MS, so the list holds the servers
@@ -34,6 +37,8 @@ interface Env {
 }
 
 const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
+const MAX_TRACE_BYTES = 262_144;
+const MAX_TRACES = 40;
 // Any page may read the listing, and it changes with every announcement.
 const HEADERS = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
 
@@ -61,9 +66,29 @@ async function announce(
   return new Response(null, { status: 204, headers: HEADERS });
 }
 
+async function traces(request: Request, url: URL, env: Env): Promise<Response> {
+  const store = env.DIRECTORY.get(env.DIRECTORY.idFromName("traces"));
+  if (request.method === "GET") {
+    return Response.json({ traces: await store.traces() }, { headers: HEADERS });
+  }
+  const id = url.searchParams.get("id") ?? "";
+  if (request.method !== "POST" || !/^[\w-]{1,64}$/.test(id)) {
+    return text("POST a trace with an id", 400);
+  }
+  const body = await request.text();
+  if (body.length > MAX_TRACE_BYTES) {
+    return text(`traces are limited to ${MAX_TRACE_BYTES} bytes`, 413);
+  }
+  await store.addTrace(id, request.headers.get("User-Agent") ?? "", body);
+  return new Response(null, { status: 204, headers: HEADERS });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/traces") {
+      return traces(request, url, env);
+    }
     if (url.pathname !== "/servers") {
       return text("Not found", 404);
     }
@@ -105,6 +130,34 @@ export class Directory extends DurableObject<Env> {
       seen INTEGER NOT NULL,
       announcement TEXT NOT NULL
     )`);
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS traces (
+      id TEXT PRIMARY KEY,
+      at INTEGER NOT NULL,
+      agent TEXT NOT NULL,
+      trace TEXT NOT NULL
+    )`);
+  }
+
+  addTrace(id: string, agent: string, trace: string): void {
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO traces (id, at, agent, trace) VALUES (?, ?, ?, ?)",
+      id,
+      Date.now(),
+      agent,
+      trace,
+    );
+    this.ctx.storage.sql.exec(
+      "DELETE FROM traces WHERE id NOT IN (SELECT id FROM traces ORDER BY at DESC LIMIT ?)",
+      MAX_TRACES,
+    );
+  }
+
+  traces(): { id: string; at: number; agent: string; trace: string }[] {
+    return this.ctx.storage.sql
+      .exec<{ id: string; at: number; agent: string; trace: string }>(
+        "SELECT id, at, agent, trace FROM traces ORDER BY at DESC",
+      )
+      .toArray();
   }
 
   announce(url: string, announcement: Announcement): void {

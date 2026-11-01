@@ -1,10 +1,10 @@
 //! Pine Village's authored cover, and the shared pickup and spawn layout every map uses.
 
-use super::data::ARENA;
 use super::house_layout::HOUSE_HEALTH;
+use super::kinds::{CoverKind, PickupKind, Team};
 use super::math::{Vec2, js_round};
+use super::model_data::ARENA;
 use super::timber_layout::{TIMBER_HEALTH, TimberJoin};
-use super::types::{CoverKind, PickupKind, Team};
 
 /// An authored cover placement; w/d/h are full dimensions in metres.
 #[derive(Clone, Debug, PartialEq)]

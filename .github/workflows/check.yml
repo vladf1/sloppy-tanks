@@ -1,8 +1,8 @@
 # The quality gate, `bun run check`, split into parallel jobs. Each job runs one of
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
-# directly; the Pages workflow calls it with the production site settings and deploys
+# directly; the deploy workflow calls it with the production site settings and deploys
 # only after every job here passes. Beside its gate script, the server job publishes the
-# multiplayer server's Docker image, which the Pages workflow promotes to :production.
+# multiplayer server's Docker image, which the deploy workflow promotes to :production.
 name: Code quality
 
 on:
@@ -10,20 +10,20 @@ on:
   workflow_call:
     inputs:
       deploy-base:
-        description: Build the site with this DEPLOY_BASE and upload it as the Pages artifact.
+        description: Build the site with this DEPLOY_BASE and upload it as the site artifact.
         type: string
         default: ""
       directory-url:
-        description: VITE_DIRECTORY_URL for the Pages build.
+        description: SLOPPY_DIRECTORY_URL for the production build.
         type: string
         default: ""
       server-environment:
-        description: VITE_SERVER_ENVIRONMENT, whose servers the Pages build lists.
+        description: SLOPPY_SERVER_ENVIRONMENT, whose servers the production build lists.
         type: string
         default: ""
       build-number:
         description: >-
-          The Pages workflow's run number, which the page and the server image report as
+          The deploy workflow's run number, which the page and the server image report as
           their build. Pull requests have none.
         type: string
         default: ""
@@ -53,15 +53,16 @@ jobs:
       - run: bun run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
-          VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
-          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
+          SLOPPY_DIRECTORY_URL: ${{ inputs.directory-url }}
+          SLOPPY_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
+      # The build the deploy workflow publishes.
       - if: inputs.deploy-base
-        uses: actions/configure-pages@v6
-      - if: inputs.deploy-base
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
+          name: site
           path: dist
+          retention-days: 7
 
   clippy:
     name: Rust format and clippy

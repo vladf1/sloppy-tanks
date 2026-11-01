@@ -118,6 +118,28 @@ impl StepClock {
     }
 }
 
+/// The frames a page's engine may have on the GPU when the next one runs (the
+/// [`FramePacing`] limit) in the browser of `user_agent`. Chrome holds animation frames
+/// back while the GPU is behind, so 0 leaves the pacing to it (frame callbacks it reports
+/// late would only skip frames). WebKit (Safari, and every iOS browser) lets a WebGPU
+/// canvas's frames queue instead: a GPU-bound village kept 0.4-0.9 s of frames waiting
+/// and the controls answered that late, so there two keep the GPU fed while the picture
+/// stays current.
+pub fn browser_frames_in_flight(user_agent: &str) -> u32 {
+    let webkit = user_agent.contains("AppleWebKit");
+    let blink = ["Chrome", "Chromium", "Android"]
+        .iter()
+        .any(|name| user_agent.contains(name));
+    if webkit && !blink {
+        WEBKIT_FRAMES_IN_FLIGHT
+    } else {
+        0
+    }
+}
+
+/// [`browser_frames_in_flight`] in WebKit.
+const WEBKIT_FRAMES_IN_FLIGHT: u32 = 2;
+
 /// Which animation frames run, and the time each runs at, where the browser queues a
 /// WebGPU canvas's frames without holding animation frames back: there a GPU-bound page
 /// runs far ahead of its picture, and the controls answer that late. With a `limit`, a
@@ -178,6 +200,27 @@ impl FramePacing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Safari on a Mac and every iOS browser (WebKit, Chrome's included) queue WebGPU
+    /// frames; Chrome, Edge and Android's browsers hold them back themselves.
+    #[test]
+    fn only_webkit_pages_limit_their_frames_on_the_gpu() {
+        let mac_safari = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 \
+                          (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
+        let ios_chrome = "Mozilla/5.0 (iPad; CPU OS 26_0 like Mac OS X) AppleWebKit/605.1.15 \
+                          (KHTML, like Gecko) CriOS/140.0 Mobile/15E148 Safari/604.1";
+        let mac_chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+                          (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+        let android = "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 \
+                       (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36";
+        let firefox =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:140.0) Gecko/20100101 Firefox/140.0";
+        assert_eq!(browser_frames_in_flight(mac_safari), 2);
+        assert_eq!(browser_frames_in_flight(ios_chrome), 2);
+        assert_eq!(browser_frames_in_flight(mac_chrome), 0);
+        assert_eq!(browser_frames_in_flight(android), 0);
+        assert_eq!(browser_frames_in_flight(firefox), 0);
+    }
 
     /// Displayed time (one step behind the clock) of a [`StepClock`] fed `deltas`, after
     /// each frame.

@@ -48,8 +48,8 @@ pub fn house_texture(kind: HouseSurface) -> TextureRef {
     }
 }
 
-static MATERIALS: Cache<(HouseSurface, u32), Material> = Cache::new();
-static GEOMETRIES: Cache<(u8, [u64; 3]), Mesh> = Cache::new();
+static MATERIALS: Cache<(HouseSurface, u32), Material> = Cache::new("house_surfaces::MATERIALS");
+static GEOMETRIES: Cache<(u8, [u64; 3]), Mesh> = Cache::new("house_surfaces::GEOMETRIES");
 
 /// `surfaceMaterial(kind, color)`: the tile as both albedo and bump, double-sided.
 pub fn house_material(kind: HouseSurface, color: u32) -> Arc<Material> {

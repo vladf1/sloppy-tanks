@@ -20,7 +20,7 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * with the bare build for its own and could promote it to :production. A dev publish
  * reuses CI's image of the same server build when there is one, else its own earlier one.
  *
- * Main's builds also pass `--build-number`, the Pages workflow's run number, which
+ * Main's builds also pass `--build-number`, the deploy workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image
  * records as a label and as `SLOPPY_RELEASE` for `/health`. A server build keeps the
  * release of the first main build that shipped it: a pull request usually built the

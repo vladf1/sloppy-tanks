@@ -25,8 +25,8 @@ pub(super) const LID_DROP: f64 = 0.035;
 /// The wall's share of the atlas width.
 const WALL_U: f64 = 0.75;
 
-static DRUM_MESH: Cache<(), Mesh> = Cache::new();
-static DRUM_MATERIAL: Cache<(), Material> = Cache::new();
+static DRUM_MESH: Cache<(), Mesh> = Cache::new("barrel_surfaces::DRUM_MESH");
+static DRUM_MATERIAL: Cache<(), Material> = Cache::new("barrel_surfaces::DRUM_MATERIAL");
 
 /// The drum's lathe profile from the bottom centre to the lid's centre, as
 /// (radius, height from the drum's centre): rolled chimes top and bottom, two

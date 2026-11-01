@@ -16,7 +16,7 @@ turn this file into a second directory listing.
   (one test binary; a new file directly under `tests/` would be another binary to
   compile and link on every engine edit) for engine and net behavior, a
   module of `crates/server/tests/integration/` for the server, `tests/*.test.ts`
-  for the page shell.
+  for the scripts, bots and directory.
 - Establish a reproducible failure or a matched before/after measurement
   before doing a broad refactor or performance change.
 - Keep tests fast and deterministic. Prefer fixed-step loops, scoped random
@@ -37,9 +37,9 @@ the server:
   and input commands. Pure CPU parts compile natively and carry its tests.
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
   and `NetGame` a room page, one coarse call per frame; the `labs` feature adds
-  the development `RenderLab` and `EffectsLab`, and `webgl` (without the default
-  `webgpu`) makes the WebGL2 fallback engine. It also produces everything both
-  shells show in words or play: the HUD's text (`hud.rs`), the death report, kill
+  the development `RenderLab` and `EffectsLab`. A browser build names its graphics
+  backend, `webgpu` or `webgl` (the WebGL2 engine); neither is a default. It also produces everything the shell shows
+  in words or plays: the HUD's text (`hud.rs`), the death report, kill
   feed and toasts (`feedback.rs`), the battle report and pause facts
   (`battle_report.rs`), the sounds to play (`sounds.rs`), Stats for nerds
   (`nerd_rows.rs`), the room menu's text (`room_text.rs`) and Battle Setup's
@@ -53,23 +53,24 @@ the server:
   Worker's control page reaches over a service binding. Like the page and the server it
   is stamped with the content version, so it plays only on servers built from the same
   core.
-- `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
-  controls, audio and the room page's DOM. It lays out and plays what `sloppy-web`
-  produces and derives none of it. Game rules, simulation, rendering, effects and
-  replication must not come back into TypeScript; the import boundary tests
-  (`tests/*-imports.test.ts`) allowlist the shell modules.
-- `crates/desktop` (native, macOS, Windows and iPad): the other shell, binary
-  `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
+- `crates/desktop` (native for macOS, Windows and iPad, and Wasm for the page): the
+  shell, binary `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
-  and `NetGame` the page drives (`sloppy-web`'s `native` feature). It passes and
+  and `NetGame` (`sloppy-web`'s `native` feature). Built for wasm32
+  (`bun run wasm`, into the ignored `src/generated/shell/`) it is the web page:
+  `index.html` only starts it, on the browser's WebGPU, behind a loading view that
+  learns how it goes from `page.rs` (`data-shell`, `sloppy:*` marks). It passes and
   reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
-  never the JSON or names they take and write for the page, and like the page only
-  lays out and plays what they produce; `crates/web/tests/fixtures/page-json.json`
-  pins the page's JSON byte for byte. Game rules stay out of both shells. The iPad
-  build is the same crate for `aarch64-apple-ios` (`TOUCH` in `main.rs`): touch
-  controls painted in egui (`touch.rs`, `ui/touch.rs`), no Quit or fullscreen, and
-  `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle iOS 27 requires,
-  hardware keyboard presses).
+  never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
+  byte), and only lays out and plays what they produce. Game rules stay out of the
+  shell. The iPad build is the same crate for `aarch64-apple-ios`, which plays by touch
+  (`touch::screen`: true there, in the phone edition, and in a page on a touch screen as
+  Settings' Touch controls say): touch controls painted in egui (`touch.rs`,
+  `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there
+  (the UIScene life cycle iOS 27 requires, hardware keyboard presses). The device class
+  (`touch::device`: desktop, tablet or phone) is decided once at startup and picks the
+  engine's starting graphics, the reticle and the phone edition, whose screens are
+  separate `phone_*` layouts beside the full ones; keep that edition limited.
 
 ## Code style
 
@@ -96,10 +97,9 @@ the server:
   (`35afd91`, in Git history).
 - Keep the Wasm boundary coarse: packed `Float32Array` input and frame results,
   JSON for HUD, events and stats, never per-entity calls from JavaScript.
-  In TypeScript, let the compiler infer obvious locals and narrow engine JSON
-  at the boundary (`src/game/engine-api.ts`).
+  In TypeScript, let the compiler infer obvious locals.
 - `cargo fmt` and clippy (`-D warnings`) own Rust style; Prettier owns the rest.
-  Bun checks the page; lint uses a separate TypeScript 6
+  Bun checks the scripts and tools; lint uses a separate TypeScript 6
   toolchain (see `tools/lint/README.md`).
 
 ## Normal development and validation
@@ -131,27 +131,33 @@ whether Kache was on when reporting build times.
 
 ```sh
 bun run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
-bun run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
-bun run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
+bun run wasm                         # the page (the egui shell) and its shader tables into src/generated/; rerun after Rust/WGSL edits
+bun run wasm:fast                    # the same, built for compile time: for checking how a change looks
+bun run wasm:engine                  # the sloppy-web engine for the fixtures, game preview and WireView
 cargo test --workspace --exclude sloppy-desktop --test integration navigation::   # one area of the core tests (add --release for seeded matches)
-bun test tests/foo.test.ts    # focused page-shell test
+bun test tests/foo.test.ts    # focused Bun test
 bun run validate                     # seeded headless matches and reset checks
 bun run desktop                      # the desktop app for this Mac or Windows PC into artifacts/desktop/
 bun run ipad:simulator -- --install  # the iPad app, opened in a booted iPad simulator
 bun run dev                          # browser work; use the printed URL
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
 ```
 
 `bun run validate` writes its results to the ignored
 `artifacts/performance/simulation-results.json`. `bun run build` creates
 `dist/`; it is a build output, not a place to edit source behavior. Vite and
-`bun check` import the generated glue, so run `bun run wasm` before them; `build`,
-`build:dev` and `check` do. `bun run wasm` leaves the WebGL2 engine
-(`src/generated/engine-webgl/`) alone unless its glue is missing or the engine's
-API changed, because building it doubles the compile work of every edit; the
-browser checks that play it rebuild it first, and `build` builds both
-(`bun run wasm:all`). Keep `--workspace --exclude sloppy-desktop` on focused cargo
-commands, as `test:rust` and `rust:clippy` have it: `-p sloppy-core` alone, or the
+`bun check` import the generated glue, so build it before them; `build`, `build:dev` and
+`check` build the shell and the engine (`bun run wasm:all`).
+
+Pick the build for what you are checking. While iterating on how something looks or
+behaves (layout, text, a menu, a shader's colours), build only what you will open, as
+fast as it builds: `bun run wasm:fast` (`--fast` works with every `build-wasm.mjs`
+mode), then `DEPLOY_BASE=/ bun x vite build --outDir <dir>` with the default config,
+and lint the other graphics backend with clippy rather than building it. After a shell
+edit that took about 4 s against 52 for release, for a binary 70% larger that renders a
+little slower. Timing, frame rates, Wasm size and anything published use the optimized
+release build (`bun run wasm`, `wasm:all`, `build:dev`), which every deploy and CI
+build already is. Keep
+`--workspace --exclude sloppy-desktop` on focused cargo commands, as `test:rust` and `rust:clippy` have it: `-p sloppy-core` alone, or the
 desktop crate's features, resolve different dependency features and compile Rapier
 and its stack a second time. Linux CI leaves `sloppy-desktop` out, since its window,
 audio and GPU crates need system libraries there; `.github/workflows/desktop.yml`
@@ -162,40 +168,40 @@ version multiplayer needs. `tests/traffic-bots.test.ts` drives the built server 
 (`bun run server:build`).
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
-transitions, rendering, or cleanup. Run `bun run check:browser` against the
-dev server for startup, menu, input or rendering changes, or the focused check
-from `scripts/README.md` while iterating. Keep those checks passing: fix or
-delete a check that no longer matches the game rather than leaving it broken,
-and start rounds through `startRound()` in `scripts/browser-helpers.mjs`. If
-the reported bug is a real pointer interaction, verify it with a physical
-coordinate click (`page.mouse`); a locator or accessibility activation can
-bypass pointer-event and coordinate-routing bugs. Checks launch headless Chrome
-through the shared `headless` flag so they never pop windows over the user's
-desktop; only `SLOPPY_HEADED=1` opens a visible window.
+transitions, rendering, or cleanup: play the changed path in the page (`bun run dev`)
+or the desktop app. The page draws everything on one canvas, so a browser check has
+no DOM to query: it opens the page with `?automation` and reads the shell's state and
+its labelled widgets (egui's AccessKit tree, in CSS pixels) through `window.sloppyShell`
+(`crates/desktop/src/automation.rs`), then plays it with real mouse, keyboard and touch
+input at those coordinates. A new clickable widget names itself (`paint::labelled`,
+`paint::labelled_choice`) so checks can find it. `bun run check:browser` runs the
+checks and the engine fixtures (`scripts/README.md`). Keep them passing: fix or delete a
+check that no longer matches the game rather than leaving it broken. Checks launch headless
+Chrome
+through the shared `headless` flag so they never pop windows over the user's desktop;
+only `SLOPPY_HEADED=1` opens a visible window.
 
-Phones get only a deliberately limited edition (`src/game/phone-mode.ts`: tank, map
-and battle format setup, Easy single player, a one-action multiplayer tab that joins the
-busiest open room or creates one, drive stick, touch the arena to aim and fire); do not
-grow it into full phone support unless explicitly requested. Focus browser validation on
-desktop; retain tablet/iPad touch support, the phone edition and their input checks.
-
-Profiling and benchmarks (`profile.mjs`, the loading and host-download
-benchmarks) are manual evidence, not normal CI. Do not add these
-workloads to `bun run check` or deployment workflows. Keep HTTP delivery,
+Profiling and benchmarks (the host-download benchmark) are manual evidence, not
+normal CI. Do not add these workloads to `bun run check` or deployment workflows. Keep HTTP delivery,
 browser cold-load, and in-game rendering/gameplay conclusions separate; a
 result from one category does not prove the others. Preserve outliers and
 disclose sample counts instead of reporting a clean percentile that discarded
 a slow run.
 
 Separate page runs of one build drift 2x on a developer Mac, so compare render
-CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
-loaded at once: debug-API static bundles (`NODE_ENV=development bun x vite
-build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
-page per build, seeded, with the overview camera; hold the game's `loop`, step
-every page through the same timestamps in alternating 40-frame blocks, wait for
-the GPU before each frame, pair frame _n_ across builds and report the mean paired
-difference ± two standard errors over blocks. Run it again with the page order
-reversed, since the first page created tends to be faster. Call counts (wrapping
+CPU (`renderMs`, the engine's presentation and `Renderer::render`, or a whole frame's
+animation-frame callbacks, which include egui's layout and drawing) between builds
+loaded at once: static builds served cross-origin isolated for 5 µs timer
+resolution, one page per build opened with `?automation&seed=<n>` (the same match
+in every build), with the overview camera and the round started by the hook's
+`start`, not a click (the turret follows the pointer); hold the page's animation
+frames from GO (honour `cancelAnimationFrame`: winit cancels before asking again)
+and the shell's clock (`sloppyShell.hold`), step every page through the same
+timestamps in alternating 40-frame blocks, wait for the GPU before each frame, pair
+frame _n_ across builds and report the mean paired difference ± two standard errors
+over blocks. Check the scenes match (tank poses, draw counts) before trusting it.
+Run it again with the page order reversed, since the first page created tends to be
+faster. Call counts (wrapping
 the WebGPU or WebGL prototypes) and profiles (CDP profiler, which runs pages
 about twice as fast) explain a result but never time one; the GPU process's CPU,
 sampled with `ps` over fresh browsers, is a separate measurement.
@@ -281,6 +287,38 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
   scenery) must not also sit in a cache or a retained tree. Check a map's
   `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
+- The page keeps the generated vehicle models and each theme's scenery across visits
+  (`presentation/geometry_cache.rs`, `src/geometry-cache.ts`, `scene_codec`): what
+  the core builders return, read back bit for bit with the same `Arc` sharing, so the
+  draws and GPU resources match a built model's (`geometry-cache-check.mjs`). Its
+  files are keyed by the geometry version (`geometryVersion` in
+  `scripts/content-version.mjs`, stamped as `SLOPPY_GEOMETRY_VERSION`) and the
+  graphics backend. The key hashes exactly the sources a `--cfg sloppy_geometry_only`
+  build of sloppy-core compiles (read from its dep-info), which holds only the cached
+  builders (`build_scenery`, `tank_model_variant`), the codec and what they reach;
+  everything else is inside `beyond_geometry!` (`crates/core/src/lib.rs`). Add to it
+  sloppy-core's manifest and resolved crates, the compiler, the profiles and target
+  flags and the page's build profile; a gameplay change keeps players' caches. The
+  vehicles give the simulation its hitboxes, so the key must stay complete: a model
+  that comes to reach outside the set fails `bun run rust:geometry` (part of
+  `check:rust-lint`), and that check refuses a set that grows back into the simulation,
+  the balance (`sim::data`; models read `sim::model_data`) or `net`; cut the edge
+  instead (models take their enums from `sim::kinds`, not `sim::types`). Builders may
+  read no state other code sets beyond their own keyed stores, and a store's value
+  depends only on its key (the vertex materials are keyed by the whole painted
+  material, so the order models build in cannot change one). A change to the file
+  layout bumps `scene_codec::FORMAT_VERSION`. A builder's process-wide store of
+  shared meshes or materials is a named `Cache` or `SharedOnce` (`Cache::private()`
+  when keyed by addresses), never a bare static, or models built after a read-back
+  stop sharing with it (`scene_codec::fresh_processes_share_alike` counts them). The
+  shell writes a built scenery at the build's next step, while its tree lives anyway
+  (kept until the arena was ready, it raised the heap's peak by 12 MB), and the page
+  stores files only once the arena is ready. A read-back scenery is batched and
+  uploaded in the task that reads it: left across a frame, its meshes and batches
+  sat under whatever landed then (a decoded preview, the simulation's world), and a
+  cached visit's heap peaked higher than a built one's, whose freed temporaries
+  leave room. Compare heaps of warm visits (`geometry-cache-check.mjs`): a first
+  visit's downloads move where its allocations land by several MB.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
@@ -297,20 +335,22 @@ sampled with `ps` over fresh browsers, is a separate measurement.
 - Preserve bounded pools and capacity assumptions for particles, fragments,
   tracks, effects and diagnostics. If a change adds a new per-frame allocation
   or growing collection, measure reset and long-run behavior.
-- Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
-  fallback: a second engine build (`--no-default-features --features webgl`,
-  `src/generated/engine-webgl/`) on glow, drawing without wgpu (its build compiles
-  wgpu's API crate unused; `crates/render/Cargo.toml` says why). `src/engine.ts` loads
-  it only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
-  so a WebGPU page never downloads WebGL code. The renderer core (`gpu/mod.rs` and
+- Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`). The renderer also has
+  a WebGL2 backend: a build with `--features webgl` draws on glow and compiles no wgpu
+  (no browser backend is a default, so native builds compile neither); the page loads
+  the shell's WebGL build (`bun run wasm:webgl`, egui drawn with egui_glow) where the
+  browser gives no WebGPU adapter, and `?webgl` forces it. The renderer core (`gpu/mod.rs` and
   its shared mesh, material, texture and pool stores) builds the same draw lists
   for both; the browser API is one backend module chosen at build time,
   `gpu/webgpu/` or `gpu/webgl/`, each with the same few concrete types (`Gpu`,
   `Frame`, `Pipelines`, `PageBuffers`, `MaterialBinding`, `InstanceStore`,
   `Uploader`) whose GPU objects free themselves on drop. Keep shared logic out of
   the backends and add no trait or wgpu-like layer between them. The WebGL backend
-  translates the same WGSL with naga (`shader::glsl`) and sets GL state only
-  through its cache (`gpu/webgl/context.rs`); uploads go through
+  draws the GLSL ES the build translated from the same WGSL with naga (`shader::glsl`,
+  `shader/tables.rs`) and sets GL state only
+  through its cache (`gpu/webgl/context.rs`), except the shell's egui overlay, which
+  draws with its own glow handle after the output pass, before `Gl::reclaim` resets the
+  cache to its first record; uploads go through
   `COPY_WRITE_BUFFER` and the upload texture unit so they never disturb what draws
   bound. WebGL2's gaps: instance records live in an RGBA32F texture rather than a
   storage buffer (`instances_texture.wgsl`), the first instance is a per-program
@@ -325,12 +365,20 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   differently between the engines.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
-  building: `bun run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
-  fallback and `SLOPPY_WEBGL=1` runs any browser check on the WebGL engine (both
-  rebuild it first through `buildWebglEngine()` in `scripts/browser-helpers.mjs`).
+  building: `bun run rust:clippy` lints both.
   Shaders are handwritten WGSL; custom model effects register
-  an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
+  an `EffectDefinition`. The specializer (`shader/assembly.rs`, the `specializer`
+  feature) assembles each variant from the templates; the desktop apps and the engine
+  build run it when a pipeline first asks, but the page's shell carries neither it nor
+  the WGSL nor naga: `bun run wasm` first runs the native `shader-tables` generator,
+  which writes every variant the page's registry can produce, stages split and WebGL's
+  translated, into `src/generated/shaders/`, and `index.html` fetches its backend's
+  file beside the binary (`shader/tables.rs`). A new effect, key flag or fixed shader
+  must be reachable there (`generate::variant_keys`, `fixed_stage_list`); the page
+  stops with an error on a key the tables lack or on tables from other sources or
+  another registry. The native `shader`/`registry` tests validate every
+  variant with naga and translate it to WebGL's GLSL ES 3.00 and pin the tables to the
+  specializer byte for byte, but a browser can
   still reject a pipeline: inspect console
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and
@@ -371,8 +419,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   display frame: those builds judge a reset canvas on its first frames at the GPU's
   clock of the moment, and an Apple GPU clocks down while frames are held (5-6 ms of
   village work spanned 21-25 ms at 30 fps), so resetting then drops the canvas lower.
-  Measure with Graphics pinned (localStorage `sloppy-graphics`) or
-  `debug_set_scene_load`, since Auto otherwise changes what is being timed.
+  Measure with Graphics pinned (the `graphics` field of the page's localStorage
+  `sloppy-shell-settings`, Settings in the app) or `debug_set_scene_load`, since Auto
+  otherwise changes what is being timed.
 - WebKit (Safari, every iPad) guards each WGSL loop with a volatile
   forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
   indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
@@ -440,8 +489,8 @@ line-of-sight and tank steering when changing cover geometry.
 Extra levels are maps with their own arena, roster and rules, offered in Battle
 Setup's map dropdowns (marked EXTRA, in their own group) only on a page opened
 with `?debug`. Each is a map option with `extra: true`
-(`crates/core/src/sim/map_options.rs`, mirrored for the menu in
-`src/game/map-options.ts`) and a setup in `sim/extra_levels.rs` (`extra_level`).
+(`crates/core/src/sim/map_options.rs`) and a setup in `sim/extra_levels.rs`
+(`extra_level`).
 Single player plays one as an endless team battle (`single_player_rules`);
 switching back applies the standard rules, so every rule a level sets needs a
 standard value there. A room plays one like any map: the host picks it,
@@ -472,9 +521,16 @@ offline.
   under `assets/texture-sources/`. Regenerate checked-in WebP/audio assets
   only for an intentional artwork or sound change, and use the documented
   encoders rather than hand-editing generated binaries.
-- Production is GitHub Pages at the custom domain `sloppy-tanks.fridman.me`; its
-  workflow builds with `DEPLOY_BASE=/`, and `fridman.me/sloppy-tanks/` redirects
-  there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
+- The game page fetches its runtime files under content-hashed names that browsers
+  keep for good (`scripts/hashed-assets.ts`): the renderer's textures through the
+  page's manifest, and the fonts, sounds and previews that `index.html` downloads
+  beside the Wasm for the shell (`crates/desktop/src/assets.rs`), which the native
+  apps embed instead. Do not embed files in the page's Wasm, which downloads again
+  with every release, nor fetch a runtime file by its plain path from the game page.
+- Production is the Cloudflare Worker `sloppy-tanks` at `sloppytanks.com`, hosted
+  like the dev site (`deploy/site/`); main's deploy workflow builds it with
+  `DEPLOY_BASE=/`, and a redirect Worker sends `www.sloppytanks.com` and the old
+  `sloppy-tanks.fridman.me` there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
   The workflow runs the same parallel jobs as the pull-request check
   (`.github/workflows/check.yml`, each running one of the scripts
   `bun run check` chains), so a lint/type/build/test failure blocks the
@@ -494,7 +550,7 @@ offline.
   to the dedicated Cloudflare Worker `sloppy-tanks-dev` (setup and URLs in
   `README.md`). It publishes current local files, including uncommitted
   changes. Use this when asked to publish the dev site. Do not publish it to
-  production or change the production GitHub Pages workflow, and never upload
+  production or change the production deploy workflow, and never upload
   the repository directory.
 - `deploy:dev` first publishes the dev site's own multiplayer server
   (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
@@ -508,7 +564,7 @@ offline.
   `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs its server as a container image under
   Podman, behind Caddy's own container: CI pushes one image per server build and,
-  after the Pages deploy, moves `:production` to main's. Production then needs
+  after the site deploy, moves `:production` to main's. Production then needs
   `bun run server:update` only where auto-update is off (it is on by default;
   `server:status` shows it); ask before running it.
   `bun run server:deploy` from `main` is the SSH fallback when CI or the
@@ -540,7 +596,7 @@ offline.
   Setup shows one build line (release version and commit); build time and the rest
   belong in `/health` (`scripts/page-health.ts`, on production too).
 - The release version is `MAJOR.MINOR.PATCH.BUILD` (`scripts/release-version.mjs`):
-  `version` in package.json, bumped by hand, plus the Pages workflow's
+  `version` in package.json, bumped by hand, plus the deploy workflow's
   `github.run_number`, so only main's deploys have the fourth part. `/health` reports
   it as `version`, beside `protocol`, the number clients and the traffic bots read. The server image carries the release of the first main build that
   shipped its server build; later builds only retag it, so the VPS does not restart

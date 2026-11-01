@@ -13,10 +13,10 @@ use super::model_primitives::shadow_receiver;
 use super::quarry_soil::{ACCUM_CELLS, QUARRY_TERRAIN_EXTENT};
 use crate::geometry::math::js_hypot;
 use crate::sim::arena::BOUNDARY_THICKNESS;
-use crate::sim::data::ARENA;
+use crate::sim::kinds::CoverKind;
 use crate::sim::math::Random;
+use crate::sim::model_data::ARENA;
 use crate::sim::quarry_layout::quarry_layout;
-use crate::sim::types::CoverKind;
 
 const EXTENT: f64 = QUARRY_TERRAIN_EXTENT;
 /// Largest floor cell where the ground is flat, in metres. The floor only bends

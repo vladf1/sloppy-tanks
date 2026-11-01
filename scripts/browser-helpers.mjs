@@ -1,6 +1,7 @@
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { createServer } from "node:net";
+import { setTimeout as wait } from "node:timers/promises";
 import { chromium } from "playwright";
 
 /**
@@ -13,40 +14,10 @@ export const headless = !process.env.SLOPPY_HEADED;
 /** The Vite dev server under test; `bun run dev` prints it. */
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
-/**
- * SLOPPY_WEBGL=1 runs checks on the WebGL2 engine: their pages see no WebGPU, so they
- * fall back to WebGL by themselves, as a browser without WebGPU does.
- */
+/** SLOPPY_WEBGL=1 opens the game on its WebGL2 build (`?webgl`, `openShell`). */
 const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
 
-/**
- * Bring the WebGL2 engine up to date before a check plays it. `bun run wasm` builds only
- * the WebGPU engine, so after a Rust edit the WebGL one is stale until this runs; when it
- * is current, this is a half-second Cargo no-op. A check of another host's page plays
- * that host's build, so only local dev servers rebuild.
- */
-/** The `?directory=` a check passes for a local game server at WebSocket address
- * `server`: a lone server is its own directory. */
-export function localDirectory(server) {
-  const url = new URL(server);
-  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  return url.origin;
-}
-
-export function buildWebglEngine() {
-  if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) return;
-  const build = spawnSync(
-    process.execPath,
-    [fileURLToPath(new URL("build-wasm.mjs", import.meta.url)), "--webgl"],
-    { stdio: "inherit" },
-  );
-  assert.equal(build.status, 0, "the WebGL engine build failed");
-}
-
-if (webglOnly || new URL(gameUrl).searchParams.has("webgl")) buildWebglEngine();
-
-/** Headless Chrome whose pages keep their timers and frames while another page is in front,
- * so several players on one machine all keep sending input. */
+/** Headless Chrome whose pages keep their timers and frames while another page is in front. */
 export function launchChrome() {
   return chromium.launch({
     channel: "chrome",
@@ -58,6 +29,9 @@ export function launchChrome() {
     ],
   });
 }
+
+/** Chrome's touch emulation warns of its own touch events, which cannot be cancelled. */
+const TOUCH_EMULATION = /Ignored attempt to cancel a touch\w+ event with cancelable=false/;
 
 /**
  * Collect a page's uncaught errors in `errors`, each after `prefix`. `consoleErrors` also
@@ -72,32 +46,34 @@ export function collectErrors(page, errors, { consoleErrors = false, prefix = ""
   page.on("console", (message) => {
     // Fixture pages have no icon; Chrome's automatic favicon request is not an error.
     if (message.type() !== "error" || message.location().url.endsWith("/favicon.ico")) return;
+    if (TOUCH_EMULATION.test(message.text())) return;
     errors.push(prefix + message.text());
   });
 }
 
 /**
- * Launch installed Chrome (`launchChrome`) with one desktop context and page, with
- * `window.engine` (`installEngineHelpers`) in every page. Errors from every page in the
- * context are collected in `errors` (`collectErrors`).
- * `isMobile` emulates a phone: its screen is the viewport and its pointer is coarse.
- * @param {{ viewport?: { width: number, height: number }, hasTouch?: boolean, isMobile?: boolean, consoleErrors?: boolean }} [options]
+ * Launch installed Chrome (`launchChrome`) with one context and page, a desktop's unless
+ * the device options say otherwise (`hasTouch` and `isMobile` make a touch screen with a
+ * coarse pointer). Errors from every page in the context are collected in `errors`
+ * (`collectErrors`).
+ * @param {{ viewport?: { width: number, height: number }, consoleErrors?: boolean,
+ *   deviceScaleFactor?: number, hasTouch?: boolean, isMobile?: boolean }} [options]
  */
 export async function launchGame({
   viewport = { width: 1600, height: 900 },
+  consoleErrors = false,
+  deviceScaleFactor = 1,
   hasTouch = false,
   isMobile = false,
-  consoleErrors = false,
 } = {}) {
   const browser = await launchChrome();
   const context = await browser.newContext({
     viewport,
     screen: viewport,
+    deviceScaleFactor,
     hasTouch,
     isMobile,
-    deviceScaleFactor: 1,
   });
-  await installEngineHelpers(context);
   const errors = [];
   context.on("page", (page) => collectErrors(page, errors, { consoleErrors }));
   const page = await context.newPage();
@@ -105,289 +81,497 @@ export async function launchGame({
 }
 
 /**
- * Hold the game's own `loop` animation callback so a check decides exactly when
- * frames run: `window.advanceFrame(ms)` runs one loop frame `ms` after the previous
- * one, and `window.runLoop(timestamp)` runs one at an absolute RAF timestamp. The
- * loop is the one callback that hands the packed input to `Game.frame`, so every
- * engine frame (simulation steps, events, HUD refresh and drawing) happens only
- * then. Other animation callbacks keep running normally.
+ * Open the game page with its automation hook (`?automation`, the shell's
+ * `crates/desktop/src/automation.rs`), on WebGL2 with SLOPPY_WEBGL=1, and wait for the
+ * shell's first frame. `query` adds
+ * the page's own parameters (`"debug&map=harbor"`). Throws if the shell failed to start.
  * @param {import("playwright").Page} page
+ * @param {string} [query]
  */
-export async function freezeLoop(page) {
-  await page.addInitScript(() => {
-    let loop, now;
-    const requestFrame = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (callback) => {
-      if (callback.name !== "loop") return requestFrame(callback);
-      loop = callback;
-      return 1;
-    };
-    window.runLoop = (timestamp) => {
-      now = timestamp;
-      loop(timestamp);
-    };
-    window.advanceFrame = (ms) => window.runLoop((now ?? performance.now()) + ms);
-  });
+export async function openShell(page, query = "") {
+  const url = new URL(gameUrl);
+  const parameters = ["automation", ...(webglOnly ? ["webgl"] : []), ...(query ? [query] : [])];
+  url.search = parameters.join("&");
+  return openAddress(page, url.href);
 }
 
 /**
- * Install `window.engine` in every page of `target`: shorthands for the dev-only
- * `Game.debug_*` fixture hooks (`crates/web/src/game/debug.rs`) that parse their
- * JSON. `engine.view()` is what every entity's view showed in the last frame and
- * `engine.covers()` the covers; the simulation and camera are `window.sloppy.sim` and the
- * renderer counters `window.sloppy.stats()`. Use it once `window.sloppy` exists. With
- * `webglOnly` its pages also see no WebGPU.
- * @param {import("playwright").BrowserContext | import("playwright").Page} target
+ * Open `address` (an invite link, a page's own address) and wait for the shell's first
+ * frame, as `openShell` does. A `reload` reopens the page's own address.
+ * @param {import("playwright").Page} page
+ * @param {string | { reload: true }} address
  */
-export async function installEngineHelpers(target) {
-  if (webglOnly) {
-    await target.addInitScript(() => {
-      Object.defineProperty(Navigator.prototype, "gpu", { get: () => undefined });
-    });
-  }
-  await target.addInitScript(() => {
-    const game = () => window.sloppy.game;
-    window.engine = {
-      view: () => JSON.parse(game().debug_view_json()),
-      covers: () => JSON.parse(game().debug_covers_json()),
-      /** Draw one still frame, from `camera = [px, py, pz, tx, ty, tz]` when given. */
-      draw: (camera = [], overview = false) =>
-        game().debug_render(1, 0, overview, new Float32Array(camera)),
-      setTank: (id, patch) => game().debug_set_tank(id, JSON.stringify(patch)),
-      setHuman: (patch) => game().debug_set_tank(window.sloppy.sim.human.id, JSON.stringify(patch)),
-      setSim: (patch) => game().debug_set_sim(JSON.stringify(patch)),
-    };
+export async function openAddress(page, address) {
+  if (typeof address === "string") await page.goto(address);
+  else await page.reload();
+  await page.waitForFunction(() => document.documentElement.dataset.shell, null, {
+    timeout: 60000,
   });
+  const shell = await page.evaluate(() => document.documentElement.dataset.shell);
+  if (shell !== "ready") throw new Error(`the shell did not start: ${shell}`);
+  // The loading view fades out over the first frames; screenshots should not catch it.
+  await page.waitForFunction(() => {
+    const boot = document.getElementById("boot");
+    return !boot || getComputedStyle(boot).display === "none";
+  });
+  return nextFrame(page);
 }
 
 /**
- * Start a round through the real Battle Setup menu, as a player does. Until GO
- * completes, the startup overlay covers the canvas and swallows pointer and wheel
- * input; `window.sloppy.start()` alone restarts the simulation but leaves the menu up.
- * Waits on match state rather than rendered time, so it also works in fixtures that
- * freeze the game's own animation loop. `touch` taps GO like a tablet player.
+ * The shell's state after its next presented frame, with the engine's JSON for each of
+ * `extras` (`"hud"`, `"stats"`, `"nerd"`, `"debug"`, `"snapshot"`) in `state.extras`.
+ * Throws with the page's reason once its loading view says the shell stopped, which
+ * draws no further frame.
  * @param {import("playwright").Page} page
- * @param {{ touch?: boolean }} [options]
+ * @param {string[]} [extras]
  */
-export async function startRound(page, { touch = false } = {}) {
-  const start = page.locator("#start");
-  await (touch ? start.tap() : start.click());
-  // Production builds have no `window.sloppy`; there the removed menu is the signal.
-  await page.waitForFunction(
-    () =>
-      !document.querySelector("#startup-overlay") &&
-      (!window.sloppy || window.sloppy.sim.match.phase === "playing"),
+export function nextFrame(page, extras = []) {
+  return page.evaluate(
+    (wanted) =>
+      new Promise((resolve, reject) => {
+        const root = document.documentElement;
+        const stopped = () => {
+          if (root.dataset.shell !== "failed") return false;
+          reject(
+            new Error(`the shell stopped: ${document.getElementById("boot-note")?.dataset.detail}`),
+          );
+          return true;
+        };
+        if (stopped()) return;
+        const watch = new MutationObserver(() => stopped() && watch.disconnect());
+        watch.observe(root, { attributes: true, attributeFilter: ["data-shell"] });
+        window.sloppyShell
+          .frame(wanted)
+          .then(resolve, reject)
+          .finally(() => watch.disconnect());
+      }),
+    extras,
   );
 }
 
 /**
- * Wait until Battle Setup is ready to start a round, polling every animation frame.
+ * Wait until `test(state)` holds for a presented frame; returns that state. `test` may
+ * be async (to read the page's widgets or storage too). `extras` as in `nextFrame`.
  * @param {import("playwright").Page} page
+ * @param {(state: any) => unknown} test
+ * @param {{ extras?: string[], timeout?: number, what?: string }} [options]
+ */
+export async function untilState(page, test, { extras = [], timeout = 30000, what } = {}) {
+  const start = Date.now();
+  let state;
+  while (Date.now() - start < timeout) {
+    state = await nextFrame(page, extras);
+    if (await test(state)) return state;
+  }
+  const last = JSON.stringify({ ...state, prefs: undefined, extras: undefined });
+  throw new Error(`timed out waiting for ${what ?? test.toString()}: ${last}`);
+}
+
+/**
+ * The widget labelled `label` on the last frame (a string matches the whole label, a
+ * RegExp any part), or undefined.
+ * @param {import("playwright").Page} page
+ * @param {string | RegExp} label
+ */
+export async function findWidget(page, label) {
+  const widgets = await page.evaluate(() => window.sloppyShell.widgets());
+  return widgets.find((widget) =>
+    typeof label === "string" ? widget.label === label : label.test(widget.label),
+  );
+}
+
+/**
+ * The widget labelled `label` once a frame lists it (an egui area that has just opened
+ * lists its widgets a frame later).
+ * @param {import("playwright").Page} page
+ * @param {string | RegExp} label
+ */
+export async function untilWidget(page, label, { timeout = 15000 } = {}) {
+  const start = Date.now();
+  for (;;) {
+    const widget = await findWidget(page, label);
+    if (widget) return widget;
+    if (Date.now() - start > timeout) throw new Error(`no widget ${label} on screen`);
+    await nextFrame(page);
+  }
+}
+
+/**
+ * Click the middle of the widget labelled `label` with the real mouse, at its CSS
+ * coordinates, once a frame shows it, and wait for the frame that takes the click.
+ * Returns the widget.
+ * @param {import("playwright").Page} page
+ * @param {string | RegExp} label
  * @param {{ timeout?: number }} [options]
  */
-export function menuReady(page, options) {
-  return page.waitForFunction(
-    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
-    null,
-    options,
-  );
-}
-
-/**
- * Choose a map in Battle Setup with pointer clicks, as a player does: a button in the row
- * of standard maps, or the dropdown that replaces it with `?debug`. Single player
- * and a new room share the "mapMode" choice.
- * @param {import("playwright").Page} page
- * @param {string} map
- */
-export async function chooseMap(page, map) {
-  const dropdown = page.locator('.map-picker[data-name="mapMode"] .map-picker-button');
-  if (await dropdown.isVisible()) {
-    await dropdown.click();
-    await page.locator(`#mapMode-${map}`).click();
-  } else {
-    await page.locator(`input[name="mapMode"][value="${map}"]`).click();
-  }
-  await page.waitForFunction(
-    (map) => document.querySelector('.map-picker[data-name="mapMode"]')?.dataset.value === map,
-    map,
-  );
-}
-
-/** The map Battle Setup shows as chosen. @param {import("playwright").Page} page */
-export function chosenMap(page) {
-  return page.locator('.map-picker[data-name="mapMode"]').getAttribute("data-value");
-}
-
-/** Set only the seed the startup script hands the engine; the page's other
- * `Math.random` uses (cosmetic variation, bot names) stay untouched. */
-export async function seedGame(page, seed) {
-  if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("Invalid fixture seed");
-  // Startup is bundled inline in HTML in both Vite modes.
-  await page.route(
-    (url) => url.pathname.endsWith("/") || url.pathname.endsWith(".html"),
-    async (route) => {
-      const url = new URL(route.request().url());
-      if (["127.0.0.1", "localhost"].includes(url.hostname)) {
-        // Chromium treats a fulfilled document as non-local; allow this fixture's Vite socket.
-        await page.context().grantPermissions(["local-network-access"], { origin: url.origin });
-      }
-      const response = await route.fetch();
-      const source = await response.text();
-      const seeded = source.replace(
-        /Math\.floor\(Math\.random\(\)\s*\*\s*(?:1e6|1000000)\)/,
-        String(seed),
+export async function clickWidget(page, label, { timeout = 15000 } = {}) {
+  const start = Date.now();
+  for (;;) {
+    const widget = await findWidget(page, label);
+    if (widget?.enabled) {
+      await page.mouse.click(widget.x + widget.width / 2, widget.y + widget.height / 2);
+      // egui reads one click per widget a frame: let it see this one before the next.
+      await nextFrame(page);
+      return widget;
+    }
+    if (Date.now() - start > timeout) {
+      const labels = (await page.evaluate(() => window.sloppyShell.widgets())).map(
+        (shown) => shown.label,
       );
-      if (source === seeded) throw new Error("Game seed initialization changed; update seedGame");
-      await route.fulfill({ response, body: seeded });
-    },
-  );
+      throw new Error(`no enabled widget ${label} on screen; shown: ${labels.join(", ")}`);
+    }
+    await nextFrame(page);
+  }
 }
 
 /**
- * A physical coordinate click at the centre of `target` (a selector or a locator), which
- * exercises the same pointer routing a player uses; locator clicks can bypass
- * pointer-event and hit-testing bugs.
+ * Run a debug command of the hook (the old `window.sloppy` methods: `start`, `killHuman`,
+ * `giveAmmo`, `overview`, `autoplay`, `zoom`, `soak`, a room's `latency`).
  * @param {import("playwright").Page} page
- * @param {string | import("playwright").Locator} target
+ * @param {string} name
+ * @param {...unknown} args
  */
-export async function click(page, target) {
-  const locator = typeof target === "string" ? page.locator(target) : target;
-  await locator.waitFor();
-  await locator.scrollIntoViewIfNeeded();
-  assert.ok(await locator.isEnabled(), `${target} is enabled`);
-  const bounds = await locator.boundingBox();
-  assert.ok(bounds, `${target}`);
-  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
-}
-
-/** Wait two animation frames, so input and layout changes reach the page and its canvas. */
-export function nextFrames(page) {
+export function shellDebug(page, name, ...args) {
   return page.evaluate(
-    () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    ([command, rest]) => window.sloppyShell.debug(command, ...rest),
+    [name, args],
   );
 }
 
-/** The bounding box of `selector`, which must be laid out. */
-export async function box(page, selector) {
-  const rect = await page.locator(selector).boundingBox();
-  assert.ok(rect, selector);
-  return rect;
-}
+/** Where `dropSockets` sends new sockets: a port nothing listens on, refused at once. */
+export const DEAD_SOCKET = "ws://127.0.0.1:9/";
 
-/** The centre of `selector`'s bounding box. */
-export async function center(page, selector) {
-  const rect = await box(page, selector);
-  return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+/**
+ * What a context's pages let a check see and stage, as `window.sloppyProbes`, installed
+ * before the page runs:
+ *
+ * - `openSockets()`: the game's WebSockets connecting or open (not the dev server's);
+ *   `socketsCreated`: all it made so far; `inputs`: the room `input` messages they sent
+ *   (time, seq, drive, fire, mines), the latest few thousand;
+ * - `dropSockets(ms)`: close every open socket and send new ones to a closed port
+ *   (`DEAD_SOCKET`) for `ms`, as a network drop would;
+ * - `setHidden(hidden)`: report the page hidden or visible (`visibilityState`,
+ *   `hidden`) and fire `visibilitychange`, as switching tabs does; while hidden it gets
+ *   no animation frames, and its timers and delayed tasks wait a second at least;
+ * - `wasmBytes()`: each instantiated Wasm memory's size;
+ * - `listenerCounts()`: event listeners added and not removed, by target and type (but
+ *   not those of one-shot audio sources);
+ * - `intervalCount()`: `setInterval` timers not cleared.
+ * @param {import("playwright").BrowserContext} context
+ */
+export function installProbes(context) {
+  return context.addInitScript((deadSocket) => {
+    const probes = {
+      sockets: [],
+      socketsCreated: 0,
+      blockedUntil: 0,
+      hidden: false,
+      memories: [],
+      listeners: new Map(),
+      intervals: new Set(),
+    };
+    window.sloppyProbes = probes;
+
+    // Only the game's sockets: the dev server's own (Vite's HMR, on the page's host)
+    // reloads the page when it drops.
+    const NativeSocket = window.WebSocket;
+    window.WebSocket = class extends NativeSocket {
+      constructor(url, protocols) {
+        const game = new URL(url, location.href).host !== location.host;
+        const blocked = game && performance.now() < probes.blockedUntil;
+        super(blocked ? deadSocket : url, protocols);
+        if (!game) return;
+        probes.socketsCreated += 1;
+        probes.sockets.push(this);
+      }
+
+      send(data) {
+        if (typeof data === "string" && data.startsWith('{"type":"input"')) {
+          const input = JSON.parse(data);
+          probes.inputs.push({
+            at: performance.now(),
+            seq: input.seq,
+            moveX: input.moveX,
+            moveZ: input.moveZ,
+            fire: Boolean(input.fire),
+            mines: (input.actions ?? []).filter((action) => action.type === "mine").length,
+          });
+          if (probes.inputs.length > MAX_INPUTS) probes.inputs.splice(0, MAX_INPUTS / 2);
+        }
+        return super.send(data);
+      }
+    };
+    const MAX_INPUTS = 4000;
+    probes.inputs = [];
+    probes.openSockets = () => {
+      probes.sockets = probes.sockets.filter((socket) => socket.readyState <= 1);
+      return probes.sockets.length;
+    };
+    probes.dropSockets = (ms) => {
+      probes.blockedUntil = performance.now() + ms;
+      for (const socket of probes.sockets) socket.close();
+    };
+
+    // A hidden tab as Chrome runs one: no animation frames, and timers and delayed tasks
+    // wake at most once a second. Headless Chrome keeps every tab visible.
+    for (const [name, value] of [
+      ["hidden", () => probes.hidden],
+      ["visibilityState", () => (probes.hidden ? "hidden" : "visible")],
+    ]) {
+      Object.defineProperty(document, name, { configurable: true, get: value });
+    }
+    const HIDDEN_WAKE_MS = 1000;
+    const heldFrames = new Map();
+    let heldId = 0;
+    const { requestAnimationFrame: requestFrame, cancelAnimationFrame: cancelFrame } = window;
+    window.requestAnimationFrame = function (callback) {
+      if (!probes.hidden) return requestFrame.call(this, callback);
+      heldId -= 1;
+      heldFrames.set(heldId, callback);
+      return heldId;
+    };
+    window.cancelAnimationFrame = function (id) {
+      if (!heldFrames.delete(id)) cancelFrame.call(this, id);
+    };
+    const { setTimeout: startTimeout } = window;
+    window.setTimeout = function (handler, delay, ...rest) {
+      const wake = probes.hidden ? Math.max(HIDDEN_WAKE_MS, Number(delay) || 0) : delay;
+      return startTimeout.call(this, handler, wake, ...rest);
+    };
+    const scheduler = globalThis.scheduler;
+    if (scheduler?.postTask) {
+      const postTask = scheduler.postTask.bind(scheduler);
+      scheduler.postTask = (callback, options) =>
+        postTask(
+          callback,
+          probes.hidden && options?.delay != null
+            ? { ...options, delay: Math.max(HIDDEN_WAKE_MS, options.delay) }
+            : options,
+        );
+    }
+    probes.setHidden = (hidden) => {
+      probes.hidden = hidden;
+      document.dispatchEvent(new Event("visibilitychange"));
+      if (hidden) return;
+      const callbacks = [...heldFrames.values()];
+      heldFrames.clear();
+      for (const callback of callbacks) requestFrame.call(window, callback);
+    };
+
+    for (const name of ["instantiate", "instantiateStreaming"]) {
+      const original = WebAssembly[name];
+      if (typeof original !== "function") continue;
+      WebAssembly[name] = async function (...args) {
+        const result = await original.apply(this, args);
+        const instance = result instanceof WebAssembly.Instance ? result : result.instance;
+        const memory = instance?.exports?.memory;
+        if (memory instanceof WebAssembly.Memory) probes.memories.push(memory);
+        return result;
+      };
+    }
+    probes.wasmBytes = () => probes.memories.map((memory) => memory.buffer.byteLength);
+
+    // Kept per target and listener, so one added twice or removed unadded counts as the
+    // browser counts it.
+    const added = new WeakMap();
+    const targetName = (target) =>
+      target === window
+        ? "window"
+        : target === document
+          ? "document"
+          : (target?.constructor?.name ?? "unknown");
+    const keyOf = (type, options) =>
+      `${type}|${typeof options === "boolean" ? options : Boolean(options?.capture)}`;
+    // Audio buffer sources play once and are collected with their listeners (the web's
+    // audio output schedules one per buffer), so they are left out.
+    const counted = (target) =>
+      !(globalThis.AudioScheduledSourceNode && target instanceof AudioScheduledSourceNode);
+    const { addEventListener, removeEventListener } = EventTarget.prototype;
+    EventTarget.prototype.addEventListener = function (type, listener, options) {
+      if (listener && counted(this)) {
+        let keys = added.get(this);
+        if (!keys) added.set(this, (keys = new Map()));
+        const key = keyOf(type, options);
+        let listeners = keys.get(key);
+        if (!listeners) keys.set(key, (listeners = new Set()));
+        if (!listeners.has(listener)) {
+          listeners.add(listener);
+          const name = `${targetName(this)} ${type}`;
+          probes.listeners.set(name, (probes.listeners.get(name) ?? 0) + 1);
+        }
+      }
+      return addEventListener.call(this, type, listener, options);
+    };
+    EventTarget.prototype.removeEventListener = function (type, listener, options) {
+      if (added.get(this)?.get(keyOf(type, options))?.delete(listener)) {
+        const name = `${targetName(this)} ${type}`;
+        probes.listeners.set(name, probes.listeners.get(name) - 1);
+      }
+      return removeEventListener.call(this, type, listener, options);
+    };
+    probes.listenerCounts = () =>
+      Object.fromEntries([...probes.listeners].filter(([, count]) => count > 0).sort());
+
+    const { setInterval: startInterval, clearInterval: stopInterval } = window;
+    window.setInterval = function (...args) {
+      const id = startInterval.apply(this, args);
+      probes.intervals.add(id);
+      return id;
+    };
+    window.clearInterval = function (id) {
+      probes.intervals.delete(id);
+      return stopInterval.call(this, id);
+    };
+    probes.intervalCount = () => probes.intervals.size;
+  }, DEAD_SOCKET);
 }
 
 /**
- * Real multi-touch through CDP. `touch(type, id, x, y)` presses, moves or lifts
- * (`touchEnd`) finger `id` while the others stay down, then waits two frames;
- * `tap(id, point)` presses and lifts one finger; `cancel()` is the OS cancelling every touch.
- * @param {import("playwright").Page} page
+ * The game server the multiplayer checks start: `SLOPPY_SERVER_BIN`, else the build of
+ * `node scripts/build-server.mjs`, which stamps the content version the page plays (a
+ * plain `cargo build` reports "test-content", and the page refuses its rooms).
  */
-export async function touchScreen(page) {
-  const session = await page.context().newCDPSession(page);
-  const fingers = new Map();
-  const touch = async (type, id, x, y) => {
-    const released = fingers.get(id);
-    if (type === "touchEnd") fingers.delete(id);
-    else fingers.set(id, { id, x, y, radiusX: 5, radiusY: 5, force: 1 });
-    await session.send("Input.dispatchTouchEvent", {
-      type,
-      touchPoints: type === "touchEnd" ? [released] : [...fingers.values()],
-    });
-    await nextFrames(page);
-  };
-  const tap = async (id, { x, y }) => {
-    await touch("touchStart", id, x, y);
-    await touch("touchEnd", id);
-  };
-  const cancel = async () => {
-    await session.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
-    fingers.clear();
-  };
-  return { touch, tap, cancel };
+export const serverBinary = process.env.SLOPPY_SERVER_BIN ?? "target/server/sloppy-server";
+
+/** Whether `serverBinary` is there to start. */
+export function hasServerBinary() {
+  return existsSync(serverBinary);
 }
 
-/** Each control's box lies inside the `width`×`height` viewport, and no two overlap. */
-export function assertApart(rects, selectors, width, height) {
-  const size = `at ${width}x${height}`;
-  rects.forEach((rect, i) => {
-    assert.ok(rect.x >= 0 && rect.y >= 0, `${selectors[i]} on screen ${size}`);
-    assert.ok(
-      rect.x + rect.width <= width && rect.y + rect.height <= height,
-      `${selectors[i]} on screen ${size}`,
-    );
-    rects.slice(i + 1).forEach((other, j) => {
-      const apart =
-        rect.x + rect.width <= other.x ||
-        other.x + other.width <= rect.x ||
-        rect.y + rect.height <= other.y ||
-        other.y + other.height <= rect.y;
-      assert.ok(apart, `${selectors[i]} and ${selectors[i + j + 1]} do not overlap ${size}`);
+/** A local TCP port nothing listens on now, so a check never meets another session's. */
+export function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
     });
   });
 }
 
-/** A physical touch at the centre of each control lands on that control. */
-export async function assertTouchable(page, selectors, size) {
-  for (const selector of selectors) {
-    const point = await center(page, selector);
-    assert.equal(
-      await page.evaluate(
-        ({ selector, point }) =>
-          document.querySelector(selector).contains(document.elementFromPoint(point.x, point.y)),
-        { selector, point },
-      ),
-      true,
-      `${selector} can receive physical touches ${size}`,
+/**
+ * Start `serverBinary` on `port` (a free one by default) and wait for its `/health`.
+ * `directory` is its HTTP address, which a page lists rooms from (`?directory=`; a lone
+ * server is its own directory), and `url` the `ws:` address its rooms carry, as seat keys
+ * name it. `stop(signal)` waits for it to exit: SIGKILL crashes it, SIGTERM is a deploy's
+ * graceful stop, which tells players their room closed. `start()` brings it back on the
+ * same port; `logs()` is everything it printed.
+ * @param {{ port?: number }} [options]
+ */
+export async function startGameServer({ port } = {}) {
+  port ??= await freePort();
+  const directory = `http://127.0.0.1:${port}`;
+  let child;
+  let logs = "";
+  const healthy = () =>
+    fetch(`${directory}/health`).then(
+      (answer) => answer.ok,
+      () => false,
     );
+  const server = {
+    port,
+    directory,
+    url: `ws://127.0.0.1:${port}`,
+    logs: () => logs,
+    async start() {
+      if (await healthy()) throw new Error(`something already answers on port ${port}`);
+      child = spawn(serverBinary, [], {
+        env: { ...process.env, PORT: String(port) },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      child.stdout.on("data", (data) => (logs += data));
+      child.stderr.on("data", (data) => (logs += data));
+      const deadline = Date.now() + 20000;
+      while (!(await healthy())) {
+        if (child.exitCode !== null) throw new Error(`the server exited: ${logs}`);
+        if (Date.now() > deadline) throw new Error(`the server did not start: ${logs}`);
+        await wait(100);
+      }
+    },
+    async stop(signal = "SIGTERM") {
+      if (!child || child.exitCode !== null || child.signalCode !== null) return;
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      child.kill(signal);
+      await exited;
+    },
+  };
+  await server.start();
+  return server;
+}
+
+/**
+ * What `directory`'s server lists for `room` (`/rooms`: players connected, seats
+ * reserved, phase), or undefined when it lists none.
+ * @param {string} directory
+ * @param {string} room
+ */
+export async function roomListing(directory, room) {
+  const { rooms } = await (await fetch(`${directory}/rooms?debug`)).json();
+  return rooms.find((listed) => listed.room === room);
+}
+
+/**
+ * Fingers on a touch page (`hasTouch`) through CDP, as a touch screen sends them: a start
+ * or move carries every finger down, an end the one that lifts. Once one has lifted the
+ * others hold still and lift last. Each waits for the shell's next frame.
+ * @param {import("playwright").Page} page
+ */
+export async function fingers(page) {
+  const session = await page.context().newCDPSession(page);
+  const down = new Map();
+  // CDP ends its touch sequence at a touchEnd although fingers stay down: they can still
+  // lift together (an empty touchEnd) but no longer move or lift one by one.
+  let lifted = false;
+  const send = async (type, touchPoints) => {
+    await session.send("Input.dispatchTouchEvent", { type, touchPoints });
+    await nextFrame(page);
+  };
+  const point = (id, x, y) => ({ id, x, y, radiusX: 4, radiusY: 4, force: 1 });
+  return {
+    start(id, x, y) {
+      down.set(id, point(id, x, y));
+      return send("touchStart", [...down.values()]);
+    },
+    move(id, x, y) {
+      if (lifted) throw new Error("CDP moves no finger after another lifted");
+      down.set(id, point(id, x, y));
+      return send("touchMove", [...down.values()]);
+    },
+    end(id) {
+      const finger = down.get(id);
+      down.delete(id);
+      if (!lifted) {
+        lifted = down.size > 0;
+        return send("touchEnd", [finger]);
+      }
+      if (down.size > 0) throw new Error("CDP lifts the rest only together");
+      lifted = false;
+      return send("touchEnd", []);
+    },
+    async tap(id, x, y) {
+      await this.start(id, x, y);
+      await this.end(id);
+    },
+  };
+}
+
+/**
+ * Tap the middle of the widget labelled `label` with a finger (`fingers`) once a frame
+ * shows it enabled. Returns the widget.
+ * @param {import("playwright").Page} page
+ * @param {Awaited<ReturnType<typeof fingers>>} touch
+ * @param {string | RegExp} label
+ */
+export async function tapWidget(page, touch, label, { timeout = 15000 } = {}) {
+  const start = Date.now();
+  for (;;) {
+    const widget = await findWidget(page, label);
+    if (widget?.enabled) {
+      await touch.tap(90, widget.x + widget.width / 2, widget.y + widget.height / 2);
+      return widget;
+    }
+    if (Date.now() - start > timeout) throw new Error(`no enabled widget ${label} to tap`);
+    await nextFrame(page);
   }
-}
-
-/** Single player's touch controls hold fire; the message shows the tank and match state. */
-export async function assertFiring(page, message) {
-  const now = await page.evaluate(() => ({
-    fire: window.sloppy.controls.touch.fire,
-    alive: window.sloppy.sim.human.alive,
-    phase: window.sloppy.sim.match.phase,
-  }));
-  assert.equal(now.fire, true, `${message}: ${JSON.stringify(now)}`);
-}
-
-/** A finger on the arena at (x, y) fires until it lifts; returns where the turret then aims.
- * `touch` is a `touchScreen` finger driver. */
-export async function aimAfterTap(page, touch, x, y) {
-  await touch("touchStart", 2, x, y);
-  await touch("touchMove", 2, x + 1, y);
-  await assertFiring(page, "an arena finger fires");
-  await page.waitForTimeout(400);
-  await touch("touchEnd", 2);
-  assert.equal(
-    await page.evaluate(() => window.sloppy.controls.touch.fire),
-    false,
-    "lifting it stops firing",
-  );
-  return page.evaluate(() => window.sloppy.sim.human.aim);
-}
-
-/** Turn touch controls on or off and save Settings; `touch` taps like a tablet player. */
-export async function setTouchMode(page, mode, { touch = false } = {}) {
-  const press = (selector) =>
-    touch ? page.locator(selector).tap() : page.locator(selector).click();
-  await press("#settings-open");
-  await page.locator("#touch-mode").selectOption(mode);
-  await press(".settings-save");
-}
-
-/** A screenshot's RGBA pixels. Only the checks that compare pixels load the native canvas. */
-export async function pixels(png) {
-  const { createCanvas, loadImage } = await import("@napi-rs/canvas");
-  const image = await loadImage(png);
-  const canvas = createCanvas(image.width, image.height);
-  const context = canvas.getContext("2d");
-  context.drawImage(image, 0, 0);
-  return context.getImageData(0, 0, image.width, image.height).data;
 }

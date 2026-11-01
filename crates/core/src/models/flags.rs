@@ -14,7 +14,7 @@ use super::{Team, model_primitives::Cache};
 use crate::geometry::plane_geometry_segments;
 use crate::scene::{Color, Effect, Instance, Material, Node, Side};
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
-use crate::sim::data::ARENA;
+use crate::sim::model_data::ARENA;
 
 /// Node names of the flag instanced meshes.
 const FLAG_POLE: &str = "flag-pole";
@@ -32,7 +32,7 @@ fn flag_positions(team: Team) -> [(f64, f64); 5] {
     spawn_positions(team, 1.0).map(|spawn| (x, spawn.z))
 }
 
-static CLOTH_MATERIALS: Cache<Team, Material> = Cache::new();
+static CLOTH_MATERIALS: Cache<Team, Material> = Cache::new("flags::CLOTH_MATERIALS");
 
 fn cloth_material(team: Team) -> Arc<Material> {
     CLOTH_MATERIALS.get_or_insert(team, || Material {

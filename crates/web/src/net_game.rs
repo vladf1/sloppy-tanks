@@ -83,7 +83,6 @@ use serde_json::{Value, json};
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
 };
-use sloppy_core::net::client_setup::pending_join;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -93,7 +92,7 @@ use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::GraphicsSetting;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
@@ -102,8 +101,9 @@ use crate::nerd_rows::{
     ConnectionStats, FeelStats, NetworkSampler, RoomStats, SceneStats, StatsSection, room_sections,
 };
 use crate::page::{
-    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
-    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
+    BakedPixels, CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED,
+    PageError, PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result,
+    queue_event,
 };
 use crate::room_notices::RoomNotice;
 use crate::room_text::RoomText;
@@ -160,7 +160,7 @@ struct PendingArena {
     state: RenderState,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 pub struct NetGame {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
@@ -184,6 +184,8 @@ pub struct NetGame {
     times: FrameTimes,
     pacing: FramePacing,
     canvas: CanvasSize,
+    /// A dialog the page blurred the arena behind is open (`set_backdrop_blur`).
+    backdrop_blur: bool,
     graphics: Graphics,
     /// The last frame's result, which a frame skipped for the GPU hands back.
     last_result: Vec<f32>,
@@ -194,7 +196,7 @@ pub struct NetGame {
     network_sampler: NetworkSampler,
 }
 
-#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+#[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
 impl NetGame {
     /// Create the renderer on `canvas` and the room session (not yet connected).
     /// Rejects when the renderer cannot start or the configuration is invalid.
@@ -202,12 +204,6 @@ impl NetGame {
         #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
         Self::create_with(canvas, parse(config_json)?, parse(config_json)?).await
-    }
-
-    /// The choices Battle Setup stored for `room` before reloading into it, as `JoinChoice`
-    /// JSON, or undefined when the saved text is missing, for another room, or invalid.
-    pub fn pending_join(saved: Option<String>, room: &str) -> Option<String> {
-        pending_join(saved.as_deref(), room).map(|choice| choice.to_json())
     }
 
     // ---------------------------------------------------------- connection
@@ -385,6 +381,7 @@ impl NetGame {
         self.canvas.apply(&mut self.view);
         self.graphics
             .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+        self.set_backdrop_blur(self.backdrop_blur);
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
@@ -444,21 +441,9 @@ impl NetGame {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 
-    /// The pixels of a claimed bake, baked on the shell's threads.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
-        self.view.supply_texture(key, rgba).map_err(js_error)
-    }
-
     /// Bake a claimed texture on the main thread after all (the worker failed).
     pub fn release_texture_bake(&mut self, key: &str) {
         self.view.release_texture_bake(key);
-    }
-
-    /// The renderer, for the desktop shell's overlay and presentation.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
-        &mut self.view.renderer
     }
 
     // ---------------------------------------------------------- frame
@@ -679,6 +664,16 @@ impl NetGame {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl NetGame {
+    /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
+    pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// The renderer, for the desktop shell's overlay and presentation.
+    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
+        &mut self.view.renderer
+    }
+
     /// `create` with the view and the room's configuration as values.
     pub async fn create_with(
         canvas: RenderTarget,
@@ -721,6 +716,7 @@ impl NetGame {
             times: FrameTimes::default(),
             pacing,
             canvas,
+            backdrop_blur: false,
             shell,
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
@@ -842,6 +838,16 @@ impl NetGame {
     /// The GPU's smoothed frame time in milliseconds, once sampled.
     pub fn gpu_ms(&self) -> Option<f64> {
         self.graphics.gpu_ms()
+    }
+
+    /// Blur and desaturate the arena while a dialog is over it (the room's menu, the
+    /// connection's, Settings), as the page's dialog backdrop did; from the next frame
+    /// shown.
+    pub fn set_backdrop_blur(&mut self, on: bool) {
+        self.backdrop_blur = on;
+        self.view
+            .renderer
+            .set_backdrop_blur(self.canvas.backdrop_blur(on));
     }
 }
 

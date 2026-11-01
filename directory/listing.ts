@@ -1,5 +1,5 @@
 // The server directory's rules (worker.ts), free of Cloudflare imports so node tests run them.
-import { readRooms, type RoomListing } from "../src/net/room-listing";
+import { readRooms, type RoomListing } from "./room-listing";
 
 /** Each environment lists its own game servers: production's and the dev site's. */
 export const ENVIRONMENTS = ["production", "dev"] as const;
@@ -13,8 +13,7 @@ export const MAX_BODY_BYTES = 256 * 1024;
 const MAX_CPUS = 1024;
 const MAX_MEMORY_MB = 16 * 1024 * 1024;
 
-/** What a game server announces: its `/health` fields and its rooms, checked as the page
- * checks them (src/net/room-listing.ts) so one bad announcement cannot spoil the list. */
+/** What a game server announces: its `/health` fields and its rooms (`room-listing.ts`). */
 export interface Announcement {
   version?: string;
   protocol: number;
