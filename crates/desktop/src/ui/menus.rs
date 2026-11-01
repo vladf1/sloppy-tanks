@@ -65,6 +65,8 @@ const SLIDER_OFFSET: f32 = 6.0;
 const FIRST_GROUP_GAP: f32 = 5.5;
 const GROUP_GAP: f32 = 12.0;
 const SETTINGS_ACTIONS_GAP: f32 = 22.0;
+/// How far the rows fade out over SAVE and CANCEL while more of them lie below.
+const SETTINGS_FOLD_FADE: f32 = 36.0;
 const RESET_HEIGHT: f32 = 30.0;
 /// A pause fact's cell: its least height (half the pane's 216), and its padding.
 const FACT_ROW: f32 = 107.5;
@@ -1257,8 +1259,9 @@ fn switch(ui: &mut Ui, painter: &Painter, rect: Rect, id: &str, on: &mut bool) {
 
 /// Settings: sound, graphics, fullscreen, Stats for nerds and (single player) the
 /// battle speeds. Nothing changes until SAVE; CANCEL, Esc or the X leave every
-/// setting as it was. A screen too short for it scrolls the dialog, as the page's
-/// does, rather than shrinking its type.
+/// setting as it was. A screen too short for it scrolls the rows, as the page's
+/// dialog does, rather than shrinking its type, and keeps SAVE and CANCEL under
+/// them on screen.
 pub fn settings(
     context: &egui::Context,
     state: &mut UiState,
@@ -1292,22 +1295,57 @@ pub fn settings(
         padding,
         |ui, _, origin, width| {
             let [side, top, bottom] = padding;
-            // The plate's whole inside scrolls, its padding with it.
-            let plate =
-                Rect::from_min_size(origin - vec2(side, top), vec2(width + 2.0 * side, room.y));
+            let actions_height = if stacked { PHONE_BUTTON_HEIGHT } else { 48.0 };
+            // Everything over the buttons scrolls, the plate's top padding with it.
+            let rows_room = room.y - SETTINGS_ACTIONS_GAP - actions_height - bottom;
+            let plate = Rect::from_min_size(
+                origin - vec2(side, top),
+                vec2(width + 2.0 * side, rows_room),
+            );
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(plate));
             let shown = egui::ScrollArea::vertical()
                 .id_salt("settings")
-                .max_height(room.y)
+                .max_height(rows_room)
                 .auto_shrink([false, true])
                 .show(&mut body, |ui| {
                     let origin = ui.max_rect().min + vec2(side, top);
                     let height = settings_body(
                         ui, art, view, &mut draft, &mut close, origin, width, padding, stacked,
                     );
-                    ui.set_min_size(vec2(plate.width(), top + height + bottom));
+                    ui.set_min_size(vec2(plate.width(), top + height));
                 });
-            shown.content_size.y.min(room.y) - top - bottom
+            let rows_height = shown.content_size.y.min(rows_room) - top;
+            // Rows below the fold fade into the plate, so a finger knows to scroll.
+            let viewport = shown.inner_rect;
+            if shown.state.clamped_offset().y + viewport.height() < shown.content_size.y - 1.0 {
+                let plate_top = origin.y - top;
+                let plate_height =
+                    top + rows_height + SETTINGS_ACTIONS_GAP + actions_height + bottom;
+                let plate = paint::mix(
+                    hexa(paint::PLATE_TOP, 0.97),
+                    hexa(paint::PLATE_BOTTOM, 0.99),
+                    (viewport.bottom() - plate_top) / plate_height,
+                );
+                let band = Rect::from_min_max(
+                    pos2(origin.x, viewport.bottom() - SETTINGS_FOLD_FADE),
+                    pos2(origin.x + width, viewport.bottom()),
+                );
+                ui.painter().add(paint::vgradient(
+                    band,
+                    &[(0.0, Color32::TRANSPARENT), (1.0, plate)],
+                ));
+            }
+            let actions_top = origin.y + rows_height + SETTINGS_ACTIONS_GAP;
+            settings_actions(
+                ui,
+                art,
+                &mut close,
+                origin.x,
+                actions_top,
+                width,
+                actions_height,
+            );
+            rows_height + SETTINGS_ACTIONS_GAP + actions_height
         },
     );
     match close {
@@ -1317,8 +1355,8 @@ pub fn settings(
     }
 }
 
-/// Settings' head, rows and buttons from `origin` in `width`; returns the height used.
-/// `close` becomes whether to keep the draft once the dialog is done.
+/// Settings' head and rows from `origin` in `width`; returns the height used. `close`
+/// becomes whether to keep the draft once the dialog is done.
 #[allow(clippy::too_many_arguments)]
 fn settings_body(
     ui: &mut Ui,
@@ -1515,10 +1553,21 @@ fn settings_body(
         }
     }
     y = rows.row(painter, y, "Privacy & support", "Opens sloppytanks.com");
-    y += SETTINGS_ACTIONS_GAP;
-    let height = if stacked { PHONE_BUTTON_HEIGHT } else { 48.0 };
+    y - origin.y
+}
+
+/// SAVE and CANCEL in a row `height` tall from (`left`, `top`) across `width`.
+fn settings_actions(
+    ui: &mut Ui,
+    art: &Art,
+    close: &mut Option<bool>,
+    left: f32,
+    top: f32,
+    width: f32,
+    height: f32,
+) {
     let save_width = (width - 10.0) * 0.645;
-    let save = Rect::from_min_size(pos2(origin.x, y), vec2(save_width, height));
+    let save = Rect::from_min_size(pos2(left, top), vec2(save_width, height));
     if paint::button_at(ui, art, save, "SAVE", None, ButtonStyle::Primary, true).clicked() {
         *close = Some(true);
     }
@@ -1526,7 +1575,7 @@ fn settings_body(
         ui,
         art,
         Rect::from_min_size(
-            pos2(save.right() + 10.0, y),
+            pos2(save.right() + 10.0, top),
             vec2(width - save_width - 10.0, height),
         ),
         "CANCEL",
@@ -1538,7 +1587,6 @@ fn settings_body(
     {
         *close = Some(false);
     }
-    y + height - origin.y
 }
 
 /// The battle speed group's own action (`.group-action`): both speeds back to 100%,
