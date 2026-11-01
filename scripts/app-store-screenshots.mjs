@@ -324,16 +324,26 @@ async function captureIos({ device, udid }) {
 
 // ---------------------------------------------------------------- Mac
 
-/** The on-screen windows of process `pid`, with their bounds in points. */
+/** The on-screen windows of process `pid`, with their bounds in points and whether another
+ * app's window lies over them (the list runs front to back). */
 function macWindows(pid) {
   const script = `ObjC.import("CoreGraphics");
 const list = ObjC.castRefToObject(
   $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, $.kCGNullWindowID));
 const windows = [];
+const above = [];
+const overlap = (a, b) =>
+  a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
 for (let i = 0; i < list.count; i++) {
   const window = ObjC.deepUnwrap(list.objectAtIndex(i));
-  if (window.kCGWindowOwnerPID === ${pid} && window.kCGWindowLayer === 0)
-    windows.push({ id: window.kCGWindowNumber, bounds: window.kCGWindowBounds });
+  if (window.kCGWindowLayer !== 0) continue;
+  const bounds = window.kCGWindowBounds;
+  if (window.kCGWindowOwnerPID === ${pid}) {
+    windows.push({ id: window.kCGWindowNumber, bounds,
+      covered: above.some((other) => overlap(other, bounds)) });
+  } else if ((window.kCGWindowAlpha ?? 1) > 0) {
+    above.push(bounds);
+  }
 }
 JSON.stringify(windows);`;
   return JSON.parse(run("osascript", ["-l", "JavaScript", "-e", script]));
@@ -407,15 +417,23 @@ async function captureMac(device) {
       // missed the window, but System Events now and then cannot see it for seconds while
       // the app loads an arena, so it is only asked to move the window when it is out of
       // place, and given half a minute (a battle's first shot is 50 s in).
+      // A capture takes the screen, so another app's window over the game's (the player
+      // went on with their day) would be in it: the window must be clear as well.
       const content = async () => {
         for (let tries = 0; ; tries++) {
-          const bounds = macWindows(app.pid)[0]?.bounds;
-          if (bounds?.Width === points[0] && bounds?.Height === points[1]) {
+          const window = macWindows(app.pid)[0];
+          const bounds = window?.bounds;
+          const sized = bounds?.Width === points[0] && bounds?.Height === points[1];
+          if (sized && !window.covered) {
             return [bounds.X, bounds.Y, bounds.Width, bounds.Height];
           }
           if (tries === 150) {
-            const size = bounds ? `${bounds.Width}×${bounds.Height}` : "gone";
-            throw new Error(`the Mac app's window is ${size}, not ${points.join("×")}`);
+            const state = !bounds
+              ? "gone"
+              : sized
+                ? "covered by another window"
+                : `${bounds.Width}×${bounds.Height}, not ${points.join("×")}`;
+            throw new Error(`the Mac app's window is ${state}`);
           }
           try {
             placeMacWindow(app.pid, [left, top, ...points]);
