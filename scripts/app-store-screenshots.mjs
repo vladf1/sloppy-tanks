@@ -6,6 +6,7 @@
 //   pnpm run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
 //   pnpm run screenshots:app-store -- --only ipad-13,mac --no-report
 //
+// The apps are built single player, as the App Store has them (`--single-player`).
 // Each device shows Battle Setup, three autoplayed single-player battles (one per standard
 // map, the player's tank driving itself) and, unless `--no-report`, the third battle's
 // report, which waits out its five-minute round. The game reads its command line as a
@@ -404,7 +405,9 @@ const ios = devices.filter((device) => !device.mac);
 const mac = devices.find((device) => device.mac);
 if (!process.argv.includes("--no-build")) {
   const build = (mode) =>
-    execFileSync("node", [join(root, "scripts/build-desktop.mjs"), mode], { stdio: "inherit" });
+    execFileSync("node", [join(root, "scripts/build-desktop.mjs"), mode, "--single-player"], {
+      stdio: "inherit",
+    });
   if (ios.length) build("--ios-simulator");
   if (mac) build("--mac");
 }
