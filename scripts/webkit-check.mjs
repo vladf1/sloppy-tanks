@@ -5,7 +5,15 @@
 // mid-round and no renderer, page or console error. While driving it records the
 // animation frames' gaps and the presented frames' (the shell's clock per frame) and
 // prints their distribution; headless timing is noisy, so only a gross stall fails.
+//
+// The frame rate is judged against the machine, not a fixed number: a blank page first
+// shows the rate WebKit gives any page here (60 headless on a Mac, 30 in macOS's Low
+// Power Mode, more on a fast display), and the drive must keep most of it. A drive held
+// lower while its frames fit a display frame is WebKit's canvas pacing (bug 325095,
+// which `reset_canvas_pacing` undoes) and fails; one whose frames cost more is this
+// machine being slower than its display, printed but not judged: timing is not a gate.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { setTimeout as wait } from "node:timers/promises";
 import { webkit } from "playwright";
@@ -26,9 +34,15 @@ const READY_TIMEOUT_MS = 180_000;
 const DRIVE_MS = 5000;
 /** The drive's first stretch, whose frames may still settle in. */
 const SETTLE_MS = 1000;
-/** Frames per second the drive must reach: headless WebKit paces to 60, and WebKit's
- * WebGPU canvas drops to 30 or 24 when a frame's work overruns the display's. */
-const MIN_DRIVE_FPS = 45;
+/** The share of the blank page's frame rate the drive must keep: WebKit's WebGPU canvas
+ * drops to a half or less (60 to 30 or 24) when one frame's work overruns. */
+const MIN_DRIVE_SHARE = 0.75;
+/** The share of a frame its work fills when the work, not the browser, sets the rate:
+ * the main thread's of a display frame, the GPU's of the drive's own frame interval.
+ * WebKit queues frames the GPU is behind on, so a GPU-bound page runs at its GPU time
+ * rather than a vsync step, while an Apple GPU under a held canvas clocks down to fill
+ * only about 0.6-0.75 of it (21-25 ms of 33, `quality.rs`). */
+const BOUND_SHARE = 0.85;
 /** A frame gap this long after the first second is a stall, not noise. */
 const STALL_MS = 250;
 /** Distinct pipelines an arena may prepare; the village needs about 60. */
@@ -60,21 +74,58 @@ function distribution(values) {
 }
 const gaps = (times) => times.slice(1).map((time, index) => time - times[index]);
 
+/** Animation frames a blank page times before the game is judged. */
+const BLANK_PAGE_FRAMES = 60;
+/** The frame rate WebKit gives a page that draws nothing: the most the game can reach. */
+async function blankPageFps(browser) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  const times = await page.evaluate(
+    (count) =>
+      new Promise((resolve) => {
+        const times = [];
+        const tick = (time) => {
+          times.push(time);
+          if (times.length > count) resolve(times);
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+    BLANK_PAGE_FRAMES,
+  );
+  await context.close();
+  return (BLANK_PAGE_FRAMES * 1000) / (times.at(-1) - times[0]);
+}
+
+/** Why the browser may hold every page, where the system says: Low Power Mode is
+ * `powermode 1` on Apple silicon and `lowpowermode 1` on Intel Macs. */
+function lowPowerMode() {
+  if (process.platform !== "darwin") return false;
+  const settings = execFileSync("pmset", ["-g"], { encoding: "utf8" });
+  return /^\s*(?:powermode|lowpowermode)\s+1\b/m.test(settings);
+}
+
 const browser = await webkit.launch({ headless });
 const results = { browser: `WebKit ${browser.version()}` };
 try {
+  const displayFps = await blankPageFps(browser);
+  results.blankPageFps = Math.round(displayFps * 10) / 10;
+  const lowPower = lowPowerMode() ? " (Low Power Mode is on)" : "";
+  console.log(`webkit-check: a blank page runs at ${results.blankPageFps} fps${lowPower}`);
   for (const { name, options } of SIZES) {
     const context = await browser.newContext(options);
     // Every animation frame's time, and the shell's clock for each frame it presented.
     await context.addInitScript(() => {
-      const pacing = (window.pacing = { recording: false, frames: [], presented: [] });
+      const pacing = (window.pacing = { recording: false, frames: [], presented: [], work: [] });
       let shown = 0;
       const request = window.requestAnimationFrame.bind(window);
       window.requestAnimationFrame = (callback) =>
         request((time) => {
+          const start = performance.now();
           callback(time);
           if (!pacing.recording) return;
           pacing.frames.push(time);
+          pacing.work.push(performance.now() - start);
           const state = window.sloppyShell?.state();
           if (state && state.frame !== shown) {
             shown = state.frame;
@@ -136,7 +187,8 @@ try {
     }));
     const pacing = await page.evaluate(() => {
       window.pacing.recording = false;
-      return { frames: window.pacing.frames, presented: window.pacing.presented };
+      const { frames, presented, work } = window.pacing;
+      return { frames, presented, work };
     });
     state = await nextFrame(page, ["debug", "stats"]);
     const moved = Math.hypot(
@@ -157,6 +209,11 @@ try {
       animationFrameGaps: distribution(gaps(pacing.frames)),
       presentedGaps: distribution(gaps(pacing.presented)),
       settledMaxGap: Math.max(...gaps(settled(pacing.frames)), ...gaps(settled(pacing.presented))),
+      // The main thread's animation-frame callbacks (engine, egui and drawing) and the
+      // GPU's smoothed frame time, null where WebKit gives no timestamps.
+      frameWork: distribution(pacing.work),
+      gpuMs: state.extras.stats.quality.gpuMs,
+      pacingResets: state.extras.stats.quality.pacingResets,
     };
     results[name] = result;
     writeFileSync(`${out}/${name}-samples.json`, JSON.stringify(pacing));
@@ -164,7 +221,22 @@ try {
     await page.screenshot({ path: `${out}/${name}-driving.png` });
 
     assert.ok(moved > 1, `${name}: W drives the tank, ${moved.toFixed(2)} m`);
-    assert.ok(fps >= MIN_DRIVE_FPS, `${name}: ${fps.toFixed(1)} frames per second while driving`);
+    if (fps < displayFps * MIN_DRIVE_SHARE) {
+      const displayMs = 1000 / displayFps;
+      const cpuMs = result.frameWork.p50;
+      const gpuMs = result.gpuMs ?? 0;
+      const bound = cpuMs > displayMs * BOUND_SHARE || gpuMs > (1000 / fps) * BOUND_SHARE;
+      const cost = `main thread ${cpuMs.toFixed(1)} ms, GPU ${gpuMs.toFixed(1)} ms`;
+      assert.ok(
+        bound,
+        `${name}: ${fps.toFixed(1)} fps while driving against a blank page's ` +
+          `${displayFps.toFixed(1)} with frames to spare (${cost}): WebKit's canvas pacing held them`,
+      );
+      console.log(
+        `webkit-check: ${name}: ${fps.toFixed(1)} fps, bound by this machine (${cost}); ` +
+          `the frame rate is not judged`,
+      );
+    }
     assert.ok(result.pipelines <= MAX_PIPELINES, `${name}: ${result.pipelines} pipelines`);
     assert.equal(result.latePipelines, 0, `${name}: pipelines compiled while playing`);
     assert.ok(
