@@ -83,8 +83,6 @@ const MAC_WINDOWS = [
   [1440, 900],
   [1280, 800],
 ];
-// The app's first window content (`WINDOW_SIZE`, crates/desktop/src/app.rs).
-const MAC_FIRST_WINDOW = [1280, 800];
 
 function run(command, args, options = {}) {
   return (execFileSync(command, args, { encoding: "utf8", ...options }) ?? "").trim();
@@ -179,11 +177,11 @@ function scratchFile(device, name) {
 async function shoot(device, shot, launched, capture) {
   const at = (seconds) => sleep(launched + seconds * 1000 - Date.now());
   await at(shot.seconds);
-  capture(shot.file);
+  await capture(shot.file);
   if (shot.autoplay) {
     for (const [index, seconds] of ALTERNATE_SECONDS.entries()) {
       await at(shot.seconds + seconds);
-      capture(`alternates/${shot.file.replace(".png", `-${index + 2}.png`)}`);
+      await capture(`alternates/${shot.file.replace(".png", `-${index + 2}.png`)}`);
     }
   }
   if (shot.report && withReport) {
@@ -193,7 +191,7 @@ async function shoot(device, shot, launched, capture) {
       `waiting ${Math.round(end - (Date.now() - launched) / 1000)} s for the battle report`,
     );
     await at(end);
-    capture(`0${shots.length + 1}-battle-report.png`);
+    await capture(`0${shots.length + 1}-battle-report.png`);
   }
 }
 
@@ -358,18 +356,9 @@ async function captureMac(device) {
       stdio: "ignore",
     });
     try {
-      // Read until two reads agree: macOS grows a new window open over a few frames.
-      let window;
-      for (let tries = 0, last = ""; ; tries++) {
+      for (let tries = 0; !macWindows(app.pid).length; tries++) {
         if (tries > 100) throw new Error("the Mac app opened no window");
         await sleep(200);
-        window = macWindows(app.pid)[0];
-        const bounds = JSON.stringify(window?.bounds);
-        if (window && bounds === last) break;
-        last = bounds;
-      }
-      if (window.bounds.Height !== MAC_FIRST_WINDOW[1]) {
-        throw new Error("the Mac app's window has a frame: build one that takes --borderless");
       }
       // The largest window the visible area holds, at its top left; the region it covers,
       // in points.
@@ -378,22 +367,27 @@ async function captureMac(device) {
       if (!points) {
         throw new Error(`the screen holds no ${MAC_WINDOWS.at(-1).join("×")} point window`);
       }
-      const content = () => {
-        placeMacWindow(app.pid, [left, top, ...points]);
-        const { X, Y, Width, Height } = macWindows(app.pid)[0].bounds;
-        if (Width !== points[0] || Height !== points[1]) {
-          throw new Error(`the Mac app's window is ${Width}×${Height}, not ${points.join("×")}`);
+      // A window behind the front app is drawn at 98%, so its size reads true only once
+      // it is in front.
+      const content = async () => {
+        for (let tries = 0; ; tries++) {
+          placeMacWindow(app.pid, [left, top, ...points]);
+          const { X, Y, Width, Height } = macWindows(app.pid)[0].bounds;
+          if (Width === points[0] && Height === points[1]) return [X, Y, Width, Height];
+          if (tries === 10) {
+            throw new Error(`the Mac app's window is ${Width}×${Height}, not ${points.join("×")}`);
+          }
+          await sleep(200);
         }
-        return [X, Y, Width, Height];
       };
-      const capture = (name) => {
-        const region = content();
+      const capture = async (name) => {
+        const region = await content();
         const file = scratchFile(device, name);
         screenCapture(region, file);
         // A Retina display captures two pixels a point.
         keep({ ...device, size: [region[2] * 2, region[3] * 2] }, file, name);
       };
-      content();
+      await content();
       await shoot(device, shot, launched, capture);
     } finally {
       app.kill();
