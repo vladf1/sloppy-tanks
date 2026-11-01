@@ -203,8 +203,8 @@ impl Drop for ColorTarget {
 
 /// The quarter-size ambient occlusion target and its blur at each corner of its
 /// texels (`blurred_occlusion_size`), each with its framebuffer; the blur
-/// samples the occlusion through a linear sampler and the output pass fetches the
-/// blur. Dropping it deletes them.
+/// samples the occlusion and the output pass the blur, both through a linear
+/// sampler. Dropping it deletes them.
 struct OcclusionTarget {
     gpu: Gpu,
     texture: glow::Texture,
@@ -225,7 +225,7 @@ impl OcclusionTarget {
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
         check_framebuffer(gpu, "ambient occlusion");
         let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
-        let blurred = texel_storage(gpu, glow::R8, blurred_width, blurred_height);
+        let blurred = storage(gpu, glow::R8, 1, blurred_width, blurred_height);
         let blurred_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, blurred);
         check_framebuffer(gpu, "ambient occlusion blur");
         Self {
@@ -973,9 +973,9 @@ impl Frame {
         gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
         gpu.bind_texture(unit::BLOOM, self.bloom.levels[0].0);
         gpu.bind_sampler(unit::BLOOM, Some(self.linear_sampler));
-        // Read only while the occlusion is on, which also draws it (`texelFetch`).
+        // Read only while the occlusion is on, which also draws it.
         gpu.bind_texture(unit::OCCLUSION, self.occlusion.blurred);
-        gpu.bind_sampler(unit::OCCLUSION, None);
+        gpu.bind_sampler(unit::OCCLUSION, Some(self.linear_sampler));
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         stats.draw_calls += 1;

@@ -564,9 +564,12 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
     let strength = output.effects.z;
     if strength > 0.0 {
-        // The quarter-size occlusion's tent at the corner of its texels nearest this
-        // pixel (`occlusion_blur`).
-        let ao = textureLoad(occlusion, vec2i(floor(pixel * 0.25 + 0.5)), 0).r;
+        // The quarter-size occlusion's tent (`occlusion_blur`), filtered between the
+        // corners around this pixel: read at the nearest corner, it stepped in 4×4
+        // blocks fixed to the screen, which crawled over a wall's dark foot as the
+        // camera panned.
+        let corners = vec2f(textureDimensions(occlusion));
+        let ao = textureSampleLevel(occlusion, linear_clamp, (pixel * 0.25 + 0.5) / corners, 0.0).r;
         // Occlusion takes away sky fill, which sunlit surfaces barely depend on: it
         // darkens shade fully and bright sunlit ground only lightly, so a tank sits in
         // a soft contact shade rather than on a dark decal. What it removes is the
