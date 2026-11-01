@@ -1287,8 +1287,8 @@ fn switch(ui: &mut Ui, painter: &Painter, rect: Rect, id: &str, on: &mut bool) {
     painter.circle_filled(knob, rect.height() / 2.0 - 3.0, Color32::WHITE);
 }
 
-/// Settings: sound, graphics, fullscreen, Stats for nerds and (single player) the
-/// battle speeds. Nothing changes until SAVE; CANCEL, Esc or the X leave every
+/// Settings: sound, touch controls, graphics, fullscreen, the debug tools and the
+/// privacy and support pages. Nothing changes until SAVE; CANCEL, Esc or the X leave every
 /// setting as it was. A screen too short for it scrolls the rows, as the page's
 /// dialog does, rather than shrinking its type, and keeps SAVE and CANCEL under
 /// them on screen.
