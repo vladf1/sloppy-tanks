@@ -368,14 +368,22 @@ async function captureMac(device) {
         throw new Error(`the screen holds no ${MAC_WINDOWS.at(-1).join("×")} point window`);
       }
       // A window behind the front app is drawn at 98%, so its size reads true only once
-      // it is in front.
+      // it is in front; and System Events now and then misses the window for a moment.
       const content = async () => {
         for (let tries = 0; ; tries++) {
-          placeMacWindow(app.pid, [left, top, ...points]);
-          const { X, Y, Width, Height } = macWindows(app.pid)[0].bounds;
-          if (Width === points[0] && Height === points[1]) return [X, Y, Width, Height];
+          let bounds;
+          try {
+            placeMacWindow(app.pid, [left, top, ...points]);
+            bounds = macWindows(app.pid)[0]?.bounds;
+          } catch (error) {
+            if (tries === 10) throw error;
+          }
+          if (bounds?.Width === points[0] && bounds?.Height === points[1]) {
+            return [bounds.X, bounds.Y, bounds.Width, bounds.Height];
+          }
           if (tries === 10) {
-            throw new Error(`the Mac app's window is ${Width}×${Height}, not ${points.join("×")}`);
+            const size = bounds ? `${bounds.Width}×${bounds.Height}` : "gone";
+            throw new Error(`the Mac app's window is ${size}, not ${points.join("×")}`);
           }
           await sleep(200);
         }
