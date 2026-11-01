@@ -301,7 +301,10 @@
         const FLAG = "sloppy-trace";
         const NOTES = "sloppy-trace-notes";
         const MAX_NOTES = 600;
+        // A keepalive request carries at most 64 KB; a dump of GPU calls takes at most
+        // half of an upload, so the notes around it (the loss itself) go up with it.
         const MAX_UPLOAD = 60000;
+        const MAX_DUMP = 30000;
         const TRACES = "https://directory.sloppytanks.com/traces";
         const query = new URLSearchParams(location.search);
         try {
@@ -331,11 +334,23 @@
             localStorage.setItem(NOTES, JSON.stringify(notes));
           } catch {}
         };
+        /** The latest whole notes that fit an upload, with this load's own first one,
+         * which names the page, the screen and the browser. */
+        const uploadBody = () => {
+          const latest = [];
+          let size = 0;
+          for (let index = notes.length - 1; index >= 0; index--) {
+            size += notes[index].length + 1;
+            if (size > MAX_UPLOAD) break;
+            latest.push(notes[index]);
+          }
+          latest.reverse();
+          return (latest.includes(loaded) ? latest : [loaded, ...latest]).join("\n");
+        };
         const upload = () =>
           fetch(`${TRACES}?id=${id}`, {
             method: "POST",
-            // A keepalive request carries at most 64 KB: the latest notes.
-            body: notes.join("\n").slice(-MAX_UPLOAD),
+            body: uploadBody(),
             keepalive: true,
           }).catch(() => {});
         const mb = (bytes) => (bytes / 1e6).toFixed(1);
@@ -343,6 +358,7 @@
           "load",
           `${location.href} ${innerWidth}x${innerHeight}@${devicePixelRatio} ${navigator.userAgent}`,
         );
+        const loaded = notes[notes.length - 1];
         // The previous load's notes go up first: it may have ended without a word.
         upload();
 
@@ -378,7 +394,7 @@
               note("gpu-lost", `#${number} ${info.reason} "${info.message}"`);
               note(
                 "gpu-ops",
-                `the last ${operations.length} before the loss:\n${operations.join("\n")}`,
+                `the last GPU calls before the loss:\n${operations.join("\n").slice(-MAX_DUMP)}`,
               );
               save();
               upload();
@@ -603,7 +619,11 @@
         try {
           const earlier = localStorage.getItem(OPERATIONS);
           if (earlier) {
-            notes.splice(notes.length - 1, 0, `-- the previous load's last GPU calls:\n${earlier}`);
+            notes.splice(
+              notes.length - 1,
+              0,
+              `-- the previous load's last GPU calls:\n${earlier.slice(-MAX_DUMP)}`,
+            );
             localStorage.removeItem(OPERATIONS);
             upload();
           }
