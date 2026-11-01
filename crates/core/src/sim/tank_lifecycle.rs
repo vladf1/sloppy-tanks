@@ -18,9 +18,9 @@ use super::types::{
     Brain, Driver, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind,
 };
 
-/// Soft-CCD reach for a chassis: two ticks at 1.5x its (tuned) top speed.
-pub fn soft_ccd_prediction(kind: VehicleKind, speed_scale: f64) -> f64 {
-    vehicle(kind).speed * speed_scale * 1.5 * STEP * 2.0
+/// Soft-CCD reach for a chassis: two ticks at 1.5x its top speed.
+fn soft_ccd_prediction(kind: VehicleKind) -> f64 {
+    vehicle(kind).speed * 1.5 * STEP * 2.0
 }
 
 /// A tank's body and its two colliders (the hull, which carries the mass, and the
@@ -28,7 +28,6 @@ pub fn soft_ccd_prediction(kind: VehicleKind, speed_scale: f64) -> f64 {
 pub fn tank_body_parts(
     kind: VehicleKind,
     position: Vec2,
-    speed_scale: f64,
 ) -> (RigidBodyBuilder, [ColliderBuilder; 2]) {
     let stats = vehicle(kind);
     let body = RigidBodyBuilder::dynamic()
@@ -41,7 +40,7 @@ pub fn tank_body_parts(
         .linear_damping(SIMULATION_RULES.tank_linear_damping as f32)
         .angular_damping(SIMULATION_RULES.tank_angular_damping as f32)
         .ccd_enabled(true)
-        .soft_ccd_prediction(soft_ccd_prediction(kind, speed_scale) as f32);
+        .soft_ccd_prediction(soft_ccd_prediction(kind) as f32);
     let hull = tank_contact_collider(kind)
         .mass(stats.mass as f32)
         .collision_groups(interaction_groups(group::TANK))
@@ -54,9 +53,8 @@ fn create_tank_body(
     simulation: &mut Simulation,
     kind: VehicleKind,
     position: Vec2,
-    speed_scale: f64,
 ) -> (RigidBodyHandle, ColliderHandle) {
-    let (body, [hull, contact]) = tank_body_parts(kind, position, speed_scale);
+    let (body, [hull, contact]) = tank_body_parts(kind, position);
     let body = simulation.world.insert_body(body);
     let collider = simulation.world.insert_collider(hull, Some(body));
     simulation.world.insert_collider(contact, Some(body));
@@ -108,8 +106,7 @@ impl Simulation {
         } else {
             bot_profile_for(assignment.personality).chassis
         };
-        let speed_scale = self.speed_tuning.tank_speed;
-        let (body, collider) = create_tank_body(self, kind, position, speed_scale);
+        let (body, collider) = create_tank_body(self, kind, position);
         let player = self.player_at(team, slot).cloned();
         let names = &self.bot_names;
         let name = if human {
@@ -186,8 +183,7 @@ impl Simulation {
             .expect("a team always has spawn lanes")
         });
         self.tanks[tank_index].kind = kind;
-        let speed_scale = self.speed_tuning.tank_speed;
-        let (body, collider) = create_tank_body(self, kind, p, speed_scale);
+        let (body, collider) = create_tank_body(self, kind, p);
         let records = self.records(&self.tanks[tank_index]);
         if records {
             self.combat_record.life_started = self.elapsed;

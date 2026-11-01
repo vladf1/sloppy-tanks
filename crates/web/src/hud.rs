@@ -19,7 +19,6 @@ use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::new_match;
 use sloppy_core::sim::render_state::RenderTank;
-use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
     AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
@@ -50,7 +49,6 @@ pub struct Hud<'a> {
     /// The enemy tanks alive, for pause's facts.
     #[serde(skip)]
     pub active_enemies: usize,
-    pub speed_tuning: SpeedTuning,
     pub human: HudHuman,
     pub scoreboard: Scoreboard<'a>,
     /// The finished round's recap, while results show.
@@ -76,7 +74,6 @@ impl Default for Hud<'_> {
             score_limit: SCORE_LIMIT,
             team_names: TEAM_NAMES,
             active_enemies: 0,
-            speed_tuning: SpeedTuning::default(),
             human: HudHuman::default(),
             scoreboard: Scoreboard::Kept(Vec::new()),
             recap: None,
@@ -99,7 +96,6 @@ impl Hud<'_> {
             score_limit: self.score_limit,
             team_names: self.team_names,
             active_enemies: self.active_enemies,
-            speed_tuning: self.speed_tuning,
             human: self.human,
             scoreboard: self.scoreboard.into_owned(),
             recap: self.recap.map(|recap| Cow::Owned(recap.into_owned())),
@@ -131,7 +127,6 @@ pub fn simulation_hud<'a>(
         score_limit: SCORE_LIMIT,
         team_names: TEAM_NAMES,
         active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
-        speed_tuning: sim.speed_tuning,
         human: human_json(tank, sim.elapsed, timers),
         scoreboard: Scoreboard::Simulated(&sim.tanks),
         recap: recap.map(Cow::Borrowed),

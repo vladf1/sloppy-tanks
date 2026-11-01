@@ -57,7 +57,6 @@ beyond_geometry! {
     pub mod shooter_rewind;
     pub mod simulation;
     pub mod simulation_rules;
-    pub mod speed_tuning;
     pub mod stress_test_level;
     pub mod superstress_level;
     pub mod tank_destruction;

@@ -79,7 +79,6 @@
 //! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
 //!   and clamped overhead zoom, for the page to save after a camera input.
 //! - `set_human_kind(kind)`: the respawn menu's tank, keeping the world.
-//! - `set_speed(key, value) -> f64`: "tank-speed" or "bullet-speed" scale.
 //! - `debug_*`: the dev `window.sloppy` hooks below and the fixture hooks of
 //!   `game/debug.rs`.
 //! - `error() -> string | undefined`: the first GPU error, if any.
@@ -88,8 +87,7 @@
 //! JSON or names: `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]),
 //! `loading` ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
 //! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
-//! `set_graphics_setting`, `respawn_in` and `set_speed_scale` with the setting, tank and
-//! speed themselves.
+//! `set_graphics_setting` and `respawn_in` with the setting and tank themselves.
 
 use crate::Shell;
 use crate::battle_report::pause_report;
@@ -125,7 +123,6 @@ use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
 #[cfg(target_arch = "wasm32")]
 use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
-use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::types::{DamageCause, DamageSource};
 use sloppy_core::sim::{
     CoverKind, FragmentShape, GameMode, MatchPhase, RenderState, Shot, SimEventType, Simulation,
@@ -615,17 +612,6 @@ impl Game {
         self.respawn_in(kind)
     }
 
-    /// "tank-speed" or "bullet-speed"; returns the scale in effect.
-    #[cfg(target_arch = "wasm32")]
-    pub fn set_speed(&mut self, key: &str, value: f64) -> f64 {
-        let key = match key {
-            "tank-speed" => SpeedSetting::TankSpeed,
-            "bullet-speed" => SpeedSetting::BulletSpeed,
-            _ => return 1.0,
-        };
-        self.set_speed_scale(key, value)
-    }
-
     pub fn error(&self) -> Option<String> {
         self.view.renderer.error()
     }
@@ -1071,11 +1057,6 @@ impl Game {
         self.sim.human_kind = kind;
         self.options.human_kind = kind;
         Ok(())
-    }
-
-    /// A speed scale; returns the scale in effect.
-    pub fn set_speed_scale(&mut self, key: SpeedSetting, value: f64) -> f64 {
-        tune_speed(&mut self.sim, key, value)
     }
 
     /// Stats for nerds' sections and rows, read from the game now.

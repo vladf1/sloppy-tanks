@@ -33,9 +33,6 @@ use crate::sim::tank_lifecycle::tank_body_parts;
 use crate::sim::types::{CoverKind, FragmentShape, VehicleKind};
 use crate::sim::wrecks::wreck_piece_box;
 
-/// Multiplayer always drives at the standard speed.
-const SPEED_SCALE: f64 = 1.0;
-
 /// The viewer's hull after one host tick, as the host's physics holds it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HullState {
@@ -620,7 +617,7 @@ impl TankPredictor {
 
     /// A tank body at `position` with its colliders, as the host builds one.
     fn insert_tank(&mut self, kind: VehicleKind, position: Point3) -> RigidBodyHandle {
-        let (body, colliders) = tank_body_parts(kind, position.planar(), SPEED_SCALE);
+        let (body, colliders) = tank_body_parts(kind, position.planar());
         let body = self.world.insert_body(body);
         for collider in colliders {
             self.world.insert_collider(collider, Some(body));
@@ -930,5 +927,5 @@ pub fn solid_debris(fragment: &RenderFragment) -> bool {
 fn drive(hull: &mut Hull, speed: &mut f64, body: &mut RigidBody, input: Vec2) {
     *speed = 0f64.max(*speed - STEP);
     hull.boosted = *speed > 0.0;
-    drive_hull(hull, body, input.x, input.z, STEP, SPEED_SCALE);
+    drive_hull(hull, body, input.x, input.z, STEP);
 }

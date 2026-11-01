@@ -86,7 +86,7 @@ fn retreat_command() -> VehicleCommand {
 fn drive(simulation: &mut Simulation, index: usize, command: &VehicleCommand) {
     let tank = &mut simulation.tanks[index];
     let body = &mut simulation.world.bodies[tank.body];
-    drive_tank(tank, body, command, STEP, 1.0);
+    drive_tank(tank, body, command, STEP);
 }
 
 #[test]

@@ -18,7 +18,6 @@ pub fn drive_tank(
     body: &mut RigidBody,
     command: &VehicleCommand,
     dt: f64,
-    speed_scale: f64,
 ) {
     let mut hull = Hull {
         kind: tank.kind,
@@ -28,14 +27,7 @@ pub fn drive_tank(
         // danger. Only a committed stuck-position recovery may use reverse gear.
         reverse_gear: tank.kind != VehicleKind::Humvee || tank.human || tank.brain.recovery > 0.0,
     };
-    drive_hull(
-        &mut hull,
-        body,
-        command.move_x,
-        command.move_z,
-        dt,
-        speed_scale,
-    );
+    drive_hull(&mut hull, body, command.move_x, command.move_z, dt);
     tank.heading = hull.heading;
 }
 
@@ -56,11 +48,9 @@ pub fn drive_hull(
     move_x: f64,
     move_z: f64,
     dt: f64,
-    speed_scale: f64,
 ) {
     let input_magnitude = move_x.hypot(move_z);
     let speed = vehicle(hull.kind).speed
-        * speed_scale
         * if hull.boosted {
             SPEED_BOOST_MULTIPLIER
         } else {
