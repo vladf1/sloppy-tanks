@@ -30,7 +30,7 @@ const skipped = [];
 for (const { script, server } of checks) {
   console.log(`\n=== ${script}`);
   if (server && !hasServerBinary()) {
-    console.log(`skipped: no game server at ${serverBinary} (node scripts/build-server.mjs)`);
+    console.log(`skipped: no game server at ${serverBinary} (bun scripts/build-server.mjs)`);
     skipped.push(script);
     continue;
   }

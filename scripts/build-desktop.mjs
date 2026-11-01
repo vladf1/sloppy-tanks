@@ -1,15 +1,18 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
-// `artifacts/desktop/`, or the same app for iPad into `artifacts/ipad/`.
+// `artifacts/desktop/`, or the same app for iPhone and iPad into `artifacts/ios/`.
 //
 //   bun scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
 //   bun scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   bun scripts/build-desktop.mjs             # whichever this machine is
-//   bun scripts/build-desktop.mjs --ipad              # Sloppy Tanks.app and an .ipa for iPads
-//   bun scripts/build-desktop.mjs --ipad-simulator    # the app for Xcode's iPad simulators
+//   bun scripts/build-desktop.mjs --ios               # Sloppy Tanks.app and an .ipa for iPhones and iPads
+//   bun scripts/build-desktop.mjs --ios-simulator     # the app for Xcode's iPhone and iPad simulators
 //
-// Add `--install` to an iPad build to install and open it on the first connected iPad
-// (`SLOPPY_IOS_DEVICE` names another device) or on a booted iPad simulator (one is
-// booted when none is).
+// The iOS app is one bundle for both (`UIDeviceFamily` 1 and 2): an iPhone plays the
+// phone edition and an iPad the tablet's (`touch::detect`). Add `--install` to an iOS
+// build to install and open it on the iPhone or iPad on a cable (or the only one
+// paired), or on a booted simulator of either (an iPhone simulator is booted when none
+// is); `--iphone` or `--ipad` takes only that kind, and `SLOPPY_IOS_DEVICE` names a
+// device or simulator.
 //
 // Like the browser engine and the server, the app is stamped with the content version
 // multiplayer joins send (`SLOPPY_CONTENT_VERSION`), so only a build through this script
@@ -32,7 +35,7 @@
 // pick an identity when there are several. Without an identity the app gets only the
 // ad-hoc signature arm64 needs to run at all, and the package none.
 //
-// An iPad build for devices is signed with an "Apple Development" identity and the
+// An iOS build for devices is signed with an "Apple Development" identity and the
 // provisioning profile Xcode keeps for it whose app ID covers the bundle identifier
 // (the team's wildcard profile does); `SLOPPY_IOS_PROFILE` names a profile file and
 // `SLOPPY_IOS_IDENTITY` an identity instead. Without them the app is signed ad hoc and
@@ -66,11 +69,11 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 const MINIMUM_MACOS = "11.0";
 const MAC_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
-// The iPad app needs Metal and the landscape full-screen window iPadOS 16 gives every
-// iPad since 2017.
-const MINIMUM_IPADOS = "16.0";
-const IPAD_TARGET = "aarch64-apple-ios";
-const IPAD_SIMULATOR_TARGET = "aarch64-apple-ios-sim";
+// The iOS app needs Metal and the full-screen window iOS 16 gives every iPhone since
+// the 8 and iPadOS 16 every iPad since 2017.
+const MINIMUM_IOS = "16.0";
+const IOS_TARGET = "aarch64-apple-ios";
+const IOS_SIMULATOR_TARGET = "aarch64-apple-ios-sim";
 // The launch screen's colour, Battle Setup's backdrop (`theme::BACKDROP`).
 const LAUNCH_BACKGROUND = [0x0a, 0x15, 0x27];
 
@@ -169,7 +172,7 @@ function plist(entries) {
   );
 }
 
-/** The Info.plist entries the Mac and iPad bundles share: the app's name, identifier,
+/** The Info.plist entries the Mac and iOS bundles share: the app's name, identifier,
  * executable and versions. */
 function bundleInfo() {
   return {
@@ -424,7 +427,7 @@ function signingIdentities() {
   }));
 }
 
-/** The profile and identity that sign the iPad app for devices (see the top of the
+/** The profile and identity that sign the iOS app for devices (see the top of the
  * file), or null. */
 function iosSigning(scratch) {
   const identities = signingIdentities().filter(({ name }) =>
@@ -473,7 +476,7 @@ function compileAssets(app, scratch, platform) {
   const iconSet = join(catalog, "AppIcon.appiconset");
   mkdirSync(iconSet, { recursive: true });
   writeFileSync(join(catalog, "Contents.json"), JSON.stringify(info));
-  // iPadOS draws every size from one 1024-point square, the web app's artwork scaled up.
+  // iOS draws every size from one 1024-point square, the web app's artwork scaled up.
   run("sips", [
     ...["-z", "1024", "1024", join(root, "public/icons/icon-512.png")],
     ...["--out", join(iconSet, "icon-1024.png")],
@@ -505,48 +508,51 @@ function compileAssets(app, scratch, platform) {
   const partial = join(scratch, "assets-info.plist");
   run("xcrun", [
     ...["actool", catalog, "--compile", app, "--platform", platform],
-    ...["--minimum-deployment-target", MINIMUM_IPADOS, "--target-device", "ipad"],
+    ...["--minimum-deployment-target", MINIMUM_IOS],
+    ...["--target-device", "iphone", "--target-device", "ipad"],
     ...["--app-icon", "AppIcon", "--output-partial-info-plist", partial],
     ...["--output-format", "human-readable-text", "--notices", "--warnings"],
   ]);
   return JSON.parse(capture("plutil", ["-convert", "json", "-o", "-", partial]) || "{}");
 }
 
-function buildIpad(simulator) {
+function buildIos(simulator) {
   if (process.platform !== "darwin") {
-    console.error("The iPad app builds on a Mac with Xcode (actool, codesign).");
+    console.error("The iOS app builds on a Mac with Xcode (actool, codesign).");
     process.exit(1);
   }
-  const target = simulator ? IPAD_SIMULATOR_TARGET : IPAD_TARGET;
+  const target = simulator ? IOS_SIMULATOR_TARGET : IOS_TARGET;
   const platform = simulator ? "iphonesimulator" : "iphoneos";
   ensureTargets([target]);
-  const binary = build(target, { IPHONEOS_DEPLOYMENT_TARGET: MINIMUM_IPADOS });
+  const binary = build(target, { IPHONEOS_DEPLOYMENT_TARGET: MINIMUM_IOS });
 
-  const scratch = join(
-    root,
-    "target",
-    PROFILE,
-    simulator ? "ipad-simulator-bundle" : "ipad-bundle",
-  );
+  const scratch = join(root, "target", PROFILE, simulator ? "ios-simulator-bundle" : "ios-bundle");
   rmSync(scratch, { recursive: true, force: true });
   const app = join(scratch, `${APP_NAME}.app`);
   mkdirSync(app, { recursive: true });
   copyFileSync(binary, join(app, BINARY));
   const assets = compileAssets(app, scratch, platform);
+  // Held either way, as the page lays out an upright phone or tablet; an iPhone not upside
+  // down (winit's `LandscapeAndPortrait` asks the same).
   const landscape = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"];
+  const portrait = ["UIInterfaceOrientationPortrait"];
   writeFileSync(
     join(app, "Info.plist"),
     plist({
       ...bundleInfo(),
       CFBundleSupportedPlatforms: [simulator ? "iPhoneSimulator" : "iPhoneOS"],
       LSRequiresIPhoneOS: true,
-      MinimumOSVersion: MINIMUM_IPADOS,
-      // iPad only: the menus and HUD need a landscape screen of 1024 points or more.
-      UIDeviceFamily: [2],
+      MinimumOSVersion: MINIMUM_IOS,
+      // iPhone and iPad: an iPhone plays the phone edition's screens.
+      UIDeviceFamily: [1, 2],
       UIRequiredDeviceCapabilities: ["arm64", "metal"],
       UIRequiresFullScreen: true,
-      UISupportedInterfaceOrientations: landscape,
-      "UISupportedInterfaceOrientations~ipad": landscape,
+      UISupportedInterfaceOrientations: [...portrait, ...landscape],
+      "UISupportedInterfaceOrientations~ipad": [
+        ...portrait,
+        "UIInterfaceOrientationPortraitUpsideDown",
+        ...landscape,
+      ],
       UIStatusBarHidden: true,
       UIApplicationSupportsIndirectInputEvents: true,
       UILaunchScreen: { UIColorName: "LaunchBackground" },
@@ -588,13 +594,13 @@ function buildIpad(simulator) {
     if (!simulator) {
       console.warn(
         "No Apple Development identity with a provisioning profile for " +
-          `${BUNDLE_ID}: the app is signed ad hoc and installs on no iPad.`,
+          `${BUNDLE_ID}: the app is signed ad hoc and installs on no device.`,
       );
     }
     run("codesign", ["--force", "--sign", "-", app]);
   }
 
-  const folder = join(root, simulator ? "artifacts/ipad-simulator" : "artifacts/ipad");
+  const folder = join(root, simulator ? "artifacts/ios-simulator" : "artifacts/ios");
   mkdirSync(folder, { recursive: true });
   const built = join(folder, `${APP_NAME}.app`);
   rmSync(built, { recursive: true, force: true });
@@ -602,7 +608,7 @@ function buildIpad(simulator) {
   console.log(`Built ${built} (${megabytes(join(app, BINARY))})`);
   const artifact = join(
     folder,
-    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-iPad${simulator ? "-Simulator" : ""}`,
+    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-iOS${simulator ? "-Simulator" : ""}`,
   );
   if (simulator) {
     const zip = `${artifact}.zip`;
@@ -622,21 +628,45 @@ function buildIpad(simulator) {
   }
   if (process.argv.includes("--install")) {
     if (simulator) installOnSimulator(built);
-    else installOnIpad(built);
+    else installOnDevice(built, scratch);
   }
 }
 
-/** Install `app` on the booted iPad simulator (booting one if none is) and open it. */
+/** The kinds of device `--install` may take: `--iphone` or `--ipad`, or either. */
+function installKinds() {
+  const iphone = process.argv.includes("--iphone");
+  const ipad = process.argv.includes("--ipad");
+  if (iphone === ipad) return ["iPhone", "iPad"];
+  return iphone ? ["iPhone"] : ["iPad"];
+}
+
+/** Install `app` on the simulator `SLOPPY_IOS_DEVICE` names (name or UDID), or on a
+ * booted iPhone or iPad simulator, booting one if none is, and open it. */
 function installOnSimulator(app) {
   const listed = JSON.parse(capture("xcrun", ["simctl", "list", "devices", "available", "--json"]));
-  const ipads = Object.values(listed.devices ?? {})
+  const named = process.env.SLOPPY_IOS_DEVICE;
+  const kinds = installKinds();
+  const simulators = Object.values(listed.devices ?? {})
     .flat()
-    .filter((device) => device.name.startsWith("iPad"));
-  let device = ipads.find((candidate) => candidate.state === "Booted");
+    .filter((device) =>
+      named
+        ? device.name === named || device.udid === named
+        : kinds.some((kind) => device.name.startsWith(kind)),
+    );
+  let device = simulators.find((candidate) => candidate.state === "Booted");
   if (!device) {
-    device = ipads[0];
+    // The first kind asked for first: an iPhone unless `--ipad` says otherwise.
+    device = named
+      ? simulators[0]
+      : kinds
+          .map((kind) => simulators.find((candidate) => candidate.name.startsWith(kind)))
+          .find(Boolean);
     if (!device) {
-      console.error("No iPad simulator: add one in Xcode's Devices and Simulators window.");
+      console.error(
+        named
+          ? `No simulator named ${named}.`
+          : `No ${kinds.join(" or ")} simulator: add one in Xcode's Devices and Simulators window.`,
+      );
       process.exit(1);
     }
     run("xcrun", ["simctl", "boot", device.udid]);
@@ -646,27 +676,36 @@ function installOnSimulator(app) {
   console.log(`Opened on ${device.name} (simulator).`);
 }
 
-/** Install `app` on the first connected iPad, or the device `SLOPPY_IOS_DEVICE` names,
- * and open it. */
-function installOnIpad(app) {
+/** Install `app` on the device `SLOPPY_IOS_DEVICE` names, the one iPhone or iPad on a
+ * cable, or the only one paired, and open it. Paired devices answer over the local
+ * network too, other people's among them, so it never picks one of several. */
+function installOnDevice(app, scratch) {
   let device = process.env.SLOPPY_IOS_DEVICE;
   if (!device) {
-    const listing = join(root, "target", PROFILE, "ipad-bundle", "devices.json");
+    const kinds = installKinds();
+    const listing = join(scratch, "devices.json");
     run("xcrun", ["devicectl", "list", "devices", "--quiet", "--json-output", listing]);
     const devices = JSON.parse(readFileSync(listing, "utf8")).result?.devices ?? [];
-    const ipad = devices.find(
+    const paired = devices.filter(
       (candidate) =>
-        candidate.hardwareProperties?.deviceType === "iPad" &&
+        kinds.includes(candidate.hardwareProperties?.deviceType) &&
         candidate.hardwareProperties?.reality === "physical" &&
         candidate.connectionProperties?.pairingState === "paired",
     );
-    if (!ipad) {
+    const wired = paired.filter(
+      (candidate) => candidate.connectionProperties?.transportType === "wired",
+    );
+    const chosen = wired.length === 1 ? wired[0] : paired.length === 1 ? paired[0] : null;
+    if (!chosen) {
+      const names = paired.map((candidate) => candidate.deviceProperties?.name).join(", ");
       console.error(
-        "No paired iPad is connected: set SLOPPY_IOS_DEVICE to a device's name or UDID.",
+        paired.length
+          ? `Several devices are paired (${names}): set SLOPPY_IOS_DEVICE to one's name or UDID.`
+          : `No paired ${kinds.join(" or ")}: set SLOPPY_IOS_DEVICE to a device's name or UDID.`,
       );
       process.exit(1);
     }
-    device = ipad.hardwareProperties.udid;
+    device = chosen.hardwareProperties.udid;
   }
   run("xcrun", ["devicectl", "device", "install", "app", "--device", device, app]);
   run("xcrun", ["devicectl", "device", "process", "launch", "--device", device, BUNDLE_ID]);
@@ -674,9 +713,9 @@ function installOnIpad(app) {
 
 const mac = process.argv.includes("--mac");
 const windows = process.argv.includes("--windows");
-const ipad = process.argv.includes("--ipad");
-const ipadSimulator = process.argv.includes("--ipad-simulator");
-if (ipad || ipadSimulator) buildIpad(ipadSimulator);
+const ios = process.argv.includes("--ios");
+const iosSimulator = process.argv.includes("--ios-simulator");
+if (ios || iosSimulator) buildIos(iosSimulator);
 else if (mac || (!windows && process.platform === "darwin")) buildMac();
 else if (windows || process.platform === "win32") buildWindows();
 else {

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Sloppy Tanks for macOS, Windows, iPad and the web: the game's egui shell over the shared engine"
+description = "Sloppy Tanks for macOS, Windows, iPhone, iPad and the web: the game's egui shell over the shared engine"
 
 [[bin]]
 name = "sloppy-tanks"

@@ -428,7 +428,7 @@ export function installProbes(context) {
 
 /**
  * The game server the multiplayer checks start: `SLOPPY_SERVER_BIN`, else the build of
- * `node scripts/build-server.mjs`, which stamps the content version the page plays (a
+ * `bun scripts/build-server.mjs`, which stamps the content version the page plays (a
  * plain `cargo build` reports "test-content", and the page refuses its rooms).
  */
 export const serverBinary = process.env.SLOPPY_SERVER_BIN ?? "target/server/sloppy-server";

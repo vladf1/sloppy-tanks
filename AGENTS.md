@@ -53,7 +53,7 @@ the server:
   Worker's control page reaches over a service binding. Like the page and the server it
   is stamped with the content version, so it plays only on servers built from the same
   core.
-- `crates/desktop` (native for macOS, Windows and iPad, and Wasm for the page): the
+- `crates/desktop` (native for macOS, Windows, iPhone and iPad, and Wasm for the page): the
   shell, binary `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
   and `NetGame` (`sloppy-web`'s `native` feature). Built for wasm32
@@ -63,7 +63,8 @@ the server:
   reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
   never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
   byte), and only lays out and plays what they produce. Game rules stay out of the
-  shell. The iPad build is the same crate for `aarch64-apple-ios`, which plays by touch
+  shell. The iOS build is the same crate for `aarch64-apple-ios`, one bundle for iPhone
+  and iPad (an iPhone plays the phone edition), which plays by touch
   (`touch::screen`: true there, in the phone edition, and in a page on a touch screen as
   Settings' Touch controls say): touch controls painted in egui (`touch.rs`,
   `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there
@@ -138,7 +139,7 @@ cargo test --workspace --exclude sloppy-desktop --test integration navigation:: 
 bun test tests/foo.test.ts    # focused Bun test
 bun run validate                     # seeded headless matches and reset checks
 bun run desktop                      # the desktop app for this Mac or Windows PC into artifacts/desktop/
-bun run ipad:simulator -- --install  # the iPad app, opened in a booted iPad simulator
+bun run ios:simulator -- --install   # the iPhone and iPad app, opened in a booted simulator (--ipad for an iPad)
 bun run dev                          # browser work; use the printed URL
 ```
 

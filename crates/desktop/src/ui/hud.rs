@@ -998,7 +998,7 @@ fn toolbar_edge() -> f32 {
     }
 }
 
-/// The toolbar's plate: first person, fullscreen (not in the iPad app), pause and
+/// The toolbar's plate: first person, fullscreen (not in the iOS app), pause and
 /// settings.
 fn toolbar_size() -> Vec2 {
     let count = if crate::app::offers_fullscreen() {

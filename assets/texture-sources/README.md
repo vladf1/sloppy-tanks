@@ -39,10 +39,13 @@ roads, cottages or fields.
 
 ## Home Screen icons
 
-`public/icons/` (`apple-touch-icon.png`, `icon-192.png`, `icon-512.png`) are drawn by
-`bun run generate:app-icons`: Chrome renders the favicon's tank on the menu's navy, and
-[oxipng](https://github.com/shssoichiro/oxipng) (`brew install oxipng`) then recompresses
-them losslessly. Keep them PNG: iOS takes only a PNG Home Screen icon.
+`public/icons/` are drawn by `bun run generate:app-icons`: Chrome renders the favicon's
+tank on the menu's navy, and [oxipng](https://github.com/shssoichiro/oxipng)
+(`brew install oxipng`) then recompresses them losslessly. The page's own icons
+(`apple-touch-icon.png` and the manifest's `web-icon-192.png` and `web-icon-512.png`) add a
+gold bookmark ribbon, so a Home Screen bookmark of the site reads apart from the apps;
+the plain `icon-192.png` and `icon-512.png` are the desktop and iOS apps' icons. Keep them
+PNG: iOS takes only a PNG Home Screen icon.
 
 ## macOS app icon
 

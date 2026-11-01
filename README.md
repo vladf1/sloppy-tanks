@@ -88,7 +88,7 @@ To try a build on a phone or tablet, `bun run tunnel` builds the game and prints
 
 The game also comes as a desktop app for Apple silicon Macs and Windows: download it
 from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest). The
-same app builds for iPad (see [iPad](#ipad)).
+same app builds for iPhone and iPad (see [iPhone and iPad](#iphone-and-ipad)).
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
@@ -128,9 +128,9 @@ In first person the camera sits on your turret: the mouse turns it (click the ar
 
 Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
-On iPads, car screens and other touchscreens, touch controls appear automatically (in the [iPad app](#ipad) too): drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. In a page, Settings' **Touch controls: Auto / On / Off** is saved: Auto shows them where the browser reports a touchscreen and from the first touch on a touch laptop, and Off keeps the keyboard and mouse whatever touches the screen. The desktop app plays with a keyboard and mouse.
+On iPads, car screens and other touchscreens, touch controls appear automatically (in the [iPad app](#iphone-and-ipad) too): drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. In a page, Settings' **Touch controls: Auto / On / Off** is saved: Auto shows them where the browser reports a touchscreen and from the first touch on a touch laptop, and Off keeps the keyboard and mouse whatever touches the screen. The desktop app plays with a keyboard and mouse.
 
-Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs and the battle format (Team Battle or Solo Assault), single-player bots are always Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom, the first-person ◎ and pause keys along the top, and the mid-screen notices. Touch the arena to aim and fire. In first person the drive stick's sideways push turns the view, and the hull compass shows over a small hull plate. Phones start with a farther camera until you zoom (the zoom is remembered) and draw no overhead aiming reticle. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with Easy bots filling the teams. In a room the menu keeps only the room, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no mine button or ammo strip on a phone, and Settings opens from the pause menu. In an iPhone's browser Battle Setup suggests adding the game to the Home Screen, which gives it the whole screen.
+Phones (a touchscreen whose shorter side is under 600 px, the [iPhone app](#iphone-and-ipad), or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs and the battle format (Team Battle or Solo Assault), single-player bots are always Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom, the first-person ◎ and pause keys along the top, and the mid-screen notices. Touch the arena to aim and fire. In first person the drive stick's sideways push turns the view, and the hull compass shows over a small hull plate. Phones start with a farther camera until you zoom (the zoom is remembered) and draw no overhead aiming reticle. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with Easy bots filling the teams. In a room the menu keeps only the room, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no mine button or ammo strip on a phone, and Settings opens from the pause menu. In an iPhone's browser Battle Setup suggests adding the game to the Home Screen, which gives it the whole screen.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
@@ -271,8 +271,8 @@ keep the full release optimization. CI keeps separate caches for these compiler 
 each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
 builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iPad app for
-the simulator, on pull requests that
+[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
+the simulators, on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
 the `desktop-check` profile, without optimizing the GPU and window dependencies, while
@@ -287,27 +287,33 @@ and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sl
 The release job publishes only a Mac app and package that carry a stapled notarization
 ticket.
 
-### iPad
+### iPhone and iPad
 
-The same crate builds as an iPad app (iPadOS 16 or newer, landscape, full screen), with
-the web edition's tablet touch controls: the drive stick in the bottom-left corner, a
-finger on the arena to aim and fire, and the mine button with − / + zoom in the
-bottom-right corner. A hardware keyboard plays as on a Mac (arrows or WASD, Space, 1–5,
-Q/E, V). There is no Quit or fullscreen, and single player pauses when the app leaves the
-screen. It needs a Mac with Xcode:
+The same crate builds as one iOS app for iPhone and iPad (iOS and iPadOS 16 or newer,
+full screen, held sideways or upright). On an iPad it has the web edition's tablet touch controls: the
+drive stick in the bottom-left corner, a finger on the arena to aim and fire, and the mine
+button with − / + zoom in the bottom-right corner. On an iPhone it plays the web's phone
+edition (see [Play](#play)): the drive stick, a finger on the arena to aim and fire, and
+the few keys along the top. A hardware keyboard plays as on a Mac (arrows or WASD, Space,
+1–5, Q/E, V). There is no Quit or fullscreen, and single player pauses when the app leaves
+the screen. It needs a Mac with Xcode:
 
 ```sh
-bun run ipad                         # artifacts/ipad/: Sloppy Tanks.app and an .ipa for devices
-bun run ipad -- --install            # also install and open it on the connected iPad
-bun run ipad:simulator -- --install  # artifacts/ipad-simulator/, opened in an iPad simulator
+bun run ios                                 # artifacts/ios/: Sloppy Tanks.app and an .ipa for devices
+bun run ios -- --install                    # also install and open it on the iPhone or iPad on a cable
+bun run ios:simulator -- --install          # artifacts/ios-simulator/, opened in a booted simulator
+bun run ios:simulator -- --install --ipad   # the same, in an iPad simulator
 ```
 
-A device build is signed with an Apple Development identity and the provisioning profile
+`--install` takes a booted simulator of either kind, booting an iPhone simulator when
+none is, or the one device on a cable (or the only one paired; with several,
+`SLOPPY_IOS_DEVICE` must name one); `--iphone` or `--ipad` takes only that kind. A
+device build is signed with an Apple Development identity and the provisioning profile
 Xcode keeps for the bundle identifier (the team's wildcard profile covers it), and
 installs only on the devices that profile lists; `SLOPPY_IOS_PROFILE` and
-`SLOPPY_IOS_IDENTITY` choose others, and `SLOPPY_IOS_DEVICE` the iPad to install on.
-Simulator builds need no signing. Like the Mac app it carries the content version, so it
-joins the same multiplayer servers.
+`SLOPPY_IOS_IDENTITY` choose others, and `SLOPPY_IOS_DEVICE` the device or simulator to
+install on. Simulator builds need no signing. Like the Mac app it carries the content
+version, so it joins the same multiplayer servers.
 
 Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
 a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
