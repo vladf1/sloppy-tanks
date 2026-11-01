@@ -5,6 +5,11 @@
 //   pnpm run screenshots:app-store                       # build both apps, then every device
 //   pnpm run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
 //   pnpm run screenshots:app-store -- --only ipad-13,mac --no-report
+//   pnpm run screenshots:app-store -- --no-build --only mac --shots harbor,quarry
+//
+// A shot that fails is tried again (`SHOT_ATTEMPTS`) and the rest go on; screenshots
+// already taken stay, and the run ends with the command that retakes only what is missing.
+// `--shots` takes battle-setup, village, harbor and quarry (with the report).
 //
 // The apps are built single player, as the App Store has them (`--single-player`).
 // Each device shows Battle Setup, three autoplayed single-player battles (one per standard
@@ -46,7 +51,7 @@ const ROUND_SECONDS = 300;
 const REPORT_MARGIN_SECONDS = 45;
 // The saved settings every device starts from (`preferences.rs`): the High graphics tier
 // whatever the device class or the simulator's frame rate would pick, and no sound.
-const SETTINGS = { graphics: "high", volume: 0 };
+const SETTINGS = { graphics: "high", volume: 0, firstPerson: false, zoom: 34 };
 // The shots, in App Store order. Battle Setup waits for its arena; a battle for its
 // arena, GO and a fight under way.
 const SHOTS = [
@@ -102,6 +107,35 @@ if (only && devices.length !== only.length) {
 }
 const withReport = !process.argv.includes("--no-report");
 const shots = SHOTS.map((shot, index) => ({ ...shot, file: `0${index + 1}-${shot.name}.png` }));
+const onlyShots = argument("--shots")?.split(",");
+if (onlyShots?.some((name) => !shots.some((shot) => shot.name === name))) {
+  console.error(`--shots takes ${shots.map((shot) => shot.name).join(", ")}.`);
+  process.exit(1);
+}
+const chosenShots = shots.filter((shot) => !onlyShots || onlyShots.includes(shot.name));
+// How many times a shot is taken before the run gives up on it.
+const SHOT_ATTEMPTS = 3;
+// Each device's shots that failed every attempt, by device id.
+const missing = new Map();
+
+/** Take each chosen shot through `take`, trying a failed one again. */
+async function takeShots(device, take) {
+  for (const shot of chosenShots) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await take(shot);
+        break;
+      } catch (error) {
+        const again = attempt < SHOT_ATTEMPTS;
+        log(device, `${shot.name} failed: ${error.message}${again ? "; trying it again" : ""}`);
+        if (!again) {
+          missing.set(device.id, [...(missing.get(device.id) ?? []), shot.name]);
+          break;
+        }
+      }
+    }
+  }
+}
 
 function log(device, message) {
   console.log(`[${device.id}] ${message}`);
@@ -111,6 +145,9 @@ function launchArguments(shot) {
   return [
     ...["--map", shot.map, "--seed", String(shot.seed)],
     ...(shot.autoplay ? ["--autoplay"] : []),
+    // No build line; on the Mac a borderless window, as a titled one's rounded bottom
+    // corners and edged sides would show in a capture of its content.
+    "--screenshot",
   ];
 }
 
@@ -279,7 +316,7 @@ async function captureIos({ device, udid }) {
     });
     keep(device, file, name);
   };
-  for (const shot of shots) {
+  await takeShots(device, async (shot) => {
     log(device, `${shot.name}: launching ${launchArguments(shot).join(" ")}`);
     const launched = Date.now();
     run("xcrun", [
@@ -287,7 +324,7 @@ async function captureIos({ device, udid }) {
       ...launchArguments(shot),
     ]);
     await shoot(device, shot, launched, capture);
-  }
+  });
   execFileSync("xcrun", ["simctl", "terminate", udid, BUNDLE_ID], { stdio: "ignore" });
 }
 
@@ -345,13 +382,13 @@ async function captureMac(device) {
   rmSync(home, { recursive: true, force: true });
   const settings = join(home, "Library/Application Support/Sloppy Tanks");
   mkdirSync(settings, { recursive: true });
-  writeFileSync(join(settings, "settings.json"), JSON.stringify(SETTINGS));
-  for (const shot of shots) {
+  await takeShots(device, async (shot) => {
     log(device, `${shot.name}: launching ${launchArguments(shot).join(" ")}`);
     const launched = Date.now();
-    // Borderless: a titled window's bottom corners are rounded and its sides edged, and
-    // both would show in a capture of its content.
-    const app = spawn(binary, [...launchArguments(shot), "--borderless"], {
+    // A rewritten settings file each launch: a stray V or click on the eye button saves
+    // the chase camera, which the next launch would open in.
+    writeFileSync(join(settings, "settings.json"), JSON.stringify(SETTINGS));
+    const app = spawn(binary, launchArguments(shot), {
       env: { ...process.env, HOME: home },
       stdio: "ignore",
     });
@@ -400,7 +437,7 @@ async function captureMac(device) {
     } finally {
       app.kill();
     }
-  }
+  });
 }
 
 /** The screen's `region` (x, y, width and height in points) into `file`. */
@@ -434,7 +471,6 @@ if (!process.argv.includes("--no-build")) {
   if (ios.length) build("--ios-simulator");
   if (mac) build("--mac");
 }
-for (const device of devices) rmSync(join(output, device.id), { recursive: true, force: true });
 mkdirSync(scratch, { recursive: true });
 const failures = [];
 const attempt = async (device, work) => {
@@ -460,4 +496,10 @@ for (const { udid, booted } of prepared) {
 }
 if (mac) await attempt(mac, () => captureMac(mac));
 console.log(`Screenshots in ${output}`);
-if (failures.length) process.exit(1);
+for (const [id, names] of missing) {
+  console.error(
+    `[${id}] missing ${names.join(", ")}; retake them with\n` +
+      `  pnpm run screenshots:app-store -- --no-build --only ${id} --shots ${names.join(",")}`,
+  );
+}
+if (failures.length || missing.size) process.exit(1);

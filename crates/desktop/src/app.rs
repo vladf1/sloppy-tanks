@@ -71,9 +71,10 @@ pub struct Options {
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
     pub autoplay: bool,
-    /// `--borderless`: a window without a title bar or frame, whose square corners
-    /// the App Store screenshots take whole (`scripts/app-store-screenshots.mjs`).
-    pub borderless: bool,
+    /// `--screenshot`, for the App Store screenshots (`scripts/app-store-screenshots.mjs`):
+    /// no build line, and a window without a title bar or frame, whose square corners a
+    /// capture takes whole.
+    pub screenshot: bool,
     /// `--directory <url>`: the server directory to list rooms from.
     pub directory: Option<String>,
     /// `--map <id>`: Battle Setup's map in place of the saved one, an extra level only
@@ -687,7 +688,11 @@ impl Session {
             prefs,
             audio: None,
             debug: options.debug,
-            build: build_line(),
+            build: if options.screenshot {
+                String::new()
+            } else {
+                build_line()
+            },
             rooms,
             seats: SavedSeats::default(),
             frame_log: options.frame_log,
@@ -1467,7 +1472,7 @@ fn window_attributes(prefs: &Preferences, options: &Options) -> WindowAttributes
         .with_title("Sloppy Tanks")
         .with_inner_size(WINDOW_SIZE)
         .with_min_inner_size(MIN_WINDOW_SIZE)
-        .with_decorations(!options.borderless)
+        .with_decorations(!options.screenshot)
         .with_window_icon(window_icon());
     if prefs.fullscreen {
         attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
