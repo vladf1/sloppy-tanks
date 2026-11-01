@@ -1,7 +1,9 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
-// `artifacts/desktop/`, or the same app for iPhone and iPad into `artifacts/ios/`.
+// `artifacts/desktop/`, or the same app for iPhone and iPad into `artifacts/ios/`, and
+// either for the App Store into `artifacts/mac-app-store/` or `artifacts/ios-app-store/`.
 //
 //   node scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
+//   node scripts/build-desktop.mjs --mac --app-store   # the Mac App Store .pkg for App Store Connect and TestFlight
 //   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   node scripts/build-desktop.mjs             # whichever this machine is
 //   node scripts/build-desktop.mjs --ios               # Sloppy Tanks.app and an .ipa for iPhones and iPads
@@ -42,12 +44,15 @@
 // `SLOPPY_IOS_IDENTITY` an identity instead. Without them the app is signed ad hoc and
 // installs on no device. Simulator builds need no signing.
 //
-// `--app-store` signs the iOS app for App Store Connect instead: an "Apple Distribution"
-// identity and an App Store provisioning profile (no devices, no debugger), and it stops
-// without them. Its build (CFBundleVersion) is `SLOPPY_APP_STORE_BUILD`, CI's run number,
-// as App Store Connect takes one to three integers that rise with every upload, not the
-// release's four parts. `--upload` then sends the .ipa to App Store Connect with the API
-// key notarization uses and waits until Apple has processed it, when it is in TestFlight.
+// `--app-store` signs the app for App Store Connect instead, with an "Apple Distribution"
+// identity and an App Store provisioning profile (no devices, no debugger): the iOS app
+// as an .ipa, the Mac app sandboxed and in a package signed by a "3rd Party Mac Developer
+// Installer" identity. It stops without them; `SLOPPY_MAC_PROFILE` names the Mac profile
+// as `SLOPPY_IOS_PROFILE` the iOS one. Its build (CFBundleVersion) is
+// `SLOPPY_APP_STORE_BUILD`, CI's run number, as App Store Connect takes one to three
+// integers that rise with every upload, not the release's four parts. `--upload` then
+// sends it to App Store Connect with the API key notarization uses and waits until Apple
+// has processed it, when it is in TestFlight.
 import { spawnSync } from "node:child_process";
 import { createHash, sign } from "node:crypto";
 import {
@@ -233,6 +238,8 @@ function bundleInfo() {
     CFBundleShortVersionString: version,
     CFBundleVersion: stamps.SLOPPY_RELEASE,
     LSApplicationCategoryType: "public.app-category.action-games",
+    // TLS to the game servers is the only encryption, which export rules exempt.
+    ITSAppUsesNonExemptEncryption: false,
   };
 }
 
@@ -296,7 +303,7 @@ function notarize(file, staple, notary) {
   run("xcrun", ["stapler", "staple", staple]);
 }
 
-function buildMac() {
+async function buildMac(appStore) {
   if (process.platform !== "darwin") {
     console.error("The macOS app needs a Mac (codesign, productbuild, notarytool).");
     process.exit(1);
@@ -308,11 +315,15 @@ function buildMac() {
     console.error(error.message);
     process.exit(1);
   }
+  const scratch = join(root, "target", PROFILE, appStore ? "mac-app-store-bundle" : "bundle");
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync(scratch, { recursive: true });
+  // What an App Store build needs is found before it compiles.
+  const store = appStore ? macAppStoreSigning(scratch) : null;
+  const destination = process.argv.includes("--upload") ? await appStoreDestination() : null;
   ensureTargets([MAC_TARGET]);
   const binary = build(MAC_TARGET);
 
-  const scratch = join(root, "target", PROFILE, "bundle");
-  rmSync(scratch, { recursive: true, force: true });
   const app = join(scratch, `${APP_NAME}.app`);
   const contents = join(app, "Contents");
   mkdirSync(join(contents, "MacOS"), { recursive: true });
@@ -320,10 +331,13 @@ function buildMac() {
   const executable = join(contents, "MacOS", BINARY);
   copyFileSync(binary, executable);
   copyFileSync(appIcon, join(contents, "Resources", "AppIcon.icns"));
+  writeFileSync(join(contents, "Resources", "PrivacyInfo.xcprivacy"), privacyManifest(binary));
   writeFileSync(
     join(contents, "Info.plist"),
     plist({
       ...bundleInfo(),
+      ...(appStore ? { CFBundleVersion: appStoreBuild() } : {}),
+      ...toolchainInfo("macosx"),
       CFBundleIconFile: "AppIcon",
       LSMinimumSystemVersion: MINIMUM_MACOS,
       NSHighResolutionCapable: true,
@@ -331,6 +345,10 @@ function buildMac() {
     }),
   );
   writeFileSync(join(contents, "PkgInfo"), "APPL????");
+  if (store) {
+    await finishForMacAppStore(app, store, destination, scratch);
+    return;
+  }
   const signing = macSigning();
   if (signing.app) {
     // Distribution signing: the hardened runtime notarization requires, and a secure
@@ -371,6 +389,67 @@ function buildMac() {
   console.log(`Built ${join(output, `${APP_NAME}.app`)} (Apple silicon, ${megabytes(executable)})`);
   console.log(`Built ${zip} (${megabytes(zip)})`);
   console.log(`Built ${installer} (${megabytes(installer)})`);
+}
+
+/** The identity and profile that sign the Mac app for the App Store, and the identity
+ * that signs its package (see the top of the file). Stops the build without them. */
+function macAppStoreSigning(scratch) {
+  const signing = profileSigning(scratch, "OSX", true);
+  const installer = identity(
+    "3rd Party Mac Developer Installer",
+    process.env.SLOPPY_MAC_INSTALLER_IDENTITY,
+    [],
+  );
+  if (!signing || !installer) {
+    console.error(
+      `No Apple Distribution identity with a Mac App Store profile for ${BUNDLE_ID}, or ` +
+        "no 3rd Party Mac Developer Installer identity.",
+    );
+    process.exit(1);
+  }
+  return { ...signing, installer };
+}
+
+/** Sign `app` for the Mac App Store and package it for App Store Connect, which takes a
+ * signed package that installs the app in Applications; with a `destination`, upload it. */
+async function finishForMacAppStore(app, store, destination, scratch) {
+  const { profile, identity, installer } = store;
+  copyFileSync(profile.file, join(app, "Contents", "embedded.provisionprofile"));
+  const entitlements = join(scratch, "entitlements.plist");
+  writeFileSync(
+    entitlements,
+    plist({
+      "com.apple.application-identifier": `${profile.team}.${BUNDLE_ID}`,
+      "com.apple.developer.team-identifier": profile.team,
+      // The Mac App Store takes only sandboxed apps. The game reaches nothing but its
+      // servers; settings land in the sandbox's own Application Support.
+      "com.apple.security.app-sandbox": true,
+      "com.apple.security.network.client": true,
+      ...(profile.testFlight ? { "beta-reports-active": true } : {}),
+    }),
+  );
+  console.log(`Signing with ${identity.name} and the profile "${profile.name}".`);
+  run("codesign", ["--force", "--sign", identity.hash, "--entitlements", entitlements, app]);
+  run("codesign", ["--verify", "--strict", "--verbose=2", app]);
+
+  const folder = join(root, "artifacts", "mac-app-store");
+  mkdirSync(folder, { recursive: true });
+  const built = join(folder, `${APP_NAME}.app`);
+  rmSync(built, { recursive: true, force: true });
+  run("ditto", [app, built]);
+  const installerPackage = join(
+    folder,
+    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-macOS-App-Store.pkg`,
+  );
+  rmSync(installerPackage, { force: true });
+  run("productbuild", ["--component", app, "/Applications", "--sign", installer, installerPackage]);
+  console.log(
+    `Built ${built} (Apple silicon, ${megabytes(join(app, "Contents", "MacOS", BINARY))})`,
+  );
+  console.log(`Built ${installerPackage} (${megabytes(installerPackage)})`);
+  if (destination) {
+    await uploadToAppStore(installerPackage, "macos", destination, appStoreBuild(), scratch);
+  }
 }
 
 /** An installer package that puts `app` in /Applications, titled for Installer; signed
@@ -454,7 +533,10 @@ function readProfile(file, scratch) {
   return {
     file,
     name: field("Name"),
-    appId: field("Entitlements.application-identifier"),
+    // iOS profiles name the app ID `application-identifier`, Mac ones with Apple's prefix.
+    appId:
+      field("Entitlements.application-identifier") ||
+      field("Entitlements.com\\.apple\\.application-identifier"),
     team: field("TeamIdentifier.0"),
     platforms: field("Platform", "json"),
     expires: new Date(field("ExpirationDate")),
@@ -476,13 +558,16 @@ function signingIdentities() {
   }));
 }
 
-/** The profile and identity that sign the iOS app for devices, or with `appStore` for
- * App Store Connect (see the top of the file), or null. */
-function iosSigning(scratch, appStore) {
+/** The profile and identity that sign the app for `platform` ("iOS" or "OSX"): the iOS
+ * app for devices, or with `appStore` either app for App Store Connect (see the top of the
+ * file), or null. */
+function profileSigning(scratch, platform, appStore) {
+  const ios = platform === "iOS";
+  const named = ios ? process.env.SLOPPY_IOS_IDENTITY : process.env.SLOPPY_MAC_APP_IDENTITY;
   const kind = appStore ? "Distribution" : "Development";
   const identities = signingIdentities().filter(({ name }) =>
-    process.env.SLOPPY_IOS_IDENTITY
-      ? name === process.env.SLOPPY_IOS_IDENTITY || name.startsWith(process.env.SLOPPY_IOS_IDENTITY)
+    named
+      ? name === named || name.startsWith(named)
       : new RegExp(`^(Apple|iPhone) ${kind}: `).test(name),
   );
   const home = process.env.HOME ?? "";
@@ -490,12 +575,14 @@ function iosSigning(scratch, appStore) {
     join(home, "Library/Developer/Xcode/UserData/Provisioning Profiles"),
     join(home, "Library/MobileDevice/Provisioning Profiles"),
   ];
-  const files = process.env.SLOPPY_IOS_PROFILE
-    ? [process.env.SLOPPY_IOS_PROFILE]
+  const chosen = ios ? process.env.SLOPPY_IOS_PROFILE : process.env.SLOPPY_MAC_PROFILE;
+  const extension = ios ? ".mobileprovision" : ".provisionprofile";
+  const files = chosen
+    ? [chosen]
     : folders.flatMap((folder) =>
         existsSync(folder)
           ? readdirSync(folder)
-              .filter((name) => name.endsWith(".mobileprovision"))
+              .filter((name) => name.endsWith(extension))
               .map((name) => join(folder, name))
           : [],
       );
@@ -503,7 +590,7 @@ function iosSigning(scratch, appStore) {
   for (const file of files) {
     const profile = readProfile(file, scratch);
     // A development profile lists the devices it installs on, an App Store one none.
-    if (!profile || !profile.platforms.includes("iOS") || profile.devices === appStore) continue;
+    if (!profile || !profile.platforms.includes(platform) || profile.devices === appStore) continue;
     if (!(profile.expires > new Date())) continue;
     const wanted = `${profile.team}.${BUNDLE_ID}`;
     const covers =
@@ -637,7 +724,7 @@ async function buildIos(simulator, appStore) {
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(scratch, { recursive: true });
   // What an App Store build needs is found before it compiles.
-  const signing = simulator ? null : iosSigning(scratch, appStore);
+  const signing = simulator ? null : profileSigning(scratch, "iOS", appStore);
   if (appStore && !signing) {
     console.error(
       `No Apple Distribution identity with an App Store provisioning profile for ${BUNDLE_ID}.`,
@@ -689,8 +776,6 @@ async function buildIos(simulator, appStore) {
           UIWindowSceneSessionRoleApplication: [{ UISceneConfigurationName: "Default" }],
         },
       },
-      // TLS to the game servers is the only encryption, which export rules exempt.
-      ITSAppUsesNonExemptEncryption: false,
       ...assets,
     }),
   );
@@ -751,7 +836,7 @@ async function buildIos(simulator, appStore) {
     rmSync(ipa, { force: true });
     run("ditto", ["-c", "-k", "--norsrc", "--keepParent", join(payload, "Payload"), ipa]);
     console.log(`Built ${ipa} (${megabytes(ipa)})`);
-    if (destination) await uploadToAppStore(ipa, destination, appStoreBuild(), scratch);
+    if (destination) await uploadToAppStore(ipa, "ios", destination, appStoreBuild(), scratch);
   }
   if (process.argv.includes("--install")) {
     if (simulator) installOnSimulator(built);
@@ -815,20 +900,21 @@ async function appStoreDestination() {
   return { key, app: app.id };
 }
 
-/** Send `ipa`, build `build`, to the App Store Connect app `destination` names and wait
+/** Send `file` (an .ipa, or a Mac App Store .pkg), build `build` of the app for
+ * `platform` ("ios" or "macos"), to the App Store Connect app `destination` names and wait
  * until Apple has processed it. */
-async function uploadToAppStore(ipa, destination, build, scratch) {
+async function uploadToAppStore(file, platform, destination, build, scratch) {
   const { key, app } = destination;
   // altool reads a key only from a file named for its ID in a `private_keys` folder, and
   // Xcode 26's can send a build to another of the team's apps unless `--apple-id` names it.
   const keys = join(scratch, "private_keys");
   mkdirSync(keys, { recursive: true });
   copyFileSync(key.file, join(keys, `AuthKey_${key.id}.p8`));
-  console.log(`Uploading ${ipa} to App Store Connect…`);
+  console.log(`Uploading ${file} to App Store Connect…`);
   const upload = spawnSync(
     "xcrun",
     [
-      ...["altool", "--upload-package", ipa, "--type", "ios", "--apple-id", app],
+      ...["altool", "--upload-package", file, "--type", platform, "--apple-id", app],
       ...["--bundle-id", BUNDLE_ID, "--bundle-version", build],
       ...["--bundle-short-version-string", version],
       ...["--apiKey", key.id, "--apiIssuer", key.issuer],
@@ -837,19 +923,20 @@ async function uploadToAppStore(ipa, destination, build, scratch) {
   );
   rmSync(keys, { recursive: true, force: true });
   if (upload.status !== 0) {
-    console.error(`altool could not upload ${ipa}.`);
+    console.error(`altool could not upload ${file}.`);
     process.exit(1);
   }
-  await awaitProcessing(key, app, build);
+  await awaitProcessing(key, app, platform, build);
 }
 
-/** Wait until App Store Connect has processed build `build` of `app`, which is then in
- * TestFlight. Xcode 26's altool can report an upload that never arrives, so a build App
+/** Wait until App Store Connect has processed build `build` of `app` for `platform`,
+ * which is then in TestFlight. Xcode 26's altool can report an upload that never arrives, so a build App
  * Store Connect still does not list at the deadline fails, while one it is still
  * processing only warns. */
-async function awaitProcessing(key, app, build) {
+async function awaitProcessing(key, app, platform, build) {
   const query = {
     "filter[app]": app,
+    "filter[preReleaseVersion.platform]": platform === "ios" ? "IOS" : "MAC_OS",
     "filter[version]": build,
     "filter[preReleaseVersion.version]": version,
     "fields[builds]": "processingState",
@@ -962,12 +1049,12 @@ const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
 const appStore = process.argv.includes("--app-store");
-if (appStore && (!ios || iosSimulator)) {
-  console.error("--app-store builds the iOS app for devices: pass it with --ios.");
+if (appStore && !(ios || mac)) {
+  console.error("--app-store builds the iOS app (--ios) or the Mac app (--mac) for the App Store.");
   process.exit(1);
 }
 if (process.argv.includes("--upload") && !appStore) {
-  console.error("--upload sends an App Store build: pass it with --ios --app-store.");
+  console.error("--upload sends an App Store build: pass it with --app-store.");
   process.exit(1);
 }
 if (appStore && process.argv.includes("--install")) {
@@ -975,7 +1062,7 @@ if (appStore && process.argv.includes("--install")) {
   process.exit(1);
 }
 if (ios || iosSimulator) await buildIos(iosSimulator, appStore);
-else if (mac || (!windows && process.platform === "darwin")) buildMac();
+else if (mac || (!windows && process.platform === "darwin")) await buildMac(appStore);
 else if (windows || process.platform === "win32") buildWindows();
 else {
   console.error("Desktop builds are for macOS and Windows: pass --mac or --windows.");
