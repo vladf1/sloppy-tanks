@@ -322,7 +322,7 @@
         let wasm;
         const note = (kind, detail = "") => {
           const at = new Date().toISOString().slice(11, 23);
-          notes.push(`${at} ${kind} ${String(detail).slice(0, 600)}`);
+          notes.push(`${at} ${kind} ${kind === "gpu-ops" ? detail : String(detail).slice(0, 600)}`);
           if (notes.length > MAX_NOTES) notes.splice(0, notes.length - MAX_NOTES);
         };
         const save = () => {
@@ -374,6 +374,10 @@
             device.lost.then((info) => {
               gpu.lost.push(number);
               note("gpu-lost", `#${number} ${info.reason} "${info.message}"`);
+              note(
+                "gpu-ops",
+                `the last ${operations.length} before the loss:\n${operations.join("\n")}`,
+              );
               save();
               upload();
             });
@@ -419,6 +423,105 @@
             return device;
           };
         }
+        // The GPU work last sent, for a device the GPU process lost: each call by name,
+        // with what it names (labels, sizes, counts).
+        const operations = [];
+        const MAX_OPERATIONS = 1200;
+        const name = (object) =>
+          object
+            ? `${object.label || object.constructor?.name}${object.size !== undefined ? `[${object.size}]` : ""}${object.width ? `[${object.width}x${object.height} ${object.format}]` : ""}`
+            : String(object);
+        const describe = (value) =>
+          value && typeof value === "object"
+            ? ArrayBuffer.isView(value) || value instanceof ArrayBuffer
+              ? `<${value.byteLength}B>`
+              : value.label !== undefined || value.size !== undefined
+                ? name(value)
+                : Array.isArray(value)
+                  ? `[${value.length}]`
+                  : JSON.stringify(value, (key, inner) =>
+                      inner &&
+                      typeof inner === "object" &&
+                      (inner.label !== undefined || inner.size !== undefined) &&
+                      key
+                        ? name(inner)
+                        : inner,
+                    )?.slice(0, 300)
+            : String(value);
+        const record = (type, method) => {
+          const prototype = globalThis[type]?.prototype;
+          const original = prototype?.[method];
+          if (!original) return;
+          prototype[method] = function (...args) {
+            operations.push(
+              `${type.replace("GPU", "")}.${method}(${args.map(describe).join(", ")}) on ${name(this)}`,
+            );
+            if (operations.length > MAX_OPERATIONS)
+              operations.splice(0, operations.length - MAX_OPERATIONS);
+            return original.apply(this, args);
+          };
+        };
+        for (const method of [
+          "submit",
+          "writeBuffer",
+          "writeTexture",
+          "copyExternalImageToTexture",
+        ]) {
+          record("GPUQueue", method);
+        }
+        for (const method of [
+          "beginRenderPass",
+          "beginComputePass",
+          "copyBufferToBuffer",
+          "copyBufferToTexture",
+          "copyTextureToTexture",
+          "copyTextureToBuffer",
+          "clearBuffer",
+          "resolveQuerySet",
+          "finish",
+        ]) {
+          record("GPUCommandEncoder", method);
+        }
+        for (const method of [
+          "setPipeline",
+          "setBindGroup",
+          "setVertexBuffer",
+          "setIndexBuffer",
+          "draw",
+          "drawIndexed",
+          "drawIndirect",
+          "drawIndexedIndirect",
+          "setViewport",
+          "setScissorRect",
+          "executeBundles",
+          "end",
+        ]) {
+          record("GPURenderPassEncoder", method);
+        }
+        for (const method of ["setPipeline", "setBindGroup", "dispatchWorkgroups", "end"]) {
+          record("GPUComputePassEncoder", method);
+        }
+        for (const method of ["configure", "getCurrentTexture", "unconfigure"]) {
+          record("GPUCanvasContext", method);
+        }
+        for (const method of [
+          "createRenderPipelineAsync",
+          "createRenderPipeline",
+          "createComputePipeline",
+          "createBindGroup",
+        ]) {
+          record("GPUDevice", method);
+        }
+        for (const method of ["destroy", "mapAsync", "unmap"]) {
+          record("GPUBuffer", method);
+        }
+        record("GPUTexture", "destroy");
+        const animationFrame = requestAnimationFrame;
+        window.requestAnimationFrame = (callback) =>
+          animationFrame((time) => {
+            operations.push(`--- frame ${time.toFixed(1)}`);
+            return callback(time);
+          });
         const NativeSocket = WebSocket;
         window.WebSocket = class extends NativeSocket {
           constructor(...args) {
