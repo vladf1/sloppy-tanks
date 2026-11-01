@@ -301,6 +301,7 @@
         const FLAG = "sloppy-trace";
         const NOTES = "sloppy-trace-notes";
         const MAX_NOTES = 600;
+        const MAX_UPLOAD = 240000;
         const TRACES = "https://directory.sloppytanks.com/traces";
         const query = new URLSearchParams(location.search);
         try {
@@ -333,7 +334,8 @@
         const upload = () =>
           fetch(`${TRACES}?id=${id}`, {
             method: "POST",
-            body: notes.join("\n"),
+            // The directory takes at most 256 KB a trace: the latest notes.
+            body: notes.join("\n").slice(-MAX_UPLOAD),
             keepalive: true,
           }).catch(() => {});
         const mb = (bytes) => (bytes / 1e6).toFixed(1);
@@ -557,6 +559,11 @@
         });
         addEventListener("visibilitychange", () => note("visibility", document.visibilityState));
         addEventListener("pagehide", () => {
+          // A page that unloads itself leaves no GPU calls for the next load.
+          clearInterval(storeOperations);
+          try {
+            localStorage.removeItem(OPERATIONS);
+          } catch {}
           note("pagehide");
           save();
           upload();
@@ -583,6 +590,23 @@
           );
           save();
           if (++seconds % 5 === 0) upload();
+        }, 1000);
+        // A page the system kills says nothing more: its latest GPU calls go to storage
+        // each second, and the next load uploads them.
+        const OPERATIONS = "sloppy-trace-operations";
+        const STORED_OPERATIONS = 300;
+        try {
+          const earlier = localStorage.getItem(OPERATIONS);
+          if (earlier) {
+            notes.splice(notes.length - 1, 0, `-- the previous load's last GPU calls:\n${earlier}`);
+            localStorage.removeItem(OPERATIONS);
+            upload();
+          }
+        } catch {}
+        const storeOperations = setInterval(() => {
+          try {
+            localStorage.setItem(OPERATIONS, operations.slice(-STORED_OPERATIONS).join("\n"));
+          } catch {}
         }, 1000);
       })();
     </script>
