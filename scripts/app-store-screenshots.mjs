@@ -5,15 +5,17 @@
 //   pnpm run screenshots:app-store                       # build both apps, then every device
 //   pnpm run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
 //   pnpm run screenshots:app-store -- --only ipad-13,mac --no-report
-//   pnpm run screenshots:app-store -- --no-build --only mac --shots harbor,quarry
+//   pnpm run screenshots:app-store -- --no-build --only mac --shots quarry
 //
-// A shot that fails is tried again (`SHOT_ATTEMPTS`) and the rest go on; screenshots
-// already taken stay, and the run ends with the command that retakes only what is missing.
-// `--shots` takes battle-setup, village, harbor and quarry (with the report).
+// Each shot is a launch of its own, so `--shots` retakes any of them alone: battle-setup
+// (about 25 s), village, harbor and quarry (about a minute each) and battle-report (five
+// and a half minutes, the round's clock). A shot that fails is tried again
+// (`SHOT_ATTEMPTS`) and the rest go on; screenshots already taken stay, and the run ends
+// with the command that retakes only what is missing.
 //
 // The apps are built single player, as the App Store has them (`--single-player`).
 // Each device shows Battle Setup, three autoplayed single-player battles (one per standard
-// map, the player's tank driving itself) and, unless `--no-report`, the third battle's
+// map, the player's tank driving itself) and, unless `--no-report`, a Dusty Dig battle's
 // report, which waits out its five-minute round. The game reads its command line as a
 // page reads its query (`crates/desktop/src/main.rs`): `--map`, `--seed` and
 // `--autoplay`, which starts the round once the arena is ready. The seed fixes each
@@ -58,7 +60,9 @@ const SHOTS = [
   { name: "battle-setup", map: "village", seed: 11, seconds: 25 },
   { name: "village", map: "village", seed: 11, seconds: 50, autoplay: true },
   { name: "harbor", map: "harbor", seed: 21, seconds: 50, autoplay: true },
-  { name: "quarry", map: "quarry", seed: 31, seconds: 50, autoplay: true, report: true },
+  { name: "quarry", map: "quarry", seed: 31, seconds: 50, autoplay: true },
+  // A battle of its own that waits out the round (`ROUND_SECONDS`) for its report.
+  { name: "battle-report", map: "quarry", seed: 31, autoplay: true, report: true },
 ];
 // A battle's moment may catch the player's tank destroyed, its respawn panel over the
 // fight, and the seed cannot rule that out: the autoplayed tank's commands follow the
@@ -106,7 +110,10 @@ if (only && devices.length !== only.length) {
   process.exit(1);
 }
 const withReport = !process.argv.includes("--no-report");
-const shots = SHOTS.map((shot, index) => ({ ...shot, file: `0${index + 1}-${shot.name}.png` }));
+const shots = SHOTS.map((shot, index) => ({
+  ...shot,
+  file: `0${index + 1}-${shot.name}.png`,
+})).filter((shot) => withReport || !shot.report);
 const onlyShots = argument("--shots")?.split(",");
 if (onlyShots?.some((name) => !shots.some((shot) => shot.name === name))) {
   console.error(`--shots takes ${shots.map((shot) => shot.name).join(", ")}.`);
@@ -213,6 +220,13 @@ function scratchFile(device, name) {
  * report. */
 async function shoot(device, shot, launched, capture) {
   const at = (seconds) => sleep(launched + seconds * 1000 - Date.now());
+  if (shot.report) {
+    const end = ROUND_SECONDS + REPORT_MARGIN_SECONDS;
+    log(device, `waiting ${end} s for the battle report`);
+    await at(end);
+    await capture(shot.file);
+    return;
+  }
   await at(shot.seconds);
   await capture(shot.file);
   if (shot.autoplay) {
@@ -220,15 +234,6 @@ async function shoot(device, shot, launched, capture) {
       await at(shot.seconds + seconds);
       await capture(`alternates/${shot.file.replace(".png", `-${index + 2}.png`)}`);
     }
-  }
-  if (shot.report && withReport) {
-    const end = ROUND_SECONDS + REPORT_MARGIN_SECONDS;
-    log(
-      device,
-      `waiting ${Math.round(end - (Date.now() - launched) / 1000)} s for the battle report`,
-    );
-    await at(end);
-    await capture(`0${shots.length + 1}-battle-report.png`);
   }
 }
 
@@ -359,14 +364,18 @@ JSON.stringify([visible.origin.x, frame.size.height - visible.origin.y - visible
 
 /** Bring process `pid` to the front and give its window `frame` (points). */
 function placeMacWindow(pid, [x, y, width, height]) {
-  run("osascript", [
-    "-e",
-    `tell application "System Events" to tell (first process whose unix id is ${pid})
+  execFileSync(
+    "osascript",
+    [
+      "-e",
+      `tell application "System Events" to tell (first process whose unix id is ${pid})
       set frontmost to true
       set position of window 1 to {${x}, ${y}}
       set size of window 1 to {${width}, ${height}}
     end tell`,
-  ]);
+    ],
+    { stdio: "ignore" },
+  );
 }
 
 async function captureMac(device) {
@@ -404,23 +413,25 @@ async function captureMac(device) {
       if (!points) {
         throw new Error(`the screen holds no ${MAC_WINDOWS.at(-1).join("×")} point window`);
       }
-      // A window behind the front app is drawn at 98%, so its size reads true only once
-      // it is in front; and System Events now and then misses the window for a moment.
+      // The window as it stands when it is in place: the size this capture takes, which
+      // a window behind the front app (drawn at 98%) does not read. The window list never
+      // missed the window, but System Events now and then cannot see it for seconds while
+      // the app loads an arena, so it is only asked to move the window when it is out of
+      // place, and given half a minute (a battle's first shot is 50 s in).
       const content = async () => {
         for (let tries = 0; ; tries++) {
-          let bounds;
-          try {
-            placeMacWindow(app.pid, [left, top, ...points]);
-            bounds = macWindows(app.pid)[0]?.bounds;
-          } catch (error) {
-            if (tries === 10) throw error;
-          }
+          const bounds = macWindows(app.pid)[0]?.bounds;
           if (bounds?.Width === points[0] && bounds?.Height === points[1]) {
             return [bounds.X, bounds.Y, bounds.Width, bounds.Height];
           }
-          if (tries === 10) {
+          if (tries === 150) {
             const size = bounds ? `${bounds.Width}×${bounds.Height}` : "gone";
             throw new Error(`the Mac app's window is ${size}, not ${points.join("×")}`);
+          }
+          try {
+            placeMacWindow(app.pid, [left, top, ...points]);
+          } catch {
+            // Asked again on the next try.
           }
           await sleep(200);
         }
