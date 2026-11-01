@@ -32,10 +32,11 @@ const GUNSMOKE: u32 = 0xc8c4bc;
 /// The flame star's points around the bore (rad from the barrel's line).
 const STAR_ANGLES: [f32; 4] = [-1.15, -0.55, 0.55, 1.15];
 /// The muzzle light's peak intensity (times the shot size) and reach.
-pub const MUZZLE_LIGHT: f32 = 28.0;
+pub const MUZZLE_LIGHT: f32 = 11.0;
 pub const MUZZLE_LIGHT_DISTANCE: f32 = 10.0;
-/// The light dies this fast (1/s).
-const LIGHT_DECAY: f64 = 32.0;
+/// The light dies this fast (1/s): over several frames even at 30 fps. A brighter
+/// flash gone within one such frame strobed the walls and shade around every gun.
+const LIGHT_DECAY: f64 = 12.0;
 const FLAME_COLOR: [f32; 3] = [3.6, 1.6, 0.38];
 
 #[derive(Clone, Copy, Debug)]
