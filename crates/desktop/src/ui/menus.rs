@@ -14,7 +14,6 @@ use super::paint::{self, ButtonStyle, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
 use crate::preferences::{Preferences, TouchSetting};
-use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
 use sloppy_core::sim::{GameMode, Team};
 use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone, pause_report};
 use sloppy_web::catalog::{
@@ -61,13 +60,12 @@ const STACKED_LABEL: f32 = 38.0;
 const CHOICE_OFFSET: f32 = 10.0;
 const SLIDER_OFFSET: f32 = 6.0;
 /// The space from the head to the first group's heading, over each later heading, and
-/// over the dialog's buttons; and the battle speed group's reset action's height.
+/// over the dialog's buttons.
 const FIRST_GROUP_GAP: f32 = 5.5;
 const GROUP_GAP: f32 = 12.0;
 const SETTINGS_ACTIONS_GAP: f32 = 22.0;
 /// How far the rows fade out over SAVE and CANCEL while more of them lie below.
 const SETTINGS_FOLD_FADE: f32 = 36.0;
-const RESET_HEIGHT: f32 = 30.0;
 /// A pause fact's cell: its least height (half the pane's 216), and its padding.
 const FACT_ROW: f32 = 107.5;
 const FACT_PADDING: [f32; 3] = [14.0, 16.0, 12.0];
@@ -1068,11 +1066,10 @@ impl SettingRows {
         bottom
     }
 
-    /// A group's heading over its hairline (`.setting-group-label`), from `top`, with
-    /// `action_height` of room for its own action at the row's end. Returns where its
-    /// rows start.
-    fn group(&self, painter: &Painter, top: f32, label: &str, action_height: f32) -> f32 {
-        let content = action_height.max(28.0);
+    /// A group's heading over its hairline (`.setting-group-label`), from `top`.
+    /// Returns where its rows start.
+    fn group(&self, painter: &Painter, top: f32, label: &str) -> f32 {
+        let content = 28.0;
         paint::text(
             painter,
             pos2(self.left, top + content / 2.0),
@@ -1085,6 +1082,39 @@ impl SettingRows {
         let rule = top + content + 5.5;
         self.rule(painter, rule, hexa(0x9fd0ff, 0.1));
         rule + 0.5
+    }
+
+    /// A row from `top` with a switch at its end, which is small enough to stay beside
+    /// its name in any width. Returns the row's bottom.
+    #[allow(clippy::too_many_arguments)]
+    fn switch_row(
+        &self,
+        ui: &mut Ui,
+        painter: &Painter,
+        top: f32,
+        id: &str,
+        on: &mut bool,
+        name: &str,
+        note: &str,
+    ) -> f32 {
+        switch(
+            ui,
+            painter,
+            Rect::from_min_size(
+                pos2(
+                    self.left + self.width - 46.0,
+                    top + (SETTING_ROW - 26.0) / 2.0,
+                ),
+                vec2(46.0, 26.0),
+            ),
+            id,
+            on,
+        );
+        let beside = SettingRows {
+            stacked: false,
+            ..*self
+        };
+        beside.row(painter, top, name, note)
     }
 
     fn rule(&self, painter: &Painter, y: f32, color: Color32) {
@@ -1418,7 +1448,7 @@ fn settings_body(
     } else {
         "SOUND"
     };
-    let mut y = rows.group(painter, origin.y + head + FIRST_GROUP_GAP, group, 0.0);
+    let mut y = rows.group(painter, origin.y + head + FIRST_GROUP_GAP, group);
     slider(
         ui,
         painter,
@@ -1446,7 +1476,7 @@ fn settings_body(
             "Auto shows them on touchscreens",
         );
     }
-    y = rows.group(painter, y + GROUP_GAP, "DISPLAY", 0.0);
+    y = rows.group(painter, y + GROUP_GAP, "DISPLAY");
     setting_choice(
         ui,
         painter,
@@ -1459,24 +1489,12 @@ fn settings_body(
     // A page goes fullscreen only from a press (the HUD's button), so it keeps no
     // fullscreen choice, as the old page kept none.
     if crate::app::offers_fullscreen() && cfg!(not(target_arch = "wasm32")) {
-        // A switch is small enough to stay beside its name in any width.
-        let rows = SettingRows {
-            stacked: false,
-            ..rows
-        };
-        switch(
+        y = rows.switch_row(
             ui,
             painter,
-            Rect::from_min_size(
-                pos2(origin.x + width - 46.0, y + (SETTING_ROW - 26.0) / 2.0),
-                vec2(46.0, 26.0),
-            ),
+            y,
             "fullscreen",
             &mut draft.fullscreen,
-        );
-        y = rows.row(
-            painter,
-            y,
             "Fullscreen",
             if cfg!(target_os = "macos") {
                 "Fill the screen (Cmd+F)"
@@ -1485,59 +1503,18 @@ fn settings_body(
             },
         );
     }
-    y = rows.group(painter, y + GROUP_GAP, "DEVELOPER", 0.0);
-    setting_choice(
+    y = rows.group(painter, y + GROUP_GAP, "DEVELOPER");
+    y = rows.switch_row(
         ui,
         painter,
-        rows.control(y, CHOICE_OFFSET, 38.0),
-        "debug tools",
-        &[(false, "Off"), (true, "On")],
-        &mut draft.debug,
-    );
-    y = rows.row(
-        painter,
         y,
+        "debug tools",
+        &mut draft.debug,
         "Debug tools",
         "Extra levels and Stats for nerds",
     );
-    if !view.room {
-        // Battle speed: single player tunes its own battle.
-        let group_top = y + GROUP_GAP;
-        let reset = Rect::from_min_size(
-            pos2(origin.x + width - 143.0, group_top),
-            vec2(143.0, RESET_HEIGHT),
-        );
-        y = rows.group(painter, group_top, "BATTLE SPEED", RESET_HEIGHT);
-        reset_speeds(ui, painter, art, reset, draft);
-        for (name, note, value, id) in [
-            (
-                "Tank base speed",
-                "How fast every tank drives",
-                &mut draft.tank_speed,
-                "tank speed",
-            ),
-            (
-                "Projectile base speed",
-                "How fast shells and rockets fly",
-                &mut draft.bullet_speed,
-                "bullet speed",
-            ),
-        ] {
-            slider(
-                ui,
-                painter,
-                rows.control(y, SLIDER_OFFSET, 26.0),
-                id,
-                value,
-                (MIN_SPEED_SCALE, MAX_SPEED_SCALE),
-                1.0,
-                ("Slower", "Faster"),
-            );
-            y = rows.row(painter, y, name, note);
-        }
-    }
     // The App Store wants the privacy policy reachable inside the app.
-    y = rows.group(painter, y + GROUP_GAP, "ABOUT", 0.0);
+    y = rows.group(painter, y + GROUP_GAP, "ABOUT");
     let links = rows.control(y, CHOICE_OFFSET, 38.0);
     let link_width = (links.width() - 10.0) / 2.0;
     for (index, (label, page)) in [("PRIVACY", "privacy.html"), ("SUPPORT", "support.html")]
@@ -1586,72 +1563,6 @@ fn settings_actions(
     .clicked()
     {
         *close = Some(false);
-    }
-}
-
-/// The battle speed group's own action (`.group-action`): both speeds back to 100%,
-/// dimmed in its place while they are there already.
-fn reset_speeds(ui: &mut Ui, painter: &Painter, art: &Art, rect: Rect, draft: &mut Preferences) {
-    let changed = draft.tank_speed != 1.0 || draft.bullet_speed != 1.0;
-    let response = ui
-        .interact(
-            rect,
-            Id::unique("speeds reset"),
-            if changed {
-                Sense::click()
-            } else {
-                Sense::hover()
-            },
-        )
-        .on_hover_text("Both speeds back to 100%");
-    paint::labelled(&response, changed, "Reset speeds");
-    painter.rect_filled(
-        rect,
-        8,
-        if changed {
-            hexa(0xffcf38, 0.1)
-        } else {
-            Color32::TRANSPARENT
-        },
-    );
-    painter.rect_stroke(
-        rect,
-        8,
-        Stroke::new(
-            1.0,
-            if changed {
-                hexa(0xffcf38, 0.4)
-            } else {
-                hexa(0x9fd0ff, 0.2)
-            },
-        ),
-        StrokeKind::Inside,
-    );
-    let ink = if !changed {
-        hex(0x8ea6bd)
-    } else if response.hovered() {
-        Color32::WHITE
-    } else {
-        GOLD_HOT
-    };
-    art.icon(
-        painter,
-        "reset",
-        Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(14.0)),
-        ink,
-    );
-    paint::text(
-        painter,
-        pos2(rect.left() + 32.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        "Reset to 100%",
-        bold_font(13.0),
-        ink,
-        0.0,
-    );
-    if changed && response.clicked() {
-        draft.tank_speed = 1.0;
-        draft.bullet_speed = 1.0;
     }
 }
 
