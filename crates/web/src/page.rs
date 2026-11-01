@@ -299,11 +299,14 @@ impl Graphics {
 }
 
 /// Whether the renderer multisamples, decided once per page since every pipeline is
-/// made for it: desktops do; touch tablets and phones draw single-sampled, since four
-/// samples of the HDR target and its depth cost a tile-based mobile GPU dearly in
-/// fill and bandwidth, unless the player chose High.
+/// made for it: desktops and phones do; touch tablets draw single-sampled, since four
+/// samples of the HDR target and its depth over a tablet's screen cost a tile-based
+/// mobile GPU dearly in fill and bandwidth, unless the player chose High. A phone's
+/// scene is small (one render pixel per CSS pixel, a ninth of its screen), so its four
+/// samples cost about what one does over a tablet's, and single-sampled its edges
+/// stepped three screen pixels at a time and crawled as the camera moved.
 fn multisampled(device: DeviceClass, setting: GraphicsSetting) -> bool {
-    device == DeviceClass::Desktop || setting == GraphicsSetting::Fixed(Tier::High)
+    device != DeviceClass::Tablet || setting == GraphicsSetting::Fixed(Tier::High)
 }
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,

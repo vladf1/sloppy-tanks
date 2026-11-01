@@ -380,7 +380,8 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         // where it is, so the mark sat under it and stuck where it lifted.
         hide_reticle: device != DeviceClass::Desktop,
         graphics: prefs.graphics,
-        // Tablets and phones start a tier lower and draw single-sampled (`quality.rs`).
+        // Tablets and phones start a tier lower (`quality.rs`); tablets draw
+        // single-sampled (`sloppy_web::page::multisampled`).
         device,
         // A page words what only a page does (RELOAD, "in this browser") as the page did.
         shell: if cfg!(target_arch = "wasm32") {

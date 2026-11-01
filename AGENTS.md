@@ -406,7 +406,8 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   upsamples it; at scale 1 the output reads texels exactly as before, so the High
   tier on a desktop is pixel for pixel today's picture. Tiers switch optional work
   through uniforms and passes (`TierFeatures`), never through pipeline variants.
-  Touch devices also draw without MSAA, which is fixed per renderer. Keep a new
+  Touch tablets also draw without MSAA (phones, whose scene is small, keep it), which
+  is fixed per renderer. Keep a new
   expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
   to 15-30 fps after a single frame overruns, and builds from August to October 2026
   (bug 325095, Playwright's WebKit too) never raise it again on their own; the
