@@ -176,12 +176,12 @@ jobs:
             profile-secret: IOS_APP_STORE_PROFILE
             profile-variable: SLOPPY_IOS_PROFILE
             cargo-cache: ios-device-fat-1
-          # The same compiler settings as the macOS app's job, whose cache it shares.
+          # Built for macOS 12 (MACOSX_DEPLOYMENT_TARGET), unlike the macOS app's job.
           - name: macOS app
             platform: mac
             profile-secret: MAC_APP_STORE_PROFILE
             profile-variable: SLOPPY_MAC_PROFILE
-            cargo-cache: desktop-macos-fat-1
+            cargo-cache: mac-app-store-fat-1
     steps:
       - name: Signing keychain
         id: signing

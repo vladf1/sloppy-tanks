@@ -80,6 +80,9 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 // wgpu's Metal backend and winit support macOS 10.13 and up; 11 (Big Sur) is the first
 // release that runs on Apple silicon, and older ones no longer get Xcode or security fixes.
 const MINIMUM_MACOS = "11.0";
+// App Store Connect takes an Apple silicon-only Mac app from macOS 12 on (ITMS-90869), the
+// first release TestFlight for Mac runs on too.
+const MINIMUM_MACOS_APP_STORE = "12.0";
 const MAC_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 // The iOS app needs Metal and the full-screen window iOS 16 gives every iPhone since
@@ -322,7 +325,9 @@ async function buildMac(appStore) {
   const store = appStore ? macAppStoreSigning(scratch) : null;
   const destination = process.argv.includes("--upload") ? await appStoreDestination() : null;
   ensureTargets([MAC_TARGET]);
-  const binary = build(MAC_TARGET);
+  const minimum = appStore ? MINIMUM_MACOS_APP_STORE : MINIMUM_MACOS;
+  // rustc targets macOS 11 by default; only the App Store build asks for a later one.
+  const binary = build(MAC_TARGET, appStore ? { MACOSX_DEPLOYMENT_TARGET: minimum } : {});
 
   const app = join(scratch, `${APP_NAME}.app`);
   const contents = join(app, "Contents");
@@ -339,7 +344,7 @@ async function buildMac(appStore) {
       ...(appStore ? { CFBundleVersion: appStoreBuild() } : {}),
       ...toolchainInfo("macosx"),
       CFBundleIconFile: "AppIcon",
-      LSMinimumSystemVersion: MINIMUM_MACOS,
+      LSMinimumSystemVersion: minimum,
       NSHighResolutionCapable: true,
       NSSupportsAutomaticGraphicsSwitching: true,
     }),

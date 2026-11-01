@@ -329,7 +329,8 @@ pnpm run ios -- --app-store --upload   # also upload it and wait until TestFligh
 
 Both are signed with an Apple Distribution identity and an App Store provisioning profile
 (found as for device builds, or named by `SLOPPY_IOS_PROFILE` and `SLOPPY_MAC_PROFILE`),
-and stop without them. The Mac app runs in the App Sandbox with network access only (its
+and stop without them. The Mac app needs macOS 12 or newer there (App Store Connect takes
+no Apple silicon-only app for 11), runs in the App Sandbox with network access only (its
 settings move to the sandbox's container) and goes in a package signed by a 3rd Party Mac
 Developer Installer identity. The version is package.json's and the build number
 `SLOPPY_APP_STORE_BUILD`, which CI sets to the workflow's run number: App Store Connect
