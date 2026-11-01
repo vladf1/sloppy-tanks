@@ -313,8 +313,10 @@ Windows.
 
 ### App Store and TestFlight
 
-Main's [Desktop app workflow](.github/workflows/desktop.yml) also builds the iOS app and
-the Mac app for the App Store and uploads them to App Store Connect (the app
+The [Desktop app workflow](.github/workflows/desktop.yml), run by hand on main (Run
+workflow in GitHub's Actions tab, or `gh workflow run desktop.yml --ref main`), also
+builds the iOS app and the Mac app for the App Store and uploads them to App Store Connect
+(the app
 `me.fridman.sloppy-tanks`, one record for both), from where iPhones, iPads and Macs
 install them through the TestFlight app. Each upload waits until Apple has processed the
 build and fails if Apple finds it invalid. Testers on the App Store Connect team get every

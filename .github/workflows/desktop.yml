@@ -3,9 +3,10 @@
 # the iPhone and iPad app for Xcode's simulators through `scripts/build-desktop.mjs`,
 # uploaded as this run's artifacts. Linux CI (check.yml) leaves the crate out, since its
 # window, audio and GPU dependencies need system libraries there.
-# On main the iOS and macOS apps are also built for the App Store and uploaded to App
-# Store Connect, where TestFlight offers them to testers once Apple has processed them,
-# for now without multiplayer (`--single-player`).
+# Run by hand on main (`gh workflow run desktop.yml --ref main`), it also builds the iOS
+# and macOS apps for the App Store and uploads them to App Store Connect, where TestFlight
+# offers them to testers once Apple has processed them, for now without multiplayer
+# (`--single-player`).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -164,9 +165,10 @@ jobs:
 
   testflight:
     name: ${{ matrix.name }} (TestFlight)
-    # Only builds whose shell passed its lints and tests reach testers.
+    # Only builds whose shell passed its lints and tests reach testers. Uploads are run by
+    # hand (Run workflow on main), so pushes to main do not wait for Apple's processing.
     needs: [macos-check, ios]
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     strategy:
       fail-fast: false
