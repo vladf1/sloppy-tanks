@@ -71,6 +71,9 @@ pub struct Options {
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
     pub autoplay: bool,
+    /// `--finish-round`: once the first round is on, its rest is simulated at once, for
+    /// the App Store screenshot of its battle report.
+    pub finish_round: bool,
     /// `--screenshot`, for the App Store screenshots (`scripts/app-store-screenshots.mjs`):
     /// no build line, and a window without a title bar or frame, whose square corners a
     /// capture takes whole.
@@ -269,6 +272,8 @@ pub struct Shell {
     pub autoplay: bool,
     /// `--seed`, for the first single-player arena only.
     pub seed: Option<f64>,
+    /// `--finish-round`, for the first single-player round only.
+    pub finish_round: bool,
 }
 
 /// The release line Battle Setup shows.
@@ -498,6 +503,8 @@ struct Session {
     /// A round is on (the HUD shows; frames run).
     in_round: bool,
     phase: MatchPhase,
+    /// `--finish-round`, until the first round is on.
+    finish_round: bool,
     alive: bool,
     first_person: bool,
     /// The window is covered or minimized (macOS says so).
@@ -698,6 +705,7 @@ impl Session {
             frame_log: options.frame_log,
             autoplay: options.autoplay,
             seed: options.seed,
+            finish_round: options.finish_round,
         })
     }
 
@@ -714,6 +722,7 @@ impl Session {
             frame_log,
             autoplay,
             seed,
+            finish_round,
         } = shell;
         let target = render_target(&window)?;
         // The team is the seed's to draw.
@@ -763,6 +772,7 @@ impl Session {
             options_shown: None,
             in_round: false,
             phase: MatchPhase::Ready,
+            finish_round,
             alive: true,
             first_person: prefs.first_person,
             occluded: false,
@@ -798,6 +808,7 @@ impl Session {
             frame_log: self.frame_log.is_some(),
             autoplay: false,
             seed: None,
+            finish_round: false,
         }
     }
 
@@ -1220,6 +1231,10 @@ impl Session {
         }
         let slot = |index: usize| result.get(index).copied().unwrap_or(0.0);
         self.phase = frame_slot::phase(slot(frame_slot::PHASE));
+        if self.finish_round && self.phase == MatchPhase::Playing {
+            self.finish_round = false;
+            self.game.debug_finish_round();
+        }
         self.alive = slot(frame_slot::HUMAN_ALIVE) == 1.0;
         self.first_person = slot(frame_slot::FIRST_PERSON) == 1.0;
         self.ui.cockpit = slot(frame_slot::COCKPIT) == 1.0;

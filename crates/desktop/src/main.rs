@@ -126,6 +126,7 @@ fn options(arguments: &[String], development: bool) -> app::Options {
         frame_log: flag("--frame-log"),
         autoplay: flag("--autoplay"),
         screenshot: flag("--screenshot"),
+        finish_round: flag("--finish-round"),
         directory: tool("--directory"),
         map: value("--map").and_then(|id| MapId::parse(&id)),
         multiplayer: flag("--multiplayer"),

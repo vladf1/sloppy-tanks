@@ -8,15 +8,15 @@
 //   pnpm run screenshots:app-store -- --no-build --only mac --shots quarry
 //
 // Each shot is a launch of its own, so `--shots` retakes any of them alone: battle-setup
-// (about 25 s), village, harbor and quarry (about a minute each) and battle-report (five
-// and a half minutes, the round's clock). A shot that fails is tried again
+// (about 25 s), village, harbor and quarry (about a minute each) and battle-report (20 s:
+// the app simulates the round's rest at once). A shot that fails is tried again
 // (`SHOT_ATTEMPTS`) and the rest go on; screenshots already taken stay, and the run ends
 // with the command that retakes only what is missing.
 //
 // The apps are built single player, as the App Store has them (`--single-player`).
 // Each device shows Battle Setup, three autoplayed single-player battles (one per standard
 // map, the player's tank driving itself) and, unless `--no-report`, a Dusty Dig battle's
-// report, which waits out its five-minute round. The game reads its command line as a
+// report. The game reads its command line as a
 // page reads its query (`crates/desktop/src/main.rs`): `--map`, `--seed` and
 // `--autoplay`, which starts the round once the arena is ready. The seed fixes each
 // arena; the autoplayed match follows the frames and differs between runs, so each battle
@@ -46,11 +46,6 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 const IOS_APP = join(root, "artifacts/ios-simulator/Sloppy Tanks.app");
 const MAC_APP = join(root, "artifacts/desktop/Sloppy Tanks.app");
 const MAC_BINARY = "Contents/MacOS/sloppy-tanks";
-// `ROUND_TIME` (crates/core/src/sim/data.rs): an autoplayed round ends on the clock, or
-// in overtime on the next kill when the scores are level.
-const ROUND_SECONDS = 300;
-// Past the round's end: the arena's build before GO and overtime's deciding kill.
-const REPORT_MARGIN_SECONDS = 45;
 // The saved settings every device starts from (`preferences.rs`): the High graphics tier
 // whatever the device class or the simulator's frame rate would pick, and no sound.
 const SETTINGS = { graphics: "high", volume: 0, firstPerson: false, zoom: 34 };
@@ -61,8 +56,8 @@ const SHOTS = [
   { name: "village", map: "village", seed: 11, seconds: 50, autoplay: true },
   { name: "harbor", map: "harbor", seed: 21, seconds: 50, autoplay: true },
   { name: "quarry", map: "quarry", seed: 31, seconds: 50, autoplay: true },
-  // A battle of its own that waits out the round (`ROUND_SECONDS`) for its report.
-  { name: "battle-report", map: "quarry", seed: 31, autoplay: true, report: true },
+  // A battle whose rest the app simulates at once (`--finish-round`), for its report.
+  { name: "battle-report", map: "quarry", seed: 31, seconds: 20, autoplay: true, report: true },
 ];
 // A battle's moment may catch the player's tank destroyed, its respawn panel over the
 // fight, and the seed cannot rule that out: the autoplayed tank's commands follow the
@@ -152,6 +147,7 @@ function launchArguments(shot) {
   return [
     ...["--map", shot.map, "--seed", String(shot.seed)],
     ...(shot.autoplay ? ["--autoplay"] : []),
+    ...(shot.report ? ["--finish-round"] : []),
     // No build line; on the Mac a borderless window, as a titled one's rounded bottom
     // corners and edged sides would show in a capture of its content.
     "--screenshot",
@@ -220,16 +216,9 @@ function scratchFile(device, name) {
  * report. */
 async function shoot(device, shot, launched, capture) {
   const at = (seconds) => sleep(launched + seconds * 1000 - Date.now());
-  if (shot.report) {
-    const end = ROUND_SECONDS + REPORT_MARGIN_SECONDS;
-    log(device, `waiting ${end} s for the battle report`);
-    await at(end);
-    await capture(shot.file);
-    return;
-  }
   await at(shot.seconds);
   await capture(shot.file);
-  if (shot.autoplay) {
+  if (shot.autoplay && !shot.report) {
     for (const [index, seconds] of ALTERNATE_SECONDS.entries()) {
       await at(shot.seconds + seconds);
       await capture(`alternates/${shot.file.replace(".png", `-${index + 2}.png`)}`);

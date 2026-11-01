@@ -300,6 +300,7 @@ impl RoomSession {
             frame_log: false,
             autoplay: false,
             seed: None,
+            finish_round: false,
         }
     }
 
