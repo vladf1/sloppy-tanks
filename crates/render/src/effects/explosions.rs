@@ -199,6 +199,10 @@ const HIT_LIGHT_DECAY: f64 = 9.0;
 /// (1/s), slow enough to span several frames for the same reason.
 const BLAST_FLASH: f64 = 0.55;
 const BLAST_FLASH_DECAY: f64 = 12.0;
+/// The fireball's light: its mean share of the fire and how far it wavers. A ±15%
+/// waver, partly at 9.5 Hz, shimmered over walls and shade near every blast.
+const BLAST_FIRE_LIGHT_MEAN: f64 = 0.85;
+const BLAST_FIRE_LIGHT_WAVER: f64 = 0.04;
 /// The light's color at the white flash and through the fire.
 const FLASH_LIGHT_COLOR: u32 = 0xffe4c8;
 const FIRE_LIGHT_COLOR: u32 = 0xffa465;
@@ -691,8 +695,10 @@ impl Blast {
         // A short flash, then the fire's glow.
         let flash = (-t * BLAST_FLASH_DECAY).exp();
         let fire = burning(fire_heat(t, COOLING / look.fire_life));
-        let flicker =
-            0.85 + 0.15 * (t * 37.0 + self.phase * 5.0).sin() * (t * 23.0 + self.phase).sin();
+        let flicker = BLAST_FIRE_LIGHT_MEAN
+            + BLAST_FIRE_LIGHT_WAVER
+                * (t * 37.0 + self.phase * 5.0).sin()
+                * (t * 23.0 + self.phase).sin();
         BLAST_FLASH * flash + 0.6 * fire * flicker
     }
 }
