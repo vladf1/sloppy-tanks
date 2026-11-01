@@ -301,7 +301,7 @@
         const FLAG = "sloppy-trace";
         const NOTES = "sloppy-trace-notes";
         const MAX_NOTES = 600;
-        const MAX_UPLOAD = 240000;
+        const MAX_UPLOAD = 60000;
         const TRACES = "https://directory.sloppytanks.com/traces";
         const query = new URLSearchParams(location.search);
         try {
@@ -334,7 +334,7 @@
         const upload = () =>
           fetch(`${TRACES}?id=${id}`, {
             method: "POST",
-            // The directory takes at most 256 KB a trace: the latest notes.
+            // A keepalive request carries at most 64 KB: the latest notes.
             body: notes.join("\n").slice(-MAX_UPLOAD),
             keepalive: true,
           }).catch(() => {});
