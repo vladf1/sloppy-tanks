@@ -137,10 +137,10 @@ pub fn invite_link(room: &str) -> String {
     }
 }
 
-/// The apps' App Store page, which the web version points to. A placeholder until App
-/// Store Connect publishes the app and gives it its id.
+/// The apps' App Store page, which the web version points to (App Store Connect's Apple
+/// ID for the app; the page shows the app once Apple releases it).
 #[cfg(target_arch = "wasm32")]
-pub const APP_STORE: &str = "https://apps.apple.com/app/sloppy-tanks/id0000000000";
+pub const APP_STORE: &str = "https://apps.apple.com/app/sloppy-tanks/id6829385069";
 
 /// Open one of the site's own pages (`privacy.html`, `support.html`) in the browser: a
 /// page opens it beside itself, under its own base, and the app opens the web version's.

@@ -354,7 +354,7 @@ release leaves online rooms and their player names out of review. The store list
 the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
 every app and the page also open from Settings' About row; keep the privacy policy true
 to what the game sends. The web page's Battle Setup links to the apps' App Store page in
-its bottom-right corner (`links::APP_STORE`, a placeholder until the app is published).
+both bottom corners (`links::APP_STORE`).
 
 ## Assets
 
