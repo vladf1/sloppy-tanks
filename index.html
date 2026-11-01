@@ -450,16 +450,20 @@
                         : inner,
                     )?.slice(0, 300)
             : String(value);
+        const remember = (operation) => {
+          operations.push(operation);
+          if (operations.length > MAX_OPERATIONS) {
+            operations.splice(0, operations.length - MAX_OPERATIONS);
+          }
+        };
         const record = (type, method) => {
           const prototype = globalThis[type]?.prototype;
           const original = prototype?.[method];
           if (!original) return;
           prototype[method] = function (...args) {
-            operations.push(
+            remember(
               `${type.replace("GPU", "")}.${method}(${args.map(describe).join(", ")}) on ${name(this)}`,
             );
-            if (operations.length > MAX_OPERATIONS)
-              operations.splice(0, operations.length - MAX_OPERATIONS);
             return original.apply(this, args);
           };
         };
@@ -521,7 +525,7 @@
         const animationFrame = requestAnimationFrame;
         window.requestAnimationFrame = (callback) =>
           animationFrame((time) => {
-            operations.push(`--- frame ${time.toFixed(1)}`);
+            remember(`--- frame ${time.toFixed(1)}`);
             return callback(time);
           });
         const NativeSocket = WebSocket;
@@ -559,7 +563,8 @@
         });
         addEventListener("visibilitychange", () => note("visibility", document.visibilityState));
         addEventListener("pagehide", () => {
-          // A page that unloads itself leaves no GPU calls for the next load.
+          // A page that unloads itself leaves no GPU calls for the next load; one the
+          // back-forward cache keeps stores them again when it is shown.
           clearInterval(storeOperations);
           try {
             localStorage.removeItem(OPERATIONS);
@@ -603,11 +608,19 @@
             upload();
           }
         } catch {}
-        const storeOperations = setInterval(() => {
-          try {
-            localStorage.setItem(OPERATIONS, operations.slice(-STORED_OPERATIONS).join("\n"));
-          } catch {}
-        }, 1000);
+        const storeOperationsEachSecond = () =>
+          setInterval(() => {
+            try {
+              localStorage.setItem(OPERATIONS, operations.slice(-STORED_OPERATIONS).join("\n"));
+            } catch {}
+          }, 1000);
+        let storeOperations = storeOperationsEachSecond();
+        addEventListener("pageshow", (event) => {
+          if (event.persisted) {
+            note("pageshow", "from the back-forward cache");
+            storeOperations = storeOperationsEachSecond();
+          }
+        });
       })();
     </script>
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
