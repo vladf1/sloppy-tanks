@@ -1086,10 +1086,8 @@ impl Frame {
     }
 
     /// Draw `main_target` into `output` through the output transform. Behind a dialog
-    /// the output pass draws into the backdrop's targets instead and blurs along their
-    /// rows, in a command buffer of its own submitted here, and `encoder` gets the blur
-    /// down the columns into `output`: WebKit paces a canvas by the GPU time of the
-    /// command buffers that write it ([`Self::draw`]).
+    /// the output pass draws into the backdrop's targets instead, blurs along their
+    /// rows, and then down the columns into `output`.
     fn encode_output(
         &mut self,
         gpu: &Gpu,
@@ -1118,14 +1116,12 @@ impl Frame {
         }
         let targets = self.backdrop.as_ref().expect("made above");
         let blur = &pipelines.fixed().backdrop;
-        let mut picture = gpu
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("backdrop"),
-            });
-        self.output_pass(&mut picture, &targets.picture.1, pipelines);
+        // All three passes go in the frame's own command buffer: a separate one submitted
+        // ahead of it, which the frame's passes have not been, lost the GPU device on
+        // iPhones (a room's joining card blurs from its first frame).
+        self.output_pass(encoder, &targets.picture.1, pipelines);
         post_draw(
-            &mut picture,
+            encoder,
             "backdrop rows",
             blur,
             &targets.picture_group,
@@ -1133,7 +1129,6 @@ impl Frame {
             false,
             BloomPass::BackdropRows as u32,
         );
-        gpu.queue.submit([picture.finish()]);
         post_draw(
             encoder,
             "backdrop columns",
