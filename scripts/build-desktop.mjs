@@ -5,6 +5,7 @@
 //   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   node scripts/build-desktop.mjs             # whichever this machine is
 //   node scripts/build-desktop.mjs --ios               # Sloppy Tanks.app and an .ipa for iPhones and iPads
+//   node scripts/build-desktop.mjs --ios --app-store   # the .ipa for App Store Connect and TestFlight
 //   node scripts/build-desktop.mjs --ios-simulator     # the app for Xcode's iPhone and iPad simulators
 //
 // The iOS app is one bundle for both (`UIDeviceFamily` 1 and 2): an iPhone plays the
@@ -40,8 +41,15 @@
 // (the team's wildcard profile does); `SLOPPY_IOS_PROFILE` names a profile file and
 // `SLOPPY_IOS_IDENTITY` an identity instead. Without them the app is signed ad hoc and
 // installs on no device. Simulator builds need no signing.
+//
+// `--app-store` signs the iOS app for App Store Connect instead: an "Apple Distribution"
+// identity and an App Store provisioning profile (no devices, no debugger), and it stops
+// without them. Its build (CFBundleVersion) is `SLOPPY_APP_STORE_BUILD`, CI's run number,
+// as App Store Connect takes one to three integers that rise with every upload, not the
+// release's four parts. `--upload` then sends the .ipa to App Store Connect with the API
+// key notarization uses and waits until Apple has processed it, when it is in TestFlight.
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, sign } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -76,6 +84,45 @@ const IOS_TARGET = "aarch64-apple-ios";
 const IOS_SIMULATOR_TARGET = "aarch64-apple-ios-sim";
 // The launch screen's colour, Battle Setup's backdrop (`theme::BACKDROP`).
 const LAUNCH_BACKGROUND = [0x0a, 0x15, 0x27];
+// Apple's required-reason APIs, by the names an executable imports or looks up (C
+// functions and Foundation constants with their underscore, Objective-C classes and
+// selectors without): App Store Connect refuses a build that uses one without a reason
+// for its category in the privacy manifest. A category with no reason here stops the
+// build until one of Apple's approved reasons is chosen for it.
+const REQUIRED_REASON_APIS = [
+  {
+    category: "NSPrivacyAccessedAPICategoryFileTimestamp",
+    // The standard library sizes and stats the app's own files (settings, records).
+    reason: "C617.1",
+    names: [
+      ...["_stat", "_fstat", "_fstatat", "_lstat", "_getattrlist", "_fgetattrlist"],
+      ...["_getattrlistat", "_getattrlistbulk", "_NSFileCreationDate", "_NSFileModificationDate"],
+      ...["_NSURLContentModificationDateKey", "_NSURLCreationDateKey"],
+      ...["creationDate", "modificationDate", "fileModificationDate"],
+    ],
+  },
+  {
+    category: "NSPrivacyAccessedAPICategorySystemBootTime",
+    // Monotonic clocks time frames and events within the app.
+    reason: "35F9.1",
+    names: ["_mach_absolute_time", "systemUptime"],
+  },
+  {
+    category: "NSPrivacyAccessedAPICategoryDiskSpace",
+    names: [
+      ...["_statfs", "_statvfs", "_fstatfs", "_fstatvfs", "_getattrlist", "_fgetattrlist"],
+      ...["_getattrlistat", "_NSFileSystemFreeSize", "_NSFileSystemSize"],
+      ...["_NSURLVolumeAvailableCapacityKey", "_NSURLVolumeAvailableCapacityForImportantUsageKey"],
+      ...["_NSURLVolumeAvailableCapacityForOpportunisticUsageKey", "_NSURLVolumeTotalCapacityKey"],
+    ],
+  },
+  { category: "NSPrivacyAccessedAPICategoryActiveKeyboards", names: ["activeInputModes"] },
+  { category: "NSPrivacyAccessedAPICategoryUserDefaults", names: ["NSUserDefaults"] },
+];
+const APP_STORE_CONNECT_API = "https://api.appstoreconnect.apple.com/v1";
+// Apple usually processes a build in 5 to 20 minutes.
+const PROCESSING_TIMEOUT_MS = 45 * 60 * 1000;
+const PROCESSING_POLL_MS = 30 * 1000;
 
 /** Run `command` from the repository root and exit the process unless it succeeds. */
 function run(command, args, options = {}) {
@@ -412,6 +459,8 @@ function readProfile(file, scratch) {
     platforms: field("Platform", "json"),
     expires: new Date(field("ExpirationDate")),
     debuggable: field("Entitlements.get-task-allow") === "true",
+    // App Store profiles grant TestFlight's entitlement.
+    testFlight: field("Entitlements.beta-reports-active") === "true",
     // App Store profiles list no devices and install on none.
     devices: field("ProvisionedDevices", "json") !== "",
     certificates,
@@ -427,13 +476,14 @@ function signingIdentities() {
   }));
 }
 
-/** The profile and identity that sign the iOS app for devices (see the top of the
- * file), or null. */
-function iosSigning(scratch) {
+/** The profile and identity that sign the iOS app for devices, or with `appStore` for
+ * App Store Connect (see the top of the file), or null. */
+function iosSigning(scratch, appStore) {
+  const kind = appStore ? "Distribution" : "Development";
   const identities = signingIdentities().filter(({ name }) =>
     process.env.SLOPPY_IOS_IDENTITY
       ? name === process.env.SLOPPY_IOS_IDENTITY || name.startsWith(process.env.SLOPPY_IOS_IDENTITY)
-      : /^(Apple|iPhone) Development: /.test(name),
+      : new RegExp(`^(Apple|iPhone) ${kind}: `).test(name),
   );
   const home = process.env.HOME ?? "";
   const folders = [
@@ -452,7 +502,8 @@ function iosSigning(scratch) {
   const candidates = [];
   for (const file of files) {
     const profile = readProfile(file, scratch);
-    if (!profile || !profile.platforms.includes("iOS") || !profile.devices) continue;
+    // A development profile lists the devices it installs on, an App Store one none.
+    if (!profile || !profile.platforms.includes("iOS") || profile.devices === appStore) continue;
     if (!(profile.expires > new Date())) continue;
     const wanted = `${profile.team}.${BUNDLE_ID}`;
     const covers =
@@ -516,21 +567,93 @@ function compileAssets(app, scratch, platform) {
   return JSON.parse(capture("plutil", ["-convert", "json", "-o", "-", partial]) || "{}");
 }
 
-function buildIos(simulator) {
+/** The Info.plist entries Xcode records about the SDK and toolchain of a build, which App
+ * Store Connect reads to hold uploads to its minimum SDK and Xcode. */
+function toolchainInfo(platform) {
+  const sdkVersion = capture("xcrun", ["--sdk", platform, "--show-sdk-version"]);
+  const sdkBuild = capture("xcrun", ["--sdk", platform, "--show-sdk-build-version"]);
+  const [, xcode = "", xcodeBuild = ""] =
+    capture("xcodebuild", ["-version"]).match(/^Xcode (\S+)\nBuild version (\S+)/) ?? [];
+  // Xcode writes 26.4.1 as 2641 and 26.6 as 2660.
+  const [major = "0", minor = "0", patch = "0"] = xcode.split(".");
+  return {
+    BuildMachineOSBuild: capture("sw_vers", ["-buildVersion"]),
+    DTCompiler: "com.apple.compilers.llvm.clang.1_0",
+    DTPlatformBuild: sdkBuild,
+    DTPlatformName: platform,
+    DTPlatformVersion: sdkVersion,
+    DTSDKBuild: sdkBuild,
+    DTSDKName: `${platform}${sdkVersion}`,
+    DTXcode: `${major.padStart(2, "0")}${minor}${patch}`,
+    DTXcodeBuild: xcodeBuild,
+  };
+}
+
+/** The app's privacy manifest: no tracking, no data collected, and a reason for each
+ * required-reason API category `executable` uses. Stops the build at a category without
+ * one. */
+function privacyManifest(executable) {
+  const contents = readFileSync(executable);
+  const used = REQUIRED_REASON_APIS.map((api) => ({
+    ...api,
+    found: api.names.filter((name) => contents.includes(`\0${name}\0`)),
+  })).filter(({ found }) => found.length);
+  const unexplained = used.filter(({ reason }) => !reason);
+  if (unexplained.length) {
+    for (const { category, found } of unexplained) {
+      console.error(`The app uses ${category} (${found.join(", ")}), which has no reason.`);
+    }
+    console.error("Give each a reason in REQUIRED_REASON_APIS from Apple's approved list.");
+    process.exit(1);
+  }
+  return plist({
+    NSPrivacyTracking: false,
+    NSPrivacyTrackingDomains: [],
+    NSPrivacyCollectedDataTypes: [],
+    NSPrivacyAccessedAPITypes: used.map(({ category, reason }) => ({
+      NSPrivacyAccessedAPIType: category,
+      NSPrivacyAccessedAPITypeReasons: [reason],
+    })),
+  });
+}
+
+/** The build number of an App Store upload (see the top of the file). */
+function appStoreBuild() {
+  const build = process.env.SLOPPY_APP_STORE_BUILD || version;
+  if (!/^\d+(\.\d+){0,2}$/.test(build)) {
+    console.error(`An App Store build is one to three integers, not ${build}.`);
+    process.exit(1);
+  }
+  return build;
+}
+
+async function buildIos(simulator, appStore) {
   if (process.platform !== "darwin") {
     console.error("The iOS app builds on a Mac with Xcode (actool, codesign).");
     process.exit(1);
   }
+  const kind = simulator ? "ios-simulator" : appStore ? "ios-app-store" : "ios";
+  const scratch = join(root, "target", PROFILE, `${kind}-bundle`);
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync(scratch, { recursive: true });
+  // What an App Store build needs is found before it compiles.
+  const signing = simulator ? null : iosSigning(scratch, appStore);
+  if (appStore && !signing) {
+    console.error(
+      `No Apple Distribution identity with an App Store provisioning profile for ${BUNDLE_ID}.`,
+    );
+    process.exit(1);
+  }
+  const destination = process.argv.includes("--upload") ? await appStoreDestination() : null;
   const target = simulator ? IOS_SIMULATOR_TARGET : IOS_TARGET;
   const platform = simulator ? "iphonesimulator" : "iphoneos";
   ensureTargets([target]);
   const binary = build(target, { IPHONEOS_DEPLOYMENT_TARGET: MINIMUM_IOS });
 
-  const scratch = join(root, "target", PROFILE, simulator ? "ios-simulator-bundle" : "ios-bundle");
-  rmSync(scratch, { recursive: true, force: true });
   const app = join(scratch, `${APP_NAME}.app`);
   mkdirSync(app, { recursive: true });
   copyFileSync(binary, join(app, BINARY));
+  writeFileSync(join(app, "PrivacyInfo.xcprivacy"), privacyManifest(binary));
   const assets = compileAssets(app, scratch, platform);
   // Held either way, as the page lays out an upright phone or tablet; an iPhone not upside
   // down (winit's `LandscapeAndPortrait` asks the same).
@@ -540,6 +663,8 @@ function buildIos(simulator) {
     join(app, "Info.plist"),
     plist({
       ...bundleInfo(),
+      ...(appStore ? { CFBundleVersion: appStoreBuild() } : {}),
+      ...toolchainInfo(platform),
       CFBundleSupportedPlatforms: [simulator ? "iPhoneSimulator" : "iPhoneOS"],
       LSRequiresIPhoneOS: true,
       MinimumOSVersion: MINIMUM_IOS,
@@ -571,7 +696,6 @@ function buildIos(simulator) {
   );
   writeFileSync(join(app, "PkgInfo"), "APPL????");
 
-  const signing = simulator ? null : iosSigning(scratch);
   if (signing) {
     const { profile, identity } = signing;
     copyFileSync(profile.file, join(app, "embedded.mobileprovision"));
@@ -582,6 +706,7 @@ function buildIos(simulator) {
         "application-identifier": `${profile.team}.${BUNDLE_ID}`,
         "com.apple.developer.team-identifier": profile.team,
         "get-task-allow": profile.debuggable,
+        ...(profile.testFlight ? { "beta-reports-active": true } : {}),
       }),
     );
     console.log(`Signing with ${identity.name} and the profile "${profile.name}".`);
@@ -600,15 +725,16 @@ function buildIos(simulator) {
     run("codesign", ["--force", "--sign", "-", app]);
   }
 
-  const folder = join(root, simulator ? "artifacts/ios-simulator" : "artifacts/ios");
+  const folder = join(root, "artifacts", kind);
   mkdirSync(folder, { recursive: true });
   const built = join(folder, `${APP_NAME}.app`);
   rmSync(built, { recursive: true, force: true });
   run("ditto", [app, built]);
   console.log(`Built ${built} (${megabytes(join(app, BINARY))})`);
+  const suffix = simulator ? "-Simulator" : appStore ? "-App-Store" : "";
   const artifact = join(
     folder,
-    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-iOS${simulator ? "-Simulator" : ""}`,
+    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-iOS${suffix}`,
   );
   if (simulator) {
     const zip = `${artifact}.zip`;
@@ -616,8 +742,8 @@ function buildIos(simulator) {
     run("ditto", ["-c", "-k", "--keepParent", app, zip]);
     console.log(`Built ${zip} (${megabytes(zip)})`);
   } else {
-    // An .ipa is the app in a Payload folder, zipped: what Apple Configurator, Xcode's
-    // Devices window and over-the-air installs take.
+    // An .ipa is the app in a Payload folder, zipped: what App Store Connect, Apple
+    // Configurator, Xcode's Devices window and over-the-air installs take.
     const payload = join(scratch, "ipa");
     mkdirSync(join(payload, "Payload"), { recursive: true });
     run("ditto", [app, join(payload, "Payload", `${APP_NAME}.app`)]);
@@ -625,11 +751,131 @@ function buildIos(simulator) {
     rmSync(ipa, { force: true });
     run("ditto", ["-c", "-k", "--norsrc", "--keepParent", join(payload, "Payload"), ipa]);
     console.log(`Built ${ipa} (${megabytes(ipa)})`);
+    if (destination) await uploadToAppStore(ipa, destination, appStoreBuild(), scratch);
   }
   if (process.argv.includes("--install")) {
     if (simulator) installOnSimulator(built);
     else installOnDevice(built, scratch);
   }
+}
+
+/** The App Store Connect API key notarization uses (see the top of the file), or null. */
+function appStoreConnectKey() {
+  const {
+    SLOPPY_NOTARY_KEY: file,
+    SLOPPY_NOTARY_KEY_ID: id,
+    SLOPPY_NOTARY_ISSUER: issuer,
+  } = process.env;
+  return file && id && issuer ? { file, id, issuer } : null;
+}
+
+/** The `data` of `path` with `query` from the App Store Connect API, each request with a
+ * token of its own, as one lasts 20 minutes at most. */
+async function appStoreConnect(key, path, query) {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const now = Math.floor(Date.now() / 1000);
+  const claims = { iss: key.issuer, iat: now, exp: now + 10 * 60, aud: "appstoreconnect-v1" };
+  const unsigned = `${encode({ alg: "ES256", kid: key.id, typ: "JWT" })}.${encode(claims)}`;
+  const signature = sign("sha256", Buffer.from(unsigned), {
+    key: readFileSync(key.file, "utf8"),
+    dsaEncoding: "ieee-p1363",
+  });
+  const response = await fetch(`${APP_STORE_CONNECT_API}${path}?${new URLSearchParams(query)}`, {
+    headers: { Authorization: `Bearer ${unsigned}.${signature.toString("base64url")}` },
+  });
+  if (!response.ok) {
+    console.error(
+      `App Store Connect answered ${path} with ${response.status}: ${await response.text()}`,
+    );
+    process.exit(1);
+  }
+  return (await response.json()).data;
+}
+
+/** The API key and the App Store Connect app an upload goes to. Stops the build, before
+ * it compiles, without either. */
+async function appStoreDestination() {
+  const key = appStoreConnectKey();
+  if (!key) {
+    console.error(
+      "--upload needs an App Store Connect API key: SLOPPY_NOTARY_KEY, SLOPPY_NOTARY_KEY_ID " +
+        "and SLOPPY_NOTARY_ISSUER.",
+    );
+    process.exit(1);
+  }
+  const apps = await appStoreConnect(key, "/apps", {
+    "filter[bundleId]": BUNDLE_ID,
+    "fields[apps]": "bundleId",
+  });
+  const app = apps.find((candidate) => candidate.attributes.bundleId === BUNDLE_ID);
+  if (!app) {
+    console.error(`App Store Connect has no app for ${BUNDLE_ID}: add it under Apps first.`);
+    process.exit(1);
+  }
+  return { key, app: app.id };
+}
+
+/** Send `ipa`, build `build`, to the App Store Connect app `destination` names and wait
+ * until Apple has processed it. */
+async function uploadToAppStore(ipa, destination, build, scratch) {
+  const { key, app } = destination;
+  // altool reads a key only from a file named for its ID in a `private_keys` folder, and
+  // Xcode 26's can send a build to another of the team's apps unless `--apple-id` names it.
+  const keys = join(scratch, "private_keys");
+  mkdirSync(keys, { recursive: true });
+  copyFileSync(key.file, join(keys, `AuthKey_${key.id}.p8`));
+  console.log(`Uploading ${ipa} to App Store Connect…`);
+  const upload = spawnSync(
+    "xcrun",
+    [
+      ...["altool", "--upload-package", ipa, "--type", "ios", "--apple-id", app],
+      ...["--bundle-id", BUNDLE_ID, "--bundle-version", build],
+      ...["--bundle-short-version-string", version],
+      ...["--apiKey", key.id, "--apiIssuer", key.issuer],
+    ],
+    { cwd: scratch, stdio: "inherit" },
+  );
+  rmSync(keys, { recursive: true, force: true });
+  if (upload.status !== 0) {
+    console.error(`altool could not upload ${ipa}.`);
+    process.exit(1);
+  }
+  await awaitProcessing(key, app, build);
+}
+
+/** Wait until App Store Connect has processed build `build` of `app`, which is then in
+ * TestFlight. Xcode 26's altool can report an upload that never arrives, so a build App
+ * Store Connect still does not list at the deadline fails, while one it is still
+ * processing only warns. */
+async function awaitProcessing(key, app, build) {
+  const query = {
+    "filter[app]": app,
+    "filter[version]": build,
+    "filter[preReleaseVersion.version]": version,
+    "fields[builds]": "processingState",
+  };
+  const deadline = Date.now() + PROCESSING_TIMEOUT_MS;
+  let state = null;
+  while (Date.now() < deadline) {
+    state = (await appStoreConnect(key, "/builds", query))[0]?.attributes.processingState ?? null;
+    if (state === "VALID") {
+      console.log(`App Store Connect processed build ${build}: it is in TestFlight.`);
+      return;
+    }
+    if (state === "INVALID" || state === "FAILED") {
+      console.error(
+        `App Store Connect found build ${build} ${state.toLowerCase()}: Apple's email says why.`,
+      );
+      process.exit(1);
+    }
+    await new Promise((resolve) => setTimeout(resolve, PROCESSING_POLL_MS));
+  }
+  const minutes = PROCESSING_TIMEOUT_MS / 60_000;
+  if (!state) {
+    console.error(`App Store Connect lists no build ${build} ${minutes} minutes after its upload.`);
+    process.exit(1);
+  }
+  console.warn(`Build ${build} is still ${state.toLowerCase()} after ${minutes} minutes.`);
 }
 
 /** The kinds of device `--install` may take: `--iphone` or `--ipad`, or either. */
@@ -715,7 +961,20 @@ const mac = process.argv.includes("--mac");
 const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
-if (ios || iosSimulator) buildIos(iosSimulator);
+const appStore = process.argv.includes("--app-store");
+if (appStore && (!ios || iosSimulator)) {
+  console.error("--app-store builds the iOS app for devices: pass it with --ios.");
+  process.exit(1);
+}
+if (process.argv.includes("--upload") && !appStore) {
+  console.error("--upload sends an App Store build: pass it with --ios --app-store.");
+  process.exit(1);
+}
+if (appStore && process.argv.includes("--install")) {
+  console.error("An App Store build installs only through TestFlight.");
+  process.exit(1);
+}
+if (ios || iosSimulator) await buildIos(iosSimulator, appStore);
 else if (mac || (!windows && process.platform === "darwin")) buildMac();
 else if (windows || process.platform === "win32") buildWindows();
 else {

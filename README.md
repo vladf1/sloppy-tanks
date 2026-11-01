@@ -300,6 +300,36 @@ installs only on the devices that profile lists; `SLOPPY_IOS_PROFILE` and
 install on. Simulator builds need no signing. Like the Mac app it carries the content
 version, so it joins the same multiplayer servers.
 
+Main's [Desktop app workflow](.github/workflows/desktop.yml) also builds the app for the
+App Store and uploads it to App Store Connect, from where iPhones and iPads install it
+through the TestFlight app. The job waits until Apple has processed the build and fails
+if Apple finds it invalid. Testers on the App Store Connect team get builds in an
+internal TestFlight group without review; anyone else joins an external group or its
+public link, which needs Apple's beta review for each new version. The same build runs
+locally:
+
+```sh
+pnpm run ios -- --app-store            # artifacts/ios-app-store/: the .ipa signed for the App Store
+pnpm run ios -- --app-store --upload   # also upload it and wait until TestFlight has it
+```
+
+An App Store build is signed with an Apple Distribution identity and an App Store
+provisioning profile for `me.fridman.sloppy-tanks` (found as for device builds), and
+stops without them. Its version is package.json's and its build number
+`SLOPPY_APP_STORE_BUILD`, which CI sets to the workflow's run number: App Store Connect
+takes one to three integers that rise with every upload, not the release's four parts.
+Once a version is released on the App Store it takes no more builds, so bump
+package.json's version for the next. `--upload` needs the app's record in App Store
+Connect and uses the API key the Mac builds are notarized with (`SLOPPY_NOTARY_KEY`,
+`SLOPPY_NOTARY_KEY_ID`, `SLOPPY_NOTARY_ISSUER`; Developer role or higher). CI signs with
+the repository's `IOS_DISTRIBUTION_CERTIFICATE` (the identity as a base64 .p12),
+`IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` and `IOS_APP_STORE_PROFILE` (the base64
+.mobileprovision) and uploads nothing without them; the certificate and the profile
+expire after a year and are replaced there. Every iOS bundle carries a privacy manifest
+(`PrivacyInfo.xcprivacy`) with Apple's reason for each required-reason API its
+executable uses, and the build stops at one the script has no reason for
+(`REQUIRED_REASON_APIS`).
+
 Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
 a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
 a warning. Pull request builds carry only an ad-hoc signature: the first time,
