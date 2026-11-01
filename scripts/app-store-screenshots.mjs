@@ -358,11 +358,15 @@ async function captureMac(device) {
       stdio: "ignore",
     });
     try {
+      // Read until two reads agree: macOS grows a new window open over a few frames.
       let window;
-      for (let tries = 0; !window; tries++) {
+      for (let tries = 0, last = ""; ; tries++) {
         if (tries > 100) throw new Error("the Mac app opened no window");
         await sleep(200);
         window = macWindows(app.pid)[0];
+        const bounds = JSON.stringify(window?.bounds);
+        if (window && bounds === last) break;
+        last = bounds;
       }
       if (window.bounds.Height !== MAC_FIRST_WINDOW[1]) {
         throw new Error("the Mac app's window has a frame: build one that takes --borderless");
