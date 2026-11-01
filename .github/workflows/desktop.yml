@@ -1,10 +1,16 @@
 # The desktop app (crates/desktop): lint and test it on macOS beside the builds of
 # the Apple silicon app (zipped and as an installer package), the Windows executable and
 # the iPhone and iPad app for Xcode's simulators through `scripts/build-desktop.mjs`,
-# uploaded as this run's artifacts. iOS builds for devices need a provisioning profile, so
-# they are made on a developer's Mac (`pnpm run ios`). Linux CI (check.yml)
-# leaves the crate out, since its window, audio and GPU dependencies need system
-# libraries there.
+# uploaded as this run's artifacts. Linux CI (check.yml) leaves the crate out, since its
+# window, audio and GPU dependencies need system libraries there.
+# On main the iOS and macOS apps are also built for the App Store and uploaded to App
+# Store Connect, where TestFlight offers them to testers once Apple has processed them.
+# They are signed with the App Store certificates and profiles in the repository's
+# secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
+# Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
+# IOS_APP_STORE_PROFILE and MAC_APP_STORE_PROFILE, the base64 profiles), uploaded with the
+# notarization key below and numbered with this workflow's run number. Without those
+# secrets the job uploads nothing.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
 # workflow's run number, which this workflow does not have.
 # On main the macOS app and package are signed with the Developer ID certificates and
@@ -154,6 +160,80 @@ jobs:
           path: artifacts/ios-simulator/Sloppy-Tanks-*-iOS-Simulator.zip
           archive: false
           if-no-files-found: error
+
+  testflight:
+    name: ${{ matrix.name }} (TestFlight)
+    # Only builds whose shell passed its lints and tests reach testers.
+    needs: [macos-check, ios]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iOS app
+            platform: ios
+            profile-secret: IOS_APP_STORE_PROFILE
+            profile-variable: SLOPPY_IOS_PROFILE
+            cargo-cache: ios-device-fat-1
+          # Built for macOS 12 (MACOSX_DEPLOYMENT_TARGET), unlike the macOS app's job.
+          - name: macOS app
+            platform: mac
+            profile-secret: MAC_APP_STORE_PROFILE
+            profile-variable: SLOPPY_MAC_PROFILE
+            cargo-cache: mac-app-store-fat-1
+    steps:
+      - name: Signing keychain
+        id: signing
+        env:
+          CERTIFICATES: ${{ secrets.APP_STORE_CERTIFICATES }}
+          CERTIFICATES_PASSWORD: ${{ secrets.APP_STORE_CERTIFICATES_PASSWORD }}
+          PROFILE: ${{ secrets[matrix.profile-secret] }}
+          PROFILE_VARIABLE: ${{ matrix.profile-variable }}
+          API_KEY: ${{ secrets.NOTARY_API_KEY }}
+        run: |
+          if [ -z "$CERTIFICATES" ] || [ -z "$PROFILE" ] || [ -z "$API_KEY" ]; then
+            echo "::notice::No App Store signing secrets: nothing goes to TestFlight."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATES" | base64 --decode > "$RUNNER_TEMP/app-store.p12"
+          security import "$RUNNER_TEMP/app-store.p12" -k "$keychain" \
+            -P "$CERTIFICATES_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          rm "$RUNNER_TEMP/app-store.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          printf '%s' "$PROFILE" | base64 --decode > "$RUNNER_TEMP/app-store-profile"
+          printf '%s' "$API_KEY" > "$RUNNER_TEMP/app-store-connect.p8"
+          {
+            echo "$PROFILE_VARIABLE=$RUNNER_TEMP/app-store-profile"
+            echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/app-store-connect.p8"
+          } >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        if: steps.signing.outputs.ready == 'true'
+      - uses: ./.github/actions/setup
+        if: steps.signing.outputs.ready == 'true'
+        with:
+          cargo-cache: ${{ matrix.cargo-cache }}
+          node-dependencies: "false"
+      # The desktop profile keeps release's fat LTO. The script waits until Apple has
+      # processed the build and fails if Apple finds it invalid.
+      - run: node scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
+        if: steps.signing.outputs.ready == 'true'
+        env:
+          SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}
+          SLOPPY_NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          SLOPPY_NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+      - name: Remove the signing keychain
+        if: always() && steps.signing.outputs.ready == 'true'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/app-store-profile" "$RUNNER_TEMP/app-store-connect.p8"
 
   windows:
     name: Windows app

@@ -311,6 +311,42 @@ the extra levels a `?debug` page offers. Settings and personal bests live in
 `~/Library/Application Support/Sloppy Tanks/` on macOS and `%APPDATA%\Sloppy Tanks\` on
 Windows.
 
+### App Store and TestFlight
+
+Main's [Desktop app workflow](.github/workflows/desktop.yml) also builds the iOS app and
+the Mac app for the App Store and uploads them to App Store Connect (the app
+`me.fridman.sloppy-tanks`, one record for both), from where iPhones, iPads and Macs
+install them through the TestFlight app. Each upload waits until Apple has processed the
+build and fails if Apple finds it invalid. Testers on the App Store Connect team get every
+build through the internal group "Team"; anyone else joins an external group or its public
+link, which needs Apple's beta review for each new version. The same builds run locally:
+
+```sh
+pnpm run ios -- --app-store            # artifacts/ios-app-store/: the .ipa signed for the App Store
+pnpm run desktop:mac -- --app-store    # artifacts/mac-app-store/: the sandboxed app in a signed .pkg
+pnpm run ios -- --app-store --upload   # also upload it and wait until TestFlight has it
+```
+
+Both are signed with an Apple Distribution identity and an App Store provisioning profile
+(found as for device builds, or named by `SLOPPY_IOS_PROFILE` and `SLOPPY_MAC_PROFILE`),
+and stop without them. The Mac app needs macOS 12 or newer there (App Store Connect takes
+no Apple silicon-only app for 11), runs in the App Sandbox with network access only (its
+settings move to the sandbox's container) and goes in a package signed by a 3rd Party Mac
+Developer Installer identity. The version is package.json's and the build number
+`SLOPPY_APP_STORE_BUILD`, which CI sets to the workflow's run number: App Store Connect
+takes one to three integers that rise with every upload, not the release's four parts.
+Once a version is released on the App Store it takes no more builds, so bump
+package.json's version for the next. `--upload` uses the API key the Mac builds are
+notarized with (`SLOPPY_NOTARY_KEY`, `SLOPPY_NOTARY_KEY_ID`, `SLOPPY_NOTARY_ISSUER`; its
+Developer role can upload and read builds but not create certificates or profiles). CI
+signs with the repository's `APP_STORE_CERTIFICATES` (a base64 .p12 with both
+identities), `APP_STORE_CERTIFICATES_PASSWORD`, `IOS_APP_STORE_PROFILE` and
+`MAC_APP_STORE_PROFILE` (the base64 profiles) and uploads nothing without them; the
+certificates and profiles expire after a year and are replaced there. Every iOS and Mac
+bundle carries a privacy manifest (`PrivacyInfo.xcprivacy`) with Apple's reason for each
+required-reason API its executable uses, and the build stops at one the script has no
+reason for (`REQUIRED_REASON_APIS`).
+
 ## Assets
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
