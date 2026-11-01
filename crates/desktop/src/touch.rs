@@ -1,4 +1,4 @@
-//! Touch play on the iPad and on a page's touch screen (`touch-controls.ts`): the drive
+//! Touch play in the iOS app and on a page's touch screen (`touch-controls.ts`): the drive
 //! stick in the bottom-left corner, the mine button with the zoom pair stacked over it in
 //! the bottom-right (a phone's edition has no mines, and its zoom pair joins the top
 //! row), and a finger anywhere else on the arena aims there and fires while it is down.
@@ -23,7 +23,7 @@ use sloppy_web::hud::Hud;
 use crate::input::Controls;
 use crate::preferences::TouchSetting;
 
-/// Whether this device plays by touch: the iPad app, the phone edition, and a page on a
+/// Whether this device plays by touch: the iOS app, the phone edition, and a page on a
 /// touch screen as Settings' Touch controls say (Auto: the browser reported one, or a
 /// finger touched the page). Touch play has the touch controls and no pointer lock;
 /// Macs and PCs play with keyboard and mouse.
@@ -48,7 +48,7 @@ fn plays_by_touch(touch_only: bool, setting: TouchSetting, detected: bool) -> bo
 }
 
 /// Whether Settings offers Touch controls: in a page, but not in the phone edition,
-/// which has no other controls. The iPad app always plays by touch, and the desktop app
+/// which has no other controls. The iOS app always plays by touch, and the desktop app
 /// with keyboard and mouse (macOS has no touch screens; Windows' are left to the page).
 pub fn offers_setting() -> bool {
     cfg!(target_arch = "wasm32") && !phone()
@@ -63,7 +63,8 @@ pub fn device() -> DeviceClass {
     }
 }
 
-/// The phone edition: a coarse pointer on a small screen, or `?phone` (`--phone`).
+/// The phone edition: an iPhone, a coarse pointer on a small screen, or `?phone`
+/// (`--phone`).
 pub fn phone() -> bool {
     device() == DeviceClass::Phone
 }
@@ -107,7 +108,8 @@ pub fn set_setting(touch: TouchSetting) {
 /// primary pointer (a tablet, a car's screen) or iPadOS Safari, which presents itself as
 /// a Mac with touch points; otherwise a desktop. A touch laptop's primary pointer is
 /// fine, so on Auto it plays with keyboard and mouse until a finger touches the page
-/// ([`touched`]). `phone` (`?phone`) asks for the phone edition anywhere.
+/// ([`touched`]). The iOS app is a phone on an iPhone and a tablet on an iPad. `phone`
+/// (`?phone`) asks for the phone edition anywhere.
 pub fn detect(phone: bool) {
     #[cfg(target_arch = "wasm32")]
     let (phone, touch) = {
@@ -139,6 +141,9 @@ pub fn detect(phone: bool) {
         HOME_SCREEN_TIP.store(phone && iphone && !home_screen_app, Ordering::Relaxed);
         (phone, ipad || coarse)
     };
+    // The iOS app is one bundle for both: an iPhone plays the phone edition.
+    #[cfg(target_os = "ios")]
+    let phone = phone || crate::ios::is_phone();
     #[cfg(not(target_arch = "wasm32"))]
     let touch = cfg!(target_os = "ios");
     let class = if phone {
@@ -720,7 +725,7 @@ mod tests {
     fn the_setting_decides_touch_play_where_the_device_has_other_controls() {
         use TouchSetting::{Auto, Off, On};
         for detected in [false, true] {
-            // The iPad app and the phone edition have no other controls.
+            // The iOS app and the phone edition have no other controls.
             for setting in [Auto, On, Off] {
                 assert!(plays_by_touch(true, setting, detected));
             }

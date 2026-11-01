@@ -1,8 +1,8 @@
 # The desktop app (crates/desktop): lint and test it on macOS beside the builds of
 # the Apple silicon app (zipped and as an installer package), the Windows executable and
-# the iPad app for Xcode's simulators through `scripts/build-desktop.mjs`, uploaded as
-# this run's artifacts. iPad builds for devices need a provisioning profile, so they are
-# made on a developer's Mac (`pnpm run ipad`). Linux CI (check.yml)
+# the iPhone and iPad app for Xcode's simulators through `scripts/build-desktop.mjs`,
+# uploaded as this run's artifacts. iOS builds for devices need a provisioning profile, so
+# they are made on a developer's Mac (`pnpm run ios`). Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
 # libraries there.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
@@ -132,26 +132,26 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/notary.p8"
 
-  ipad:
-    name: iPad app (simulator)
+  ios:
+    name: iOS app (simulator)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          cargo-cache: ipad-simulator-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
+          cargo-cache: ios-simulator-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
           node-dependencies: "false"
       # The iOS targets stay out of rust-toolchain.toml, which is part of the content
       # version; the build script adds its own, and clippy needs the simulator's first.
       - run: rustup target add aarch64-apple-ios-sim
       - run: cargo clippy --locked --profile desktop-check --target aarch64-apple-ios-sim -p sloppy-desktop --all-targets -- -D warnings
-      - run: node scripts/build-desktop.mjs --ipad-simulator
+      - run: node scripts/build-desktop.mjs --ios-simulator
         env:
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
           CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
       - uses: actions/upload-artifact@v7
         with:
-          path: artifacts/ipad-simulator/Sloppy-Tanks-*-iPad-Simulator.zip
+          path: artifacts/ios-simulator/Sloppy-Tanks-*-iOS-Simulator.zip
           archive: false
           if-no-files-found: error
 

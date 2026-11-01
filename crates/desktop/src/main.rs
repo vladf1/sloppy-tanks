@@ -1,8 +1,8 @@
-//! Sloppy Tanks on macOS, Windows, iPad and the web: the game's menus and HUD in egui
+//! Sloppy Tanks on macOS, Windows, iPhone, iPad and the web: the game's menus and HUD in egui
 //! over the engine's `Game` and `NetGame` (`crates/web`), in a native window drawn with
 //! wgpu on Metal or Direct3D 12, or built for `wasm32` (`pnpm run wasm`) as the web
-//! version's page (`index.html`) on the browser's WebGPU. The iPad plays it with touch
-//! controls (`touch.rs`).
+//! version's page (`index.html`) on the browser's WebGPU. The iPhone and iPad play it
+//! with touch controls (`touch.rs`).
 
 // A Windows release build opens no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -50,7 +50,7 @@ use sloppy_core::sim::map_options::MapId;
 
 use crate::room::NetworkTools;
 
-/// The app may quit itself: not on an iPad, nor in a page.
+/// The app may quit itself: not on an iPhone or iPad, nor in a page.
 pub const QUITS: bool = cfg!(not(any(target_os = "ios", target_arch = "wasm32")));
 
 fn main() {

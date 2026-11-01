@@ -1,11 +1,32 @@
-//! What the iPad needs beyond winit 0.30. Apps built with the iOS 27 SDK launch only
-//! with the scene life cycle (the bundle's `UIApplicationSceneManifest`), and UIKit
-//! shows a window only once it belongs to a scene; winit creates its `UIWindow` from
-//! the screen's bounds with none, so the window joins the app's scene here. winit also
-//! hears a hardware keyboard only as text, so its view controller takes the keyboard's
-//! presses (`hardware_keys.rs` turns them into game keys).
+//! What the iPhone and iPad need beyond winit 0.30. Apps built with the iOS 27 SDK
+//! launch only with the scene life cycle (the bundle's `UIApplicationSceneManifest`),
+//! and UIKit shows a window only once it belongs to a scene; winit creates its
+//! `UIWindow` from the screen's bounds with none, so the window joins the app's scene
+//! here. winit also hears a hardware keyboard only as text, so its view controller
+//! takes the keyboard's presses (`hardware_keys.rs` turns them into game keys).
 
 use winit::window::Window;
+
+/// Whether the app runs on an iPhone, which plays the phone edition: UIKit's phone
+/// idiom, as the one bundle for both (`UIDeviceFamily` 1 and 2) reports it on each.
+pub fn is_phone() -> bool {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject};
+
+    /// `UIUserInterfaceIdiomPhone`.
+    const PHONE_IDIOM: isize = 0;
+    let Some(device) = AnyClass::get(c"UIDevice") else {
+        return false;
+    };
+    // SAFETY: `currentDevice` and `userInterfaceIdiom` are documented UIKit messages,
+    // sent from the main thread, where `main` runs.
+    unsafe {
+        let current: Retained<AnyObject> = msg_send![device, currentDevice];
+        let idiom: isize = msg_send![&*current, userInterfaceIdiom];
+        idiom == PHONE_IDIOM
+    }
+}
 
 /// Put the window winit made into the app's window scene and show it. Call once,
 /// right after creating the window (winit's `resumed` comes after the scene is active).
@@ -48,7 +69,7 @@ pub fn attach_to_scene(window: &Window) {
             }
             let _: () = msg_send![&*ui_window, setWindowScene: &*scene];
             // The window was sized from the screen before it had a scene; the scene's
-            // bounds are the interface's, landscape here.
+            // bounds are the interface's, turned the way the device is held.
             let space: Retained<AnyObject> = msg_send![&*scene, coordinateSpace];
             let bounds: objc2_core_foundation::CGRect = msg_send![&*space, bounds];
             let _: () = msg_send![&*ui_window, setFrame: bounds];

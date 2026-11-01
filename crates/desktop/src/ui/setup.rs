@@ -1460,7 +1460,7 @@ fn status_line(painter: &Painter, right: egui::Pos2, state: &UiState, time: f64)
 /// the garage stacked over the tray below it, and one column at the narrow width and under.
 const GARAGE_MIN_WIDTH: f32 = 1240.0;
 const NARROW_MAX_WIDTH: f32 = 600.0;
-/// Whether Battle Setup changes layout at the page's widths: on the page and in the iPad
+/// Whether Battle Setup changes layout at the page's widths: on the page and in the iOS
 /// app. The desktop app keeps the garage at every size its window takes.
 const FOLLOWS_PAGE_WIDTHS: bool = cfg!(any(target_arch = "wasm32", target_os = "ios"));
 
@@ -2619,7 +2619,7 @@ fn stack_layout(
     }
 }
 
-/// Battle Setup under the garage's width on the page and in the iPad app (`style.css`
+/// Battle Setup under the garage's width on the page and in the iOS app (`style.css`
 /// below 1240 px): the logo shares the tabs' row over one tray holding the tank cards,
 /// the maps and the open tab's choices, scaled down to fit a short window as `fitPanels`
 /// scales it. At 600 px and under the logo has a row of its own and every choice is a
@@ -3961,7 +3961,7 @@ fn corner_plate_width() -> f32 {
     CORNER_BUTTON * corner_actions().len() as f32 + 6.0
 }
 
-/// Settings and Quit on a small plate at the header's right. An iPad app or a page
+/// Settings and Quit on a small plate at the header's right. The iOS app or a page
 /// never quits itself, so there it is Settings alone, at the plate's right end.
 fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Action>) {
     let button = CORNER_BUTTON;

@@ -306,7 +306,7 @@ pub fn css_size(window: &Window) -> (f64, f64, f64) {
     (logical.width, logical.height, scale)
 }
 
-/// Whether the player may choose fullscreen: not in the iPad app, which always fills the
+/// Whether the player may choose fullscreen: not in the iOS app, which always fills the
 /// screen, nor in the phone edition, whose top row keeps only its few keys.
 pub fn offers_fullscreen() -> bool {
     !cfg!(target_os = "ios") && !crate::touch::phone()
@@ -1467,14 +1467,15 @@ fn window_attributes(prefs: &Preferences) -> WindowAttributes {
     }
 }
 
-/// The iPad's whole screen, held sideways (the menus and HUD need a landscape
-/// window), with no status bar; the system's edge swipes wait for a second swipe, so a
-/// thumb on the stick or the toolbar stays in the game.
+/// The iPhone's or iPad's whole screen, held either way (the menus and HUD lay out
+/// upright screens as the page does; an iPhone never upside down), with no status bar;
+/// the system's edge swipes wait for a second swipe, so a thumb on the stick or the
+/// toolbar stays in the game.
 #[cfg(target_os = "ios")]
 fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
     use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
     Window::default_attributes()
-        .with_valid_orientations(ValidOrientations::Landscape)
+        .with_valid_orientations(ValidOrientations::LandscapeAndPortrait)
         .with_prefers_status_bar_hidden(true)
         .with_prefers_home_indicator_hidden(true)
         .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
