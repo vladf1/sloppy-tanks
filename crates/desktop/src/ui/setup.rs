@@ -2719,16 +2719,16 @@ fn stacked_setup(
     }
 }
 
-/// What the corner's lines need clear of Battle Setup: the build line, and over it in a
-/// page the App Store link.
+/// What a corner's line needs clear of Battle Setup: the build line, and in a page the
+/// App Store link in the other corner.
 const CORNER_LINES: Vec2 = if cfg!(target_arch = "wasm32") {
-    vec2(220.0, 44.0)
+    vec2(220.0, 30.0)
 } else {
     vec2(140.0, 30.0)
 };
 
-/// The build line in the screen's bottom-right corner, outside Battle Setup, and over it
-/// in a page the link to the apps (the apps name no store of their own).
+/// The build line in the screen's bottom-right corner, outside Battle Setup, and in a page
+/// the link to the apps in the bottom-left one (the apps name no store of their own).
 fn build_label(context: &egui::Context, screen: Rect, view: &View) {
     let painter = context.layer_painter(LayerId::new(
         Order::Foreground,
@@ -2745,26 +2745,16 @@ fn build_label(context: &egui::Context, screen: Rect, view: &View) {
     );
     // Battle Setup is centred, so where the right corner is clear the left one is too.
     #[cfg(target_arch = "wasm32")]
-    {
-        app_store_link(
-            context,
-            screen.right_bottom() - vec2(12.0, 25.0),
-            Align2::RIGHT_BOTTOM,
-        );
-        app_store_link(
-            context,
-            screen.left_bottom() + vec2(12.0, -9.0),
-            Align2::LEFT_BOTTOM,
-        );
-    }
+    app_store_link(context, screen.left_bottom() + vec2(12.0, -9.0));
 }
 
-/// A quiet link to the App Store apps, its `align` corner at `corner`.
+/// A quiet link to the App Store apps, its bottom-left corner at `corner`.
 #[cfg(target_arch = "wasm32")]
-fn app_store_link(context: &egui::Context, corner: Pos2, align: Align2) {
+fn app_store_link(context: &egui::Context, corner: Pos2) {
     const LINK: &str = "Get the iPhone, iPad and Mac app";
     let font = egui::FontId::proportional(11.0);
-    egui::Area::new(Id::unique(("app store link", align == Align2::LEFT_BOTTOM)))
+    let align = Align2::LEFT_BOTTOM;
+    egui::Area::new(Id::unique("app store link"))
         .order(Order::Foreground)
         .fixed_pos(pos2(0.0, 0.0))
         .constrain(false)
