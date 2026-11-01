@@ -56,6 +56,13 @@ shows the download and, when the game cannot start, why, with a retry; the shell
 to it and to measurements through `crates/desktop/src/page.rs` (the root's `data-shell`
 and `sloppy:*` performance marks).
 
+For a device with no inspector at hand (an iPhone), `?trace` turns on a trace in that
+browser until `?trace=off`: each second, and at every GPU device, loss, error, large
+allocation, socket and page event, the page notes what it does, keeps its last GPU calls,
+and uploads the notes to the server directory, where `GET
+https://directory.sloppytanks.com/traces` lists the latest. The notes live in
+`localStorage`, so a page the system killed uploads them on its next load.
+
 The page draws with WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU) and with WebGL2 otherwise; `?webgl` forces WebGL2. It downloads only the build it plays.
 
 A returning visit reads the vehicle models and its map's scenery from the browser's IndexedDB instead of generating them again (a release that changes no model keeps them); `?geometry-cache=off` neither reads nor stores them, for comparing the two.
