@@ -349,7 +349,8 @@ reason for (`REQUIRED_REASON_APIS`).
 
 `--single-player` builds any of the apps without multiplayer (the `single-player` feature
 of `sloppy-desktop`): Battle Setup shows the Single player tab alone and `--multiplayer`
-and `--room` open nothing. The store listing points at two pages the site serves beside
+and `--room` open nothing. CI's App Store builds are single player for now, so the first
+release leaves online rooms and their player names out of review. The store listing points at two pages the site serves beside
 the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
 every app and the page also open from Settings' About row; keep the privacy policy true
 to what the game sends. The web page's Battle Setup links to the apps' App Store page in
