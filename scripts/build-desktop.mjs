@@ -192,6 +192,7 @@ function build(target, env = {}) {
       target,
       "-p",
       "sloppy-desktop",
+      ...(singlePlayer ? ["--features", "single-player"] : []),
     ],
     { env: { ...process.env, ...stamps, ...env } },
   );
@@ -1066,6 +1067,7 @@ const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
 const appStore = process.argv.includes("--app-store");
+const singlePlayer = process.argv.includes("--single-player");
 if (appStore && !(ios || mac)) {
   console.error("--app-store builds the iOS app (--ios) or the Mac app (--mac) for the App Store.");
   process.exit(1);

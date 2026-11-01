@@ -137,6 +137,33 @@ pub fn invite_link(room: &str) -> String {
     }
 }
 
+/// The apps' App Store page, which the web version points to. A placeholder until App
+/// Store Connect publishes the app and gives it its id.
+#[cfg(target_arch = "wasm32")]
+pub const APP_STORE: &str = "https://apps.apple.com/app/sloppy-tanks/id0000000000";
+
+/// Open one of the site's own pages (`privacy.html`, `support.html`) in the browser: a
+/// page opens it beside itself, under its own base, and the app opens the web version's.
+pub fn open_site_page(context: &egui::Context, page: &str) {
+    #[cfg(target_arch = "wasm32")]
+    open_url(context, page);
+    #[cfg(not(target_arch = "wasm32"))]
+    open_url(context, &format!("{}{page}", web_site()));
+}
+
+/// Open `url` in the browser, from a page in a new tab.
+pub fn open_url(context: &egui::Context, url: &str) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = context;
+        if let Some(window) = web_sys::window() {
+            let _ = window.open_with_url_and_target(url, "_blank");
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    context.open_url(egui::OpenUrl::new_tab(url));
+}
+
 /// Put `text` on the clipboard; the answer says whether it took it. The app copies
 /// through egui at once; a page writes the browser's clipboard, which may refuse (no
 /// secure context, or the click too long ago for Safari).

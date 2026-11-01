@@ -312,6 +312,11 @@ pub fn offers_fullscreen() -> bool {
     !cfg!(target_os = "ios") && !crate::touch::phone()
 }
 
+/// Whether Battle Setup offers multiplayer: every build but a `single-player` one.
+pub fn offers_multiplayer() -> bool {
+    !cfg!(feature = "single-player")
+}
+
 /// Fill the screen or give the window back, as `prefs` say, and keep the choice.
 pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
     if !offers_fullscreen() {
@@ -671,7 +676,7 @@ impl Session {
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
         }
-        if options.multiplayer || options.room.is_some() {
+        if offers_multiplayer() && (options.multiplayer || options.room.is_some()) {
             rooms.open_link(options.room.as_deref());
         }
         Ok(Shell {
