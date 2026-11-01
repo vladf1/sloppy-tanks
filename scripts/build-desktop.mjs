@@ -69,8 +69,8 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 const MINIMUM_MACOS = "11.0";
 const MAC_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
-// The iOS app needs Metal and the landscape full-screen window iOS 16 gives every
-// iPhone since the 8 and iPadOS 16 every iPad since 2017.
+// The iOS app needs Metal and the full-screen window iOS 16 gives every iPhone since
+// the 8 and iPadOS 16 every iPad since 2017.
 const MINIMUM_IOS = "16.0";
 const IOS_TARGET = "aarch64-apple-ios";
 const IOS_SIMULATOR_TARGET = "aarch64-apple-ios-sim";
@@ -532,7 +532,10 @@ function buildIos(simulator) {
   mkdirSync(app, { recursive: true });
   copyFileSync(binary, join(app, BINARY));
   const assets = compileAssets(app, scratch, platform);
+  // Held either way, as the page lays out an upright phone or tablet; an iPhone not upside
+  // down (winit's `LandscapeAndPortrait` asks the same).
   const landscape = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"];
+  const portrait = ["UIInterfaceOrientationPortrait"];
   writeFileSync(
     join(app, "Info.plist"),
     plist({
@@ -540,12 +543,16 @@ function buildIos(simulator) {
       CFBundleSupportedPlatforms: [simulator ? "iPhoneSimulator" : "iPhoneOS"],
       LSRequiresIPhoneOS: true,
       MinimumOSVersion: MINIMUM_IOS,
-      // iPhone and iPad, held sideways: an iPhone plays the phone edition's screens.
+      // iPhone and iPad: an iPhone plays the phone edition's screens.
       UIDeviceFamily: [1, 2],
       UIRequiredDeviceCapabilities: ["arm64", "metal"],
       UIRequiresFullScreen: true,
-      UISupportedInterfaceOrientations: landscape,
-      "UISupportedInterfaceOrientations~ipad": landscape,
+      UISupportedInterfaceOrientations: [...portrait, ...landscape],
+      "UISupportedInterfaceOrientations~ipad": [
+        ...portrait,
+        "UIInterfaceOrientationPortraitUpsideDown",
+        ...landscape,
+      ],
       UIStatusBarHidden: true,
       UIApplicationSupportsIndirectInputEvents: true,
       UILaunchScreen: { UIColorName: "LaunchBackground" },

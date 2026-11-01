@@ -275,7 +275,7 @@ ticket.
 ### iPhone and iPad
 
 The same crate builds as one iOS app for iPhone and iPad (iOS and iPadOS 16 or newer,
-landscape, full screen). On an iPad it has the web edition's tablet touch controls: the
+full screen, held sideways or upright). On an iPad it has the web edition's tablet touch controls: the
 drive stick in the bottom-left corner, a finger on the arena to aim and fire, and the mine
 button with − / + zoom in the bottom-right corner. On an iPhone it plays the web's phone
 edition (see [Play](#play)): the drive stick, a finger on the arena to aim and fire, and

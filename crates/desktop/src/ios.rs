@@ -69,7 +69,7 @@ pub fn attach_to_scene(window: &Window) {
             }
             let _: () = msg_send![&*ui_window, setWindowScene: &*scene];
             // The window was sized from the screen before it had a scene; the scene's
-            // bounds are the interface's, landscape here.
+            // bounds are the interface's, turned the way the device is held.
             let space: Retained<AnyObject> = msg_send![&*scene, coordinateSpace];
             let bounds: objc2_core_foundation::CGRect = msg_send![&*space, bounds];
             let _: () = msg_send![&*ui_window, setFrame: bounds];
