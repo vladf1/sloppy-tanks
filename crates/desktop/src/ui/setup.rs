@@ -2743,31 +2743,43 @@ fn build_label(context: &egui::Context, screen: Rect, view: &View) {
         fade(TEXT_DIM, 0.7),
         0.4,
     );
+    // Battle Setup is centred, so where the right corner is clear the left one is too.
     #[cfg(target_arch = "wasm32")]
-    app_store_link(context, screen.right_bottom() - vec2(12.0, 25.0));
+    {
+        app_store_link(
+            context,
+            screen.right_bottom() - vec2(12.0, 25.0),
+            Align2::RIGHT_BOTTOM,
+        );
+        app_store_link(
+            context,
+            screen.left_bottom() + vec2(12.0, -9.0),
+            Align2::LEFT_BOTTOM,
+        );
+    }
 }
 
-/// A quiet link to the App Store apps, its bottom-right corner at `corner`.
+/// A quiet link to the App Store apps, its `align` corner at `corner`.
 #[cfg(target_arch = "wasm32")]
-fn app_store_link(context: &egui::Context, corner: Pos2) {
+fn app_store_link(context: &egui::Context, corner: Pos2, align: Align2) {
     const LINK: &str = "Get the iPhone, iPad and Mac app";
     let font = egui::FontId::proportional(11.0);
-    egui::Area::new(Id::unique("app store link"))
+    egui::Area::new(Id::unique(("app store link", align == Align2::LEFT_BOTTOM)))
         .order(Order::Foreground)
         .fixed_pos(pos2(0.0, 0.0))
         .constrain(false)
         .show(context, |ui| {
             let painter = ui.painter().clone();
             let width = paint::text_width(&painter, LINK, font.clone(), 0.4);
-            let rect = Align2::RIGHT_BOTTOM.anchor_size(corner, vec2(width, 14.0));
-            let response = ui.interact(rect, Id::unique("app store button"), Sense::click());
+            let rect = align.anchor_size(corner, vec2(width, 14.0));
+            let response = ui.interact(rect, ui.scope_id().with("button"), Sense::click());
             paint::labelled(&response, true, "App Store");
             let ink = if response.hovered() {
                 Color32::WHITE
             } else {
                 fade(TEXT_DIM, 0.85)
             };
-            paint::text(&painter, corner, Align2::RIGHT_BOTTOM, LINK, font, ink, 0.4);
+            paint::text(&painter, corner, align, LINK, font, ink, 0.4);
             if response.clicked() {
                 crate::links::open_url(ui.ctx(), crate::links::APP_STORE);
             }
