@@ -131,6 +131,8 @@ const APP_STORE_CONNECT_API = "https://api.appstoreconnect.apple.com/v1";
 // Apple usually processes a build in 5 to 20 minutes.
 const PROCESSING_TIMEOUT_MS = 45 * 60 * 1000;
 const PROCESSING_POLL_MS = 30 * 1000;
+const API_TRIES = 4;
+const API_RETRY_MS = 5 * 1000;
 
 /** Run `command` from the repository root and exit the process unless it succeeds. */
 function run(command, args, options = {}) {
@@ -870,9 +872,19 @@ async function appStoreConnect(key, path, query) {
     key: readFileSync(key.file, "utf8"),
     dsaEncoding: "ieee-p1363",
   });
-  const response = await fetch(`${APP_STORE_CONNECT_API}${path}?${new URLSearchParams(query)}`, {
-    headers: { Authorization: `Bearer ${unsigned}.${signature.toString("base64url")}` },
-  });
+  const url = `${APP_STORE_CONNECT_API}${path}?${new URLSearchParams(query)}`;
+  const headers = { Authorization: `Bearer ${unsigned}.${signature.toString("base64url")}` };
+  // A connection kept alive through the compile is often gone by the next request
+  // (EPIPE), and a poll over many minutes meets the odd network failure.
+  let response;
+  for (let tries = 1; !response; tries += 1) {
+    try {
+      response = await fetch(url, { headers });
+    } catch (error) {
+      if (tries === API_TRIES) throw error;
+      await new Promise((resolve) => setTimeout(resolve, API_RETRY_MS));
+    }
+  }
   if (!response.ok) {
     console.error(
       `App Store Connect answered ${path} with ${response.status}: ${await response.text()}`,
