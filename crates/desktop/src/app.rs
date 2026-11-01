@@ -71,6 +71,13 @@ pub struct Options {
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
     pub autoplay: bool,
+    /// `--finish-round`: once the first round is on, its rest is simulated at once, for
+    /// the App Store screenshot of its battle report.
+    pub finish_round: bool,
+    /// `--screenshot`, for the App Store screenshots (`scripts/app-store-screenshots.mjs`):
+    /// no build line, and a window without a title bar or frame, whose square corners a
+    /// capture takes whole.
+    pub screenshot: bool,
     /// `--directory <url>`: the server directory to list rooms from.
     pub directory: Option<String>,
     /// `--map <id>`: Battle Setup's map in place of the saved one, an extra level only
@@ -265,6 +272,8 @@ pub struct Shell {
     pub autoplay: bool,
     /// `--seed`, for the first single-player arena only.
     pub seed: Option<f64>,
+    /// `--finish-round`, for the first single-player round only.
+    pub finish_round: bool,
 }
 
 /// The release line Battle Setup shows.
@@ -310,6 +319,11 @@ pub fn css_size(window: &Window) -> (f64, f64, f64) {
 /// screen, nor in the phone edition, whose top row keeps only its few keys.
 pub fn offers_fullscreen() -> bool {
     !cfg!(target_os = "ios") && !crate::touch::phone()
+}
+
+/// Whether Battle Setup offers multiplayer: every build but a `single-player` one.
+pub fn offers_multiplayer() -> bool {
+    !cfg!(feature = "single-player")
 }
 
 /// Fill the screen or give the window back, as `prefs` say, and keep the choice.
@@ -490,6 +504,8 @@ struct Session {
     /// A round is on (the HUD shows; frames run).
     in_round: bool,
     phase: MatchPhase,
+    /// `--finish-round`, until the first round is on.
+    finish_round: bool,
     alive: bool,
     first_person: bool,
     /// The window is covered or minimized (macOS says so).
@@ -660,7 +676,7 @@ impl Session {
         }
         let window = Arc::new(
             event_loop
-                .create_window(window_attributes(&prefs))
+                .create_window(window_attributes(&prefs, options))
                 .map_err(|error| error.to_string())?,
         );
         #[cfg(target_os = "ios")]
@@ -672,7 +688,7 @@ impl Session {
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
         }
-        if options.multiplayer || options.room.is_some() {
+        if offers_multiplayer() && (options.multiplayer || options.room.is_some()) {
             rooms.open_link(options.room.as_deref());
         }
         Ok(Shell {
@@ -680,12 +696,17 @@ impl Session {
             prefs,
             audio: None,
             debug: options.debug,
-            build: build_line(),
+            build: if options.screenshot {
+                String::new()
+            } else {
+                build_line()
+            },
             rooms,
             seats: SavedSeats::default(),
             frame_log: options.frame_log,
             autoplay: options.autoplay,
             seed: options.seed,
+            finish_round: options.finish_round,
         })
     }
 
@@ -702,6 +723,7 @@ impl Session {
             frame_log,
             autoplay,
             seed,
+            finish_round,
         } = shell;
         let target = render_target(&window)?;
         // The team is the seed's to draw.
@@ -751,6 +773,7 @@ impl Session {
             options_shown: None,
             in_round: false,
             phase: MatchPhase::Ready,
+            finish_round,
             alive: true,
             first_person: prefs.first_person,
             occluded: false,
@@ -786,6 +809,7 @@ impl Session {
             frame_log: self.frame_log.is_some(),
             autoplay: false,
             seed: None,
+            finish_round: false,
         }
     }
 
@@ -1208,6 +1232,10 @@ impl Session {
         }
         let slot = |index: usize| result.get(index).copied().unwrap_or(0.0);
         self.phase = frame_slot::phase(slot(frame_slot::PHASE));
+        if self.finish_round && self.phase == MatchPhase::Playing {
+            self.finish_round = false;
+            self.game.debug_finish_round();
+        }
         self.alive = slot(frame_slot::HUMAN_ALIVE) == 1.0;
         self.first_person = slot(frame_slot::FIRST_PERSON) == 1.0;
         self.ui.cockpit = slot(frame_slot::COCKPIT) == 1.0;
@@ -1455,11 +1483,12 @@ impl Session {
 
 /// A resizable window at its first size, or fullscreen as the player left it.
 #[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
-fn window_attributes(prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(prefs: &Preferences, options: &Options) -> WindowAttributes {
     let attributes = Window::default_attributes()
         .with_title("Sloppy Tanks")
         .with_inner_size(WINDOW_SIZE)
         .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_decorations(!options.screenshot)
         .with_window_icon(window_icon());
     if prefs.fullscreen {
         attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
@@ -1473,7 +1502,7 @@ fn window_attributes(prefs: &Preferences) -> WindowAttributes {
 /// the system's edge swipes wait for a second swipe, so a thumb on the stick or the
 /// toolbar stays in the game.
 #[cfg(target_os = "ios")]
-fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(_prefs: &Preferences, _options: &Options) -> WindowAttributes {
     use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
     Window::default_attributes()
         .with_valid_orientations(ValidOrientations::LandscapeAndPortrait)
@@ -1485,7 +1514,7 @@ fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
 /// A canvas filling the page (`index.html` sizes it). Fullscreen waits for the
 /// player's click: a page may not take the screen by itself.
 #[cfg(target_arch = "wasm32")]
-fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(_prefs: &Preferences, _options: &Options) -> WindowAttributes {
     use winit::platform::web::WindowAttributesExtWebSys;
     Window::default_attributes()
         .with_title("Sloppy Tanks")

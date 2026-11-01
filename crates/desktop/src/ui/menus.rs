@@ -1498,6 +1498,23 @@ fn settings_body(
             y = rows.row(painter, y, name, note);
         }
     }
+    // The App Store wants the privacy policy reachable inside the app.
+    y = rows.group(painter, y + GROUP_GAP, "ABOUT", 0.0);
+    let links = rows.control(y, CHOICE_OFFSET, 38.0);
+    let link_width = (links.width() - 10.0) / 2.0;
+    for (index, (label, page)) in [("PRIVACY", "privacy.html"), ("SUPPORT", "support.html")]
+        .into_iter()
+        .enumerate()
+    {
+        let rect = Rect::from_min_size(
+            links.min + vec2(index as f32 * (link_width + 10.0), 0.0),
+            vec2(link_width, links.height()),
+        );
+        if paint::button_at(ui, art, rect, label, None, ButtonStyle::Secondary, true).clicked() {
+            crate::links::open_site_page(ui.ctx(), page);
+        }
+    }
+    y = rows.row(painter, y, "Privacy & support", "Opens sloppytanks.com");
     y += SETTINGS_ACTIONS_GAP;
     let height = if stacked { PHONE_BUTTON_HEIGHT } else { 48.0 };
     let save_width = (width - 10.0) * 0.645;

@@ -838,6 +838,15 @@ impl Game {
         }
     }
 
+    /// Simulate the rest of the round as fast as possible, every tank the bots' to
+    /// drive, so its results and battle report come at the next frame.
+    pub fn debug_finish_round(&mut self) {
+        while self.sim.match_state.phase == MatchPhase::Playing {
+            self.sim.step(VehicleCommand::idle(), true);
+        }
+        self.sim.events.clear();
+    }
+
     /// Simulate `seconds` of autoplay as fast as possible, resetting finished
     /// rounds; returns `{ simulatedSeconds, resets, snapshot }`.
     pub fn debug_soak(&mut self, seconds: f64) -> String {

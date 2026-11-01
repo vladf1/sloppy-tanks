@@ -1,0 +1,523 @@
+// App Store Connect screenshots of the iPhone, iPad and Mac apps, at the sizes Apple takes
+// (App Store Connect's "Screenshot specifications"), into the ignored
+// artifacts/app-store/screenshots/<device>/NN-<name>.png:
+//
+//   pnpm run screenshots:app-store                       # build both apps, then every device
+//   pnpm run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
+//   pnpm run screenshots:app-store -- --only ipad-13,mac --no-report
+//   pnpm run screenshots:app-store -- --no-build --only mac --shots quarry
+//
+// Each shot is a launch of its own, so `--shots` retakes any of them alone: battle-setup
+// (about 25 s), village, harbor and quarry (about a minute each) and battle-report (20 s:
+// the app simulates the round's rest at once). A shot that fails is tried again
+// (`SHOT_ATTEMPTS`) and the rest go on; screenshots already taken stay, and the run ends
+// with the command that retakes only what is missing.
+//
+// The apps are built single player, as the App Store has them (`--single-player`).
+// Each device shows Battle Setup, three autoplayed single-player battles (one per standard
+// map, the player's tank driving itself) and, unless `--no-report`, a Dusty Dig battle's
+// report. The game reads its command line as a
+// page reads its query (`crates/desktop/src/main.rs`): `--map`, `--seed` and
+// `--autoplay`, which starts the round once the arena is ready. The seed fixes each
+// arena; the autoplayed match follows the frames and differs between runs, so each battle
+// also leaves alternates (`ALTERNATE_SECONDS`).
+//
+// The iOS app runs on simulators this script creates once ("Sloppy Tanks <device>"),
+// booted beside whatever else is, shut down again after. It is the simulator build
+// (`build-desktop.mjs --ios-simulator`) with its Info.plist cut to landscape, so it opens
+// on its side without turning the simulator, which `simctl` cannot do. The status bar is
+// hidden by the app (UIStatusBarHidden); a Dynamic Island simulator draws its island
+// into the screenshot as a black pill, as a device's own screenshots do not. The Mac app runs its binary with HOME in a
+// scratch folder, so it reads these settings rather than the player's, in a window whose
+// content is 1440×900 points (1280×800 where the screen above the Dock is too small),
+// captured by `screencapture` at the display's 2×. That needs the Screen Recording
+// permission for the app running the script, and moving and sizing the window through
+// System Events needs Accessibility.
+import { execFileSync, spawn } from "node:child_process";
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const output = join(root, "artifacts/app-store/screenshots");
+const scratch = join(root, "artifacts/app-store/scratch");
+const BUNDLE_ID = "me.fridman.sloppy-tanks";
+const IOS_APP = join(root, "artifacts/ios-simulator/Sloppy Tanks.app");
+const MAC_APP = join(root, "artifacts/desktop/Sloppy Tanks.app");
+const MAC_BINARY = "Contents/MacOS/sloppy-tanks";
+// The saved settings every device starts from (`preferences.rs`): the High graphics tier
+// whatever the device class or the simulator's frame rate would pick, and no sound.
+const SETTINGS = { graphics: "high", volume: 0, firstPerson: false, zoom: 34 };
+// The shots, in App Store order. Battle Setup waits for its arena; a battle for its
+// arena, GO and a fight under way.
+const SHOTS = [
+  { name: "battle-setup", map: "village", seed: 11, seconds: 25 },
+  { name: "village", map: "village", seed: 11, seconds: 50, autoplay: true },
+  { name: "harbor", map: "harbor", seed: 21, seconds: 50, autoplay: true },
+  { name: "quarry", map: "quarry", seed: 31, seconds: 50, autoplay: true },
+  // A battle whose rest the app simulates at once (`--finish-round`), for its report.
+  { name: "battle-report", map: "quarry", seed: 31, seconds: 20, autoplay: true, report: true },
+];
+// A battle's moment may catch the player's tank destroyed, its respawn panel over the
+// fight, and the seed cannot rule that out: the autoplayed tank's commands follow the
+// frames, so the match differs between runs and devices. These later moments of each
+// battle go to <device>/alternates/ to swap in.
+const ALTERNATE_SECONDS = [7, 14];
+// Apple's sizes, landscape (the game's orientation): iPhone 6.9" and 6.3" (Dynamic
+// Island, large and medium display) and iPad 13", from simulators by device type, newest
+// first; the Mac's follows its window.
+const DEVICES = [
+  {
+    id: "iphone-6.9",
+    size: [2868, 1320],
+    types: ["iPhone-18-Pro-Max", "iPhone-17-Pro-Max", "iPhone-16-Pro-Max"],
+  },
+  { id: "iphone-6.3", size: [2622, 1206], types: ["iPhone-18-Pro", "iPhone-17-Pro"] },
+  {
+    id: "ipad-13",
+    size: [2752, 2064],
+    types: ["iPad-Pro-13-inch-M5-12GB", "iPad-Pro-13-inch-M4-8GB"],
+  },
+  { id: "mac", mac: true },
+];
+// The Mac window's content in points, the largest the screen holds above the Dock: 2880×1800
+// or 2560×1600 pixels at a Retina display's 2×, both 16:10 sizes Apple takes.
+const MAC_WINDOWS = [
+  [1440, 900],
+  [1280, 800],
+];
+
+function run(command, args, options = {}) {
+  return (execFileSync(command, args, { encoding: "utf8", ...options }) ?? "").trim();
+}
+
+/** What follows `name` on the command line. */
+function argument(name) {
+  const index = process.argv.indexOf(name);
+  return index < 0 ? undefined : process.argv[index + 1];
+}
+
+const only = argument("--only")?.split(",");
+const devices = DEVICES.filter((device) => !only || only.includes(device.id));
+if (only && devices.length !== only.length) {
+  console.error(`--only takes ${DEVICES.map((device) => device.id).join(", ")}.`);
+  process.exit(1);
+}
+const withReport = !process.argv.includes("--no-report");
+const shots = SHOTS.map((shot, index) => ({
+  ...shot,
+  file: `0${index + 1}-${shot.name}.png`,
+})).filter((shot) => withReport || !shot.report);
+const onlyShots = argument("--shots")?.split(",");
+if (onlyShots?.some((name) => !shots.some((shot) => shot.name === name))) {
+  console.error(`--shots takes ${shots.map((shot) => shot.name).join(", ")}.`);
+  process.exit(1);
+}
+const chosenShots = shots.filter((shot) => !onlyShots || onlyShots.includes(shot.name));
+// How many times a shot is taken before the run gives up on it.
+const SHOT_ATTEMPTS = 3;
+// Each device's shots that failed every attempt, by device id.
+const missing = new Map();
+
+/** Take each chosen shot through `take`, trying a failed one again. */
+async function takeShots(device, take) {
+  for (const shot of chosenShots) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await take(shot);
+        break;
+      } catch (error) {
+        const again = attempt < SHOT_ATTEMPTS;
+        log(device, `${shot.name} failed: ${error.message}${again ? "; trying it again" : ""}`);
+        if (!again) {
+          missing.set(device.id, [...(missing.get(device.id) ?? []), shot.name]);
+          break;
+        }
+      }
+    }
+  }
+}
+
+function log(device, message) {
+  console.log(`[${device.id}] ${message}`);
+}
+
+function launchArguments(shot) {
+  return [
+    ...["--map", shot.map, "--seed", String(shot.seed)],
+    ...(shot.autoplay ? ["--autoplay"] : []),
+    ...(shot.report ? ["--finish-round"] : []),
+    // No build line; on the Mac a borderless window, as a titled one's rounded bottom
+    // corners and edged sides would show in a capture of its content.
+    "--screenshot",
+  ];
+}
+
+/** The PNG's pixel size. */
+function pixelSize(file) {
+  const text = run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", file]);
+  return [/pixelWidth: (\d+)/, /pixelHeight: (\d+)/].map((pattern) =>
+    Number(text.match(pattern)[1]),
+  );
+}
+
+// A PNG (argv[0]) redrawn into argv[1] without its alpha channel, every pixel and the colour
+// profile as they were (simctl's and screencapture's PNGs carry an opaque alpha channel):
+// CoreGraphics through JavaScript for Automation, which every Mac has.
+const FLATTEN = `ObjC.import("CoreGraphics");
+ObjC.import("ImageIO");
+function run([input, output]) {
+  const source = $.CGImageSourceCreateWithURL($.NSURL.fileURLWithPath(input), null);
+  const image = $.CGImageSourceCreateImageAtIndex(source, 0, null);
+  const width = $.CGImageGetWidth(image);
+  const height = $.CGImageGetHeight(image);
+  // 5 is kCGImageAlphaNoneSkipLast: four bytes a pixel, the last unused.
+  const context = $.CGBitmapContextCreate(null, width, height, 8, 0, $.CGImageGetColorSpace(image), 5);
+  $.CGContextDrawImage(context, { origin: { x: 0, y: 0 }, size: { width, height } }, image);
+  const url = $.NSURL.fileURLWithPath(output);
+  const destination = $.CGImageDestinationCreateWithURL(url, $("public.png"), 1, null);
+  $.CGImageDestinationAddImage(destination, $.CGBitmapContextCreateImage(context), null);
+  if (!$.CGImageDestinationFinalize(destination)) throw new Error("no PNG written");
+}`;
+
+/** Keep `file` as the device's `name`, landscape, at exactly Apple's size and opaque
+ * (App Store Connect refuses an alpha channel). */
+function keep(device, file, name) {
+  let [width, height] = pixelSize(file);
+  if (width < height) {
+    // A simulator's framebuffer stays upright, the app on its side within it.
+    run("sips", ["--rotate", "270", file]);
+    [width, height] = [height, width];
+  }
+  if (width !== device.size[0] || height !== device.size[1]) {
+    throw new Error(`${name} is ${width}×${height}, not ${device.size.join("×")}`);
+  }
+  if (run("sips", ["-g", "hasAlpha", file]).includes("hasAlpha: yes")) {
+    const flat = `${file}.flat.png`;
+    run("osascript", ["-l", "JavaScript", "-e", FLATTEN, file, flat]);
+    copyFileSync(flat, file);
+    rmSync(flat);
+  }
+  const kept = join(output, device.id, name);
+  mkdirSync(dirname(kept), { recursive: true });
+  copyFileSync(file, kept);
+  rmSync(file);
+  log(device, `${device.id}/${name} (${width}×${height})`);
+}
+
+/** Where a capture of the device's `name` lands before it is kept. */
+function scratchFile(device, name) {
+  return join(scratch, `${device.id}-${name.replaceAll("/", "-")}`);
+}
+
+/** Take `shot`'s pictures through `capture` (a name under the device's folder), counting
+ * from the app's launch at `launched`: the shot, a battle's alternates and the battle
+ * report. */
+async function shoot(device, shot, launched, capture) {
+  const at = (seconds) => sleep(launched + seconds * 1000 - Date.now());
+  await at(shot.seconds);
+  await capture(shot.file);
+  if (shot.autoplay && !shot.report) {
+    for (const [index, seconds] of ALTERNATE_SECONDS.entries()) {
+      await at(shot.seconds + seconds);
+      await capture(`alternates/${shot.file.replace(".png", `-${index + 2}.png`)}`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- iOS simulators
+
+function simulators() {
+  return JSON.parse(run("xcrun", ["simctl", "list", "devices", "--json"])).devices;
+}
+
+/** The simulator for `device`, created on the newest iOS runtime with its device type
+ * the first time. */
+function simulator(device) {
+  const name = `Sloppy Tanks ${device.id}`;
+  const existing = Object.values(simulators())
+    .flat()
+    .find((candidate) => candidate.name === name && candidate.isAvailable);
+  if (existing) return existing.udid;
+  const runtimes = JSON.parse(run("xcrun", ["simctl", "list", "runtimes", "--json"]))
+    .runtimes.filter((runtime) => runtime.platform === "iOS" && runtime.isAvailable)
+    .sort((a, b) => b.version.localeCompare(a.version, undefined, { numeric: true }));
+  for (const type of device.types) {
+    const identifier = `com.apple.CoreSimulator.SimDeviceType.${type}`;
+    const runtime = runtimes.find((candidate) =>
+      candidate.supportedDeviceTypes.some((supported) => supported.identifier === identifier),
+    );
+    if (runtime) {
+      log(device, `creating the simulator "${name}" (${type}, iOS ${runtime.version})`);
+      return run("xcrun", ["simctl", "create", name, identifier, runtime.identifier]);
+    }
+  }
+  throw new Error(`no iOS runtime has a ${device.types.join(" or ")} simulator`);
+}
+
+/** The simulator build turned landscape-only and signed again, once for every device. */
+let landscapeApp;
+function landscapeIosApp() {
+  if (landscapeApp) return landscapeApp;
+  if (!existsSync(IOS_APP)) {
+    throw new Error(`${IOS_APP} is missing: run pnpm run ios:simulator, or drop --no-build`);
+  }
+  landscapeApp = join(scratch, "ios", "Sloppy Tanks.app");
+  rmSync(landscapeApp, { recursive: true, force: true });
+  mkdirSync(join(scratch, "ios"), { recursive: true });
+  run("ditto", [IOS_APP, landscapeApp]);
+  const plist = join(landscapeApp, "Info.plist");
+  const landscape = JSON.stringify([
+    "UIInterfaceOrientationLandscapeRight",
+    "UIInterfaceOrientationLandscapeLeft",
+  ]);
+  for (const key of ["UISupportedInterfaceOrientations", "UISupportedInterfaceOrientations~ipad"]) {
+    run("plutil", ["-replace", key, "-json", landscape, plist]);
+  }
+  run("codesign", ["--force", "--sign", "-", landscapeApp]);
+  return landscapeApp;
+}
+
+/** Boot `device`'s simulator and install the app afresh with the script's settings; the
+ * simulator, and whether this script booted it. */
+function prepareIos(device) {
+  const udid = simulator(device);
+  const booted =
+    Object.values(simulators())
+      .flat()
+      .find((candidate) => candidate.udid === udid).state !== "Booted";
+  if (booted) {
+    log(device, "booting");
+    run("xcrun", ["simctl", "boot", udid]);
+  }
+  run("xcrun", ["simctl", "bootstatus", udid, "-b"], { stdio: ["ignore", "ignore", "inherit"] });
+  // A clean install: no settings or records from an earlier run.
+  execFileSync("xcrun", ["simctl", "uninstall", udid, BUNDLE_ID], { stdio: "ignore" });
+  run("xcrun", ["simctl", "install", udid, landscapeIosApp()]);
+  const data = run("xcrun", ["simctl", "get_app_container", udid, BUNDLE_ID, "data"]);
+  const settings = join(data, "Library/Application Support/Sloppy Tanks");
+  mkdirSync(settings, { recursive: true });
+  writeFileSync(join(settings, "settings.json"), JSON.stringify(SETTINGS));
+  return { device, udid, booted };
+}
+
+async function captureIos({ device, udid }) {
+  const capture = (name) => {
+    const file = scratchFile(device, name);
+    run("xcrun", ["simctl", "io", udid, "screenshot", "--mask=ignored", file], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    keep(device, file, name);
+  };
+  await takeShots(device, async (shot) => {
+    log(device, `${shot.name}: launching ${launchArguments(shot).join(" ")}`);
+    const launched = Date.now();
+    run("xcrun", [
+      ...["simctl", "launch", "--terminate-running-process", udid, BUNDLE_ID],
+      ...launchArguments(shot),
+    ]);
+    await shoot(device, shot, launched, capture);
+  });
+  execFileSync("xcrun", ["simctl", "terminate", udid, BUNDLE_ID], { stdio: "ignore" });
+}
+
+// ---------------------------------------------------------------- Mac
+
+/** The on-screen windows of process `pid`, with their bounds in points and whether another
+ * app's window lies over them (the list runs front to back). */
+function macWindows(pid) {
+  const script = `ObjC.import("CoreGraphics");
+const list = ObjC.castRefToObject(
+  $.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, $.kCGNullWindowID));
+const windows = [];
+const above = [];
+const overlap = (a, b) =>
+  a.X < b.X + b.Width && b.X < a.X + a.Width && a.Y < b.Y + b.Height && b.Y < a.Y + a.Height;
+for (let i = 0; i < list.count; i++) {
+  const window = ObjC.deepUnwrap(list.objectAtIndex(i));
+  if (window.kCGWindowLayer !== 0) continue;
+  const bounds = window.kCGWindowBounds;
+  if (window.kCGWindowOwnerPID === ${pid}) {
+    windows.push({ id: window.kCGWindowNumber, bounds,
+      covered: above.some((other) => overlap(other, bounds)) });
+  } else if ((window.kCGWindowAlpha ?? 1) > 0) {
+    above.push(bounds);
+  }
+}
+JSON.stringify(windows);`;
+  return JSON.parse(run("osascript", ["-l", "JavaScript", "-e", script]));
+}
+
+/** The main screen's area below the menu bar and above the Dock, in points from its
+ * top left. A window without a title bar may sit under either, so the script keeps it
+ * there itself. */
+function macVisibleArea() {
+  const script = `ObjC.import("AppKit");
+const screen = $.NSScreen.screens.objectAtIndex(0);
+const frame = screen.frame, visible = screen.visibleFrame;
+JSON.stringify([visible.origin.x, frame.size.height - visible.origin.y - visible.size.height,
+  visible.size.width, visible.size.height]);`;
+  return JSON.parse(run("osascript", ["-l", "JavaScript", "-e", script]));
+}
+
+/** Bring process `pid` to the front and give its window `frame` (points). */
+function placeMacWindow(pid, [x, y, width, height]) {
+  execFileSync(
+    "osascript",
+    [
+      "-e",
+      `tell application "System Events" to tell (first process whose unix id is ${pid})
+      set frontmost to true
+      set position of window 1 to {${x}, ${y}}
+      set size of window 1 to {${width}, ${height}}
+    end tell`,
+    ],
+    { stdio: "ignore" },
+  );
+}
+
+async function captureMac(device) {
+  const binary = join(MAC_APP, MAC_BINARY);
+  if (!existsSync(binary)) {
+    throw new Error(`${MAC_APP} is missing: run pnpm run desktop:mac, or drop --no-build`);
+  }
+  // Find out about the permission before the first window rather than at its capture.
+  screenCapture([0, 0, 1, 1], join(scratch, "screen-recording-check.png"));
+  rmSync(join(scratch, "screen-recording-check.png"));
+  // The app keeps its settings in $HOME/Library/Application Support/Sloppy Tanks.
+  const home = join(scratch, "mac-home");
+  rmSync(home, { recursive: true, force: true });
+  const settings = join(home, "Library/Application Support/Sloppy Tanks");
+  mkdirSync(settings, { recursive: true });
+  await takeShots(device, async (shot) => {
+    log(device, `${shot.name}: launching ${launchArguments(shot).join(" ")}`);
+    const launched = Date.now();
+    // A rewritten settings file each launch: a stray V or click on the eye button saves
+    // the chase camera, which the next launch would open in.
+    writeFileSync(join(settings, "settings.json"), JSON.stringify(SETTINGS));
+    const app = spawn(binary, launchArguments(shot), {
+      env: { ...process.env, HOME: home },
+      stdio: "ignore",
+    });
+    try {
+      for (let tries = 0; !macWindows(app.pid).length; tries++) {
+        if (tries > 100) throw new Error("the Mac app opened no window");
+        await sleep(200);
+      }
+      // The largest window the visible area holds, at its top left; the region it covers,
+      // in points.
+      const [left, top, width, height] = macVisibleArea();
+      const points = MAC_WINDOWS.find(([w, h]) => w <= width && h <= height);
+      if (!points) {
+        throw new Error(`the screen holds no ${MAC_WINDOWS.at(-1).join("×")} point window`);
+      }
+      // The window as it stands when it is in place: the size this capture takes, which
+      // a window behind the front app (drawn at 98%) does not read. The window list never
+      // missed the window, but System Events now and then cannot see it for seconds while
+      // the app loads an arena, so it is only asked to move the window when it is out of
+      // place, and given half a minute (a battle's first shot is 50 s in).
+      // A capture takes the screen, so another app's window over the game's (the player
+      // went on with their day) would be in it: the window must be clear as well.
+      const content = async () => {
+        for (let tries = 0; ; tries++) {
+          const window = macWindows(app.pid)[0];
+          const bounds = window?.bounds;
+          const sized = bounds?.Width === points[0] && bounds?.Height === points[1];
+          if (sized && !window.covered) {
+            return [bounds.X, bounds.Y, bounds.Width, bounds.Height];
+          }
+          if (tries === 150) {
+            const state = !bounds
+              ? "gone"
+              : sized
+                ? "covered by another window"
+                : `${bounds.Width}×${bounds.Height}, not ${points.join("×")}`;
+            throw new Error(`the Mac app's window is ${state}`);
+          }
+          try {
+            placeMacWindow(app.pid, [left, top, ...points]);
+          } catch {
+            // Asked again on the next try.
+          }
+          await sleep(200);
+        }
+      };
+      const capture = async (name) => {
+        const region = await content();
+        const file = scratchFile(device, name);
+        screenCapture(region, file);
+        // A Retina display captures two pixels a point.
+        keep({ ...device, size: [region[2] * 2, region[3] * 2] }, file, name);
+      };
+      await content();
+      await shoot(device, shot, launched, capture);
+    } finally {
+      app.kill();
+    }
+  });
+}
+
+/** The screen's `region` (x, y, width and height in points) into `file`. */
+function screenCapture(region, file) {
+  try {
+    execFileSync("screencapture", ["-x", "-R", region.join(","), file], {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  } catch (error) {
+    throw new Error(
+      `screencapture failed (${String(error.stderr).trim()}): give the app running this ` +
+        "script the Screen Recording permission (System Settings, Privacy & Security)",
+      { cause: error },
+    );
+  }
+}
+
+// ---------------------------------------------------------------- main
+
+if (process.platform !== "darwin") {
+  console.error("The App Store screenshots need a Mac with Xcode's simulators.");
+  process.exit(1);
+}
+const ios = devices.filter((device) => !device.mac);
+const mac = devices.find((device) => device.mac);
+if (!process.argv.includes("--no-build")) {
+  const build = (mode) =>
+    execFileSync("node", [join(root, "scripts/build-desktop.mjs"), mode, "--single-player"], {
+      stdio: "inherit",
+    });
+  if (ios.length) build("--ios-simulator");
+  if (mac) build("--mac");
+}
+mkdirSync(scratch, { recursive: true });
+const failures = [];
+const attempt = async (device, work) => {
+  try {
+    return await work();
+  } catch (error) {
+    failures.push(device);
+    console.error(`[${device.id}] ${error.message}`);
+  }
+};
+// The simulators are booted and installed one by one, then play side by side; the Mac
+// app, whose window takes the screen, after them.
+const prepared = [];
+for (const device of ios) {
+  const simulator = await attempt(device, () => prepareIos(device));
+  if (simulator) prepared.push(simulator);
+}
+await Promise.all(
+  prepared.map((simulator) => attempt(simulator.device, () => captureIos(simulator))),
+);
+for (const { udid, booted } of prepared) {
+  if (booted) run("xcrun", ["simctl", "shutdown", udid]);
+}
+if (mac) await attempt(mac, () => captureMac(mac));
+console.log(`Screenshots in ${output}`);
+for (const [id, names] of missing) {
+  console.error(
+    `[${id}] missing ${names.join(", ")}; retake them with\n` +
+      `  pnpm run screenshots:app-store -- --no-build --only ${id} --shots ${names.join(",")}`,
+  );
+}
+if (failures.length || missing.size) process.exit(1);

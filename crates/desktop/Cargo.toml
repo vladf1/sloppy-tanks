@@ -16,6 +16,9 @@ path = "src/main.rs"
 # with egui_glow. The native app needs neither: it draws with wgpu on Metal or Direct3D 12.
 webgpu = ["sloppy-web/webgpu", "dep:egui-wgpu"]
 webgl = ["sloppy-web/webgl", "dep:egui_glow"]
+# A build without multiplayer (`build-desktop.mjs --single-player`): Battle Setup offers
+# single player alone and the command line opens no room.
+single-player = []
 
 [dependencies]
 sloppy-core.workspace = true

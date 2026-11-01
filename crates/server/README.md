@@ -6,8 +6,10 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the room timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
-browser engine runs. Production and the dev site each run it on their own Vultr
-machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
+browser engine runs. Before the host sees a join, `match_room.rs` replaces an offensive
+player name (rustrict's lists, `player_names.rs`) with a callsign such as `Tanker 3`,
+so strangers never read it; the lists stay out of core and the page. Production and
+the dev site each run it on their own Vultr machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
 the server directory (https://directory.sloppytanks.com) lists them.
 
 ```sh

@@ -28,6 +28,76 @@ pub fn is_phone() -> bool {
     }
 }
 
+/// UIKit's `UIEdgeInsets`, in points.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct EdgeInsets {
+    top: f64,
+    left: f64,
+    bottom: f64,
+    right: f64,
+}
+
+// SAFETY: the layout of `UIEdgeInsets`: four `CGFloat`s, which are `f64` on 64-bit iOS.
+unsafe impl objc2::Encode for EdgeInsets {
+    const ENCODING: objc2::Encoding = objc2::Encoding::Struct("UIEdgeInsets", &[f64::ENCODING; 4]);
+}
+
+/// The window's safe area in points, turned the way the interface is. winit's window
+/// joins its scene after it was made (`attach_to_scene`), and UIKit keeps giving such a
+/// window the upright insets when the scene turns sideways (62 points at the top and 34
+/// at the bottom, none at the sides, in a 874×402 window): Battle Setup sat under the
+/// Dynamic Island and lost its bottom row. Sideways, a phone keeps both sides clear of
+/// the island and the home indicator's strip at the bottom.
+pub fn safe_area_insets(window: &Window) -> Option<egui::SafeAreaInsets> {
+    use objc2::msg_send;
+    use objc2::rc::Retained;
+    use objc2::runtime::AnyObject;
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    /// `UIInterfaceOrientationLandscapeRight` and `…LandscapeLeft`.
+    const SIDEWAYS: [isize; 2] = [3, 4];
+    /// The home indicator's strip at the bottom of a sideways phone, in points.
+    const SIDEWAYS_HOME_INDICATOR: f64 = 21.0;
+    let handle = window.window_handle().ok()?;
+    let RawWindowHandle::UiKit(handle) = handle.as_raw() else {
+        return None;
+    };
+    let view = handle.ui_view.as_ptr().cast::<AnyObject>();
+    // SAFETY: `ui_view` is winit's live view and we are on the main thread, where winit
+    // runs; `window`, `safeAreaInsets`, `windowScene` and `interfaceOrientation` are
+    // documented UIKit messages, and every object is retained while it is used.
+    let (mut insets, orientation) = unsafe {
+        let ui_window: Option<Retained<AnyObject>> = msg_send![view, window];
+        let ui_window = ui_window?;
+        let insets: EdgeInsets = msg_send![&*ui_window, safeAreaInsets];
+        let scene: Option<Retained<AnyObject>> = msg_send![&*ui_window, windowScene];
+        let orientation: isize = msg_send![&*scene?, interfaceOrientation];
+        (insets, orientation)
+    };
+    let upright_insets = insets.left == 0.0 && insets.right == 0.0;
+    if is_phone() && SIDEWAYS.contains(&orientation) && upright_insets {
+        let side = insets.top;
+        let bottom = if insets.bottom > 0.0 {
+            SIDEWAYS_HOME_INDICATOR
+        } else {
+            0.0
+        };
+        insets = EdgeInsets {
+            top: 0.0,
+            left: side,
+            bottom,
+            right: side,
+        };
+    }
+    Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
+        top: insets.top as f32,
+        left: insets.left as f32,
+        right: insets.right as f32,
+        bottom: insets.bottom as f32,
+    }))
+}
+
 /// Put the window winit made into the app's window scene and show it. Call once,
 /// right after creating the window (winit's `resumed` comes after the scene is active).
 pub fn attach_to_scene(window: &Window) {

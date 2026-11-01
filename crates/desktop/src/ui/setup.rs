@@ -1605,7 +1605,7 @@ fn sheet(
             // The play tabs over their panel, the open one covering its edge.
             let multiplayer = state.rooms.multiplayer;
             tray(&painter, panels, !multiplayer, multiplayer);
-            for (index, tab) in PLAY_TABS.into_iter().enumerate() {
+            for (index, tab) in play_tabs().enumerate() {
                 let open = multiplayer == tab.0;
                 let left = panels.left() + index as f32 * (panels.width() - tab_width);
                 let rect = if open {
@@ -1827,20 +1827,8 @@ fn sheet(
         });
     // Build metadata belongs to the screen's corner, outside the setup sheet.
     let frame_bottom = offset.y + frame.bottom() * scale;
-    if frame_bottom + 8.0 <= screen.bottom() - 20.0 {
-        let painter = context.layer_painter(LayerId::new(
-            Order::Foreground,
-            Id::unique("setup build label"),
-        ));
-        paint::text(
-            &painter,
-            screen.right_bottom() - vec2(12.0, 9.0),
-            Align2::RIGHT_BOTTOM,
-            view.build,
-            egui::FontId::proportional(10.0),
-            fade(TEXT_DIM, 0.7),
-            0.4,
-        );
+    if frame_bottom + 8.0 <= screen.bottom() - (CORNER_LINES.y - 10.0) {
+        build_label(context, screen, view);
     }
 }
 
@@ -1943,6 +1931,14 @@ const PLAY_TABS: [(bool, &str, &str); 2] = [
     (false, "SINGLE PLAYER", "You versus the bots"),
     (true, "MULTIPLAYER", "Online rooms with friends"),
 ];
+
+/// The play tabs this build offers, in their places: single player alone where it
+/// leaves multiplayer out.
+fn play_tabs() -> impl Iterator<Item = (bool, &'static str, &'static str)> {
+    PLAY_TABS
+        .into_iter()
+        .filter(|tab| !tab.0 || crate::app::offers_multiplayer())
+}
 
 /// The page's `clamp(least, share × viewport width, most)` type.
 fn viewport_size(viewport_width: f32, least: f32, share: f32, most: f32) -> f32 {
@@ -2664,7 +2660,7 @@ fn stacked_setup(
                     });
             });
         // The build line keeps the screen's corner only where the column leaves it clear.
-        if page + 20.0 <= screen.height() {
+        if page + CORNER_LINES.y - 10.0 <= screen.height() {
             build_label(context, screen, view);
         }
         return;
@@ -2717,13 +2713,22 @@ fn stacked_setup(
         });
     // The build line keeps the screen's corner where the menu leaves it clear.
     let menu = Rect::from_min_size(offset, stack.size * scale);
-    let label = Rect::from_min_max(screen.right_bottom() - vec2(140.0, 30.0), screen.max);
+    let label = Rect::from_min_max(screen.right_bottom() - CORNER_LINES, screen.max);
     if menu.right() <= label.left() || menu.bottom() <= label.top() {
         build_label(context, screen, view);
     }
 }
 
-/// The build line in the screen's bottom-right corner, outside Battle Setup.
+/// What the corner's lines need clear of Battle Setup: the build line, and over it in a
+/// page the App Store link.
+const CORNER_LINES: Vec2 = if cfg!(target_arch = "wasm32") {
+    vec2(220.0, 44.0)
+} else {
+    vec2(140.0, 30.0)
+};
+
+/// The build line in the screen's bottom-right corner, outside Battle Setup, and over it
+/// in a page the link to the apps (the apps name no store of their own).
 fn build_label(context: &egui::Context, screen: Rect, view: &View) {
     let painter = context.layer_painter(LayerId::new(
         Order::Foreground,
@@ -2738,6 +2743,47 @@ fn build_label(context: &egui::Context, screen: Rect, view: &View) {
         fade(TEXT_DIM, 0.7),
         0.4,
     );
+    // Battle Setup is centred, so where the right corner is clear the left one is too.
+    #[cfg(target_arch = "wasm32")]
+    {
+        app_store_link(
+            context,
+            screen.right_bottom() - vec2(12.0, 25.0),
+            Align2::RIGHT_BOTTOM,
+        );
+        app_store_link(
+            context,
+            screen.left_bottom() + vec2(12.0, -9.0),
+            Align2::LEFT_BOTTOM,
+        );
+    }
+}
+
+/// A quiet link to the App Store apps, its `align` corner at `corner`.
+#[cfg(target_arch = "wasm32")]
+fn app_store_link(context: &egui::Context, corner: Pos2, align: Align2) {
+    const LINK: &str = "Get the iPhone, iPad and Mac app";
+    let font = egui::FontId::proportional(11.0);
+    egui::Area::new(Id::unique(("app store link", align == Align2::LEFT_BOTTOM)))
+        .order(Order::Foreground)
+        .fixed_pos(pos2(0.0, 0.0))
+        .constrain(false)
+        .show(context, |ui| {
+            let painter = ui.painter().clone();
+            let width = paint::text_width(&painter, LINK, font.clone(), 0.4);
+            let rect = align.anchor_size(corner, vec2(width, 14.0));
+            let response = ui.interact(rect, ui.scope_id().with("button"), Sense::click());
+            paint::labelled(&response, true, "App Store");
+            let ink = if response.hovered() {
+                Color32::WHITE
+            } else {
+                fade(TEXT_DIM, 0.85)
+            };
+            paint::text(&painter, corner, align, LINK, font, ink, 0.4);
+            if response.clicked() {
+                crate::links::open_url(ui.ctx(), crate::links::APP_STORE);
+            }
+        });
 }
 
 /// Draw a stacked Battle Setup laid out as `stack`, its menu's top-left at `origin`.
@@ -2775,10 +2821,10 @@ fn draw_stack(
         &painter,
         tray_rect,
         tabs[0].left() <= tray_rect.left() + 0.5,
-        tabs[1].right() >= tray_rect.right() - 0.5,
+        tabs[1].right() >= tray_rect.right() - 0.5 && crate::app::offers_multiplayer(),
     );
     let dress = window.tab_dress(stack.tab_line);
-    for (tab, rect) in PLAY_TABS.into_iter().zip(tabs) {
+    for (tab, rect) in play_tabs().zip(tabs) {
         if play_tab(ui, &painter, rect, tab, multiplayer == tab.0, dress) {
             state.rooms.multiplayer = tab.0;
         }
@@ -3428,7 +3474,7 @@ fn phone_setup(
                     }
                     // The play tabs span the sheet's top edge over the tray.
                     let tab_width = (width - TABS_GAP) / 2.0;
-                    for (index, tab) in PLAY_TABS.into_iter().enumerate() {
+                    for (index, tab) in play_tabs().enumerate() {
                         let open = multiplayer == tab.0;
                         let tab_left = left + index as f32 * (width - tab_width);
                         // The other tab stands lower, still a thumb's height.
@@ -3449,7 +3495,7 @@ fn phone_setup(
                         pos2(left, y),
                         pos2(left + width, sheet.bottom() - pad_bottom),
                     );
-                    tray(&painter, tray_rect, true, true);
+                    tray(&painter, tray_rect, true, crate::app::offers_multiplayer());
                     let inner = tray_rect.shrink2(vec2(
                         PHONE_TRAY_PADDING,
                         PHONE_TRAY_PADDING + if upright { PHONE_TRAY_BORDER } else { 0.0 },

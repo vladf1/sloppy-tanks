@@ -31,6 +31,7 @@
     "desktop:windows": "node scripts/build-desktop.mjs --windows",
     "ios": "node scripts/build-desktop.mjs --ios",
     "ios:simulator": "node scripts/build-desktop.mjs --ios-simulator",
+    "screenshots:app-store": "node scripts/app-store-screenshots.mjs",
     "check:browser": "node scripts/browser-checks.mjs",
     "check:desktop-ui": "node scripts/desktop-ui-gauntlet.mjs",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs && pnpm run generate:pickup-atlas",

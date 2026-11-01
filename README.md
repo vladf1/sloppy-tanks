@@ -347,6 +347,15 @@ bundle carries a privacy manifest (`PrivacyInfo.xcprivacy`) with Apple's reason 
 required-reason API its executable uses, and the build stops at one the script has no
 reason for (`REQUIRED_REASON_APIS`).
 
+`--single-player` builds any of the apps without multiplayer (the `single-player` feature
+of `sloppy-desktop`): Battle Setup shows the Single player tab alone and `--multiplayer`
+and `--room` open nothing. CI's App Store builds are single player for now, so the first
+release leaves online rooms and their player names out of review. The store listing points at two pages the site serves beside
+the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
+every app and the page also open from Settings' About row; keep the privacy policy true
+to what the game sends. The web page's Battle Setup links to the apps' App Store page in
+its bottom-right corner (`links::APP_STORE`, a placeholder until the app is published).
+
 ## Assets
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
