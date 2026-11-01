@@ -310,8 +310,19 @@ JSON.stringify(windows);`;
   return JSON.parse(run("osascript", ["-l", "JavaScript", "-e", script]));
 }
 
-/** Bring process `pid` to the front and give its window `frame` (points, title bar
- * included). */
+/** The main screen's area below the menu bar and above the Dock, in points from its
+ * top left. A window without a title bar may sit under either, so the script keeps it
+ * there itself. */
+function macVisibleArea() {
+  const script = `ObjC.import("AppKit");
+const screen = $.NSScreen.screens.objectAtIndex(0);
+const frame = screen.frame, visible = screen.visibleFrame;
+JSON.stringify([visible.origin.x, frame.size.height - visible.origin.y - visible.size.height,
+  visible.size.width, visible.size.height]);`;
+  return JSON.parse(run("osascript", ["-l", "JavaScript", "-e", script]));
+}
+
+/** Bring process `pid` to the front and give its window `frame` (points). */
 function placeMacWindow(pid, [x, y, width, height]) {
   run("osascript", [
     "-e",
@@ -340,7 +351,9 @@ async function captureMac(device) {
   for (const shot of shots) {
     log(device, `${shot.name}: launching ${launchArguments(shot).join(" ")}`);
     const launched = Date.now();
-    const app = spawn(binary, launchArguments(shot), {
+    // Borderless: a titled window's bottom corners are rounded and its sides edged, and
+    // both would show in a capture of its content.
+    const app = spawn(binary, [...launchArguments(shot), "--borderless"], {
       env: { ...process.env, HOME: home },
       stdio: "ignore",
     });
@@ -351,19 +364,23 @@ async function captureMac(device) {
         await sleep(200);
         window = macWindows(app.pid)[0];
       }
-      // The title bar is what the window has above its content (`WINDOW_SIZE` at first).
-      const titleBar = window.bounds.Height - MAC_FIRST_WINDOW[1];
-      // The largest content the screen holds above the Dock, at its top left; the region
-      // it covers, in points.
-      const content = () => {
-        for (const points of MAC_WINDOWS) {
-          placeMacWindow(app.pid, [0, 0, points[0], points[1] + titleBar]);
-          const { X, Y, Width, Height } = macWindows(app.pid)[0].bounds;
-          if (Width === points[0] && Height === points[1] + titleBar) {
-            return [X, Y + titleBar, ...points];
-          }
-        }
+      if (window.bounds.Height !== MAC_FIRST_WINDOW[1]) {
+        throw new Error("the Mac app's window has a frame: build one that takes --borderless");
+      }
+      // The largest window the visible area holds, at its top left; the region it covers,
+      // in points.
+      const [left, top, width, height] = macVisibleArea();
+      const points = MAC_WINDOWS.find(([w, h]) => w <= width && h <= height);
+      if (!points) {
         throw new Error(`the screen holds no ${MAC_WINDOWS.at(-1).join("×")} point window`);
+      }
+      const content = () => {
+        placeMacWindow(app.pid, [left, top, ...points]);
+        const { X, Y, Width, Height } = macWindows(app.pid)[0].bounds;
+        if (Width !== points[0] || Height !== points[1]) {
+          throw new Error(`the Mac app's window is ${Width}×${Height}, not ${points.join("×")}`);
+        }
+        return [X, Y, Width, Height];
       };
       const capture = (name) => {
         const region = content();

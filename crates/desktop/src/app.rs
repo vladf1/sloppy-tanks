@@ -71,6 +71,9 @@ pub struct Options {
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
     pub autoplay: bool,
+    /// `--borderless`: a window without a title bar or frame, whose square corners
+    /// the App Store screenshots take whole (`scripts/app-store-screenshots.mjs`).
+    pub borderless: bool,
     /// `--directory <url>`: the server directory to list rooms from.
     pub directory: Option<String>,
     /// `--map <id>`: Battle Setup's map in place of the saved one, an extra level only
@@ -664,7 +667,7 @@ impl Session {
         }
         let window = Arc::new(
             event_loop
-                .create_window(window_attributes(&prefs))
+                .create_window(window_attributes(&prefs, options))
                 .map_err(|error| error.to_string())?,
         );
         #[cfg(target_os = "ios")]
@@ -1459,11 +1462,12 @@ impl Session {
 
 /// A resizable window at its first size, or fullscreen as the player left it.
 #[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
-fn window_attributes(prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(prefs: &Preferences, options: &Options) -> WindowAttributes {
     let attributes = Window::default_attributes()
         .with_title("Sloppy Tanks")
         .with_inner_size(WINDOW_SIZE)
         .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_decorations(!options.borderless)
         .with_window_icon(window_icon());
     if prefs.fullscreen {
         attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
@@ -1477,7 +1481,7 @@ fn window_attributes(prefs: &Preferences) -> WindowAttributes {
 /// the system's edge swipes wait for a second swipe, so a thumb on the stick or the
 /// toolbar stays in the game.
 #[cfg(target_os = "ios")]
-fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(_prefs: &Preferences, _options: &Options) -> WindowAttributes {
     use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
     Window::default_attributes()
         .with_valid_orientations(ValidOrientations::LandscapeAndPortrait)
@@ -1489,7 +1493,7 @@ fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
 /// A canvas filling the page (`index.html` sizes it). Fullscreen waits for the
 /// player's click: a page may not take the screen by itself.
 #[cfg(target_arch = "wasm32")]
-fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+fn window_attributes(_prefs: &Preferences, _options: &Options) -> WindowAttributes {
     use winit::platform::web::WindowAttributesExtWebSys;
     Window::default_attributes()
         .with_title("Sloppy Tanks")
