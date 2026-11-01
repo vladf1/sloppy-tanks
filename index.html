@@ -374,10 +374,13 @@
       };
       // iOS takes the GPU from a page in the background, and Safari reports the device
       // lost, without a message, once the player comes back. Both renderers say
-      // "GPU device lost" (crates/render/src/gpu/*/context.rs). A reload brings the game
-      // back (a room's address rejoins it), unless the last one was for the same reason
-      // a moment ago: then the device is lost for good and the page says so.
-      const LOST = /GPU device lost/;
+      // "GPU device lost" (crates/render/src/gpu/*/context.rs); before that notice
+      // arrives, Safari may instead throw an InvalidStateError from a GPU object
+      // ("GPUCommandEncoder.beginRenderPass: Unable to begin render pass"), which wgpu
+      // panics on. A reload brings the game back (a room's address rejoins it), unless
+      // the last one was for the same reason a moment ago: then the device is lost for
+      // good and the page says so.
+      const LOST = /GPU device lost|InvalidStateError: GPU\w+\./;
       const RESTARTED_AT = "sloppy-gpu-restart";
       const RESTART_SPACING_MS = 60000;
       /** Reload for a lost GPU once the page is shown; false when this would loop. */
