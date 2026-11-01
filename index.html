@@ -292,6 +292,197 @@
         <button id="boot-retry" type="button" hidden>TRY AGAIN</button>
       </div>
     </div>
+    <!-- An opt-in trace for devices with no inspector at hand: `?trace` turns it on for
+         this browser (`?trace=off` off). Each second, and at every GPU, network or page
+         event, it notes what the page does in `localStorage`, which outlives a page the
+         system killed, and uploads the notes to the directory's `/traces`. -->
+    <script>
+      (() => {
+        const FLAG = "sloppy-trace";
+        const NOTES = "sloppy-trace-notes";
+        const MAX_NOTES = 600;
+        const TRACES = "https://directory.sloppytanks.com/traces";
+        const query = new URLSearchParams(location.search);
+        try {
+          if (query.has("trace")) {
+            if (query.get("trace") === "off") localStorage.removeItem(FLAG);
+            else localStorage.setItem(FLAG, String(Date.now()));
+          }
+          if (!localStorage.getItem(FLAG)) return;
+        } catch {
+          return;
+        }
+        const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        let notes = [];
+        try {
+          notes = JSON.parse(localStorage.getItem(NOTES) ?? "[]");
+        } catch {}
+        const started = performance.timeOrigin;
+        const gpu = { devices: 0, buffers: 0, textures: 0, peak: 0, lost: [] };
+        let wasm;
+        const note = (kind, detail = "") => {
+          const at = new Date().toISOString().slice(11, 23);
+          notes.push(`${at} ${kind} ${String(detail).slice(0, 600)}`);
+          if (notes.length > MAX_NOTES) notes.splice(0, notes.length - MAX_NOTES);
+        };
+        const save = () => {
+          try {
+            localStorage.setItem(NOTES, JSON.stringify(notes));
+          } catch {}
+        };
+        const upload = () =>
+          fetch(`${TRACES}?id=${id}`, {
+            method: "POST",
+            body: notes.join("\n"),
+            keepalive: true,
+          }).catch(() => {});
+        const mb = (bytes) => (bytes / 1e6).toFixed(1);
+        note(
+          "load",
+          `${location.href} ${innerWidth}x${innerHeight}@${devicePixelRatio} ${navigator.userAgent}`,
+        );
+        // The previous load's notes go up first: it may have ended without a word.
+        upload();
+
+        for (const name of ["instantiateStreaming", "instantiate"]) {
+          const original = WebAssembly[name];
+          WebAssembly[name] = async (...args) => {
+            const result = await original.apply(WebAssembly, args);
+            const instance = result.instance ?? result;
+            for (const value of Object.values(instance.exports ?? {})) {
+              if (value instanceof WebAssembly.Memory) wasm = value;
+            }
+            return result;
+          };
+        }
+        const bytesPerTexel = (format) =>
+          /32float|32uint|32sint/.test(format) && /rgba/.test(format)
+            ? 16
+            : /rgba16|rg32|depth32float-stencil8/.test(format)
+              ? 8
+              : /^r8|stencil8$/.test(format)
+                ? 1
+                : /^rg8|r16|depth16/.test(format)
+                  ? 2
+                  : 4;
+        if (globalThis.GPUAdapter) {
+          const requestDevice = GPUAdapter.prototype.requestDevice;
+          GPUAdapter.prototype.requestDevice = async function (...options) {
+            const device = await requestDevice.apply(this, options);
+            const number = ++gpu.devices;
+            note("gpu-device", `#${number} ${JSON.stringify(this.info ?? {})}`);
+            device.lost.then((info) => {
+              gpu.lost.push(number);
+              note("gpu-lost", `#${number} ${info.reason} "${info.message}"`);
+              save();
+              upload();
+            });
+            device.addEventListener("uncapturederror", (event) =>
+              note(
+                "gpu-error",
+                `#${number} ${event.error?.constructor?.name} ${event.error?.message}`,
+              ),
+            );
+            const track = (kind, bytes, object, label) => {
+              gpu[kind] += bytes;
+              gpu.peak = Math.max(gpu.peak, gpu.buffers + gpu.textures);
+              if (bytes >= 8e6) note(`gpu-${kind}`, `#${number} ${label} ${mb(bytes)} MB`);
+              const destroy = object.destroy.bind(object);
+              let live = true;
+              object.destroy = () => {
+                if (live) gpu[kind] -= bytes;
+                live = false;
+                destroy();
+              };
+              return object;
+            };
+            const createBuffer = device.createBuffer.bind(device);
+            device.createBuffer = (d) => track("buffers", d.size, createBuffer(d), d.label);
+            const createTexture = device.createTexture.bind(device);
+            device.createTexture = (d) => {
+              const [w, h = 1, l = 1] = Array.isArray(d.size)
+                ? d.size
+                : [d.size.width, d.size.height, d.size.depthOrArrayLayers];
+              let texels = 0;
+              for (let m = 0; m < (d.mipLevelCount ?? 1); m++) {
+                texels += Math.max(1, w >> m) * Math.max(1, h >> m) * l;
+              }
+              const bytes = texels * bytesPerTexel(d.format) * (d.sampleCount ?? 1);
+              const label = `${d.label} ${w}x${h}x${l} ${d.format} x${d.sampleCount ?? 1}`;
+              return track("textures", bytes, createTexture(d), label);
+            };
+            const destroyDevice = device.destroy.bind(device);
+            device.destroy = () => {
+              note("gpu-destroy", `#${number}`);
+              destroyDevice();
+            };
+            return device;
+          };
+        }
+        const NativeSocket = WebSocket;
+        window.WebSocket = class extends NativeSocket {
+          constructor(...args) {
+            super(...args);
+            const url = String(args[0]).replace(/\?.*/, "");
+            note("socket", `open ${url}`);
+            this.addEventListener("open", () => note("socket", `opened ${url}`));
+            this.addEventListener("close", (event) =>
+              note("socket", `closed ${url} ${event.code} ${event.reason}`),
+            );
+            this.addEventListener("error", () => note("socket", `error ${url}`));
+          }
+        };
+        const consoleError = console.error.bind(console);
+        console.error = (...args) => {
+          note("console-error", args.map(String).join(" "));
+          save();
+          consoleError(...args);
+        };
+        addEventListener("error", (event) =>
+          note("error", `${event.message} ${event.error?.stack ?? ""}`),
+        );
+        addEventListener("unhandledrejection", (event) =>
+          note(
+            "rejection",
+            `${event.reason?.message ?? event.reason} ${event.reason?.stack ?? ""}`,
+          ),
+        );
+        addEventListener("sloppy:failed", (event) => {
+          note("failed", event.detail);
+          save();
+          upload();
+        });
+        addEventListener("visibilitychange", () => note("visibility", document.visibilityState));
+        addEventListener("pagehide", () => {
+          note("pagehide");
+          save();
+          upload();
+        });
+        new PerformanceObserver((list) => {
+          for (const entry of list.getEntries()) {
+            if (entry.name.startsWith("sloppy:")) note("mark", entry.name);
+          }
+        }).observe({ type: "mark", buffered: true });
+        let seconds = 0;
+        setInterval(() => {
+          const canvas = document.querySelector("canvas");
+          note(
+            "tick",
+            [
+              `t=${Math.round((Date.now() - started) / 1000)}s`,
+              `shell=${document.documentElement.dataset.shell ?? "-"}`,
+              `wasm=${wasm ? mb(wasm.buffer.byteLength) : "-"}MB`,
+              `gpu=${mb(gpu.buffers)}+${mb(gpu.textures)}MB peak=${mb(gpu.peak)}`,
+              `devices=${gpu.devices} lost=${gpu.lost.join(",") || "-"}`,
+              `canvas=${canvas ? `${canvas.width}x${canvas.height}` : "-"}`,
+              document.visibilityState,
+            ].join(" "),
+          );
+          save();
+          if (++seconds % 5 === 0) upload();
+        }, 1000);
+      })();
+    </script>
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
