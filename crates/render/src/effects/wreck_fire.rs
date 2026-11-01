@@ -97,6 +97,11 @@ const GLOW_SIZE: f32 = 4.5;
 const GLOW_COLOR: [f32; 3] = [0.9, 0.34, 0.07];
 const FIRE_LIGHT: f64 = 13.0;
 const FIRE_LIGHT_COLOR: u32 = 0xff9a55;
+/// The light's (and the ground glow's) share of the fire, steady whatever the
+/// flames' flicker. Swinging with it (±20%) breathed over a wall facing the fire like
+/// a failing fluorescent tube, and wrecks burning alike kept trading the few light
+/// slots, which switched a whole pool of light off and on; the flames keep it.
+const FIRE_LIGHT_SHARE: f64 = 0.8;
 /// The firelight hangs this high over the hull (m), so the hull it burns on is
 /// lit warm from above rather than painted orange.
 const FIRE_LIGHT_HEIGHT: f32 = 3.2;
@@ -157,7 +162,7 @@ struct Burner {
     /// grows up from the fire rather than appearing whole.
     column: f64,
     ember_clock: f64,
-    /// This frame's fire strength and flicker, for its light.
+    /// This frame's fire strength, for its light.
     fire: f64,
     /// Each smoke puff's swirl and each fireball's jitter for the lap it is on
     /// (lap, value): they change only when a new lap starts.
@@ -458,7 +463,7 @@ fn draw(
         * if burner.burnout { BURNOUT_FIRE } else { 1.0 };
     let flicker = 0.8
         + 0.2 * (time * 13.0 + burner.seed * 40.0).sin() * (time * 7.3 + burner.seed * 9.0).sin();
-    burner.fire = fire * flicker;
+    burner.fire = fire * FIRE_LIGHT_SHARE;
     // The column stands over a wreck at rest; a flying hull trails its smoke.
     let smoke = settled
         * (1.0 - smoothstep(age, SMOULDER_SECONDS * 0.55, SMOULDER_SECONDS))

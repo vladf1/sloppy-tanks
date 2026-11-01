@@ -263,4 +263,17 @@ guarantees for other devices.
   regenerates it after the web icons. The checked-in icon and its
   source hashes let desktop packaging copy it without invoking Cargo or installing
   the image library in CI; see `assets/texture-sources/README.md`.
+- `app-store-screenshots.mjs` (`bun run screenshots:app-store`) builds the iOS simulator
+  app and the Mac app and captures App Store Connect's screenshots at Apple's landscape
+  sizes into `artifacts/app-store/screenshots/<device>/`: iPhone 6.9" (2868×1320) and
+  6.3" (2622×1206), iPad 13" (2752×2064) and Mac (2880×1800, or 2560×1600 when the screen
+  above the Dock is smaller). Each shows Battle Setup, autoplayed seeded battles on the
+  three standard maps (`--map`, `--seed`, `--autoplay`) and the last one's battle report,
+  which waits out the five-minute round (`--no-report` skips it). The autoplayed match
+  varies between runs, so a battle can catch the player's tank destroyed: two later
+  moments of each go to `alternates/` to swap in. The simulators, created
+  once as "Sloppy Tanks <device>", run side by side with a landscape-only copy of the
+  app; the Mac app's window opens on screen and needs the Screen Recording permission
+  for `screencapture`. `--no-build` reuses the built apps and `--only ipad-13,mac` picks
+  devices.
 - `dev-site.ts` plus `deploy-dev.mjs` build and publish the dev site.

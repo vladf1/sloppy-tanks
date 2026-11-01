@@ -1,6 +1,6 @@
 {
   "name": "sloppy-tanks",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -23,6 +23,7 @@
     "desktop:windows": "bun scripts/build-desktop.mjs --windows",
     "ios": "bun scripts/build-desktop.mjs --ios",
     "ios:simulator": "bun scripts/build-desktop.mjs --ios-simulator",
+    "screenshots:app-store": "bun scripts/app-store-screenshots.mjs",
     "check:browser": "bun scripts/browser-checks.mjs",
     "check:desktop-ui": "bun scripts/desktop-ui-gauntlet.mjs",
     "generate:textures": "bun scripts/generate-textures.ts && bun scripts/optimize-textures.mjs && bun run generate:pickup-atlas",

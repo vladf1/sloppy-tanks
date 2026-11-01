@@ -122,7 +122,7 @@ times stronger. Rooms on these levels appear in the room list only on such a pag
 | Escape / Pause     | Pause                                                    |
 | ⚙ button           | Settings: sound, graphics, battle speeds                 |
 
-Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
+Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel, tablets without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
 
 In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc frees the cursor and a second Esc pauses), WASD steers relative to where you look, the compass above the ammo strip shows which way the hull points, and pickups turn see-through. On touchscreens the drive stick's sideways push turns the view (forward and back drive toward it), and dragging the finger that fires fine-tunes the aim. While destroyed, you watch from above and the pointer stays captured for the respawn; press Esc to pick another tank.
 
@@ -361,6 +361,15 @@ certificates and profiles expire after a year and are replaced there. Every iOS 
 bundle carries a privacy manifest (`PrivacyInfo.xcprivacy`) with Apple's reason for each
 required-reason API its executable uses, and the build stops at one the script has no
 reason for (`REQUIRED_REASON_APIS`).
+
+`--single-player` builds any of the apps without multiplayer (the `single-player` feature
+of `sloppy-desktop`): Battle Setup shows the Single player tab alone and `--multiplayer`
+and `--room` open nothing. CI's App Store builds are single player for now, so the first
+release leaves online rooms and their player names out of review. The store listing points at two pages the site serves beside
+the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
+every app and the page also open from Settings' About row; keep the privacy policy true
+to what the game sends. The web page's Battle Setup links to the apps' App Store page in
+its bottom-left corner (`links::APP_STORE`).
 
 ## Assets
 

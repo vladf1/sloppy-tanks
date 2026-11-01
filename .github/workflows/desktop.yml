@@ -4,7 +4,8 @@
 # uploaded as this run's artifacts. Linux CI (check.yml) leaves the crate out, since its
 # window, audio and GPU dependencies need system libraries there.
 # On main the iOS and macOS apps are also built for the App Store and uploaded to App
-# Store Connect, where TestFlight offers them to testers once Apple has processed them.
+# Store Connect, where TestFlight offers them to testers once Apple has processed them,
+# for now without multiplayer (`--single-player`).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -223,8 +224,9 @@ jobs:
           cargo-cache: ${{ matrix.cargo-cache }}
           js-dependencies: "false"
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
-      # processed the build and fails if Apple finds it invalid.
-      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
+      # processed the build and fails if Apple finds it invalid. The App Store's first
+      # release is single player: online rooms and their player names come later.
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --single-player --upload
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}

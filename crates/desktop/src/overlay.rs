@@ -198,6 +198,10 @@ impl Overlay {
             entry.before_pass(&self.context, self.input.egui_input_mut());
         }
         let mut input = self.input.take_egui_input(&self.window);
+        #[cfg(target_os = "ios")]
+        if let Some(insets) = crate::ios::safe_area_insets(&self.window) {
+            input.safe_area_insets = Some(insets);
+        }
         let (width, height, scale) = crate::app::css_size(&self.window);
         input.screen_rect = Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,

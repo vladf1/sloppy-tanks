@@ -101,7 +101,7 @@ use textures::TextureStore;
 /// MSAA samples of the main view and the water reflection with multisampling on.
 /// WebGL takes the most up to this that its float targets support
 /// (`webgl/context.rs` `sample_count`). Without multisampling (`Renderer::new`'s
-/// `msaa`, touch devices) both draw single-sampled: WebGPU offers only 1 or 4.
+/// `msaa`, touch tablets) both draw single-sampled: WebGPU offers only 1 or 4.
 pub const SAMPLE_COUNT: u32 = 4;
 
 /// Whether a resource survives `reset_round`.

@@ -8,5 +8,6 @@ mod support;
 
 mod directory;
 mod match_room;
+mod player_names;
 mod server;
 mod socket;

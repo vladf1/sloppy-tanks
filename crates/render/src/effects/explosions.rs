@@ -190,8 +190,19 @@ pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
 /// warm, not blown out.
 const LIGHT_HEIGHT: f64 = 4.2;
 const LIGHT_LIFT: f64 = 0.8;
-/// A shell hit's brief light.
-const HIT_LIGHT: f64 = 26.0;
+/// A shell hit's brief light: its peak and how fast it dies (1/s). It fades over
+/// several frames even at 30 fps; a brighter flash gone within one such frame
+/// strobed the shade around every hit.
+const HIT_LIGHT: f64 = 11.0;
+const HIT_LIGHT_DECAY: f64 = 9.0;
+/// A blast's opening flash in its light: its peak (times the fire's) and decay
+/// (1/s), slow enough to span several frames for the same reason.
+const BLAST_FLASH: f64 = 0.55;
+const BLAST_FLASH_DECAY: f64 = 12.0;
+/// The fireball's light: its mean share of the fire and how far it wavers. A ±15%
+/// waver, partly at 9.5 Hz, shimmered over walls and shade near every blast.
+const BLAST_FIRE_LIGHT_MEAN: f64 = 0.85;
+const BLAST_FIRE_LIGHT_WAVER: f64 = 0.04;
 /// The light's color at the white flash and through the fire.
 const FLASH_LIGHT_COLOR: u32 = 0xffe4c8;
 const FIRE_LIGHT_COLOR: u32 = 0xffa465;
@@ -681,12 +692,14 @@ impl Blast {
     /// How brightly the blast lights its surroundings `t` seconds in: the
     /// flash's spike, then the flickering fireball until it burns out.
     fn fire_light(&self, t: f64, look: &Look) -> f64 {
-        // A crisp flash of a frame or two, then the fire's glow.
-        let flash = (-t * 30.0).exp();
+        // A short flash, then the fire's glow.
+        let flash = (-t * BLAST_FLASH_DECAY).exp();
         let fire = burning(fire_heat(t, COOLING / look.fire_life));
-        let flicker =
-            0.85 + 0.15 * (t * 37.0 + self.phase * 5.0).sin() * (t * 23.0 + self.phase).sin();
-        1.3 * flash + 0.6 * fire * flicker
+        let flicker = BLAST_FIRE_LIGHT_MEAN
+            + BLAST_FIRE_LIGHT_WAVER
+                * (t * 37.0 + self.phase * 5.0).sin()
+                * (t * 23.0 + self.phase).sin();
+        BLAST_FLASH * flash + 0.6 * fire * flicker
     }
 }
 
@@ -1269,7 +1282,7 @@ impl ExplosionEffects {
                     BLAST_LIGHT * BURNOUT_FIRE_SCALE * s * blast.fire_light(t, &blast.look()),
                     LIGHT_HEIGHT * s * BURNOUT_FIRE_SCALE + LIGHT_LIFT,
                 ),
-                Kind::Hit(_) => (HIT_LIGHT * (-t * 22.0).exp(), blast.y + 0.6),
+                Kind::Hit(_) => (HIT_LIGHT * (-t * HIT_LIGHT_DECAY).exp(), blast.y + 0.6),
                 _ => continue,
             };
             super::offer_light(
