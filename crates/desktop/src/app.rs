@@ -1374,9 +1374,6 @@ impl Session {
             } else {
                 self.prepare()
             };
-            // A prepared Battle Setup runs no engine frame, so a GPU lost behind its menu
-            // is noticed here.
-            let step = step.and_then(|()| self.game.error().map_or(Ok(()), Err));
             if let Err(error) = step {
                 report!("The game stopped: {error}");
                 // A page offers a reload over the shell's own words.

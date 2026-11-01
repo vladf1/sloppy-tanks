@@ -372,34 +372,6 @@
         // Enter retries, without a ring that would read as the button being chosen.
         retry.focus({ focusVisible: false });
       };
-      // iOS takes the GPU from a page in the background, and Safari reports the device
-      // lost, without a message, once the player comes back. Both renderers say
-      // "GPU device lost" (crates/render/src/gpu/*/context.rs). A reload brings the game
-      // back (a room's address rejoins it), unless the last one was for the same reason
-      // a moment ago: then the device is lost for good and the page says so.
-      const LOST = /GPU device lost/;
-      const RESTARTED_AT = "sloppy-gpu-restart";
-      const RESTART_SPACING_MS = 60000;
-      /** Reload for a lost GPU once the page is shown; false when this would loop. */
-      const restart = () => {
-        try {
-          const last = Number(sessionStorage.getItem(RESTARTED_AT)) || 0;
-          if (Date.now() - last < RESTART_SPACING_MS) return false;
-          sessionStorage.setItem(RESTARTED_AT, String(Date.now()));
-        } catch {
-          return false;
-        }
-        failed = true;
-        delete root.dataset.shell;
-        status.textContent = "Restarting the game…";
-        const reload = () => {
-          if (document.hidden) return false;
-          location.reload();
-          return true;
-        };
-        if (!reload()) addEventListener("visibilitychange", reload);
-        return true;
-      };
       /** The game's code or binary did not arrive: production's words, the detail kept. */
       const unloaded = (detail) => fail("", OFFLINE, { headline: UNLOADED, detail });
       const message = (error) => (error instanceof Error ? error.message : String(error));
@@ -407,10 +379,7 @@
       // one (out of memory). So does a browser error thrown through the shell's Wasm
       // frames (`wasm-function[n]` in every engine's stack): it skips Rust's cleanup and
       // leaves the shell mid-event, drawing no further frame.
-      addEventListener("sloppy:failed", (event) => {
-        const reason = String(event.detail);
-        if (!(LOST.test(reason) && restart())) fail(reason);
-      });
+      addEventListener("sloppy:failed", (event) => fail(String(event.detail)));
       const THROUGH_WASM = /wasm-function\[/;
       const trapped = (error) => {
         if (

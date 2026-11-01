@@ -103,13 +103,8 @@ impl Gpu {
         let error = ErrorSlot::default();
         let lost = error.clone();
         device.set_device_lost_callback(move |reason, message| {
-            // Safari gives no message when iOS took the GPU from a hidden page.
             if reason != wgpu::DeviceLostReason::Destroyed {
-                lost.set(if message.is_empty() {
-                    "GPU device lost. Reload to restart.".into()
-                } else {
-                    format!("GPU device lost: {message}. Reload to restart.")
-                });
+                lost.set(format!("GPU device lost: {message}. Reload to restart."));
             }
         });
         let validation = error.clone();
