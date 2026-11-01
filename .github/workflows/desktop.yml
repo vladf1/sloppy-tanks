@@ -22,7 +22,7 @@
 # NOTARY_API_ISSUER), and the builds replace the repository's latest release, whose
 # file names stay the same so its download links do too. Pull requests sign ad hoc and
 # publish nothing.
-name: Desktop app
+name: Apps
 
 on:
   pull_request:

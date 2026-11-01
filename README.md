@@ -256,7 +256,7 @@ keep the full release optimization. CI keeps separate caches for these compiler 
 each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
 builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
+[Apps workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
 the simulators, on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
@@ -313,7 +313,7 @@ Windows.
 
 ### App Store and TestFlight
 
-The [Desktop app workflow](.github/workflows/desktop.yml), run by hand on main (Run
+The [Apps workflow](.github/workflows/desktop.yml), run by hand on main (Run
 workflow in GitHub's Actions tab, or `gh workflow run desktop.yml --ref main`), also
 builds the iOS app and the Mac app for the App Store and uploads them to App Store Connect
 (the app
