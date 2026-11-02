@@ -11,7 +11,7 @@
 // another content version shows its room as not joinable and offers no new room.
 //
 // The check starts and stops its own server (`SLOPPY_SERVER_BIN`, default the build of
-// `node scripts/build-server.mjs`) on a free port; SLOPPY_WEBGL=1 plays it on WebGL2.
+// `bun scripts/build-server.mjs`) on a free port; SLOPPY_WEBGL=1 plays it on WebGL2.
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import http from "node:http";

@@ -1,6 +1,6 @@
 name: Set up the build toolchains
 description: >-
-  Node and pnpm, the Rust toolchain pinned in rust-toolchain.toml (with its wasm32 and
+  Bun, the Rust toolchain pinned in rust-toolchain.toml (with its wasm32 and
   musl targets), optionally the matching wasm-bindgen CLI, and this job's Cargo cache.
 inputs:
   cargo-cache:
@@ -12,22 +12,21 @@ inputs:
   wasm-bindgen:
     description: Install the wasm-bindgen CLI, which only the Wasm engine build needs.
     default: "false"
-  node-dependencies:
-    description: Install the page toolchain and dependencies; desktop packaging only needs Node.
+  js-dependencies:
+    description: Install the page's JavaScript dependencies; desktop packaging only needs Bun.
     default: "true"
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v6
-      if: inputs.node-dependencies == 'true'
-    - uses: actions/setup-node@v7
+    - uses: oven-sh/setup-bun@v2
       with:
-        node-version: 24
-        check-latest: true
-        cache: ${{ inputs.node-dependencies == 'true' && 'pnpm' || '' }}
-        cache-dependency-path: |
-          pnpm-lock.yaml
-          tools/lint/pnpm-lock.yaml
+        bun-version-file: .bun-version
+    - uses: actions/cache@v5
+      if: inputs.js-dependencies == 'true'
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-
     # rustup reads the channel, components and targets from rust-toolchain.toml.
     - name: Install the pinned Rust toolchain
       shell: bash
@@ -67,6 +66,6 @@ runs:
       if: inputs.wasm-bindgen == 'true' && steps.wasm-bindgen.outputs.cache-hit != 'true'
       shell: bash
       run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen
-    - run: pnpm install --frozen-lockfile
-      if: inputs.node-dependencies == 'true'
+    - run: bun install --frozen-lockfile
+      if: inputs.js-dependencies == 'true'
       shell: bash

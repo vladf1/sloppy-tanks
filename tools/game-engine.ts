@@ -1,4 +1,4 @@
-// The game's engine (`sloppy-web`; `pnpm run wasm:engine` writes it to
+// The game's engine (`sloppy-web`; `bun run wasm:engine` writes it to
 // `src/generated/engine/`) on a page of its own, without the shell: the game preview and
 // the `tests/*.browser.html` fixtures create and prepare its `Game` through here.
 import init, { Game } from "../src/generated/engine/engine.js";

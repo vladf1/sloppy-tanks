@@ -2,7 +2,7 @@
  * One pilot's seat in a swarm: its handle in the {@link PilotEngine} and the sockets the
  * engine asks for. The engine says what to do (`open`, `send`, `close`); the seat does it
  * through `connect` and reports the sockets' events back. Platform-free: the Worker opens
- * sockets with a fetch upgrade, `tests/pilots.test.ts` with `ws`.
+ * sockets with a fetch upgrade, `tests/pilots.test.ts` with Bun's WebSocket.
  */
 
 import type { PilotAction, PilotEngine, PilotReport, PilotSetup, SavedSeat } from "./pilot-engine";

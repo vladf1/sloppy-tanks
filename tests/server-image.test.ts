@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import { SERVER_IMAGE } from "../scripts/servers.mjs";
 const script = fileURLToPath(new URL("../scripts/build-server-image.mjs", import.meta.url));
 
 /** Runs build-server-image.mjs against a fake registry that holds `published`, with fake
- * `docker` and `node` (the binary's Cargo build) first on the PATH, and returns the docker
+ * `docker` and `bun` (the binary's Cargo build) first on the PATH, and returns the docker
  * commands it ran, each split into its arguments. */
 function buildImage(args: string[], published: string[]): string[][] {
   const bin = mkdtempSync(join(tmpdir(), "sloppy-server-image-"));
@@ -30,7 +30,7 @@ function buildImage(args: string[], published: string[]): string[][] {
       ].join("\n"),
       { mode: 0o755 },
     );
-    writeFileSync(join(bin, "node"), "#!/bin/sh\n", { mode: 0o755 });
+    writeFileSync(join(bin, "bun"), "#!/bin/sh\n", { mode: 0o755 });
     const result = spawnSync(process.execPath, [script, ...args], {
       encoding: "utf8",
       // CI's step output must not receive this run's image.

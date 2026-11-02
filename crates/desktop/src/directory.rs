@@ -19,7 +19,7 @@ const BUILD_DIRECTORY: Option<&str> = match option_env!("SLOPPY_DIRECTORY_URL") 
     _ => None,
 };
 const PRODUCTION_DIRECTORY: &str = "https://directory.sloppytanks.com";
-/// A game server on this machine (`pnpm run server:dev`), which is its own directory.
+/// A game server on this machine (`bun run server:dev`), which is its own directory.
 const LOCAL_SERVER: &str = "http://127.0.0.1:8787";
 /// The environment whose servers the app lists: production's, unless the build names
 /// another (`SLOPPY_SERVER_ENVIRONMENT`, `dev` for the dev site).

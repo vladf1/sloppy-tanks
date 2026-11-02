@@ -1,7 +1,7 @@
 // Build the pilot engine for the bots Worker: `sloppy-pilot`'s library as Wasm (the
 // `pilot` profile in Cargo.toml: release without LTO, which builds far faster) into the
 // ignored `bots/generated/sloppy_pilot.wasm`, which `bots/pilots-worker.ts` imports and
-// `pnpm run pilots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
+// `bun run pilots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
 // so it needs no wasm-bindgen glue.
 //
 // Like the browser engine it is stamped with the content version (`SLOPPY_CONTENT_VERSION`)

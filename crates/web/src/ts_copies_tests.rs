@@ -3,7 +3,7 @@
 //! (`directory/room-listing.ts`) and the game preview's input and frame slots
 //! (`tools/engine-tables.ts`). `tests/ts-copies.test.ts` checks the copies against that
 //! file, so they cannot drift. Rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
-//! change, then `pnpm run format` (Prettier owns the file's layout).
+//! change, then `bun run format` (Prettier owns the file's layout).
 
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{

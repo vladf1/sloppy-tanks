@@ -18,7 +18,7 @@ const SHELL_BINARIES = [
  * The shell binaries' sizes in bytes, as `<meta name="sloppy-shell-bytes">`, for the
  * game page's download progress (`index.html`): GitHub Pages sends them compressed, so
  * a response's length is not what it delivers. Read at every transform, so the dev
- * server follows `pnpm run wasm`; 0 for a binary not built.
+ * server follows `bun run wasm`; 0 for a binary not built.
  */
 function shellSizes(): Plugin {
   const size = (file: string) => {

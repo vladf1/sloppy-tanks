@@ -247,7 +247,7 @@ export async function serverBuild() {
   );
 }
 
-// `node scripts/content-version.mjs` lists the sources clients and the server share;
+// `bun scripts/content-version.mjs` lists the sources clients and the server share;
 // `--geometry` the sources of the page's cached models and their key (a CI check: it fails
 // when a cached model builder reaches beyond them).
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes("--geometry")) {

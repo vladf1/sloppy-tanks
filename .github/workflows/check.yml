@@ -1,4 +1,4 @@
-# The quality gate, `pnpm run check`, split into parallel jobs. Each job runs one of
+# The quality gate, `bun run check`, split into parallel jobs. Each job runs one of
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the deploy workflow calls it with the production site settings and deploys
 # only after every job here passes. Beside its gate script, the server job publishes the
@@ -50,7 +50,7 @@ jobs:
           cargo-cache: site
           wasm-bindgen: "true"
       # Pull requests have no inputs, so these are empty, which every reader treats as unset.
-      - run: pnpm run check:site
+      - run: bun run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
           SLOPPY_DIRECTORY_URL: ${{ inputs.directory-url }}
@@ -72,7 +72,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: clippy
-      - run: pnpm run check:rust-lint
+      - run: bun run check:rust-lint
 
   rust-tests:
     name: Rust tests
@@ -82,7 +82,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: rust-tests
-      - run: pnpm run test:rust
+      - run: bun run test:rust
 
   # Builds the static musl server binary once: the page-shell tests drive it, and the
   # server image (Dockerfile) copies it in. The image is pushed as <server build>, plus
@@ -114,7 +114,7 @@ jobs:
       - name: Fingerprint the server build
         id: server-build
         run: >-
-          node --input-type=module -e "import { serverBuild } from './scripts/content-version.mjs';
+          bun -e "import { serverBuild } from './scripts/content-version.mjs';
           console.log('hash=' + (await serverBuild()))" >> "$GITHUB_OUTPUT"
       - name: Restore the Kache store
         id: kache-store
@@ -131,7 +131,7 @@ jobs:
           cache-executables: true
           max-size: 150MiB
           pr-comment: false
-      - run: pnpm run check:server
+      - run: bun run check:server
       - name: Trim the Kache store
         if: steps.kache-store.outputs.cache-hit != 'true'
         run: '"$RUSTC_WRAPPER" gc --max-age 7d'
@@ -159,7 +159,7 @@ jobs:
           if [ "$PUSH" = true ]; then push=(--push); fi
           number=()
           if [ -n "$BUILD_NUMBER" ]; then number=(--build-number "$BUILD_NUMBER"); fi
-          node scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}" "${number[@]}"
+          bun scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}" "${number[@]}"
         env:
           EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

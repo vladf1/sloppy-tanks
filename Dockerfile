@@ -1,5 +1,5 @@
 # The multiplayer server as a linux/amd64 image. Build it with
-# `pnpm run server:build-docker-image`, which first cross-compiles the static musl
+# `bun run server:build-docker-image`, which first cross-compiles the static musl
 # binary with `scripts/build-server.mjs --vps` in the normal Cargo target directory,
 # so compiled dependencies are reused as in any local or cached CI build, and passes
 # the content version and server build the binary stamps (scripts/content-version.mjs),

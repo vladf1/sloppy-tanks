@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import redirect from "../deploy/site/redirect.mjs";
 import worker, { preferredEncoding } from "../deploy/site/worker.mjs";
