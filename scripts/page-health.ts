@@ -35,11 +35,11 @@ function pageBuild(): PageBuild {
 /** The page's `/health` body; `builtAt` is when the build ran or the dev server started. */
 async function healthBody(builtAt: string): Promise<string> {
   // The hash the Wasm build stamped into the shell, not one recomputed from the
-  // sources, which may have changed since `pnpm run wasm`.
+  // sources, which may have changed since `bun run wasm`.
   const stamp = "src/generated/shell/content-version";
   const contentVersion = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : "";
   if (!contentVersion) {
-    throw new Error("No content version stamp: run `pnpm run wasm` first");
+    throw new Error("No content version stamp: run `bun run wasm` first");
   }
   const { release, commit, dirty } = pageBuild();
   const health = {
@@ -68,7 +68,7 @@ export function pageHealth(): Plugin {
       server.middlewares.use((request, response, next) => {
         const path = request.url?.split("?")[0];
         if (path !== `${base}health` && path !== `${base}health/`) return next();
-        // Read on each request, so it follows `pnpm run wasm` and new commits.
+        // Read on each request, so it follows `bun run wasm` and new commits.
         healthBody(started).then((body) => {
           response.setHeader("Content-Type", "text/html; charset=utf-8");
           response.setHeader("Cache-Control", "no-store");

@@ -51,10 +51,10 @@ For example, choose an unused descriptive campaign name:
 
 ```sh
 export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH
-pnpm install
-pnpm run check:desktop-ui -- --out artifacts/performance/desktop-ui/parity-audit --round baseline
+bun install --frozen-lockfile
+bun run check:desktop-ui -- --out artifacts/performance/desktop-ui/parity-audit --round baseline
 # Make supported fixes; keep this evidence root:
-pnpm run check:desktop-ui -- --out artifacts/performance/desktop-ui/parity-audit --round corrected
+bun run check:desktop-ui -- --out artifacts/performance/desktop-ui/parity-audit --round corrected
 ```
 
 The runner preserves immutable reference directories and rejects fixture drift.
@@ -85,8 +85,8 @@ scope unless other source changed:
 cargo fmt --all --check
 cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
 cargo test --locked -p sloppy-desktop
-pnpm exec prettier --check scripts/desktop-ui-*.mjs
-pnpm exec eslint scripts/desktop-ui-*.mjs --max-warnings 0
+bun x prettier --check scripts/desktop-ui-*.mjs
+bun x eslint scripts/desktop-ui-*.mjs --max-warnings 0
 git diff --check
 ```
 
@@ -123,7 +123,7 @@ Known comparison traps:
 - Flat arena stand-ins and held animation isolate shell layout. They do not prove
   live scene compositing, timing, input, performance or long-run cleanup.
 
-These comparisons do not need a packaged app. `pnpm run desktop[:mac]` stamps
+These comparisons do not need a packaged app. `bun run desktop[:mac]` stamps
 multiplayer versions but may also sign and submit notarization when configured.
 Inspect that path before using it; do not add upload authorization to a UI task.
 `cargo build --locked -p sloppy-desktop --profile desktop` is a local compile only;

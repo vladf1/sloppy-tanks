@@ -1,5 +1,5 @@
 // Tank selection previews: renders the game's vehicle models with the engine
-// (`tools/tank-surface-check.html`, the labs build: run `pnpm run wasm -- --labs`
+// (`tools/tank-surface-check.html`, the labs build: run `bun run wasm:labs`
 // first) in headless Chrome and packs them into `public/previews/tanks.webp`, three
 // chassis columns with one row per team. `SLOPPY_PREVIEWS_OUT` writes elsewhere, for
 // comparing a candidate with the checked-in sheet before replacing it.

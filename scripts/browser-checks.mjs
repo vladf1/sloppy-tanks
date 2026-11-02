@@ -1,9 +1,9 @@
 // Run the functional browser checks one after another against a running page server
-// (`pnpm run dev`, or `pnpm exec vite preview` of a build; pass its URL in SLOPPY_URL).
+// (`bun run dev`, or `bun run preview` of a build; pass its URL in SLOPPY_URL).
 // This is a manual gate for startup, menu, input and rendering changes, not CI: it needs
 // Chrome, Playwright's WebKit and a GPU, and the performance workloads in
 // scripts/README.md stay separate. SLOPPY_WEBGL=1 plays every check on the WebGL2 build.
-// The room checks start their own game server, which `node scripts/build-server.mjs`
+// The room checks start their own game server, which `bun scripts/build-server.mjs`
 // builds; without it they are skipped, with a note.
 import { spawnSync } from "node:child_process";
 import { hasServerBinary, serverBinary } from "./browser-helpers.mjs";
@@ -30,7 +30,7 @@ const skipped = [];
 for (const { script, server } of checks) {
   console.log(`\n=== ${script}`);
   if (server && !hasServerBinary()) {
-    console.log(`skipped: no game server at ${serverBinary} (node scripts/build-server.mjs)`);
+    console.log(`skipped: no game server at ${serverBinary} (bun scripts/build-server.mjs)`);
     skipped.push(script);
     continue;
   }

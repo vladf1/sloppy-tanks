@@ -643,7 +643,7 @@
         });
       })();
     </script>
-    <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
+    <!-- The desktop app's egui shell built for the page (`bun run wasm`): on WebGPU, or
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
          the chosen build's glue and binary download (a browser with WebGPU starts on
@@ -826,7 +826,7 @@
         }
       }
 
-      // The shader stages the chosen build draws, generated with it (pnpm run wasm,
+      // The shader stages the chosen build draws, generated with it (bun run wasm,
       // crates/render/src/shader/tables.rs): they download beside the binary and stay
       // here as `sloppyShaders`, from which the renderer reads one stage at a time.
       const shaderTables = async (url) => {

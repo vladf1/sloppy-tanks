@@ -4,15 +4,17 @@ A browser tank game with destructible cover, team battles and solo survival. The
 
 ## Run
 
-Use Node.js 24 or newer, [pnpm](https://pnpm.io/installation) 11 or newer, and Rust through [rustup](https://rustup.rs). On macOS:
+Use [Bun](https://bun.sh/docs/installation) 1.4.4 and Rust through [rustup](https://rustup.rs). On macOS:
 
 ```sh
-brew install node pnpm rustup   # once per machine
+brew install rustup                 # once per machine
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
+export PATH="$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
 cargo install wasm-bindgen-cli --version 0.2.129 --locked
-pnpm install                    # once per checkout or worktree, and after dependency changes
-pnpm run wasm                   # build the page's Wasm; rerun after Rust or WGSL edits
-pnpm run dev
+bun install --frozen-lockfile   # once per checkout or worktree, and after dependency changes
+bun run wasm                   # build the page's Wasm; rerun after Rust or WGSL edits
+bun run dev
 ```
 
 `rust-toolchain.toml` pins the Rust release, rustfmt, clippy and the
@@ -24,7 +26,20 @@ pnpm run dev
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 ```
 
-On other systems, `npm install -g pnpm` also works. `package.json` pins the exact pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
+Bun handles dependency installation, TypeScript checking, tests and script
+execution; Vite, running on Bun, bundles the game and serves it in development. `.bun-version` and `package.json` pin its
+version; CI reads `.bun-version`. Installs use isolated linking and committed
+`bun.lock` files, including the lint package installed by `postinstall`. Root
+dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
+[`tools/deploy/`](tools/deploy/README.md) and installs only when a Cloudflare command
+needs it; that package trusts only its `esbuild` and `workerd` setup scripts.
+Wrangler alone runs on Node.js 22 or newer, which Cloudflare commands require on PATH.
+Run `bun add` to change dependencies and commit the affected lockfiles.
+
+`bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke
+this project's separate `check` quality gate. ESLint and Prettier run on Bun;
+the lint package retains TypeScript 6 solely for ESLint's parser and typed rules.
+The browser build has no standalone TypeScript compiler dependency.
 
 Optionally, cache compiler outputs across checkouts with [Kache](https://github.com/kunobi-ninja/kache),
 which pays off when every change gets its own worktree. Set it as Cargo's wrapper in your
@@ -43,12 +58,12 @@ missed the cache.
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. The page
 (`index.html`) is the desktop app's egui shell (`crates/desktop`) built for wasm32: Vite
 serves its release Wasm from `src/generated/shell/`; it does not compile Rust, so run
-`pnpm run wasm` again after changing a crate. The page's query reads as the app's command
+`bun run wasm` again after changing a crate. The page's query reads as the app's command
 line: `?debug` is `--debug`. `?map=<id>` picks Battle Setup's map (an extra level only
 with `?debug`), `?multiplayer` opens its Multiplayer tab and `?room=<CODE>`, an invite
 link, opens the tab with that room selected. The address then follows the tab and the
 room, so a reload comes back there, and JOIN ROOM takes back a seat the room still holds.
-A page on this machine lists the local game server (`pnpm run server:dev`) unless the
+A page on this machine lists the local game server (`bun run server:dev`) unless the
 build names a directory; there and on the dev site, `?directory=<url>` names another, and
 rooms take the network tools `?latency=`, `?jitter=`, `?stall=` (milliseconds), `?dodge=0`
 and `?shooter=0`. Until the shell shows its first frame, the page's own loading view
@@ -67,7 +82,7 @@ The page draws with WebGPU where the browser offers it (HTTPS or localhost, and 
 
 A returning visit reads the vehicle models and its map's scenery from the browser's IndexedDB instead of generating them again (a release that changes no model keeps them); `?geometry-cache=off` neither reads nor stores them, for comparing the two.
 
-To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
+To try a build on a phone or tablet, `bun run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
 ## Play
 
@@ -124,17 +139,17 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
-pnpm run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/, its shader tables into src/generated/shaders/
-pnpm run wasm:fast      # the same built for compile time, to check how a change looks (never to time or deploy)
-pnpm run wasm:engine    # the sloppy-web engine into src/generated/engine/ (fixtures, game preview, WireView)
-pnpm run wasm:all       # both
-pnpm test               # script, directory, traffic-bot and pilot tests (needs pnpm run server:build and pilot:build)
-pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
-pnpm run validate       # ten seeded full matches and reset checks
-pnpm run build          # production output in dist/ (builds the Wasm first)
-pnpm run lint:fix       # safe ESLint fixes
-pnpm run format         # Prettier for tests, scripts, tools and docs; cargo fmt for Rust
+bun run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
+bun run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/, its shader tables into src/generated/shaders/
+bun run wasm:fast      # the same built for compile time, to check how a change looks (never to time or deploy)
+bun run wasm:engine    # the sloppy-web engine into src/generated/engine/ (fixtures, game preview, WireView)
+bun run wasm:all       # both
+bun run test           # script, directory, traffic-bot and pilot tests (needs bun run server:build and pilot:build)
+bun run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
+bun run validate       # ten seeded full matches and reset checks
+bun run build          # production output in dist/ (builds the Wasm first)
+bun run lint:fix       # safe ESLint fixes
+bun run format         # Prettier for tests, scripts, tools and docs; cargo fmt for Rust
 ```
 
 [AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser fixtures and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
@@ -226,9 +241,9 @@ tank's present), and your tank's prediction corrections by cause. Render include
 **Pilots** stand in for other people when you try multiplayer: headless players that
 join a room through the game's own network client and fight with the bot brain. A pilot
 can hunt a player you name or escort them. Run them from this machine
-(`pnpm run pilot -- --room CODE --hunt NAME`, see [crates/pilot](crates/pilot/README.md)),
+(`bun run pilot -- --room CODE --hunt NAME`, see [crates/pilot](crates/pilot/README.md)),
 or from Cloudflare regions through the bots control page (**Mode: Pilots**) or
-`pnpm run bots -- start wnam 2 --room CODE --hunt NAME` (see [bots](bots/README.md)), to
+`bun run bots -- start wnam 2 --room CODE --hunt NAME` (see [bots](bots/README.md)), to
 feel the room from there. Each reports its RTT, view delay, fire-to-flash time and hits.
 
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
@@ -244,9 +259,9 @@ The window opens at 1280×800 points and has a minimum of 1100×720. Its menus a
 follow the web edition's desktop layout; fullscreen and Quit are native controls.
 
 ```sh
-pnpm run desktop          # the app for this machine
-pnpm run desktop:mac      # Sloppy Tanks.app for Apple silicon, macOS 11 or newer
-pnpm run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
+bun run desktop          # the app for this machine
+bun run desktop:mac      # Sloppy Tanks.app for Apple silicon, macOS 11 or newer
+bun run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
 ```
 
 Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it and an
@@ -289,10 +304,10 @@ the few keys along the top. A hardware keyboard plays as on a Mac (arrows or WAS
 the screen. It needs a Mac with Xcode:
 
 ```sh
-pnpm run ios                                 # artifacts/ios/: Sloppy Tanks.app and an .ipa for devices
-pnpm run ios -- --install                    # also install and open it on the iPhone or iPad on a cable
-pnpm run ios:simulator -- --install          # artifacts/ios-simulator/, opened in a booted simulator
-pnpm run ios:simulator -- --install --ipad   # the same, in an iPad simulator
+bun run ios                                 # artifacts/ios/: Sloppy Tanks.app and an .ipa for devices
+bun run ios -- --install                    # also install and open it on the iPhone or iPad on a cable
+bun run ios:simulator -- --install          # artifacts/ios-simulator/, opened in a booted simulator
+bun run ios:simulator -- --install --ipad   # the same, in an iPad simulator
 ```
 
 `--install` takes a booted simulator of either kind, booting an iPhone simulator when
@@ -329,9 +344,9 @@ build through the internal group "Team"; anyone else joins an external group or 
 link, which needs Apple's beta review for each new version. The same builds run locally:
 
 ```sh
-pnpm run ios -- --app-store            # artifacts/ios-app-store/: the .ipa signed for the App Store
-pnpm run desktop:mac -- --app-store    # artifacts/mac-app-store/: the sandboxed app in a signed .pkg
-pnpm run ios -- --app-store --upload   # also upload it and wait until TestFlight has it
+bun run ios -- --app-store             # artifacts/ios-app-store/: the .ipa signed for the App Store
+bun run desktop:mac -- --app-store     # artifacts/mac-app-store/: the sandboxed app in a signed .pkg
+bun run ios -- --app-store --upload    # also upload it and wait until TestFlight has it
 ```
 
 Both are signed with an Apple Distribution identity and an App Store provisioning profile
@@ -367,22 +382,22 @@ its bottom-left corner (`links::APP_STORE`).
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
 
-| Command                          | Output / requirements                                                                                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
-| `pnpm run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
-| `pnpm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
-| `pnpm run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
-| `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
-| `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
-| `pnpm run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
-| `pnpm run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
+| Command                         | Output / requirements                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
+| `bun run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
+| `bun run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
+| `bun run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
+| `bun run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
+| `bun run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
+| `bun run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
+| `bun run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `node --import tsx scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
+For conifer artwork, run `bun scripts/generate-conifer-texture.ts` followed by `bun run optimize:textures`. Other tree patterns use `bun scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `bun scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `bun scripts/generate-house-textures.ts`, then `bun run optimize:textures`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 
@@ -390,19 +405,19 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 The deploy workflow (`.github/workflows/deploy.yml`) publishes on pushes to `main`, after
 the quality gate passes: the pull-request check workflow's parallel jobs, which together
-run everything in `pnpm run check` and build the site.
+run everything in `bun run check` and build the site.
 It builds `dist/` with `DEPLOY_BASE=/` and publishes it to the Cloudflare Worker
 `sloppy-tanks` at <https://sloppytanks.com/>, hosted like the dev site (below) without
 its `noindex`: `deploy/site/production.wrangler.jsonc`, deployed with the repository's
 `CLOUDFLARE_API_TOKEN` secret. A second Worker, `sloppy-tanks-redirect`
 (`deploy/site/redirect.wrangler.jsonc`), sends <https://www.sloppytanks.com/> and the
 former GitHub Pages address <https://sloppy-tanks.fridman.me/> there with their path and
-query. Both hostnames are Worker custom domains, so Cloudflare keeps their DNS records. Local `pnpm run build` and
+query. Both hostnames are Worker custom domains, so Cloudflare keeps their DNS records. Local `bun run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The page holds no server address, only the server directory's (production's, unless the
 shell's build names another in `SLOPPY_DIRECTORY_URL`). The directory is a Cloudflare
-Worker at <https://directory.sloppytanks.com> (`directory/`, published with `pnpm run directory:deploy`) that every game server
+Worker at <https://directory.sloppytanks.com> (`directory/`, published with `bun run directory:deploy`) that every game server
 pushes its rooms to; the page lists every server's rooms from it and connects to the
 server that hosts the chosen room, or for a new room the one with the fewest rooms. A
 machine pushes its rooms to the directory under its environment (production or dev),
@@ -412,8 +427,8 @@ which its startup script (`deploy/server/cloud-init/`) writes as `DIRECTORY_URL`
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
-files and the crates they compile with, listed by `node scripts/content-version.mjs`,
-and `pnpm run server:check-if-redeployment-required` says whether the live server
+files and the crates they compile with, listed by `bun scripts/content-version.mjs`,
+and `bun run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
 build at `/health`: release version (`version`), protocol, content version, commit,
 local-change state and build time, and the server also its server build. The release
@@ -425,7 +440,7 @@ Battle Setup shows it with the commit. The page's `/health` is a static
 (<https://sloppytanks.com/health>). The server's release, commit and time are
 those of the first main build that shipped its server build, so they predate the
 page's when later commits left the server unchanged. After merging changes to any of them, run
-`pnpm run server:update` (or let auto-update pull it); until then, players on the
+`bun run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
 still need that update to take effect; client-only files (`crates/render`,
@@ -435,7 +450,7 @@ updater, auto-update and the SSH fallback.
 `DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
 with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
 the fonts, sounds and tank previews `index.html` downloads with it. Its shader stages come
-as a hashed JSON file of their own, one per graphics backend, which `pnpm run wasm`
+as a hashed JSON file of their own, one per graphics backend, which `bun run wasm`
 generates (`crates/render/src/shader/tables.rs`). Those files keep
 their plain paths under `public/` for the tools and fixtures, and the build also emits
 each under a content-hashed name in `assets/`, with a manifest in the game page that
@@ -445,14 +460,14 @@ visitors download none of them again until it changes. Hosts should serve the Wa
 
 ### Local dev deployment
 
-`pnpm run deploy:dev` runs the normal checks, builds the current local checkout
+`bun run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
-Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
+Cloudflare Worker. Run `bun run wrangler login` first (or provide an API token that
 can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
 token that can write packages (`crates/server/README.md` shows how with `gh`). The
 Worker's account, name and domain come from `deploy/site/dev.wrangler.jsonc`,
 independent of the local Git branch. No Git commit or push is required.
-`pnpm run build:dev` builds without publishing.
+`bun run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev servers, which list themselves in
 the directory under the dev environment. They run on their own machines, each at its nip.io
 name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes

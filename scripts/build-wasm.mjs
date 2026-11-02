@@ -14,7 +14,7 @@
 // `--engine` builds the `sloppy-web` engine alone instead, into `src/generated/engine/`:
 // the game preview (`tools/game-preview.html`), the `tests/*.browser.html` fixtures and
 // the Node multiplayer checks' `WireView` (`scripts/wire-view.mjs`) use it. `--all`
-// builds both, as `pnpm run build` does for the type check. `--labs` builds the engine
+// builds both, as `bun run build` does for the type check. `--labs` builds the engine
 // with the development labs (`RenderLab`, `EffectsLab`, the `labs` feature of
 // `sloppy-web`) into `src/generated/engine-labs/`, so a lab build never replaces the
 // engine the fixtures load.

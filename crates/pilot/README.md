@@ -77,10 +77,10 @@ server ──binary snapshots──▶ NetworkClient ──RenderState (displaye
 From this machine, against any server:
 
 ```sh
-pnpm run pilot -- --server ws://127.0.0.1:8787 --create village --pilots 3   # a local server
-pnpm run pilot -- --room ABCD2345 --hunt vlad --pilots 2 --skill hard         # a production room
-pnpm run pilot -- --room ABCD2345 --escort vlad --environment dev             # a dev-server room
-pnpm run pilot -- --help
+bun run pilot -- --server ws://127.0.0.1:8787 --create village --pilots 3   # a local server
+bun run pilot -- --room ABCD2345 --hunt vlad --pilots 2 --skill hard         # a production room
+bun run pilot -- --room ABCD2345 --escort vlad --environment dev             # a dev-server room
+bun run pilot -- --help
 ```
 
 Without `--server`, the server directory names the room's server, or for `--create` the
@@ -94,13 +94,13 @@ command line (see `bots/README.md`). The pilots run in their own Worker, which t
 control page reaches over a service binding:
 
 ```sh
-pnpm run pilots:deploy                                   # builds the Wasm engine, then deploys
-pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad
-pnpm run bots -- start weur 3 --brain --host --map harbor
-pnpm run bots -- status
+bun run pilots:deploy                                   # builds the Wasm engine, then deploys
+bun run bots -- start wnam 2 --room ABCD2345 --hunt vlad
+bun run bots -- start weur 3 --brain --host --map harbor
+bun run bots -- status
 ```
 
-**Content versions:** pilots are game code. `pnpm run pilot` and `pnpm run pilot:build`
+**Content versions:** pilots are game code. `bun run pilot` and `bun run pilot:build`
 stamp `SLOPPY_CONTENT_VERSION` as the browser build and the server do. A server whose
 content version differs refuses the pilots with "Game updated". Run or deploy them from the
 commit the target server runs. The pilots Worker reports a mismatch as a region error
@@ -110,7 +110,7 @@ naming both versions.
 
 ```sh
 cargo test -p sloppy-pilot        # unit and integration tests, about 10 s in debug
-pnpm run server:build && pnpm run pilot:build && node --import tsx --test tests/pilots.test.ts
+bun run server:build && bun run pilot:build && bun test tests/pilots.test.ts
 ```
 
 - `tests/integration/missions.rs` wires pilots and the real `MatchHost` in memory with one
@@ -130,7 +130,7 @@ pnpm run server:build && pnpm run pilot:build && node --import tsx --test tests/
 
 ## Build
 
-`pnpm run pilot:build` compiles the engine with the `pilot` profile in the root
+`bun run pilot:build` compiles the engine with the `pilot` profile in the root
 `Cargo.toml`: release optimization without LTO, in 16 codegen units. The browser's
 release profile spends about 40 s of every build on its fat-LTO link to save download
 size, which a Worker does not need. Without it, the dependencies compile once (about 70 s

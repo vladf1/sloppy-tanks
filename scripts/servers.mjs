@@ -9,7 +9,7 @@ import { isIP } from "node:net";
  * through that name.
  */
 /** The server's container image in the GitHub Container Registry. CI pushes it and moves
- * :production, `node scripts/server.mjs publish --dev` pushes a checkout's build and moves
+ * :production, `bun scripts/server.mjs publish --dev` pushes a checkout's build and moves
  * :dev, and the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 

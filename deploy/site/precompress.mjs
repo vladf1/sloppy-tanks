@@ -11,7 +11,7 @@ const gzipAsync = promisify(gzip);
 // The build to prepare, relative to the repository: dist-dev or dist.
 const build = process.argv[2];
 if (!build) {
-  throw new Error("Usage: node deploy/site/precompress.mjs <build directory>");
+  throw new Error("Usage: bun deploy/site/precompress.mjs <build directory>");
 }
 const assetDirectory = new URL(`../../${build}/assets/`, import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
