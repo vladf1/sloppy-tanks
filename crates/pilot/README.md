@@ -139,7 +139,7 @@ and a change to `crates/core` in about 23 s instead of 45 s.
 
 ## Cost
 
-These are rough measurements from a shared Linux container. The pilots ran in Node's V8
+These are rough measurements, taken in a shared Linux container. The pilots ran in Node's V8
 at 30 frames a second, with the server on the same machine:
 
 | Measurement                      | Value                             |
