@@ -20,7 +20,7 @@ nothing but message headers.
 | `hunt`        | The same, for the nearest player (a person or another pilot, never a fill bot) on the other team.                                                                                                                                      |
 | `escort:NAME` | Takes NAME's team, follows them (the support bots' escort), fires at whatever they hit and turns on whoever hits them.                                                                                                                 |
 
-A pilot that is on the wrong team changes side. Between battles it makes a team choice.
+A pilot that is on the wrong team changes side. Between battles it picks its team.
 During a battle, when choices are locked, it gives up its seat and joins again with the
 team it needs. `skill` (`easy`, `normal`, `hard`) tunes reaction, aim error and reload,
 as a room's difficulty does for fill bots. `kind` picks the tank. `style` (a bot role:
