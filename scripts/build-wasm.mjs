@@ -90,8 +90,12 @@ const profile = fast ? "wasm-fast" : "release";
 // "off" skips it: a sloppy-core edit rebuilt in 14.5 s and 54 CPU-s instead of 18 s and
 // 80, for a smaller binary. It is set here, not in Cargo.toml, whose profiles key the
 // server build and the page's geometry cache: an edit there would restart production's
-// servers and drop every player's cached models.
-const profileSettings = fast ? { CARGO_PROFILE_WASM_FAST_LTO: "off" } : {};
+// servers and drop every player's cached models. Incremental compilation, which release
+// and so `wasm-fast` leave off, took a one-line sloppy-core edit from 11.7 s to 4.0 s
+// (`.kache.toml` keeps Kache from stripping it).
+const profileSettings = fast
+  ? { CARGO_PROFILE_WASM_FAST_LTO: "off", CARGO_PROFILE_WASM_FAST_INCREMENTAL: "true" }
+  : {};
 
 const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
