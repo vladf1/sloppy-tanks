@@ -73,10 +73,12 @@ pub fn create_multiplayer_simulation(
     Ok(Simulation::new(seed, setup))
 }
 
-/// Bot takeover changes the driver, never the player's tank, balance or life. The bot
-/// stands in under a bot's name with a score of its own, so nobody reads a bot's play
-/// as the player's; the player's name returns with them (the host restores their
-/// score, which it keeps per seat).
+/// Bot takeover changes the driver, never the player's tank or balance. The bot stands
+/// in under a bot's name with a score of its own, so nobody reads a bot's play as the
+/// player's; the player's name returns with them (the host restores their score, which
+/// it keeps per seat). Handing over either way starts a new life without a death, so
+/// `ownerLife` keeps the stand-in's ordnance, mines included, from ever crediting the
+/// player, and the player's from awarding the stand-in XP.
 pub fn set_driver(
     simulation: &mut Simulation,
     tank_index: usize,
@@ -95,11 +97,13 @@ pub fn set_driver(
         tank.bot = true;
         tank.kills = 0;
         tank.deaths = 0;
+        tank.life += 1;
     } else if driver != Driver::Bot
         && let Some(name) = tank.away_player.take()
     {
         tank.name = name;
         tank.bot = false;
+        tank.life += 1;
     }
     tank.driver = driver;
     tank.command = VehicleCommand::idle_aiming(tank.aim);

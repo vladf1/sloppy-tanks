@@ -180,3 +180,45 @@ fn a_released_seat_hands_its_tank_to_a_fill_bot_under_a_bots_name() {
         tank.name
     );
 }
+
+#[test]
+fn a_stand_ins_late_ordnance_never_credits_the_player_it_stood_in_for() {
+    let mut h = room();
+    let welcome = h.latest("alice", "welcome");
+    let alice = h.tank_of("alice");
+    h.disconnect("alice");
+    h.advance();
+    // A mine the stand-in laid, or a shell it fired, carries the stand-in's life.
+    let stand_in_life = h.sim().tanks[alice].life;
+    let late_kill = |h: &mut Harness| {
+        let bob = h.tank_of("bob");
+        let sim = h.sim();
+        sim.tanks[bob].respawn = 0.0;
+        sim.respawn(bob, None);
+        sim.tanks[bob].protection = 0.0;
+        let (id, team) = (sim.tanks[alice].id, sim.tanks[alice].team);
+        sim.damage_tank(bob, 10000.0, id, team, Some(stand_in_life), None);
+        h.advance();
+    };
+
+    // It lands after the player is back.
+    h.join(
+        "alice-return",
+        json!({ "token": welcome["token"], "roomEpoch": welcome["roomEpoch"] }),
+    );
+    h.advance();
+    assert_ne!(h.sim().tanks[alice].life, stand_in_life);
+    late_kill(&mut h);
+    assert_eq!(h.sim().tanks[alice].kills, 0);
+
+    // It lands after the player left for good and a fill bot took the tank over.
+    h.disconnect("alice-return");
+    for _ in 0..=EMPTY_GRACE_MS / 50 {
+        h.advance();
+    }
+    assert!(!h.sim().tanks[alice].human);
+    late_kill(&mut h);
+    h.action("bob", "end", json!({}));
+    let row = scoreboard_row(&h, "bob", &shown("alice"));
+    assert_eq!(row["kills"], 0, "the departed player gained no kill");
+}

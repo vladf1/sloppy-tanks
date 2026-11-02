@@ -44,8 +44,9 @@ pub use super::room_list::RoomPhase;
 /// the bodies moving near it; 6: input carries the sender's view delay, and a shell's
 /// launch the ticks it rewinds the tanks it meets; 7: entity fields move on by their last
 /// change (baselines carry it), timers count steps, and the hull and bodies travel as
-/// fixed point (the hull's position still as `f32`).
-pub const PROTOCOL_VERSION: u32 = 7;
+/// fixed point (the hull's position still as `f32`); 8: tanks, lobby seats and joins
+/// carry `bot`, and a room seats players only under drawn names.
+pub const PROTOCOL_VERSION: u32 = 8;
 /// First byte of a binary baseline message.
 pub const FULL_MESSAGE: u8 = 1;
 /// First byte of a binary snapshot batch.

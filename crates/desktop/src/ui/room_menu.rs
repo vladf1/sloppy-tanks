@@ -1603,18 +1603,20 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
 /// The compact kill list beside the HUD during a battle.
 fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
     let Some(lobby) = &menu.lobby else { return };
-    let kills = |player: &Player| {
-        player
+    // Another seat shows its tank as the field draws it: while a bot stands in for an
+    // away player, the bot's name, mark and score, not the player's under the bot's kills.
+    // The viewer's own row keeps their name.
+    let shown = |player: &Player| -> (String, bool, u32) {
+        let row = player
             .tank_id
-            .and_then(|tank| {
-                state
-                    .hud
-                    .as_ref()?
-                    .scoreboard
-                    .row(tank)
-                    .map(|row| row.kills)
-            })
-            .unwrap_or(player.kills)
+            .and_then(|tank| state.hud.as_ref()?.scoreboard.row(tank));
+        match row {
+            Some(row) if player.player_id != menu.player_id => {
+                (row.name.into_owned(), row.bot, row.kills)
+            }
+            Some(row) => (player.name.clone(), player.bot, row.kills),
+            None => (player.name.clone(), player.bot, player.kills),
+        }
     };
     let mut players: Vec<&Player> = lobby.players.iter().collect();
     players.sort_by_key(|player| (player.team.index(), player.slot));
@@ -1675,18 +1677,19 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 } else {
                     ""
                 };
+                let (shown_name, bot, kills) = shown(player);
                 let tag = paint::bot_tag_width(painter, ROOM_TAG_SIZE) + paint::BOT_TAG_GAP;
                 let name = paint::text_fit(
                     painter,
                     pos2(rect.left() + 24.0, top + 13.5),
                     Align2::LEFT_CENTER,
-                    &format!("{}{you}", player.name),
+                    &format!("{shown_name}{you}"),
                     bold_font(12.0),
                     paint::fade(hex(0xf5faff), alpha),
                     0.0,
-                    155.0 - if player.bot { tag } else { 0.0 },
+                    155.0 - if bot { tag } else { 0.0 },
                 );
-                if player.bot {
+                if bot {
                     paint::bot_tag(
                         painter,
                         pos2(name.right() + paint::BOT_TAG_GAP, top + 13.5),
@@ -1698,7 +1701,7 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                     painter,
                     pos2(rect.right() - 12.0, top + 13.5),
                     Align2::RIGHT_CENTER,
-                    &kills(player).to_string(),
+                    &kills.to_string(),
                     bold_font(12.0),
                     paint::fade(hex(0xf5faff), alpha),
                     0.0,

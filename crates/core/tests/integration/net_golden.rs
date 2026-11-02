@@ -10,7 +10,7 @@
 //! header reader also reads; rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
 //! format change. Protocol 4's additions (each tank's `drive`, the snapshot's `ackTick`,
 //! `ackArrival` and `hull`) and protocol 5's (the snapshot's `bodies`) were added to the
-//! JSON signatures by hand.
+//! JSON signatures by hand, as were protocol 8's `bot` fields and drawn player names.
 
 use crate::net_support;
 

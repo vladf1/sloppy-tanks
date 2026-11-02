@@ -5,7 +5,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000001",
@@ -1120,7 +1120,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000003",
@@ -1225,7 +1225,7 @@
           "roundId": 1,
           "type": "control",
           "tankId": 105,
-          "life": 1,
+          "life": 2,
           "controlEpoch": 2,
           "driver": "bot"
         }
@@ -1239,7 +1239,7 @@
           "roundId": 1,
           "type": "control",
           "tankId": 105,
-          "life": 1,
+          "life": 3,
           "controlEpoch": 3,
           "driver": "human"
         }
@@ -1835,7 +1835,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",
@@ -1975,7 +1975,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",

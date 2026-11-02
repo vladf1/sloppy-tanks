@@ -673,19 +673,15 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     sim.tanks[a].xp = 100.0;
     let identity = |sim: &Simulation| {
         let tank = &sim.tanks[a];
-        (
-            tank.id,
-            tank.life,
-            tank.kind,
-            tank.team,
-            tank.xp,
-            sim.max_health(tank),
-        )
+        (tank.id, tank.kind, tank.team, tank.xp, sim.max_health(tank))
     };
     let before = identity(&sim);
     let player = sim.tanks[a].name.clone();
+    let life = sim.tanks[a].life;
     set_driver(&mut sim, a, Driver::Bot).unwrap();
     assert_eq!(identity(&sim), before);
+    // A new life without a death: the stand-in's ordnance never credits the player.
+    assert_eq!((sim.tanks[a].life, sim.tanks[a].deaths), (life + 1, 0));
     // The stand-in shows a bot's name, marked as a bot, with a score of its own.
     let stand_in = sim.tanks[a].name.clone();
     assert!(sim.tanks[a].bot);
@@ -712,6 +708,7 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     );
     assert!(!sim.tanks[a].bot);
     assert_eq!(sim.tanks[a].away_player, None);
+    assert_eq!(sim.tanks[a].life, life + 2);
     sim.tanks[a].protection = 0.0;
     sim.tanks[b].protection = 0.0;
     let (b_id, b_team, b_life) = (sim.tanks[b].id, sim.tanks[b].team, sim.tanks[b].life);
@@ -724,7 +721,7 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     assert_eq!(sim.tanks[a].kind, VehicleKind::Scout);
     assert_eq!(sim.tanks[b].kind, VehicleKind::Heavy);
     assert!(sim.tanks[a].alive && sim.tanks[b].alive);
-    assert_eq!((sim.tanks[a].life, sim.tanks[a].deaths), (1, 1));
+    assert_eq!((sim.tanks[a].life, sim.tanks[a].deaths), (life + 3, 1));
     assert_eq!((sim.tanks[b].life, sim.tanks[b].deaths), (1, 1));
 }
 

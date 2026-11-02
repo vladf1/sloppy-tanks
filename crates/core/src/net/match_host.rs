@@ -850,6 +850,10 @@ impl MatchHost {
             return;
         };
         let tank = &simulation.tanks[tank_index];
+        // A stand-in's lives are its own (`set_driver`): their ordnance credits no player.
+        if tank.away_player.is_some() {
+            return;
+        }
         if let Some(player) = &tank.player_id {
             self.owners
                 .entry((tank.id, tank.life))
@@ -942,8 +946,8 @@ impl MatchHost {
         let Some(simulation) = self.simulation.as_mut() else {
             return;
         };
-        // A bot standing in for an away player keeps its own score: its deaths and kills
-        // are not the player's.
+        // A bot standing in for an away player keeps its own score: its deaths are not the
+        // player's, and its kills credit nobody, since its lives have no owner.
         let mut events = std::mem::take(&mut simulation.events);
         let simulation = &*simulation;
         let stand_in = |tank: Option<u32>| {
@@ -965,7 +969,7 @@ impl MatchHost {
                     _ => None,
                 };
                 if let Some(owner_id) = owner_id {
-                    let credit = event.owner != event.id && !stand_in(event.owner);
+                    let credit = event.owner != event.id;
                     let owner = match self
                         .seats
                         .iter_mut()
