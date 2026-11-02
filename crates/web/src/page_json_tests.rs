@@ -154,7 +154,7 @@ fn notices() -> Value {
     let lobby = parse_record(
         r#"{"roomEpoch":"e1","roundId":2,"type":"lobby","phase":"results","hostId":"p1",
         "players":[{"playerId":"p1","name":"NITRO \"N\"","kind":"heavy","team":1,"slot":0,
-        "connected":true,"kills":3,"deaths":1,"tankId":4}],"scoreboard":[],
+        "connected":true,"bot":false,"kills":3,"deaths":1,"tankId":4}],"scoreboard":[],
         "settings":{"mapMode":"quarry","difficulty":"easy","humansOnly":false,"roundMinutes":15}}"#,
     )
     .unwrap();

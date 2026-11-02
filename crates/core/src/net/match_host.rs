@@ -15,6 +15,7 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::PlayerControls;
+use super::player_names::{is_player_name, name_seed, player_name};
 use super::prediction::{HullState, MovingBody};
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
@@ -27,6 +28,7 @@ use super::room_list::RoomListing;
 use super::scene_codec::Scene;
 use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
 use super::shot_paths::ShotPathRecorder;
+use crate::sim::bot_personalities::shuffled_bot_names;
 use crate::sim::shooter_rewind::ShooterRewind;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{MatchPhase, PlayerAssignment, SimEventType, Team, VehicleCommand};
@@ -503,6 +505,7 @@ impl MatchHost {
                 {
                     controls.resume(simulation, now_ms as f64);
                 }
+                self.restore_score(seat);
                 self.clients[client_index].1.observed_tick = tick;
                 self.send_control(seat);
                 self.send_full_limited(connection, client_index, now_ms)?;
@@ -561,10 +564,6 @@ impl MatchHost {
                 true,
             );
             return Ok(());
-        }
-        let name = request.name.trim().to_string();
-        if name.is_empty() {
-            return Err("Enter a player name".into());
         }
         let found = request
             .token
@@ -636,13 +635,21 @@ impl MatchHost {
                     );
                     return Ok(());
                 };
+                let player_id = (self.token)();
+                let bot = request.bot == Some(true);
+                let name = if bot {
+                    self.bot_seat_name(&player_id)
+                } else {
+                    self.player_seat_name(&request.name, &player_id)
+                };
                 let player = Player {
-                    player_id: (self.token)(),
+                    player_id,
                     name,
                     kind: request.kind,
                     team: side,
                     slot: slot as u32,
                     connected: true,
+                    bot,
                     kills: 0,
                     deaths: 0,
                     tank_id: None,
@@ -684,6 +691,7 @@ impl MatchHost {
                 {
                     controls.resume(simulation, now_ms as f64);
                 }
+                self.restore_score(seat);
                 seat
             }
         };
@@ -726,10 +734,69 @@ impl MatchHost {
         Ok(())
     }
 
+    /// A new player seat's name: the join's own if it is one a page draws
+    /// ([`is_player_name`]), or one drawn for the seat; numbered when someone in the room
+    /// already shows it. Nothing a client typed reaches other players.
+    fn player_seat_name(&self, requested: &str, player_id: &str) -> String {
+        let name = if is_player_name(requested) {
+            requested.to_string()
+        } else {
+            player_name(name_seed(player_id))
+        };
+        self.numbered(name)
+    }
+
+    /// A pilot's seat name: a bot's that nobody in the room shows, whatever it asked for.
+    fn bot_seat_name(&self, player_id: &str) -> String {
+        let deck = shuffled_bot_names(f64::from(name_seed(player_id) as u32));
+        deck.iter()
+            .find(|name| !self.name_shown(name))
+            .map_or_else(|| self.numbered(deck[0].to_string()), |name| name.to_string())
+    }
+
+    /// `name`, or `name 2`, `name 3`... when another seat, tank or departed player of the
+    /// round shows it.
+    fn numbered(&self, name: String) -> String {
+        if !self.name_shown(&name) {
+            return name;
+        }
+        (2..)
+            .map(|number| format!("{name} {number}"))
+            .find(|numbered| !self.name_shown(numbered))
+            .expect("numbered names never run out")
+    }
+
+    fn name_shown(&self, name: &str) -> bool {
+        self.seats.iter().any(|seat| seat.player.name == name)
+            || self.participants.iter().any(|player| player.name == name)
+            || self.simulation.as_ref().is_some_and(|simulation| {
+                simulation.tanks.iter().any(|tank| {
+                    tank.name == name || tank.away_player.as_deref() == Some(name)
+                })
+            })
+    }
+
+    /// A returning player's tank shows their own score again, not their stand-in's.
+    fn restore_score(&mut self, seat: usize) {
+        let entry = &self.seats[seat];
+        let (Some(simulation), Some(controls)) = (self.simulation.as_mut(), &entry.controls)
+        else {
+            return;
+        };
+        if let Some(index) = simulation.tank_index(controls.tank_id) {
+            let tank = &mut simulation.tanks[index];
+            if tank.away_player.is_none() {
+                tank.kills = entry.player.kills;
+                tank.deaths = entry.player.deaths;
+            }
+        }
+    }
+
     /// Claims a tank for a seat that joined a round already built.
     fn seat_tank(&mut self, seat: usize, now_ms: u64) -> Handled {
         let simulation = self.simulation.as_mut().expect("a round is built");
         let index = claim_player_tank(simulation, &assignment(&self.seats[seat].player));
+        simulation.tanks[index].bot = self.seats[seat].player.bot;
         let tank_id = simulation.tanks[index].id;
         let controls =
             PlayerControls::new(simulation, tank_id, now_ms as f64, !simulation.humans_only)?;
@@ -783,6 +850,10 @@ impl MatchHost {
             return;
         };
         let tank = &simulation.tanks[tank_index];
+        // A stand-in's lives are its own (`set_driver`): their ordnance credits no player.
+        if tank.away_player.is_some() {
+            return;
+        }
         if let Some(player) = &tank.player_id {
             self.owners
                 .entry((tank.id, tank.life))
@@ -835,6 +906,9 @@ impl MatchHost {
                 .position(|tank| tank.player_id.as_deref() == Some(player_id))
                 .expect("every seat has a tank");
             let tank_id = simulation.tanks[index].id;
+            let pilot = self.seats[seat].player.bot;
+            let simulation = self.simulation.as_mut().expect("just built");
+            simulation.tanks[index].bot = pilot;
             let mut controls =
                 PlayerControls::new(simulation, tank_id, now_ms as f64, bot_takeover)?;
             let entry = &mut self.seats[seat];
@@ -872,12 +946,21 @@ impl MatchHost {
         let Some(simulation) = self.simulation.as_mut() else {
             return;
         };
-        for event in simulation.events.drain(..) {
+        // A bot standing in for an away player keeps its own score: its deaths are not the
+        // player's, and its kills credit nobody, since its lives have no owner.
+        let mut events = std::mem::take(&mut simulation.events);
+        let simulation = &*simulation;
+        let stand_in = |tank: Option<u32>| {
+            tank.and_then(|id| simulation.tank_index(id))
+                .is_some_and(|index| simulation.tanks[index].away_player.is_some())
+        };
+        for event in events.drain(..) {
             if event.kind == SimEventType::Death {
                 if let Some(victim) = self
                     .seats
                     .iter_mut()
                     .find(|seat| seat.player.tank_id.is_some() && seat.player.tank_id == event.id)
+                    .filter(|_| !stand_in(event.id))
                 {
                     victim.player.deaths += 1;
                 }
@@ -913,6 +996,11 @@ impl MatchHost {
                 event,
             });
         }
+        // Hand the emptied queue back, keeping its capacity.
+        self.simulation
+            .as_mut()
+            .expect("checked above")
+            .events = events;
         for seat in 0..self.seats.len() {
             let player = &self.seats[seat].player;
             // Most ticks leave the scoreboard unchanged; keep its owned strings until
@@ -926,8 +1014,10 @@ impl MatchHost {
             let simulation = self.simulation.as_mut().expect("checked above");
             if let Some(index) = simulation.tank_index(tank_id) {
                 let tank = &mut simulation.tanks[index];
-                tank.kills = self.seats[seat].player.kills;
-                tank.deaths = self.seats[seat].player.deaths;
+                if tank.away_player.is_none() {
+                    tank.kills = self.seats[seat].player.kills;
+                    tank.deaths = self.seats[seat].player.deaths;
+                }
                 self.remember_owner(index);
             }
         }

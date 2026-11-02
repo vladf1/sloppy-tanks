@@ -39,6 +39,7 @@ pub mod multiplayer_simulation;
 pub mod network_timeline;
 pub mod own_shots;
 pub mod player_controls;
+pub mod player_names;
 pub mod playout_clock;
 pub mod prediction;
 pub mod protocol;

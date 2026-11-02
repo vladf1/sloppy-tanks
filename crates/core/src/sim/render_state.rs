@@ -28,6 +28,8 @@ pub struct RenderTank {
     pub kind: VehicleKind,
     pub team: Team,
     pub human: bool,
+    /// Shown as a bot: a fill bot, a pilot or a stand-in for an away player.
+    pub bot: bool,
     pub alive: bool,
     /// Planar position at the start of the tick; a dead tank's rest pose.
     pub previous: Vec2,
@@ -393,6 +395,7 @@ impl Simulation {
         view.kind = tank.kind;
         view.team = tank.team;
         view.human = tank.human;
+        view.bot = tank.bot;
         view.alive = tank.alive;
         view.previous = tank.previous;
         view.heading = tank.heading;

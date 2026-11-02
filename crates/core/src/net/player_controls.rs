@@ -494,19 +494,29 @@ impl PlayerControls {
             };
             set_driver(simulation, index, driver).expect("any tank can be driven by a bot");
         }
+        // A stand-in starts a life of its own; one epoch announces both changes.
+        self.take_life(simulation);
         self.new_epoch();
     }
 
     /// Gives the tank back to the player under a new control epoch.
     pub fn resume(&mut self, simulation: &mut Simulation, now_ms: f64) {
-        self.refresh_life(simulation);
         self.suspended = false;
         if let Some(index) = simulation.tank_index(self.tank_id) {
             set_driver(simulation, index, Driver::Human).expect("controls drive a player tank");
         }
+        self.take_life(simulation);
         self.last_received_ms = now_ms;
         self.lease_from_ms = now_ms;
         self.new_epoch();
+    }
+
+    /// Takes the tank's life and liveness without starting an epoch of its own.
+    fn take_life(&mut self, simulation: &Simulation) {
+        if let Some(index) = simulation.tank_index(self.tank_id) {
+            self.life = simulation.tanks[index].life;
+            self.alive = simulation.tanks[index].alive;
+        }
     }
 
     /// Picks up post-step deaths and respawns before the next control epoch is published.

@@ -6,7 +6,7 @@ use crate::net_support;
 
 use std::collections::BTreeSet;
 
-use net_support::{Harness, harness};
+use net_support::{Harness, harness, shown};
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{MAX_SERVER_MESSAGE_BYTES, Message};
 use sloppy_core::net::replication::{BinaryMessage, StateMirror, read_binary_message};
@@ -64,7 +64,11 @@ fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_stan
             "the yard's rebuild and debris rules run in the room"
         );
         assert!(!sim.endless_match, "rooms keep their match length");
-        let alice = sim.tanks.iter().find(|tank| tank.name == "alice").unwrap();
+        let alice = sim
+            .tanks
+            .iter()
+            .find(|tank| tank.name == shown("alice"))
+            .unwrap();
         assert_eq!(
             sim.max_health(alice),
             boosted,
@@ -94,7 +98,7 @@ fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_stan
     let erin = sim
         .tanks
         .iter()
-        .find(|tank| tank.name == "erin" && tank.human)
+        .find(|tank| tank.name == shown("erin") && tank.human)
         .unwrap();
     assert_eq!(
         erin.hp, boosted,
@@ -116,7 +120,7 @@ fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_stan
     let host = village
         .tanks
         .iter()
-        .find(|tank| tank.name == "alice")
+        .find(|tank| tank.name == shown("alice"))
         .unwrap();
     assert_eq!(
         village.max_health(host),
@@ -215,7 +219,11 @@ fn a_stress_grid_room_fields_its_30_tanks_on_the_full_size_grid() {
     let alice = {
         let sim = grid.sim();
         assert_eq!(sim.map_name(), "STRESS GRID");
-        let alice = sim.tanks.iter().find(|tank| tank.name == "alice").unwrap();
+        let alice = sim
+            .tanks
+            .iter()
+            .find(|tank| tank.name == shown("alice"))
+            .unwrap();
         assert_eq!(
             sim.max_health(alice),
             vehicle(VehicleKind::Balanced).health * STRESS_PLAYER_HEALTH_MULTIPLIER

@@ -259,10 +259,13 @@ pub fn human_json(tank: &RenderTank, elapsed: f64, timers: &mut EffectTimers) ->
 }
 
 /// Every tank's name and kills (`hud_json().scoreboard`), from replicated or simulated
-/// tanks, or rows kept between reads.
+/// tanks, or rows kept between reads. A room's rows mark its bots; single player's mark
+/// none, since every tank there but the player's is one.
 #[derive(Clone, Debug)]
 pub enum Scoreboard<'a> {
+    /// A room's displayed scene.
     Rendered(&'a [RenderTank]),
+    /// Single player's simulation.
     Simulated(&'a [Tank]),
     Kept(Vec<HudScore<'static>>),
 }
@@ -284,6 +287,7 @@ impl Scoreboard<'_> {
                 name: Cow::Borrowed(&tank.name),
                 kills: tank.kills,
                 deaths: tank.deaths,
+                bot: tank.bot,
                 team: tank.team,
                 kind: tank.kind,
             })
@@ -292,6 +296,7 @@ impl Scoreboard<'_> {
                 name: Cow::Borrowed(&tank.name),
                 kills: tank.kills,
                 deaths: tank.deaths,
+                bot: false,
                 team: tank.team,
                 kind: tank.kind,
             }))
@@ -376,12 +381,18 @@ pub struct HudAmmo {
     pub available: bool,
 }
 
+/// The tag the boards and the kill feed show beside a room's bot.
+pub const BOT_TAG: &str = "BOT";
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct HudScore<'a> {
     pub id: u32,
     pub name: Cow<'a, str>,
     pub kills: u32,
     pub deaths: u32,
+    /// Shown with [`BOT_TAG`]: a room's fill bot, a pilot or a bot standing in for an
+    /// away player. Single player marks none ([`Scoreboard`]).
+    pub bot: bool,
     /// The team and tank the death report names and the boards rank by; the page reads
     /// the reports.
     #[serde(skip)]
@@ -397,6 +408,7 @@ impl HudScore<'_> {
             name: Cow::Owned(self.name.into_owned()),
             kills: self.kills,
             deaths: self.deaths,
+            bot: self.bot,
             team: self.team,
             kind: self.kind,
         }
@@ -826,7 +838,8 @@ mod tests {
     }
 
     /// Single player serializes the simulation's tanks and a room its replicated
-    /// copies: both give the same scoreboard, in roster order, with names escaped.
+    /// copies: both give the same scoreboard, in roster order, with names escaped, but
+    /// only the room's marks its bots.
     #[test]
     fn local_and_replicated_scoreboards_match() {
         let mut simulation = Simulation::new(4242.0, SimulationSetup::default());
@@ -842,12 +855,18 @@ mod tests {
         let mut state = RenderState::default();
         simulation.fill_render_state(&mut state, None);
         let text = serde_json::to_string(&Scoreboard::Simulated(&simulation.tanks)).unwrap();
-        assert_eq!(
-            text,
-            serde_json::to_string(&Scoreboard::Rendered(&state.tanks)).unwrap(),
-        );
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let rendered = Scoreboard::Rendered(&state.tanks);
+        let unmarked: Vec<HudScore> = rendered
+            .rows()
+            .map(|row| HudScore { bot: false, ..row })
+            .collect();
+        assert_eq!(text, serde_json::to_string(&unmarked).unwrap());
         let tanks = &simulation.tanks;
+        let marked: Vec<bool> = rendered.rows().map(|row| row.bot).collect();
+        let bots: Vec<bool> = tanks.iter().map(|tank| tank.bot).collect();
+        assert_eq!(marked, bots);
+        assert!(bots.contains(&true), "the battle has bots to mark");
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             value[0],
             json!({
@@ -855,6 +874,7 @@ mod tests {
                 "name": tanks[0].name,
                 "kills": 12,
                 "deaths": 3,
+                "bot": false,
             })
         );
         let ids: Vec<_> = value

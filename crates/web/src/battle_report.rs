@@ -701,6 +701,7 @@ mod tests {
             name: Cow::Borrowed(name),
             kills,
             deaths,
+            bot: false,
             team,
             kind: VehicleKind::Balanced,
         }

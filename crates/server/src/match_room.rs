@@ -3,33 +3,27 @@
 //!
 //! The core host is transport-free and queues its sends, closes and directory changes;
 //! this adapter moves them, in order, into the session's [`HostOutput`] after each call.
-//! It also masks offensive player names in joins ([`crate::player_names`]), which keeps
-//! the word lists out of core and so out of the page.
 
 use sloppy_core::net::match_host::{ConnectionId, MatchHost, MatchHostOptions};
 use sloppy_core::net::room_list::RoomListing;
 
 use crate::host::{HostOutput, RoomHost};
-use crate::player_names::Callsigns;
 
 pub struct MatchRoom {
     host: MatchHost,
-    callsigns: Callsigns,
 }
 
 impl MatchRoom {
     pub fn new(options: MatchHostOptions) -> Self {
         Self {
             host: MatchHost::new(options),
-            callsigns: Callsigns::default(),
         }
     }
 }
 
 impl RoomHost for MatchRoom {
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
-        let text = self.callsigns.mask_join(text);
-        self.host.receive(connection, &text, now_ms);
+        self.host.receive(connection, text, now_ms);
         out.extend(self.host.take_events());
     }
 

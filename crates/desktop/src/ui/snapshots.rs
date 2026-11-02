@@ -63,6 +63,7 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             name: Cow::Borrowed(NAMES[index]),
             kills: KILLS[index],
             deaths: DEATHS[index],
+            bot: false,
             team: Team::from_index(usize::from(index >= 6)),
             kind: KINDS[index % 3],
         })
@@ -165,6 +166,8 @@ fn feedback(state: &mut UiState) {
         victim: victim.into(),
         killer_team: teams[0],
         victim_team: teams[1],
+        killer_bot: false,
+        victim_bot: false,
         cause: Some(cause),
         own_kill: killer == "YOU",
         own_death: false,
@@ -399,6 +402,14 @@ fn scenarios() -> Vec<Scenario> {
         let dead = name == "room-respawn";
         let mut room = screen(name, phase, false, !dead, if dead { 0.0 } else { 0.7 });
         room.in_round = menu.in_battle();
+        if dead {
+            // A room tags its bots in the feed: the pilot Crank and the fill bots.
+            feedback(&mut room.state);
+            for entry in &mut room.state.kill_feed {
+                entry.killer_bot = entry.killer == "Crank";
+                entry.victim_bot = entry.victim != "Tusk";
+            }
+        }
         room.state.settings_draft = (name == "room-settings").then(Preferences::default);
         list.push(room);
     }
@@ -448,7 +459,7 @@ fn snapshots() {
     let height = (size[1] * SCALE) as u32;
     let prefs = Preferences {
         debug: false,
-        player_name: "Driver".into(),
+        player_name: "Swift Falcon".into(),
         ..Preferences::default()
     };
     let (game_stats, room_stats) = nerd_readings();

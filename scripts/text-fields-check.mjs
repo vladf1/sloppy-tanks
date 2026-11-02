@@ -1,5 +1,5 @@
-// The page's text fields type like the browser's own: Battle Setup's room code and name
-// fields take typing, the clipboard's shortcuts (paste, copy and cut, on the browser's
+// The page's text fields type like the browser's own: Battle Setup's room code field
+// takes typing, the clipboard's shortcuts (paste, copy and cut, on the browser's
 // clipboard), Enter, Escape, Tab, the arrows, an IME's composition and a soft keyboard's
 // text; on a touch screen the field's element has the page's focus by the time the
 // tapping finger's release is handled, the only moment iOS brings up its keyboard; and
@@ -26,7 +26,6 @@ mkdirSync(out, { recursive: true });
 
 const ENTRY = "sloppy-text-entry";
 const CODE = "Room code";
-const NAME = "Tank driver";
 /** The command key people press for the clipboard here, which Playwright's browsers
  * take as theirs: Cmd on a Mac, Ctrl elsewhere. */
 const COMMAND = process.platform === "darwin" ? "Meta" : "Control";
@@ -259,44 +258,45 @@ async function keyboardFields(page, what, { readable, cdp }) {
   await untilValue(page, CODE, "ABCD2345", `${what}: Enter`);
   await untilActive(page, "canvas", `${what}: Enter`);
 
-  // The arrows, Backspace, Home and End and a selection with Shift edit at the caret.
-  await focusField(page, NAME, (point) => click(page, point, false), `${what}: the name`);
+  // The arrows, Backspace, Home and End and a selection with Shift edit at the caret,
+  // within the code's eight characters.
+  await focusField(page, CODE, (point) => click(page, point, false), `${what}: the caret`);
   await selectAll(page);
   await page.keyboard.type("ab");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.type("X");
-  await untilValue(page, NAME, "aXb", `${what}: ArrowLeft`);
+  await untilValue(page, CODE, "aXb", `${what}: ArrowLeft`);
   await page.keyboard.press("Backspace");
-  await untilValue(page, NAME, "ab", `${what}: Backspace`);
+  await untilValue(page, CODE, "ab", `${what}: Backspace`);
   await page.keyboard.press("End");
-  await page.keyboard.type(" Pilot");
-  await untilValue(page, NAME, "ab Pilot", `${what}: End`);
+  await page.keyboard.type("cd");
+  await untilValue(page, CODE, "abcd", `${what}: End`);
   await page.keyboard.press("Shift+Home");
   await nextFrame(page);
-  await page.keyboard.type("Typist");
-  await untilValue(page, NAME, "Typist", `${what}: Shift+Home`);
+  await page.keyboard.type("wx");
+  await untilValue(page, CODE, "wx", `${what}: Shift+Home`);
 
   // A soft keyboard's or an IME's text comes with no key: an input event only, or a
   // composition (Chrome's DevTools protocol stages one).
   await page.keyboard.insertText("ü");
-  await untilValue(page, NAME, "Typistü", `${what}: text with no key`);
+  await untilValue(page, CODE, "wxü", `${what}: text with no key`);
   if (cdp) {
     await cdp.send("Input.imeSetComposition", {
       text: "せんしゃ",
       selectionStart: 4,
       selectionEnd: 4,
     });
-    await untilValue(page, NAME, "Typistüせんしゃ", `${what}: a composition`);
+    await untilValue(page, CODE, "wxüせんしゃ", `${what}: a composition`);
     await cdp.send("Input.insertText", { text: "戦車" });
-    await untilValue(page, NAME, "Typistü戦車", `${what}: its commit`);
+    await untilValue(page, CODE, "wxü戦車", `${what}: its commit`);
   }
-  await shot("name");
+  await shot("caret");
 
   // Tab moves egui's focus on and types no tab.
   await page.keyboard.press("Tab");
   await nextFrame(page);
   await nextFrame(page);
-  assert.ok(!(await findWidget(page, NAME)).value.includes("\t"), `${what}: Tab typed`);
+  assert.ok(!(await findWidget(page, CODE)).value.includes("\t"), `${what}: Tab typed`);
   await page.keyboard.press("Escape");
   await untilActive(page, "canvas", `${what}: Escape after Tab`);
 }
@@ -369,29 +369,35 @@ async function touchFields(page, what, cdp, phone) {
   assert.equal(await active(page), "canvas", `${what}: the canvas kept the fingers`);
 }
 
-/** Typing on a touch screen's fields, with a soft keyboard's text. */
+/** Typing on a touch screen's field, with a soft keyboard's text. */
 async function touchTyping(page, what, cdp, press) {
   const shot = (name) => screenshot(page, `${what}-${name}`);
-  await focusField(page, NAME, press, what);
+  await focusField(page, CODE, press, what);
   await selectAll(page);
   await page.keyboard.insertText("Thumbs");
-  await untilValue(page, NAME, "Thumbs", `${what}: a soft keyboard's text`);
+  await untilValue(page, CODE, "Thumbs", `${what}: a soft keyboard's text`);
   await page.keyboard.press("Backspace");
-  await untilValue(page, NAME, "Thumb", `${what}: its Backspace`);
+  await untilValue(page, CODE, "Thumb", `${what}: its Backspace`);
+
+  // The keyboard put away: the page's focus leaves the text entry for nothing.
+  const putAway = async (when) => {
+    await page.evaluate(() => document.activeElement.blur());
+    await untilActive(page, "canvas", `${what}: the keyboard put away ${when}`);
+    await nextFrame(page);
+    assert.notEqual(await active(page), ENTRY, `${what}: the field let go ${when}`);
+  };
+  await putAway("after Backspace");
+
   // Playwright's instant tap, with no frame of the finger before it lifts.
   await focusField(page, CODE, (point) => page.touchscreen.tap(point.x, point.y), what);
+  await selectAll(page);
   await page.keyboard.insertText("abcd2345");
   await untilValue(page, CODE, "abcd2345", `${what}: the room code`);
   await shot("typed");
-
-  // The keyboard put away: the page's focus leaves the text entry for nothing.
-  await page.evaluate(() => document.activeElement.blur());
-  await untilActive(page, "canvas", `${what}: the keyboard put away`);
-  await nextFrame(page);
-  assert.notEqual(await active(page), ENTRY, `${what}: the field let go`);
+  await putAway("after the code");
 
   // The round's tab, tapped while a field types, lets go of it too (`startRound`).
-  await focusField(page, NAME, press, `${what} again`);
+  await focusField(page, CODE, press, `${what} again`);
 }
 
 const CASES = [
