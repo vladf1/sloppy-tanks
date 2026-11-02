@@ -41,7 +41,7 @@ const WALL_MARK_LIFETIME: f64 = 40.0;
 /// A mark's diameter (m), never more than its face has room for, and how far it
 /// stands off the face (a container's ribs stand proud of its skin).
 const WALL_MARK_SIZE: f64 = 2.4;
-const WALL_MARK_STANDOFF: [f32; 2] = [0.035, 0.16];
+const WALL_MARK_STANDOFF: f32 = 0.16;
 /// Ground decals a frame may hold: a dust ring and a shockwave per blast, every
 /// scorch and every wall mark.
 pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES + MAX_WALL_MARKS;
@@ -234,7 +234,6 @@ const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
 const DUST_RING: f32 = 0.0;
 const SHOCK_RING: f32 = 1.0;
 const SCORCH: f32 = 2.0;
-const STONE_MARK: f32 = 3.0;
 const STEEL_MARK: f32 = 4.0;
 const POWDER: f32 = 5.0;
 /// A concrete hit's powder stain: how far out from the face it lies and how
@@ -651,14 +650,12 @@ impl BlastDraws {
     }
 }
 
-/// A shell's mark on a hard wall: a chipped crater in stone, a sooty dent with a
-/// hot heart in steel.
+/// A shell's mark on a container: a sooty dent with a hot heart.
 #[derive(Clone, Copy, Debug, Default)]
 struct WallMark {
     position: Vec3,
     normal: Vec3,
     diameter: f32,
-    steel: bool,
     /// The wall's color, linear.
     color: [f32; 3],
     age: f64,
@@ -1123,9 +1120,7 @@ impl ExplosionEffects {
                         SIDING_DUST_SHADE,
                     ),
                 };
-                if strike.marked {
-                    wall_mark = Some((strike, blast.phase, blast.dust));
-                }
+                wall_mark = Some((strike, blast.phase, blast.dust));
             }
         }
         if let Some(wood) = wood {
@@ -1191,7 +1186,9 @@ impl ExplosionEffects {
                     POWDER,
                 );
             }
-            self.mark(strike, phase);
+            if strike.marked {
+                self.mark(strike, phase);
+            }
         }
     }
 
@@ -1364,19 +1361,16 @@ impl ExplosionEffects {
         self.scorch_count -= expired;
     }
 
-    /// Leave a shell's mark where it struck a hard wall.
+    /// Leave a shell's mark where it struck a container.
     fn mark(&mut self, strike: Strike, phase: f64) {
-        let steel = strike.material == WallMaterial::Steel;
         let diameter = (WALL_MARK_SIZE as f32).min(strike.room * 2.3);
         if diameter < 0.2 {
             return;
         }
-        let standoff = WALL_MARK_STANDOFF[usize::from(steel)];
         self.marks[self.mark_cursor] = WallMark {
-            position: strike.point + strike.normal * standoff,
+            position: strike.point + strike.normal * WALL_MARK_STANDOFF,
             normal: strike.normal,
             diameter,
-            steel,
             color: hex_to_linear(strike.color),
             age: 0.0,
             phase,
@@ -1386,7 +1380,7 @@ impl ExplosionEffects {
     }
 
     /// Every wall mark, as a decal standing on its face, oldest first; the tint is
-    /// the wall's own color for the crater's broken stone.
+    /// the container's own paint.
     fn wall_marks(&mut self, dt: f64) {
         let first = (self.mark_cursor + MAX_WALL_MARKS - self.mark_count) % MAX_WALL_MARKS;
         let mut expired = 0;
@@ -1404,7 +1398,6 @@ impl ExplosionEffects {
                 glam::Quat::from_rotation_arc(Vec3::Y, mark.normal),
                 mark.position,
             );
-            let kind = if mark.steel { STEEL_MARK } else { STONE_MARK };
             let [r, g, b] = mark.color;
             self.rings.push(record(
                 world,
@@ -1412,7 +1405,7 @@ impl ExplosionEffects {
                 [
                     mark.age as f32,
                     mark.phase as f32,
-                    kind,
+                    STEEL_MARK,
                     (strength * appear) as f32,
                 ],
             ));
@@ -1420,7 +1413,7 @@ impl ExplosionEffects {
         self.mark_count -= expired;
     }
 
-    /// Wall marks on hard cover, for tests.
+    /// Wall marks on containers, for tests.
     pub fn wall_mark_count(&self) -> usize {
         self.mark_count
     }

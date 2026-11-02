@@ -57,7 +57,7 @@ struct WallBox {
     /// `None` for cover with its own hit effects (crates, timber), which smoke
     /// still rolls round.
     material: Option<WallMaterial>,
-    /// Whether a shell's crater mark may stand on its faces (`Strike::marked`).
+    /// Whether a shell's dent may stand on its faces (`Strike::marked`).
     marked: bool,
     /// Its paint or stone, sRGB hex.
     color: u32,
@@ -86,10 +86,11 @@ pub struct Strike {
     pub point: Vec3,
     pub normal: Vec3,
     pub room: f32,
-    /// Whether the hit leaves a crater mark on the face. The mark is a flat decal on
-    /// the box, fixed where it struck: a cottage's model shows each hole itself, and
-    /// dragon's teeth and hedgehogs are neither boxes nor still (shells push them),
-    /// so a mark there hung in the air beside their slopes and beams.
+    /// Whether the hit leaves a dent on the face: only a container's. The mark is a
+    /// flat decal on the box, fixed where it struck, so it hung in the air beside a
+    /// dragon's tooth's slopes, a hedgehog's beams and a rock's bulges (and shells
+    /// push teeth and hedgehogs); a stone crater with rebar read as a sticker even on
+    /// a concrete block, and a cottage's model shows each hole itself.
     pub marked: bool,
     /// The wall's paint or stone, sRGB hex.
     pub color: u32,
@@ -335,7 +336,7 @@ impl Walls {
                 half_d: cover.d * 0.5,
                 height: cover.h,
                 material,
-                marked: cover.kind != CoverKind::House && !cover.kind.movable(),
+                marked: cover.kind == CoverKind::Container,
                 color,
                 trim,
                 roof,
@@ -576,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn only_still_box_cover_takes_a_crater_mark() {
+    fn only_a_container_takes_a_mark() {
         let cover = |kind, x| sloppy_core::sim::render_state::RenderCover {
             kind,
             x,
@@ -592,13 +593,15 @@ mod tests {
                 cover(CoverKind::Concrete, 0.0),
                 cover(CoverKind::Teeth, 10.0),
                 cover(CoverKind::Hedgehog, 20.0),
+                cover(CoverKind::Container, 30.0),
             ],
             ..RenderState::default()
         });
         let marked = |x: f64| walls.strike(x - 1.0, 1.0, 0.0).expect("on a face").marked;
-        assert!(marked(0.0));
+        assert!(!marked(0.0), "no stone crater");
         assert!(!marked(10.0), "a dragon's tooth slopes away from its box");
         assert!(!marked(20.0), "a hedgehog is open beams");
+        assert!(marked(30.0));
     }
 
     #[test]
