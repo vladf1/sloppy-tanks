@@ -4,7 +4,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { geometryKey, parseDepInfo, serverSources } from "../scripts/content-version.mjs";
+import {
+  geometryKey,
+  parseDepInfo,
+  serverSources,
+  shaderTablesSources,
+} from "../scripts/content-version.mjs";
 
 test("the server build hashes the server crate's code and manifest", async () => {
   const sources = await serverSources();
@@ -19,6 +24,24 @@ test("the server build ignores the server guide and integration tests", async ()
   assert.ok(!sources.includes("crates/server/README.md"));
   assert.deepEqual(
     sources.filter((path) => path.endsWith(".md") || path.startsWith("crates/server/tests/")),
+    [],
+  );
+});
+
+test("the shader tables follow the renderer and the core's materials, not the rest of the core", async () => {
+  const sources = await shaderTablesSources();
+  assert.ok(sources.includes("crates/render/src/shader/tables.rs"));
+  assert.ok(sources.includes("crates/render/src/bin/shader-tables.rs"));
+  assert.ok(sources.some((path) => path.endsWith(".wgsl")));
+  assert.ok(sources.includes("crates/render/build.rs"));
+  assert.ok(sources.includes("crates/core/src/scene.rs"));
+  assert.ok(sources.includes("Cargo.lock"));
+  assert.deepEqual(
+    sources.filter(
+      (path) =>
+        (path.startsWith("crates/core/") && path !== "crates/core/src/scene.rs") ||
+        path.startsWith("crates/render/tests/"),
+    ),
     [],
   );
 });
