@@ -133,7 +133,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
             let d = distance(position, q);
             firing_range = d;
             let lead = if easy { 0.1 } else { 0.65 };
-            let shell_speed = weapon(preferred).speed * simulation.speed_tuning.bullet_speed;
+            let shell_speed = weapon(preferred).speed;
             let aim_error = simulation.tanks[tank_index].brain.aim_error;
             let desired = (q.x + (velocity.x * d * lead) / shell_speed - position.x)
                 .atan2(q.z + (velocity.z * d * lead) / shell_speed - position.z)

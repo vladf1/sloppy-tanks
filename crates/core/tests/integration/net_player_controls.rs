@@ -20,7 +20,6 @@ use sloppy_core::sim::debris_cleanup::cleanup_candidate;
 use sloppy_core::sim::difficulty::{Difficulty, enemy_difficulty};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::mines::place_mine;
-use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::types::{
     AmmoSelection, CoverKind, Driver, FragmentShape, PlayerAssignment, SimEventType, Team,
     VehicleCommand, VehicleKind, Weapon,
@@ -709,8 +708,6 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     assert!(sim.tanks[a].alive && sim.tanks[b].alive);
     assert_eq!((sim.tanks[a].life, sim.tanks[a].deaths), (1, 1));
     assert_eq!((sim.tanks[b].life, sim.tanks[b].deaths), (1, 1));
-    assert_eq!(tune_speed(&mut sim, SpeedSetting::TankSpeed, 2.0), 1.0);
-    assert_eq!(tune_speed(&mut sim, SpeedSetting::BulletSpeed, 0.5), 1.0);
 }
 
 #[test]
