@@ -214,8 +214,7 @@ created ([Machines](#machines)):
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
-  environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or `:dev` every
-  10 seconds (a drop-in `bootstrap.sh` writes on dev). A check reads the tag's digest
+  environment (`SERVER_ENVIRONMENT`), `:production` or `:dev`, every 10 seconds. A check reads the tag's digest
   with two small requests (an anonymous token and the manifest's headers) and pulls
   only when it has moved; one that cannot reach the registry changes nothing, and the
   journal hears only when checks start failing or work again. `bootstrap.sh` turns it
@@ -237,7 +236,7 @@ pnpm run server:deploy                # SSH fallback: build here, copy the image
 Each acts on production's machine; `--dev` picks the dev site's.
 
 With auto-update on, as every machine is by default, production's timer checks
-`:production` every two minutes. A new image waits until nobody holds a seat (the
+`:production` every 10 seconds. A new image waits until nobody holds a seat (the
 `players` count in `/stats`), or at most four hours for a server-only change and ten
 minutes after a content change, when the new site is already sending visitors a
 reload message. Anything other than following

@@ -5,7 +5,7 @@ Description=Follow the environment's server image tag (auto-update)
 Type=oneshot
 ExecStart=/usr/local/bin/sloppy-tanks-update auto
 # Everything the updater prints is logged at notice, and nothing below it, which drops
-# systemd's own start and finish lines for every check (dev checks every 10 seconds), so
+# systemd's own start and finish lines for every check (one every 10 seconds), so
 # `server:status` shows the checks that said something.
 SyslogLevel=notice
 LogLevelMax=notice

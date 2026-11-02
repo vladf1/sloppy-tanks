@@ -46,17 +46,6 @@ install -m 755 "$work/sloppy-tanks-update" /usr/local/bin/sloppy-tanks-update
 install -m 644 "$work/sloppy-tanks-update.service" "$work/sloppy-tanks-update.timer" \
   /etc/systemd/system/
 install -m 644 "$work/sloppy-tanks.container" "$work/caddy.container" /etc/containers/systemd/
-# Dev's machines check :dev every 10 seconds, so a publish from a developer's checkout is
-# live within moments; production keeps the timer's two minutes. The empty assignment
-# clears every trigger of the timer, OnBootSec too, so dev's are set again: without
-# OnBootSec the timer waits for a run of the service that only the timer starts, and never
-# fires. AccuracySec lets it fire on time rather than anywhere within systemd's default
-# minute.
-if grep -qx 'SERVER_ENVIRONMENT=dev' /etc/sloppy-tanks/server.env; then
-  install -d /etc/systemd/system/sloppy-tanks-update.timer.d
-  printf '%s\n' '[Timer]' 'OnUnitActiveSec=' 'OnBootSec=10s' 'OnUnitActiveSec=10s' \
-    'RandomizedDelaySec=0' 'AccuracySec=1s' >/etc/systemd/system/sloppy-tanks-update.timer.d/dev.conf
-fi
 systemctl daemon-reload
 systemctl enable --now sloppy-tanks-update.timer
 # Caddy's unit pulls its pinned image at this first start; later starts find it here.
