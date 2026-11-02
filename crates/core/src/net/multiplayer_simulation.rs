@@ -73,15 +73,37 @@ pub fn create_multiplayer_simulation(
     Ok(Simulation::new(seed, setup))
 }
 
-/// Bot takeover changes the driver, never the player's tank, balance, score or life.
+/// Bot takeover changes the driver, never the player's tank or balance. The bot stands
+/// in under a bot's name with a score of its own, so nobody reads a bot's play as the
+/// player's; the player's name returns with them (the host restores their score, which
+/// it keeps per seat). Handing over either way starts a new life without a death, so
+/// `ownerLife` keeps the stand-in's ordnance, mines included, from ever crediting the
+/// player, and the player's from awarding the stand-in XP.
 pub fn set_driver(
     simulation: &mut Simulation,
     tank_index: usize,
     driver: Driver,
 ) -> Result<(), String> {
-    let tank = &mut simulation.tanks[tank_index];
-    if driver == Driver::Human && !tank.human {
+    if driver == Driver::Human && !simulation.tanks[tank_index].human {
         return Err("A fill bot has no player seat".into());
+    }
+    // A pilot's tank already shows a bot's name; only a player's is handed over.
+    let tank = &simulation.tanks[tank_index];
+    let stands_in = driver == Driver::Bot && tank.human && !tank.bot;
+    let stand_in_name = stands_in.then(|| simulation.unused_bot_name());
+    let tank = &mut simulation.tanks[tank_index];
+    if let Some(name) = stand_in_name {
+        tank.away_player = Some(std::mem::replace(&mut tank.name, name));
+        tank.bot = true;
+        tank.kills = 0;
+        tank.deaths = 0;
+        tank.life += 1;
+    } else if driver != Driver::Bot
+        && let Some(name) = tank.away_player.take()
+    {
+        tank.name = name;
+        tank.bot = false;
+        tank.life += 1;
     }
     tank.driver = driver;
     tank.command = VehicleCommand::idle_aiming(tank.aim);
@@ -103,12 +125,26 @@ pub fn reassign_tank(
         let body = simulation.tanks[tank_index].body;
         simulation.remove_body(body);
     }
+    // A fill bot that takes over from a stand-in keeps the stand-in's name, which the
+    // field already reads as a bot.
+    let tank = &mut simulation.tanks[tank_index];
+    let stand_in = tank.away_player.take().is_some();
+    let name = match player {
+        Some(player) => player.name.clone(),
+        None if stand_in => std::mem::take(&mut tank.name),
+        None => {
+            // The leaving player's name is no longer taken.
+            tank.name.clear();
+            simulation.unused_bot_name()
+        }
+    };
     let tank = &mut simulation.tanks[tank_index];
     tank.alive = false;
     tank.life += 1;
     tank.player_id = player.map(|player| player.player_id.clone());
-    tank.name = player.map_or_else(|| "BOT".to_string(), |player| player.name.clone());
+    tank.name = name;
     tank.human = player.is_some();
+    tank.bot = player.is_none();
     tank.driver = if player.is_some() {
         Driver::Human
     } else {

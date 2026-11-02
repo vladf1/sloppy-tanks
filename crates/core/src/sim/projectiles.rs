@@ -149,13 +149,8 @@ pub struct RocketThrust {
 }
 
 impl RocketThrust {
-    pub fn of(simulation: &Simulation) -> Self {
-        Self::at_bullet_speed(simulation.speed_tuning.bullet_speed)
-    }
-
-    /// A rocket's thrust under the bullet speed tuning `bullet_speed`.
-    pub fn at_bullet_speed(bullet_speed: f64) -> Self {
-        let base_speed = weapon(Weapon::Rocket).speed * bullet_speed;
+    pub fn standard() -> Self {
+        let base_speed = weapon(Weapon::Rocket).speed;
         let top_speed = base_speed * COMBAT.rocket_top_speed_multiplier;
         Self {
             acceleration: (top_speed - base_speed) / COMBAT.rocket_acceleration_seconds,
@@ -173,7 +168,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         let life = simulation.shots[i].life;
         guide_tow_missile(simulation, i, dt.min(life));
     }
-    let thrust = RocketThrust::of(simulation);
+    let thrust = RocketThrust::standard();
     for shot in simulation
         .shots
         .iter_mut()

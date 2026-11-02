@@ -41,8 +41,6 @@ use crate::sim::tank_dimensions::{tank_muzzle, tank_visual_muzzle};
 use crate::sim::types::{CoverKind, SimEvent, SimEventType, Team, VehicleKind, Weapon};
 use crate::sim::weapons::MUZZLE_FRAME_OFFSET;
 
-/// Multiplayer always fires at the standard shell speed.
-const BULLET_SPEED: f64 = 1.0;
 /// Render ids of predicted shells start here, above any id the host issues.
 const FIRST_SHELL_ID: u32 = 0xf000_0000;
 /// The host's launch of a predicted shell starts within this many ticks of it, this close
@@ -420,12 +418,12 @@ impl OwnShots {
             weapon: fired,
             y: Some(muzzle_height),
             visual_y: Some(visual_height),
-            thrust: (fired == Weapon::Rocket).then(|| RocketThrust::at_bullet_speed(BULLET_SPEED)),
+            thrust: (fired == Weapon::Rocket).then(RocketThrust::standard),
             rewind: 0,
         };
         // A rocket takes its first tick of thrust before its first sweep, so its path
         // starts at the speed after it (`step_projectiles`).
-        let speed = stats.speed * BULLET_SPEED;
+        let speed = stats.speed;
         let speed = launch.thrust.map_or(speed, |thrust| {
             thrust.top_speed.min(speed + thrust.acceleration * STEP)
         });

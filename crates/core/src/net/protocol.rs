@@ -44,8 +44,9 @@ pub use super::room_list::RoomPhase;
 /// the bodies moving near it; 6: input carries the sender's view delay, and a shell's
 /// launch the ticks it rewinds the tanks it meets; 7: entity fields move on by their last
 /// change (baselines carry it), timers count steps, and the hull and bodies travel as
-/// fixed point (the hull's position still as `f32`).
-pub const PROTOCOL_VERSION: u32 = 7;
+/// fixed point (the hull's position still as `f32`); 8: tanks, lobby seats and joins
+/// carry `bot`, and a room seats players only under drawn names.
+pub const PROTOCOL_VERSION: u32 = 8;
 /// First byte of a binary baseline message.
 pub const FULL_MESSAGE: u8 = 1;
 /// First byte of a binary snapshot batch.
@@ -246,6 +247,8 @@ pub struct JoinRequest {
     pub room_epoch: Option<String>,
     pub create: Option<RoomSettings>,
     pub existing_room: Option<bool>,
+    /// A pilot or load bot, which plays under a bot's name and mark.
+    pub bot: Option<bool>,
 }
 
 impl JoinRequest {
@@ -262,6 +265,7 @@ impl JoinRequest {
                 optional(v, |v| nested(v, RoomSettings::read))
             })?,
             existing_room: field(source, "existingRoom", |v| optional(v, boolean))?,
+            bot: field(source, "bot", |v| optional(v, boolean))?,
         })
     }
 }
@@ -275,6 +279,8 @@ pub struct Player {
     pub team: Team,
     pub slot: u32,
     pub connected: bool,
+    /// A pilot or load bot holds the seat.
+    pub bot: bool,
     pub kills: u32,
     pub deaths: u32,
     pub tank_id: Option<u32>,
@@ -290,6 +296,7 @@ impl Player {
             slot: field(source, "slot", id32)?,
             kind: field(source, "kind", read_player_kind)?,
             connected: field(source, "connected", boolean)?,
+            bot: field(source, "bot", boolean)?,
             tank_id: field(source, "tankId", |v| optional(v, id32))?,
             kills: field(source, "kills", id32)?,
             deaths: field(source, "deaths", id32)?,
@@ -306,6 +313,7 @@ impl Player {
             .int("team", self.team.index() as u64)
             .int("slot", u64::from(self.slot))
             .boolean("connected", self.connected)
+            .boolean("bot", self.bot)
             .int("kills", u64::from(self.kills))
             .int("deaths", u64::from(self.deaths));
         if let Some(tank) = self.tank_id {
@@ -494,6 +502,8 @@ pub struct JoinChoice {
     pub team: Option<Team>,
     pub create: Option<RoomSettings>,
     pub existing_room: Option<bool>,
+    /// A pilot or load bot: the room names it as a bot whatever `name` says.
+    pub bot: bool,
 }
 
 impl JoinChoice {
@@ -507,6 +517,7 @@ impl JoinChoice {
                 optional(v, |v| nested(v, RoomSettings::read))
             })?,
             existing_room: field(source, "existingRoom", |v| optional(v, boolean))?,
+            bot: field(source, "bot", |v| optional(v, boolean))?.unwrap_or(false),
         })
     }
 
@@ -527,6 +538,9 @@ impl JoinChoice {
         }
         if let Some(existing) = self.existing_room {
             writer.boolean("existingRoom", existing);
+        }
+        if self.bot {
+            writer.boolean("bot", true);
         }
     }
 
@@ -608,6 +622,7 @@ mod tests {
                 team: Team::Red,
                 slot: 1,
                 connected: true,
+                bot: false,
                 kills: 3,
                 deaths: 0,
                 tank_id: Some(4),

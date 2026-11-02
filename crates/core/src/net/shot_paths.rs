@@ -459,7 +459,7 @@ impl ShotPathRecorder {
         let Some(mut moves) = simulation.projectile_moves.take() else {
             return;
         };
-        let thrust = RocketThrust::of(simulation);
+        let thrust = RocketThrust::standard();
         let rewind = simulation.shooter_rewind.as_ref();
         for sweep in moves.drain(..) {
             let shot = &sweep.shot;

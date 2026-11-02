@@ -327,7 +327,6 @@ fn fresh_brain(position: Vec2) -> Brain {
 }
 
 fn sync_tank(simulation: &mut Simulation, index: usize, seen: &RenderTank, own: bool) {
-    let speed_scale = simulation.speed_tuning.tank_speed;
     let tank = &simulation.tanks[index];
     let new_life = tank.life != seen.life || tank.kind != seen.kind;
     if tank.alive && (!seen.alive || new_life) {
@@ -337,8 +336,7 @@ fn sync_tank(simulation: &mut Simulation, index: usize, seen: &RenderTank, own: 
     }
     let tank = &simulation.tanks[index];
     if seen.alive && !tank.alive {
-        let (builder, [hull, contact]) =
-            tank_body_parts(seen.kind, seen.position.planar(), speed_scale);
+        let (builder, [hull, contact]) = tank_body_parts(seen.kind, seen.position.planar());
         let body = simulation.world.insert_body(builder);
         let collider = simulation.world.insert_collider(hull, Some(body));
         simulation.world.insert_collider(contact, Some(body));

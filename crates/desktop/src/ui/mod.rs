@@ -77,6 +77,9 @@ pub struct KillFeedEntry {
     /// Each name's side: a team, or neutral for the yard.
     pub killer_team: Option<Team>,
     pub victim_team: Option<Team>,
+    /// The names a room tags as bots.
+    pub killer_bot: bool,
+    pub victim_bot: bool,
     /// The damage cause, for the weapon icon between the names.
     pub cause: Option<DamageCause>,
     /// The viewer destroyed someone else.
@@ -325,6 +328,8 @@ impl UiState {
                 victim,
                 killer_team: row.sides[0].team(),
                 victim_team: row.sides[1].team(),
+                killer_bot: row.bots[0],
+                victim_bot: row.bots[1],
                 cause: row.cause,
                 own_kill: row.own_kill,
                 own_death: row.own_death,
@@ -422,6 +427,8 @@ mod tests {
             victim: String::new(),
             killer_team: None,
             victim_team: None,
+            killer_bot: false,
+            victim_bot: false,
             cause: None,
             own_kill: false,
             own_death: false,

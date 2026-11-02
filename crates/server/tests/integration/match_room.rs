@@ -166,6 +166,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
 
     // Bob's network drops; his seat waits for him.
     let token = bob_welcome["token"].clone();
+    let bob_id = bob_welcome["playerId"].clone();
     drop(bob);
     alice
         .until("bob shown as disconnected", |message| {
@@ -174,7 +175,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .any(|player| player["name"] == "bob" && player["connected"] == false)
+                    .any(|player| player["playerId"] == bob_id && player["connected"] == false)
         })
         .await;
     let mut back = Player::connect(&base, "MATCHRM2").await;

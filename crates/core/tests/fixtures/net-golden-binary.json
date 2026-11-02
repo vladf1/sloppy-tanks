@@ -93,91 +93,91 @@
     },
     {
       "connection": "alice",
-      "header": "020118030b01",
+      "header": "020118030b02",
       "roundId": 1,
       "tick": 24,
       "type": "snapshot"
     },
     {
       "connection": "alice",
-      "header": "02011b030c01",
+      "header": "02011b030d01",
       "roundId": 1,
       "tick": 27,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "01011b0d0b0b676f6c64656e2d726f6f6d",
+      "header": "01011b0e0b0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 27,
       "type": "full"
     },
     {
       "connection": "alice",
-      "header": "02011e030d02",
+      "header": "02011e030e03",
       "roundId": 1,
       "tick": 30,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "02011e000e01",
+      "header": "02011e000f02",
       "roundId": 1,
       "tick": 30,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "01011e0e0b0b676f6c64656e2d726f6f6d",
+      "header": "01011e100b0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 30,
       "type": "full"
     },
     {
       "connection": "carol",
-      "header": "01011e0f0c0b676f6c64656e2d726f6f6d",
+      "header": "01011e110c0b676f6c64656e2d726f6f6d",
       "roundId": 1,
       "tick": 30,
       "type": "full"
     },
     {
       "connection": "alice",
-      "header": "020121030f03",
+      "header": "020121031103",
       "roundId": 1,
       "tick": 33,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "020121000f03",
+      "header": "020121001103",
       "roundId": 1,
       "tick": 33,
       "type": "snapshot"
     },
     {
       "connection": "alice",
-      "header": "020124031201",
+      "header": "020124031401",
       "roundId": 1,
       "tick": 36,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "020124001201",
+      "header": "020124001401",
       "roundId": 1,
       "tick": 36,
       "type": "snapshot"
     },
     {
       "connection": "alice",
-      "header": "020124031301",
+      "header": "020124031501",
       "roundId": 1,
       "tick": 36,
       "type": "snapshot"
     },
     {
       "connection": "bob",
-      "header": "020124001301",
+      "header": "020124001501",
       "roundId": 1,
       "tick": 36,
       "type": "snapshot"
@@ -309,5 +309,5 @@
       "type": "snapshot"
     }
   ],
-  "protocol": 7
+  "protocol": 8
 }

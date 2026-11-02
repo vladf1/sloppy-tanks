@@ -6,9 +6,9 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the room timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
-browser engine runs. Before the host sees a join, `match_room.rs` replaces an offensive
-player name (rustrict's lists, `player_names.rs`) with a callsign such as `Tanker 3`,
-so strangers never read it; the lists stay out of core and the page. Production and
+browser engine runs. Nobody types a name other players read: the host seats a join
+under a name drawn from fixed word lists (`sloppy_core::net::player_names`), or a
+bot's for a pilot, whatever the join asked for. Production and
 the dev site each run it on their own Vultr machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
 the server directory (https://directory.sloppytanks.com) lists them.
 
@@ -214,8 +214,7 @@ created ([Machines](#machines)):
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
-  environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or `:dev` every
-  10 seconds (a drop-in `bootstrap.sh` writes on dev). A check reads the tag's digest
+  environment (`SERVER_ENVIRONMENT`), `:production` or `:dev`, every 10 seconds. A check reads the tag's digest
   with two small requests (an anonymous token and the manifest's headers) and pulls
   only when it has moved; one that cannot reach the registry changes nothing, and the
   journal hears only when checks start failing or work again. `bootstrap.sh` turns it
@@ -237,7 +236,7 @@ bun run server:deploy                # SSH fallback: build here, copy the image,
 Each acts on production's machine; `--dev` picks the dev site's.
 
 With auto-update on, as every machine is by default, production's timer checks
-`:production` every two minutes. A new image waits until nobody holds a seat (the
+`:production` every 10 seconds. A new image waits until nobody holds a seat (the
 `players` count in `/stats`), or at most four hours for a server-only change and ten
 minutes after a content change, when the new site is already sending visitors a
 reload message. Anything other than following

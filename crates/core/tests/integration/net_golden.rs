@@ -10,13 +10,13 @@
 //! header reader also reads; rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
 //! format change. Protocol 4's additions (each tank's `drive`, the snapshot's `ackTick`,
 //! `ackArrival` and `hull`) and protocol 5's (the snapshot's `bodies`) were added to the
-//! JSON signatures by hand.
+//! JSON signatures by hand, as were protocol 8's `bot` fields and drawn player names.
 
 use crate::net_support;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use net_support::{assert_same, connection_id, merged, test_host};
+use net_support::{assert_same, connection_id, merged, shown, test_host};
 use serde_json::{Map, Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{Message, PROTOCOL_VERSION, SNAPSHOT_MESSAGE};
@@ -203,7 +203,7 @@ impl Runner {
                     "type": "join",
                     "version": PROTOCOL_VERSION,
                     "contentVersion": CONTENT,
-                    "name": conn,
+                    "name": shown(&conn),
                     "kind": "balanced",
                 }));
                 if let Some(owner) = step.get("tokenOf").and_then(Value::as_str) {

@@ -120,7 +120,7 @@ times stronger. Rooms on these levels appear in the room list only on such a pag
 | Shift + scroll     | Zoom                                                     |
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
-| ⚙ button           | Settings: sound, graphics, battle speeds                 |
+| ⚙ button           | Settings: sound, graphics, debug tools, privacy          |
 
 Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel, tablets without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
 
@@ -183,8 +183,13 @@ game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
 The Multiplayer tab lists open rooms (it polls only while shown) below a **New room**
-row that holds the new room's match length and Humans only choice. Your saved name
-is prefilled; first-time players get a random bot name they can edit. **Auto**
+row that holds the new room's match length and Humans only choice. You play under a
+name drawn from two fixed word lists (`Swift Falcon`), kept between visits; the dice
+beside it draws another. Nobody types a name other players read: the room seats a join
+that sends any other name under a drawn one. Bots show **BOT** beside their names in the
+kill feed, the scoreboards and the room's player list: fill bots, pilots, and a bot
+standing in for a player who left or paused, which plays under a bot's name and score
+until the player returns. **Auto**
 picks the team with fewer human seats (including reconnect reservations); choosing
 Blue or Red repaints the tank previews. The button where single player has **GO!**
 reads **Create room** for the new room, which starts playing immediately, or
@@ -271,7 +276,7 @@ keep the full release optimization. CI keeps separate caches for these compiler 
 each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
 builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
+[Apps workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
 the simulators, on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
@@ -328,8 +333,10 @@ Windows.
 
 ### App Store and TestFlight
 
-Main's [Desktop app workflow](.github/workflows/desktop.yml) also builds the iOS app and
-the Mac app for the App Store and uploads them to App Store Connect (the app
+The [Apps workflow](.github/workflows/desktop.yml), run by hand on main (Run
+workflow in GitHub's Actions tab, or `gh workflow run desktop.yml --ref main`), also
+builds the iOS app and the Mac app for the App Store and uploads them to App Store Connect
+(the app
 `me.fridman.sloppy-tanks`, one record for both), from where iPhones, iPads and Macs
 install them through the TestFlight app. Each upload waits until Apple has processed the
 build and fails if Apple finds it invalid. Testers on the App Store Connect team get every

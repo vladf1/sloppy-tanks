@@ -17,7 +17,6 @@ use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
 use sloppy_core::sim::map_options::{MapId, is_extra_level};
 use sloppy_core::sim::maps::MAPS;
-use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
@@ -747,8 +746,6 @@ impl Session {
             .await
             .map_err(engine_error)?;
         let hud = game.hud().into_owned();
-        game.set_speed_scale(SpeedSetting::TankSpeed, prefs.tank_speed);
-        game.set_speed_scale(SpeedSetting::BulletSpeed, prefs.bullet_speed);
         let overlay = Overlay::new(window.clone(), game.renderer())?;
         let human_team = hud.human_team;
         let mut session = Self {
@@ -1032,16 +1029,6 @@ impl Session {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
             self.game.set_graphics_setting(self.prefs.graphics);
-        }
-        if old.tank_speed != self.prefs.tank_speed {
-            self.prefs.tank_speed = self
-                .game
-                .set_speed_scale(SpeedSetting::TankSpeed, self.prefs.tank_speed);
-        }
-        if old.bullet_speed != self.prefs.bullet_speed {
-            self.prefs.bullet_speed = self
-                .game
-                .set_speed_scale(SpeedSetting::BulletSpeed, self.prefs.bullet_speed);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);

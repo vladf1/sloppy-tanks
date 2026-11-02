@@ -109,7 +109,6 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
         &[0.0]
     };
     let records = simulation.records(&simulation.tanks[tank_index]);
-    let bullet_speed = simulation.speed_tuning.bullet_speed;
     for offset in offsets {
         let angle = aim + offset;
         let shot_id = simulation.allocate_id();
@@ -125,8 +124,8 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             owner: id,
             owner_life: Some(life),
             team,
-            vx: angle.sin() * stats.speed * bullet_speed,
-            vz: angle.cos() * stats.speed * bullet_speed,
+            vx: angle.sin() * stats.speed,
+            vz: angle.cos() * stats.speed,
             damage: stats.damage * rank_stats(xp).damage,
             bounces: stats.bounces,
             ricocheted: false,

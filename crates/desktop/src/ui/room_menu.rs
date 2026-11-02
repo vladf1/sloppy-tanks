@@ -18,6 +18,7 @@ use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team, VehicleKind};
 use sloppy_web::battle_report::{count_line, title_case};
 use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
 use sloppy_web::events::PendingEvent;
+use sloppy_web::hud::BOT_TAG;
 use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText, team_word};
 
 use super::icons::Art;
@@ -246,6 +247,8 @@ impl RoomMenu {
                 killer_team: Some(arrival.team),
                 victim: String::new(),
                 victim_team: None,
+                killer_bot: false,
+                victim_bot: false,
                 cause: None,
                 own_kill: false,
                 own_death: false,
@@ -1295,6 +1298,9 @@ fn take_minutes_draft(menu: &mut RoomMenu) -> Option<u32> {
     typed.filter(|value| (1..=MAX_ROUND_MINUTES).contains(value))
 }
 
+/// The type of the bot tags beside pilots' names in the room's lists.
+const ROOM_TAG_SIZE: f32 = 9.0;
+
 /// LAST ROUND: everyone's kills and deaths, the best first, in a full-width table whose
 /// columns share the width as the page's automatic table layout does: each as wide as
 /// its widest content, and the spare width in proportion to that.
@@ -1314,9 +1320,15 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
             0.0,
         )
     };
+    // A pilot's name carries its tag.
+    let tag = paint::bot_tag_width(&painter, ROOM_TAG_SIZE) + paint::BOT_TAG_GAP;
+    let name_width = |row: &Player| {
+        paint::text_width(&painter, &row.name, bold_font(13.0), 0.0)
+            + if row.bot { tag } else { 0.0 }
+    };
     let columns = [
         rows.iter()
-            .map(|row| NAME_INSET + paint::text_width(&painter, &row.name, bold_font(13.0), 0.0))
+            .map(|row| NAME_INSET + name_width(row))
             .fold(head_width("LAST ROUND"), f32::max),
         rows.iter()
             .map(|row| number_width(row.kills))
@@ -1370,7 +1382,7 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
                     TEXT
                 };
                 let y = rect.center().y;
-                paint::text_fit(
+                let name = paint::text_fit(
                     painter,
                     pos2(rect.left() + NAME_INSET, y),
                     Align2::LEFT_CENTER,
@@ -1378,8 +1390,16 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
                     bold_font(13.0),
                     color,
                     0.0,
-                    columns[0] * share - NAME_INSET,
+                    columns[0] * share - NAME_INSET - if row.bot { tag } else { 0.0 },
                 );
+                if row.bot {
+                    paint::bot_tag(
+                        painter,
+                        pos2(name.right() + paint::BOT_TAG_GAP, y),
+                        ROOM_TAG_SIZE,
+                        1.0,
+                    );
+                }
                 for (value, x) in [
                     (row.kills, rect.left() + kills_right),
                     (row.deaths, rect.right()),
@@ -1521,6 +1541,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
             let alpha = if player.connected { 1.0 } else { 0.55 };
             let tags: Vec<&str> = [
                 (player.player_id == player_id).then_some("YOU"),
+                player.bot.then_some(BOT_TAG),
                 (player.player_id == lobby.host_id).then_some("HOST"),
                 (!player.connected).then_some("RECONNECTING"),
             ]
@@ -1582,18 +1603,20 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
 /// The compact kill list beside the HUD during a battle.
 fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
     let Some(lobby) = &menu.lobby else { return };
-    let kills = |player: &Player| {
-        player
+    // Another seat shows its tank as the field draws it: while a bot stands in for an
+    // away player, the bot's name, mark and score, not the player's under the bot's kills.
+    // The viewer's own row keeps their name.
+    let shown = |player: &Player| -> (String, bool, u32) {
+        let row = player
             .tank_id
-            .and_then(|tank| {
-                state
-                    .hud
-                    .as_ref()?
-                    .scoreboard
-                    .row(tank)
-                    .map(|row| row.kills)
-            })
-            .unwrap_or(player.kills)
+            .and_then(|tank| state.hud.as_ref()?.scoreboard.row(tank));
+        match row {
+            Some(row) if player.player_id != menu.player_id => {
+                (row.name.into_owned(), row.bot, row.kills)
+            }
+            Some(row) => (player.name.clone(), player.bot, row.kills),
+            None => (player.name.clone(), player.bot, player.kills),
+        }
     };
     let mut players: Vec<&Player> = lobby.players.iter().collect();
     players.sort_by_key(|player| (player.team.index(), player.slot));
@@ -1654,21 +1677,31 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 } else {
                     ""
                 };
-                paint::text_fit(
+                let (shown_name, bot, kills) = shown(player);
+                let tag = paint::bot_tag_width(painter, ROOM_TAG_SIZE) + paint::BOT_TAG_GAP;
+                let name = paint::text_fit(
                     painter,
                     pos2(rect.left() + 24.0, top + 13.5),
                     Align2::LEFT_CENTER,
-                    &format!("{}{you}", player.name),
+                    &format!("{shown_name}{you}"),
                     bold_font(12.0),
                     paint::fade(hex(0xf5faff), alpha),
                     0.0,
-                    155.0,
+                    155.0 - if bot { tag } else { 0.0 },
                 );
+                if bot {
+                    paint::bot_tag(
+                        painter,
+                        pos2(name.right() + paint::BOT_TAG_GAP, top + 13.5),
+                        ROOM_TAG_SIZE,
+                        alpha,
+                    );
+                }
                 paint::text(
                     painter,
                     pos2(rect.right() - 12.0, top + 13.5),
                     Align2::RIGHT_CENTER,
-                    &kills(player).to_string(),
+                    &kills.to_string(),
                     bold_font(12.0),
                     paint::fade(hex(0xf5faff), alpha),
                     0.0,
@@ -1815,6 +1848,8 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
             team,
             slot: (index % 2) as u32,
             connected,
+            // The rival is a pilot, which the lists tag.
+            bot: id == "rival",
             kills,
             deaths,
             tank_id: Some(index as u32 + 1),

@@ -5,7 +5,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000001",
@@ -25,11 +25,12 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0
             }
@@ -54,11 +55,12 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
@@ -67,11 +69,12 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
@@ -115,22 +118,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
@@ -139,22 +144,24 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
@@ -193,33 +200,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -228,33 +238,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -279,33 +292,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -314,33 +330,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -370,33 +389,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -405,33 +427,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -456,33 +481,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -491,33 +519,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -542,33 +573,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -577,33 +611,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -628,33 +665,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -663,33 +703,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -737,33 +780,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -772,33 +818,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -823,22 +872,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -847,33 +898,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -902,22 +956,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -926,33 +982,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -979,22 +1038,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -1003,33 +1064,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -1056,7 +1120,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000003",
@@ -1076,22 +1140,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
@@ -1100,22 +1166,24 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
@@ -1157,7 +1225,7 @@
           "roundId": 1,
           "type": "control",
           "tankId": 105,
-          "life": 1,
+          "life": 2,
           "controlEpoch": 2,
           "driver": "bot"
         }
@@ -1171,7 +1239,7 @@
           "roundId": 1,
           "type": "control",
           "tankId": 105,
-          "life": 1,
+          "life": 3,
           "controlEpoch": 3,
           "driver": "human"
         }
@@ -1191,33 +1259,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1226,33 +1297,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1277,33 +1351,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1312,33 +1389,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1368,33 +1448,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1403,33 +1486,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1454,33 +1540,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1489,33 +1578,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1540,33 +1632,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1575,33 +1670,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1626,33 +1724,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -1661,33 +1762,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -1731,7 +1835,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",
@@ -1751,33 +1855,36 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1786,33 +1893,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 104
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "heavy",
               "team": 1,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 105
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 106
@@ -1865,7 +1975,7 @@
         "type": "welcome",
         "exact": {
           "type": "welcome",
-          "version": 7,
+          "version": 8,
           "contentVersion": "golden-content",
           "roomEpoch": "golden-room",
           "playerId": "credential-00000000000000000005",
@@ -1885,22 +1995,24 @@
           "players": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -1909,33 +2021,36 @@
           "scoreboard": [
             {
               "playerId": "credential-00000000000000000001",
-              "name": "alice",
+              "name": "Canyon Mongoose",
               "kind": "scout",
               "team": 0,
               "slot": 0,
               "connected": true,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 58
             },
             {
               "playerId": "credential-00000000000000000003",
-              "name": "bob",
+              "name": "Gallant Osprey",
               "kind": "balanced",
               "team": 1,
               "slot": 0,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 59
             },
             {
               "playerId": "credential-00000000000000000005",
-              "name": "carol",
+              "name": "Sandy Rover",
               "kind": "balanced",
               "team": 0,
               "slot": 1,
               "connected": false,
+              "bot": false,
               "kills": 0,
               "deaths": 0,
               "tankId": 60
@@ -2106,6 +2221,7 @@
       "full.state.entities.tanks[].ammo.rocket:number",
       "full.state.entities.tanks[].ammo.spread:number",
       "full.state.entities.tanks[].ammo:object",
+      "full.state.entities.tanks[].bot:boolean",
       "full.state.entities.tanks[].cooldown:number",
       "full.state.entities.tanks[].deaths:number",
       "full.state.entities.tanks[].drive.x:number",
@@ -2257,6 +2373,7 @@
       "snapshot.snapshots[].updates.pickups.*:object",
       "snapshot.snapshots[].updates.pickups:object",
       "snapshot.snapshots[].updates.tanks.*.aim:number",
+      "snapshot.snapshots[].updates.tanks.*.bot:boolean",
       "snapshot.snapshots[].updates.tanks.*.cooldown:number",
       "snapshot.snapshots[].updates.tanks.*.drive.x:number",
       "snapshot.snapshots[].updates.tanks.*.drive.z:number",

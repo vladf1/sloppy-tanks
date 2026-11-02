@@ -1,19 +1,16 @@
-//! Bot steering, route following, stuck recovery, target and goal persistence, and the
-//! playtest speed sliders (the former `tests/bot-movement.test.ts`).
+//! Bot steering, route following, stuck recovery, and target and goal persistence (the
+//! former `tests/bot-movement.test.ts`).
 
 use crate::support;
 
 use sloppy_core::sim::ai::bot_command;
 use sloppy_core::sim::bot_movement::route_direction;
 use sloppy_core::sim::bot_personalities::BotPersonality;
-use sloppy_core::sim::data::{STEP, vehicle, weapon};
+use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::math::{Vec2, angle_delta, distance};
 use sloppy_core::sim::physics::vector;
-use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
-use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
     BotMode, DamageCause, DamageSource, PickupKind, Simulation, Team, VehicleCommand, VehicleKind,
-    Weapon,
 };
 use support::{clear_arena, concrete, damage_from, decide, pickup, tank_xz};
 
@@ -55,37 +52,33 @@ fn run(s: &mut Simulation, index: usize, seconds: usize) -> usize {
 }
 
 #[test]
-fn bots_brake_and_settle_near_a_destination_without_repeated_direction_flips_including_double_speed()
- {
+fn bots_brake_and_settle_near_a_destination_without_repeated_direction_flips() {
     for personality in [
         BotPersonality::Scout,
         BotPersonality::Guard,
         BotPersonality::Heavy,
     ] {
-        for speed in [1.0, 2.0] {
-            let mut s = arena();
-            let slot = if personality == BotPersonality::Heavy {
-                3
-            } else {
-                1
-            };
-            let bot = s.add_tank(Team::Blue, false, VehicleKind::Balanced, slot);
-            s.tanks[bot].brain.personality = personality;
-            place(&mut s, bot, 0.0, 0.0);
-            s.tanks[bot].brain.decision = 999.0;
-            s.tanks[bot].brain.goal = Vec2::new(0.0, 0.7);
-            tune_speed(&mut s, SpeedSetting::TankSpeed, speed);
-            let reversals = run(&mut s, bot, 4);
-            let label = format!("{personality:?} at {speed}x");
-            assert!(reversals <= 1, "{label}: {reversals} reversals");
-            let settled = distance(tank_xz(&s, bot), s.tanks[bot].brain.goal);
-            assert!(settled < 0.3, "{label}: {settled} from the goal");
-            let command = s.tanks[bot].command;
-            assert!(
-                command.move_x.hypot(command.move_z) < 0.01,
-                "{label}: still driving"
-            );
-        }
+        let mut s = arena();
+        let slot = if personality == BotPersonality::Heavy {
+            3
+        } else {
+            1
+        };
+        let bot = s.add_tank(Team::Blue, false, VehicleKind::Balanced, slot);
+        s.tanks[bot].brain.personality = personality;
+        place(&mut s, bot, 0.0, 0.0);
+        s.tanks[bot].brain.decision = 999.0;
+        s.tanks[bot].brain.goal = Vec2::new(0.0, 0.7);
+        let reversals = run(&mut s, bot, 4);
+        let label = format!("{personality:?}");
+        assert!(reversals <= 1, "{label}: {reversals} reversals");
+        let settled = distance(tank_xz(&s, bot), s.tanks[bot].brain.goal);
+        assert!(settled < 0.3, "{label}: {settled} from the goal");
+        let command = s.tanks[bot].command;
+        assert!(
+            command.move_x.hypot(command.move_z) < 0.01,
+            "{label}: still driving"
+        );
     }
 }
 
@@ -334,26 +327,4 @@ fn path_lookahead_cannot_shortcut_a_wall_and_unreachable_goals_never_become_dire
         direction.x.abs() > 0.8,
         "route around the wall rather than through it"
     );
-}
-
-#[test]
-fn speed_sliders_scale_from_defaults_without_compounding_and_update_active_shells_and_collision_prediction()
- {
-    let mut s = arena();
-    let t = s.add_tank(Team::Blue, true, VehicleKind::Balanced, 0);
-    place(&mut s, t, 0.0, 0.0);
-    s.tanks[t].aim = 0.0;
-    let tank_base = vehicle(VehicleKind::Balanced).speed;
-    let shell_base = weapon(Weapon::Standard).speed;
-    fire_weapon(&mut s, t);
-    tune_speed(&mut s, SpeedSetting::TankSpeed, 1.5);
-    tune_speed(&mut s, SpeedSetting::TankSpeed, 1.5);
-    assert_eq!(s.speed_tuning.tank_speed, 1.5);
-    let prediction = s.world.bodies[s.tanks[t].body].soft_ccd_prediction() as f64;
-    assert!((prediction - tank_base * 1.5 * 1.5 * STEP * 2.0).abs() < 1e-6);
-    tune_speed(&mut s, SpeedSetting::BulletSpeed, 0.5);
-    tune_speed(&mut s, SpeedSetting::BulletSpeed, 0.5);
-    assert_eq!(s.speed_tuning.bullet_speed, 0.5);
-    assert_eq!(s.shots[0].vz, shell_base * 0.5);
-    assert_eq!(tune_speed(&mut s, SpeedSetting::TankSpeed, f64::NAN), 1.0);
 }

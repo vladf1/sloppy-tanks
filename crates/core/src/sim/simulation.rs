@@ -70,24 +70,6 @@ impl GameMode {
     }
 }
 
-/// Playtest speed scales; multiplayer always uses 1.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct SpeedTuning {
-    #[serde(rename = "tank-speed")]
-    pub tank_speed: f64,
-    #[serde(rename = "bullet-speed")]
-    pub bullet_speed: f64,
-}
-
-impl Default for SpeedTuning {
-    fn default() -> Self {
-        Self {
-            tank_speed: 1.0,
-            bullet_speed: 1.0,
-        }
-    }
-}
-
 /// Level rules, run at the end of every playing tick with the same fixed step.
 pub type AfterStep = fn(&mut Simulation);
 
@@ -233,7 +215,6 @@ pub struct Simulation {
     /// The multiplayer roster; `None` for local play.
     pub players: Option<Vec<PlayerAssignment>>,
     pub humans_only: bool,
-    pub speed_tuning: SpeedTuning,
     /// Optional level rules, run at the end of every playing tick.
     pub after_step: Option<AfterStep>,
     /// When `Some`, every projectile sweep is recorded here for the caller to drain.
@@ -298,7 +279,6 @@ impl Simulation {
             human_kind: VehicleKind::Balanced,
             players: None,
             humans_only: false,
-            speed_tuning: SpeedTuning::default(),
             after_step: None,
             projectile_moves: None,
             difficulty: Difficulty::Normal,
@@ -768,7 +748,7 @@ impl Simulation {
             select_ammo(tank, c.ammo_selection);
             tank.aim = c.aim;
             let body = &mut self.world.bodies[tank.body];
-            drive_tank(tank, body, &c, STEP, self.speed_tuning.tank_speed);
+            drive_tank(tank, body, &c, STEP);
             if c.fire {
                 fire_weapon(self, i);
             }

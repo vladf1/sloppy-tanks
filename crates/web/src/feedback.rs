@@ -133,6 +133,9 @@ pub struct FeedRow {
     pub names: [String; 2],
     /// Each name's side.
     pub sides: [FeedSide; 2],
+    /// Which names the feed tags as bots: a room's, never the viewer or the yard
+    /// ([`Scoreboard`]).
+    pub bots: [bool; 2],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cause: Option<DamageCause>,
     /// The weapon's icon ([`cause_icon`]).
@@ -249,12 +252,15 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
 /// The kill-feed row of a death event.
 fn feed_row(event: &SimEvent, own: bool, viewer: u32, scoreboard: &Scoreboard) -> FeedRow {
     let name = |id: Option<u32>| match id {
-        Some(id) if id == viewer => VIEWER_NAME.to_owned(),
-        Some(id) => scoreboard
-            .row(id)
-            .map_or_else(|| YARD_NAME.to_owned(), |row| row.name.into_owned()),
-        None => YARD_NAME.to_owned(),
+        Some(id) if id == viewer => (VIEWER_NAME.to_owned(), false),
+        Some(id) => scoreboard.row(id).map_or_else(
+            || (YARD_NAME.to_owned(), false),
+            |row| (row.name.into_owned(), row.bot),
+        ),
+        None => (YARD_NAME.to_owned(), false),
     };
+    let [(killer_name, killer_bot), (victim_name, victim_bot)] =
+        [name(event.owner), name(event.id)];
     // The victim's team comes with the event; allies take no hull damage from each
     // other, so the killer is on the other side unless the tank destroyed itself or the
     // yard did it.
@@ -266,8 +272,9 @@ fn feed_row(event: &SimEvent, own: bool, viewer: u32, scoreboard: &Scoreboard) -
     };
     let cause = event.damage_source.map(|source| source.cause);
     FeedRow {
-        names: [name(event.owner), name(event.id)],
+        names: [killer_name, victim_name],
         sides: [FeedSide::of(killer), FeedSide::of(victim)],
+        bots: [killer_bot, victim_bot],
         cause,
         icon: cause_icon(cause),
         own_kill: event.owner == Some(viewer) && event.id != Some(viewer),
@@ -293,6 +300,7 @@ mod tests {
             name: Cow::Borrowed(name),
             kills,
             deaths: 0,
+            bot: false,
             team,
             kind,
         };
@@ -428,6 +436,34 @@ mod tests {
         // A kill without a reported weapon shows the wreck mark.
         assert_eq!(yard.icon, "skull");
         assert!(!yard.own_death && !yard.own_kill);
+        assert_eq!(yard.bots, [false, false]);
+    }
+
+    #[test]
+    fn the_kill_feed_tags_the_bots_its_scoreboard_marks() {
+        let Scoreboard::Kept(mut rows) = scoreboard() else {
+            unreachable!("the test's board is kept");
+        };
+        rows.iter_mut().for_each(|row| row.bot = true);
+        let board = Scoreboard::Kept(rows);
+        let row = |event: &SimEvent| {
+            event_feedback(event, event.id == Some(VIEWER), VIEWER, &board)
+                .feed
+                .unwrap()
+        };
+        // The viewer reads as YOU, never as a bot, whoever drives its tank.
+        let viewer_wrecked = row(&death(Some(RIVAL), Some(DamageCause::Rocket)));
+        assert_eq!(viewer_wrecked.bots, [true, false]);
+        let rival_wrecked = SimEvent {
+            id: Some(RIVAL),
+            ..death(Some(VIEWER), Some(DamageCause::Standard))
+        };
+        assert_eq!(row(&rival_wrecked).bots, [false, true]);
+        let yard = SimEvent {
+            owner: None,
+            ..rival_wrecked
+        };
+        assert_eq!(row(&yard).bots, [false, true]);
     }
 
     #[test]
@@ -437,6 +473,7 @@ mod tests {
             name: Cow::Borrowed("YOU"),
             kills: 0,
             deaths: 0,
+            bot: false,
             team: Team::Blue,
             kind: VehicleKind::Scout,
         }]);

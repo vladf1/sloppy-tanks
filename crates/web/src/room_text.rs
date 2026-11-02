@@ -327,6 +327,7 @@ mod tests {
             team,
             slot: 0,
             connected,
+            bot: false,
             kills: 0,
             deaths: 0,
             tank_id: None,

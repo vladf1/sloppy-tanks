@@ -275,6 +275,13 @@ pub struct Tank {
     pub name: String,
     pub team: Team,
     pub human: bool,
+    /// Boards and the kill feed mark this tank as a bot: a fill bot, a pilot program in a
+    /// player's seat, or a bot standing in for an away player (`human` still holds for
+    /// both of those, since the seat stays a player's).
+    pub bot: bool,
+    /// While a bot stands in for this seat's away player, the player's name, which the
+    /// tank shows again when they return; the stand-in shows a bot's name meanwhile.
+    pub away_player: Option<String>,
     pub player_id: Option<String>,
     pub driver: Driver,
     /// Changes on death or reassignment, independently of the scoreboard.

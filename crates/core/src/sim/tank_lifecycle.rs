@@ -7,7 +7,7 @@ use rapier3d::prelude::{ColliderBuilder, ColliderHandle, RigidBodyBuilder, Rigid
 
 use super::ammunition::clear_ammo;
 use super::arena::spawn_positions;
-use super::bot_personalities::{BotPersonality, bot_assignment, bot_profile_for};
+use super::bot_personalities::{BOT_NAMES, BotPersonality, bot_assignment, bot_profile_for};
 use super::data::{STEP, group, vehicle};
 use super::hitboxes::tank_contact_collider;
 use super::math::{Vec2, best_by};
@@ -18,9 +18,9 @@ use super::types::{
     Brain, Driver, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind,
 };
 
-/// Soft-CCD reach for a chassis: two ticks at 1.5x its (tuned) top speed.
-pub fn soft_ccd_prediction(kind: VehicleKind, speed_scale: f64) -> f64 {
-    vehicle(kind).speed * speed_scale * 1.5 * STEP * 2.0
+/// Soft-CCD reach for a chassis: two ticks at 1.5x its top speed.
+fn soft_ccd_prediction(kind: VehicleKind) -> f64 {
+    vehicle(kind).speed * 1.5 * STEP * 2.0
 }
 
 /// A tank's body and its two colliders (the hull, which carries the mass, and the
@@ -28,7 +28,6 @@ pub fn soft_ccd_prediction(kind: VehicleKind, speed_scale: f64) -> f64 {
 pub fn tank_body_parts(
     kind: VehicleKind,
     position: Vec2,
-    speed_scale: f64,
 ) -> (RigidBodyBuilder, [ColliderBuilder; 2]) {
     let stats = vehicle(kind);
     let body = RigidBodyBuilder::dynamic()
@@ -41,7 +40,7 @@ pub fn tank_body_parts(
         .linear_damping(SIMULATION_RULES.tank_linear_damping as f32)
         .angular_damping(SIMULATION_RULES.tank_angular_damping as f32)
         .ccd_enabled(true)
-        .soft_ccd_prediction(soft_ccd_prediction(kind, speed_scale) as f32);
+        .soft_ccd_prediction(soft_ccd_prediction(kind) as f32);
     let hull = tank_contact_collider(kind)
         .mass(stats.mass as f32)
         .collision_groups(interaction_groups(group::TANK))
@@ -54,9 +53,8 @@ fn create_tank_body(
     simulation: &mut Simulation,
     kind: VehicleKind,
     position: Vec2,
-    speed_scale: f64,
 ) -> (RigidBodyHandle, ColliderHandle) {
-    let (body, [hull, contact]) = tank_body_parts(kind, position, speed_scale);
+    let (body, [hull, contact]) = tank_body_parts(kind, position);
     let body = simulation.world.insert_body(body);
     let collider = simulation.world.insert_collider(hull, Some(body));
     simulation.world.insert_collider(contact, Some(body));
@@ -78,6 +76,35 @@ pub(crate) fn solo_spawn(team: Team, slot: usize) -> Vec2 {
 }
 
 impl Simulation {
+    /// The first name in the round's bot deck that no tank shows and no seat holds, for
+    /// a new fill bot or a bot standing in for an away player. Past the deck, names
+    /// repeat with a number: `NITRO 2`.
+    pub fn unused_bot_name(&self) -> String {
+        let taken = |name: &str| {
+            self.tanks.iter().any(|tank| tank.name == name)
+                || self
+                    .players
+                    .iter()
+                    .flatten()
+                    .any(|player| player.name == name)
+        };
+        // Before the first round deals its deck, the names in their listed order.
+        let deck: &[&str] = if self.bot_names.is_empty() {
+            &BOT_NAMES
+        } else {
+            &self.bot_names
+        };
+        (1..)
+            .flat_map(|round| {
+                deck.iter().map(move |name| match round {
+                    1 => (*name).to_string(),
+                    _ => format!("{name} {round}"),
+                })
+            })
+            .find(|name| !taken(name))
+            .expect("numbered names never run out")
+    }
+
     pub fn add_tank(&mut self, team: Team, human: bool, kind: VehicleKind, slot: usize) -> usize {
         let spawn = if self.game_mode == GameMode::Solo && !human {
             solo_spawn(team, slot)
@@ -108,20 +135,14 @@ impl Simulation {
         } else {
             bot_profile_for(assignment.personality).chassis
         };
-        let speed_scale = self.speed_tuning.tank_speed;
-        let (body, collider) = create_tank_body(self, kind, position, speed_scale);
+        let (body, collider) = create_tank_body(self, kind, position);
         let player = self.player_at(team, slot).cloned();
-        let names = &self.bot_names;
         let name = if human {
             player
                 .as_ref()
                 .map_or_else(|| "YOU".to_string(), |player| player.name.clone())
         } else {
-            let mut name = names[ordinal % names.len()].to_string();
-            if ordinal >= names.len() {
-                name += &format!(" {}", ordinal / names.len() + 1);
-            }
-            name
+            self.unused_bot_name()
         };
         // Everything left out starts at zero, empty or its type's default.
         let mut tank = Tank {
@@ -129,6 +150,7 @@ impl Simulation {
             name,
             team,
             human,
+            bot: !human,
             player_id: player.map(|player| player.player_id),
             driver: if human { Driver::Human } else { Driver::Bot },
             kind,
@@ -186,8 +208,7 @@ impl Simulation {
             .expect("a team always has spawn lanes")
         });
         self.tanks[tank_index].kind = kind;
-        let speed_scale = self.speed_tuning.tank_speed;
-        let (body, collider) = create_tank_body(self, kind, p, speed_scale);
+        let (body, collider) = create_tank_body(self, kind, p);
         let records = self.records(&self.tanks[tank_index]);
         if records {
             self.combat_record.life_started = self.elapsed;

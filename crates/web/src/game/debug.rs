@@ -850,7 +850,6 @@ impl Game {
                 "poses": poses,
                 "unchanged": serde_json::to_string(&room.snapshot()).unwrap_or_default() == before
                     && room.rng.state == rng,
-                "speedTuning": room.speed_tuning,
             }));
         }
         self.reset_view();

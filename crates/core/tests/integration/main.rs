@@ -35,6 +35,7 @@ mod net_extra_levels;
 mod net_golden;
 mod net_match_host;
 mod net_player_controls;
+mod net_player_names;
 mod net_replication;
 mod net_room_list;
 mod net_timing;

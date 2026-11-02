@@ -19,7 +19,6 @@ use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::new_match;
 use sloppy_core::sim::render_state::RenderTank;
-use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
     AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
@@ -50,7 +49,6 @@ pub struct Hud<'a> {
     /// The enemy tanks alive, for pause's facts.
     #[serde(skip)]
     pub active_enemies: usize,
-    pub speed_tuning: SpeedTuning,
     pub human: HudHuman,
     pub scoreboard: Scoreboard<'a>,
     /// The finished round's recap, while results show.
@@ -76,7 +74,6 @@ impl Default for Hud<'_> {
             score_limit: SCORE_LIMIT,
             team_names: TEAM_NAMES,
             active_enemies: 0,
-            speed_tuning: SpeedTuning::default(),
             human: HudHuman::default(),
             scoreboard: Scoreboard::Kept(Vec::new()),
             recap: None,
@@ -99,7 +96,6 @@ impl Hud<'_> {
             score_limit: self.score_limit,
             team_names: self.team_names,
             active_enemies: self.active_enemies,
-            speed_tuning: self.speed_tuning,
             human: self.human,
             scoreboard: self.scoreboard.into_owned(),
             recap: self.recap.map(|recap| Cow::Owned(recap.into_owned())),
@@ -131,7 +127,6 @@ pub fn simulation_hud<'a>(
         score_limit: SCORE_LIMIT,
         team_names: TEAM_NAMES,
         active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
-        speed_tuning: sim.speed_tuning,
         human: human_json(tank, sim.elapsed, timers),
         scoreboard: Scoreboard::Simulated(&sim.tanks),
         recap: recap.map(Cow::Borrowed),
@@ -264,10 +259,13 @@ pub fn human_json(tank: &RenderTank, elapsed: f64, timers: &mut EffectTimers) ->
 }
 
 /// Every tank's name and kills (`hud_json().scoreboard`), from replicated or simulated
-/// tanks, or rows kept between reads.
+/// tanks, or rows kept between reads. A room's rows mark its bots; single player's mark
+/// none, since every tank there but the player's is one.
 #[derive(Clone, Debug)]
 pub enum Scoreboard<'a> {
+    /// A room's displayed scene.
     Rendered(&'a [RenderTank]),
+    /// Single player's simulation.
     Simulated(&'a [Tank]),
     Kept(Vec<HudScore<'static>>),
 }
@@ -289,6 +287,7 @@ impl Scoreboard<'_> {
                 name: Cow::Borrowed(&tank.name),
                 kills: tank.kills,
                 deaths: tank.deaths,
+                bot: tank.bot,
                 team: tank.team,
                 kind: tank.kind,
             })
@@ -297,6 +296,7 @@ impl Scoreboard<'_> {
                 name: Cow::Borrowed(&tank.name),
                 kills: tank.kills,
                 deaths: tank.deaths,
+                bot: false,
                 team: tank.team,
                 kind: tank.kind,
             }))
@@ -381,12 +381,18 @@ pub struct HudAmmo {
     pub available: bool,
 }
 
+/// The tag the boards and the kill feed show beside a room's bot.
+pub const BOT_TAG: &str = "BOT";
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct HudScore<'a> {
     pub id: u32,
     pub name: Cow<'a, str>,
     pub kills: u32,
     pub deaths: u32,
+    /// Shown with [`BOT_TAG`]: a room's fill bot, a pilot or a bot standing in for an
+    /// away player. Single player marks none ([`Scoreboard`]).
+    pub bot: bool,
     /// The team and tank the death report names and the boards rank by; the page reads
     /// the reports.
     #[serde(skip)]
@@ -402,6 +408,7 @@ impl HudScore<'_> {
             name: Cow::Owned(self.name.into_owned()),
             kills: self.kills,
             deaths: self.deaths,
+            bot: self.bot,
             team: self.team,
             kind: self.kind,
         }
@@ -831,7 +838,8 @@ mod tests {
     }
 
     /// Single player serializes the simulation's tanks and a room its replicated
-    /// copies: both give the same scoreboard, in roster order, with names escaped.
+    /// copies: both give the same scoreboard, in roster order, with names escaped, but
+    /// only the room's marks its bots.
     #[test]
     fn local_and_replicated_scoreboards_match() {
         let mut simulation = Simulation::new(4242.0, SimulationSetup::default());
@@ -847,12 +855,18 @@ mod tests {
         let mut state = RenderState::default();
         simulation.fill_render_state(&mut state, None);
         let text = serde_json::to_string(&Scoreboard::Simulated(&simulation.tanks)).unwrap();
-        assert_eq!(
-            text,
-            serde_json::to_string(&Scoreboard::Rendered(&state.tanks)).unwrap(),
-        );
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let rendered = Scoreboard::Rendered(&state.tanks);
+        let unmarked: Vec<HudScore> = rendered
+            .rows()
+            .map(|row| HudScore { bot: false, ..row })
+            .collect();
+        assert_eq!(text, serde_json::to_string(&unmarked).unwrap());
         let tanks = &simulation.tanks;
+        let marked: Vec<bool> = rendered.rows().map(|row| row.bot).collect();
+        let bots: Vec<bool> = tanks.iter().map(|tank| tank.bot).collect();
+        assert_eq!(marked, bots);
+        assert!(bots.contains(&true), "the battle has bots to mark");
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             value[0],
             json!({
@@ -860,6 +874,7 @@ mod tests {
                 "name": tanks[0].name,
                 "kills": 12,
                 "deaths": 3,
+                "bot": false,
             })
         );
         let ids: Vec<_> = value

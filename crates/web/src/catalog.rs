@@ -308,8 +308,7 @@ pub const GRAPHICS_OPTIONS: [(GraphicsSetting, &str); 4] = [
 ];
 
 /// The sound volume the Settings dialog starts at and marks on its slider, and the step
-/// its sliders move in (volume and the battle speeds, whose range is core's
-/// `MIN_SPEED_SCALE` to `MAX_SPEED_SCALE`).
+/// the slider moves in.
 pub const DEFAULT_VOLUME: f64 = 0.6;
 pub const SLIDER_STEP: f64 = 0.05;
 

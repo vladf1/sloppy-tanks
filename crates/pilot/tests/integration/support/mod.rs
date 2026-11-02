@@ -13,6 +13,7 @@ use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::render_state::RenderTank;
+use sloppy_core::sim::types::Tank;
 use sloppy_pilot::orders::{Mission, Orders};
 use sloppy_pilot::pilot::{Pilot, PilotConfig};
 
@@ -226,10 +227,31 @@ impl Room {
         self.seats[index].pilot.scene()?.viewer()
     }
 
-    /// Where the host has the tank of the player named `name`.
-    pub fn host_tank(&self, name: &str) -> Option<(Vec2, bool, u8)> {
+    /// The host's tank for the seat of the pilot set up as `pilot`. The room names a
+    /// pilot as a bot ([`Self::room_name`]), not as it asked.
+    fn seat_tank(&self, pilot: &str) -> Option<&Tank> {
+        let seat = self.seats.iter().find(|seat| seat.pilot.name() == pilot)?;
+        let player_id = seat.pilot.player_id();
+        self.host
+            .simulation
+            .as_ref()?
+            .tanks
+            .iter()
+            .find(|tank| tank.player_id.as_deref() == Some(player_id))
+    }
+
+    /// The name the room shows for the pilot set up as `pilot`, which other pilots'
+    /// orders name.
+    pub fn room_name(&self, pilot: &str) -> String {
+        self.seat_tank(pilot)
+            .map(|tank| tank.name.clone())
+            .unwrap_or_else(|| panic!("{pilot} has a tank"))
+    }
+
+    /// Where the host has the tank of the pilot set up as `pilot`.
+    pub fn host_tank(&self, pilot: &str) -> Option<(Vec2, bool, u8)> {
         let simulation = self.host.simulation.as_ref()?;
-        let tank = simulation.tanks.iter().find(|tank| tank.name == name)?;
+        let tank = self.seat_tank(pilot)?;
         let position = if tank.alive {
             simulation.tank_planar(simulation.tank_index(tank.id)?)
         } else {

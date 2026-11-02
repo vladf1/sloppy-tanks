@@ -7,7 +7,6 @@
 //! - [`directory`]: announcing this server and its rooms to the server directory.
 //! - [`monitor`] / [`dashboard`]: readings, `/stats`, journal lines and `/dashboard`.
 //! - [`match_room`]: the room host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`].
-//! - [`player_names`]: offensive names in joins masked with callsigns before the host.
 
 pub mod config;
 pub mod dashboard;
@@ -15,7 +14,6 @@ pub mod directory;
 pub mod host;
 pub mod match_room;
 pub mod monitor;
-pub mod player_names;
 pub mod process_stats;
 pub mod protocol;
 pub mod random;

@@ -16,7 +16,7 @@ use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, UiState, View};
 use sloppy_core::sim::{GameMode, Team};
 use sloppy_web::battle_report::{BattleReport, BestProgress, Outcome};
-use sloppy_web::hud::{Hud, HudScore};
+use sloppy_web::hud::{BOT_TAG, Hud, HudScore};
 use sloppy_web::recap::RoundRecap;
 
 /// The report's width, and the screen widths under which the team boards stand under the
@@ -1230,6 +1230,10 @@ fn board(
             } else if yours && row.name != "YOU" {
                 name_right -=
                     board_tag(painter, pos2(name_right, center), "YOU", false, true) + 5.0;
+            }
+            if row.bot {
+                name_right -=
+                    board_tag(painter, pos2(name_right, center), BOT_TAG, false, false) + 5.0;
             }
             paint::text_fit(
                 painter,
