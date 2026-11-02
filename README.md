@@ -51,7 +51,9 @@ printf '[build]\nrustc-wrapper = "%s"\n' "$HOME/.cargo/bin/kache" >> ~/.cargo/co
 ```
 
 A new worktree then restores whatever another checkout already compiled instead of
-compiling it again, at the cost of about a second per rebuild within one tree.
+compiling it again. The repository's `.kache.toml` keeps the crates you edit on rustc's
+incremental compilation, which Kache otherwise strips so it can share them: those rebuild
+in place, uncached, while dependencies and release builds stay cached.
 Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
 missed the cache.
 

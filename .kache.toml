@@ -1,0 +1,9 @@
+# Kache (optional, README.md#run) reads this from the checkout. By default it strips
+# rustc's incremental flag so every compile can be shared between worktrees, which leaves
+# the crates being edited to rebuild whole: a one-line sloppy-core edit took 11.7 s of
+# `bun run wasm:fast` and 5.6 s of the test build. Preserving it builds those crates
+# incrementally and uncached (4.0 s and 4.1 s, a new worktree's first `wasm:fast` 41 s
+# rather than 60), while dependencies and release builds, which are never incremental,
+# stay cached.
+[cache]
+preserve_incremental = true
