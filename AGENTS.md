@@ -184,6 +184,18 @@ Chrome
 through the shared `headless` flag so they never pop windows over the user's desktop;
 only `SLOPPY_HEADED=1` opens a visible window.
 
+A second review of a branch comes from the Codex CLI, run non-interactively and
+read-only on `gpt-6-astra` at `xhigh` effort (`codex review` alone runs at `max`,
+whatever Codex's config says):
+
+```sh
+codex review -c model="gpt-6-astra" -c model_reasoning_effort="xhigh" -c sandbox_mode="read-only" --base origin/main
+```
+
+`--commit <sha>` or `--uncommitted` review other changes. Leave the checkout alone
+until it ends (a few minutes for a large branch), since it reads the files as they
+are. Its sandbox has no network, so the server-backed tests it tries are blocked.
+
 Profiling and benchmarks (the host-download benchmark) are manual evidence, not
 normal CI. Do not add these workloads to `bun run check` or deployment workflows. Keep HTTP delivery,
 browser cold-load, and in-game rendering/gameplay conclusions separate; a
