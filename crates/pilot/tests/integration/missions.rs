@@ -4,7 +4,7 @@
 
 use crate::support::{self, Room};
 
-use sloppy_core::net::protocol::RoomPhase;
+use sloppy_core::net::protocol::{RoomPhase, RoomSettings};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::distance;
 use sloppy_pilot::orders::Mission;
@@ -109,10 +109,16 @@ fn a_hunter_takes_the_other_side_and_goes_after_its_player() {
 #[test]
 fn an_escort_takes_its_players_side_and_stays_with_them() {
     let mut room = Room::new(9);
+    // No fill bots: an escort breaks off to fight whoever it meets, and how long those
+    // fights last depends on how the battle plays out, which physics rounding moves
+    // between platforms. Alone with its player, it has nothing to do but follow.
     room.add(
         "vlad",
         support::orders(Mission::Skirmish),
-        Some(support::settings(MapId::Quarry)),
+        Some(RoomSettings {
+            humans_only: true,
+            ..support::settings(MapId::Quarry)
+        }),
     );
     room.run(3.0 * SECOND);
     let escorted = room.room_name("vlad");
