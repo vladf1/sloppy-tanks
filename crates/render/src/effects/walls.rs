@@ -57,6 +57,8 @@ struct WallBox {
     /// `None` for cover with its own hit effects (crates, timber), which smoke
     /// still rolls round.
     material: Option<WallMaterial>,
+    /// Whether a shell's crater mark may stand on its faces (`Strike::marked`).
+    marked: bool,
     /// Its paint or stone, sRGB hex.
     color: u32,
     /// A cottage's trim paint; the wall's color on other cover.
@@ -84,6 +86,11 @@ pub struct Strike {
     pub point: Vec3,
     pub normal: Vec3,
     pub room: f32,
+    /// Whether the hit leaves a crater mark on the face. The mark is a flat decal on
+    /// the box, fixed where it struck: a cottage's model shows each hole itself, and
+    /// dragon's teeth and hedgehogs are neither boxes nor still (shells push them),
+    /// so a mark there hung in the air beside their slopes and beams.
+    pub marked: bool,
     /// The wall's paint or stone, sRGB hex.
     pub color: u32,
     /// A cottage's trim paint; the wall's color on other cover.
@@ -328,6 +335,7 @@ impl Walls {
                 half_d: cover.d * 0.5,
                 height: cover.h,
                 material,
+                marked: cover.kind != CoverKind::House && !cover.kind.movable(),
                 color,
                 trim,
                 roof,
@@ -422,6 +430,7 @@ impl Walls {
                     point,
                     normal,
                     room,
+                    marked: wall.marked,
                     color: wall.color,
                     trim: wall.trim,
                 },
@@ -543,6 +552,7 @@ mod tests {
                 half_d: 1.2,
                 height: 2.6,
                 material: Some(WallMaterial::Steel),
+                marked: true,
                 color: 0x2f8a6a,
                 trim: 0x2f8a6a,
                 roof: 0x2f8a6a,
@@ -563,6 +573,32 @@ mod tests {
         let corner = walls.strike(2.95, 1.0, 1.25).expect("on the face");
         assert!((corner.point.x - (3.0 - 0.65)).abs() < 1e-5);
         assert!(walls.strike(0.0, 1.0, 4.0).is_none());
+    }
+
+    #[test]
+    fn only_still_box_cover_takes_a_crater_mark() {
+        let cover = |kind, x| sloppy_core::sim::render_state::RenderCover {
+            kind,
+            x,
+            w: 1.9,
+            h: 1.9,
+            d: 1.9,
+            alive: true,
+            ..Default::default()
+        };
+        let mut walls = Walls::default();
+        walls.sync(&RenderState {
+            covers: vec![
+                cover(CoverKind::Concrete, 0.0),
+                cover(CoverKind::Teeth, 10.0),
+                cover(CoverKind::Hedgehog, 20.0),
+            ],
+            ..RenderState::default()
+        });
+        let marked = |x: f64| walls.strike(x - 1.0, 1.0, 0.0).expect("on a face").marked;
+        assert!(marked(0.0));
+        assert!(!marked(10.0), "a dragon's tooth slopes away from its box");
+        assert!(!marked(20.0), "a hedgehog is open beams");
     }
 
     #[test]
@@ -637,6 +673,7 @@ mod tests {
             half_d: 1.0,
             height: 3.0,
             material: Some(WallMaterial::Stone),
+            marked: true,
             color: 0x808080,
             trim: 0x808080,
             roof: 0x808080,
@@ -672,6 +709,7 @@ mod tests {
                 half_d: pick(0.4, 6.0),
                 height: pick(0.8, 7.0),
                 material: Some(WallMaterial::Stone),
+                marked: true,
                 color: 0x808080,
                 trim: 0x808080,
                 roof: 0x808080,

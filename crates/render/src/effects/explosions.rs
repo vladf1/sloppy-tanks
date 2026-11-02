@@ -1123,8 +1123,7 @@ impl ExplosionEffects {
                         SIDING_DUST_SHADE,
                     ),
                 };
-                // A cottage's model shows the hole itself: no crater decal on it.
-                if strike.material != WallMaterial::Siding {
+                if strike.marked {
                     wall_mark = Some((strike, blast.phase, blast.dust));
                 }
             }
