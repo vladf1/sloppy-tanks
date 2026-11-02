@@ -86,6 +86,12 @@ function capture(command, args) {
 
 const fast = process.argv.includes("--fast");
 const profile = fast ? "wasm-fast" : "release";
+// `lto = false` still runs a crate-local ThinLTO pass over the profile's 256 code units;
+// "off" skips it: a sloppy-core edit rebuilt in 14.5 s and 54 CPU-s instead of 18 s and
+// 80, for a smaller binary. It is set here, not in Cargo.toml, whose profiles key the
+// server build and the page's geometry cache: an edit there would restart production's
+// servers and drop every player's cached models.
+const profileSettings = fast ? { CARGO_PROFILE_WASM_FAST_LTO: "off" } : {};
 
 const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
@@ -102,7 +108,7 @@ function run(command, args) {
     const child = spawn(command, args, {
       cwd: root,
       stdio: "inherit",
-      env: { ...process.env, ...stamps },
+      env: { ...process.env, ...profileSettings, ...stamps },
     });
     child.on("error", (error) =>
       reject(
