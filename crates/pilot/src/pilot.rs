@@ -139,6 +139,7 @@ impl Pilot {
             team: None,
             create: self.config.create,
             existing_room: None,
+            bot: true,
         };
         self.client.connect(choice, now_ms);
         self.collect(now_ms);
@@ -209,6 +210,11 @@ impl Pilot {
     /// Why the connection gave up, once it has; it does not retry after that.
     pub fn ended(&self) -> Option<&Ended> {
         self.ended.as_ref()
+    }
+
+    /// The room's id for this pilot's seat; empty until welcomed.
+    pub fn player_id(&self) -> &str {
+        &self.client.player_id
     }
 
     /// The scene the pilot last displayed (and decided from).
@@ -395,6 +401,7 @@ impl Pilot {
                 team: Some(side),
                 create: None,
                 existing_room: Some(true),
+                bot: true,
             },
             now_ms,
         );

@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
 use sloppy_core::net::player_controls::Ack;
+use sloppy_core::net::player_names::{name_seed, player_name};
 use sloppy_core::net::protocol::{CONTENT_VERSION, FULL_MESSAGE, Message, PROTOCOL_VERSION};
 use sloppy_core::net::replication::{
     Baseline, BinaryMessage, FrameExtras, SnapshotBatch, StateMirror, read_binary_message,
@@ -65,6 +66,12 @@ impl Parsed {
 }
 
 /// A host created at time 0 whose seat tokens count up from `credential-…001`.
+/// The player name a test connection joins under: a room accepts only drawn names, so
+/// each connection key stands for the one its hash draws.
+pub fn shown(key: &str) -> String {
+    player_name(name_seed(key))
+}
+
 pub fn test_host(room_epoch: &str, seed: u32, content_version: Option<&str>) -> MatchHost {
     let mut token = 0;
     MatchHost::new(MatchHostOptions {
@@ -172,7 +179,7 @@ impl Harness {
             "type": "join",
             "version": PROTOCOL_VERSION,
             "contentVersion": CONTENT_VERSION,
-            "name": name,
+            "name": shown(name),
             "kind": "balanced",
         });
         self.send(name, merged(base, extra));

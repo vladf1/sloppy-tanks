@@ -31,7 +31,6 @@ fn main() -> ExitCode {
 }
 
 async fn serve(settings: Settings) -> ExitCode {
-    sloppy_server::player_names::prepare();
     let mut options = ServerOptions::new(settings.trust_proxy);
     options.build = settings.build;
     options.directory = settings.directory.map(DirectoryOptions::new);

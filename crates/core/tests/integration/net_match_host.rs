@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use net_support::{
     Harness, apply_batch, baseline, batch, first_seq, harness, harness_aged, last_seq,
-    set_translation, snapshot_batch,
+    set_translation, shown, snapshot_batch,
 };
 use serde_json::{Value, json};
 use sloppy_core::net::protocol::{
@@ -103,7 +103,7 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
     h.join("carol", json!({ "team": 1, "kind": "heavy" }));
     let carol = h.tank_of("carol");
     assert_eq!(h.sim().tanks.len(), 2);
-    assert_eq!(h.sim().tanks[carol].name, "carol");
+    assert_eq!(h.sim().tanks[carol].name, shown("carol"));
     assert_eq!(h.sim().tanks[carol].kind.as_str(), "heavy");
     assert_ne!(
         h.sim().tanks[carol].id,
@@ -590,7 +590,7 @@ fn late_join_starts_a_fresh_chassis_and_score_and_departed_ordnance_cannot_credi
             .as_array()
             .unwrap()
             .iter()
-            .find(|player| player["name"] == name)
+            .find(|player| player["name"] == shown(name))
             .map(|player| player["kills"].clone())
     };
     assert_eq!(kills("alice"), Some(json!(1)));
@@ -1034,7 +1034,7 @@ fn live_snapshots_carry_each_players_authoritative_kills_and_preserve_them_throu
         .as_array()
         .unwrap()
         .iter()
-        .find(|player| player["name"] == "alice")
+        .find(|player| player["name"] == shown("alice"))
         .unwrap()
         .clone();
     assert_eq!(alice_row["kills"], 1);
@@ -1120,11 +1120,11 @@ fn scoreboard_updates_after_idle_ticks_disconnect_and_reconnect() {
     let scoreboard = lobby["scoreboard"].as_array().unwrap();
     let alice = scoreboard
         .iter()
-        .find(|player| player["name"] == "alice")
+        .find(|player| player["name"] == shown("alice"))
         .unwrap();
     let bob = scoreboard
         .iter()
-        .find(|player| player["name"] == "bob")
+        .find(|player| player["name"] == shown("bob"))
         .unwrap();
     assert_eq!(alice["kills"], 1);
     assert_eq!(alice["connected"], true);
@@ -1187,7 +1187,7 @@ fn a_mid_round_join_gets_the_streamed_scene_and_every_client_keeps_matching_the_
         .find(|tank| tank["id"] == bob)
         .unwrap()
         .clone();
-    assert_eq!(tank["name"], "bob");
+    assert_eq!(tank["name"], shown("bob").as_str());
     assert_eq!(tank["human"], true);
     h.advance();
     let alice_batch = h.latest_binary("alice", SNAPSHOT_MESSAGE);

@@ -83,6 +83,7 @@ fn choice(name: &str, create: Option<RoomSettings>) -> JoinChoice {
         team: None,
         create,
         existing_room: None,
+        bot: false,
     }
 }
 

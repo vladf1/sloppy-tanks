@@ -678,14 +678,26 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
             tank.life,
             tank.kind,
             tank.team,
-            tank.kills,
             tank.xp,
             sim.max_health(tank),
         )
     };
     let before = identity(&sim);
+    let player = sim.tanks[a].name.clone();
     set_driver(&mut sim, a, Driver::Bot).unwrap();
     assert_eq!(identity(&sim), before);
+    // The stand-in shows a bot's name, marked as a bot, with a score of its own.
+    let stand_in = sim.tanks[a].name.clone();
+    assert!(sim.tanks[a].bot);
+    assert_eq!(sim.tanks[a].away_player.as_deref(), Some(player.as_str()));
+    assert_eq!(sim.tanks[a].kills, 0);
+    assert!(
+        sim.tanks
+            .iter()
+            .enumerate()
+            .all(|(i, tank)| i == a || tank.name != stand_in),
+        "{stand_in} is no other tank's name"
+    );
     assert_eq!(enemy_difficulty(&sim, &sim.tanks[a]).damage, 1.0);
     for bot in sim.tanks.iter().filter(|tank| !tank.human) {
         assert_eq!(enemy_difficulty(&sim, bot).damage, 1.15);
@@ -694,6 +706,12 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     sim.step_with(&BTreeMap::new());
     assert_eq!(sim.tanks[a].driver, Driver::Bot);
     set_driver(&mut sim, a, Driver::Human).unwrap();
+    assert_eq!(
+        sim.tanks[a].name, player,
+        "the player's name returns with them"
+    );
+    assert!(!sim.tanks[a].bot);
+    assert_eq!(sim.tanks[a].away_player, None);
     sim.tanks[a].protection = 0.0;
     sim.tanks[b].protection = 0.0;
     let (b_id, b_team, b_life) = (sim.tanks[b].id, sim.tanks[b].team, sim.tanks[b].life);

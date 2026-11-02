@@ -68,11 +68,9 @@ fn a_hunter_takes_the_other_side_and_goes_after_its_player() {
         Some(support::settings(MapId::Harbor)),
     );
     room.run(3.0 * SECOND);
-    let hunter = room.add(
-        "hunter",
-        support::orders(Mission::Hunt(Some("VLAD".into()))),
-        None,
-    );
+    // Orders name a player as the room shows them, in any case.
+    let quarry = room.room_name("vlad").to_lowercase();
+    let hunter = room.add("hunter", support::orders(Mission::Hunt(Some(quarry))), None);
     assert!(
         room.run_until(20.0 * SECOND, |room| {
             let (Some((.., ours)), Some((.., theirs))) =
@@ -117,11 +115,8 @@ fn an_escort_takes_its_players_side_and_stays_with_them() {
         Some(support::settings(MapId::Quarry)),
     );
     room.run(3.0 * SECOND);
-    let escort = room.add(
-        "wingman",
-        support::orders(Mission::Escort("vlad".into())),
-        None,
-    );
+    let escorted = room.room_name("vlad");
+    let escort = room.add("wingman", support::orders(Mission::Escort(escorted)), None);
     assert!(
         room.run_until(20.0 * SECOND, |room| {
             let (Some((.., ours)), Some((.., theirs))) =

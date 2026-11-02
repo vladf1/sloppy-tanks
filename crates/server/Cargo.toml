@@ -35,7 +35,6 @@ tokio-rustls.workspace = true
 webpki-roots.workspace = true
 # Masks offensive player names; its word lists stay out of the page's Wasm.
 # `customize` adds the ordinary names its exceptions miss.
-rustrict = { version = "0.7.39", default-features = false, features = ["censor", "customize"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

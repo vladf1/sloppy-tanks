@@ -7,7 +7,7 @@ use rapier3d::prelude::{ColliderBuilder, ColliderHandle, RigidBodyBuilder, Rigid
 
 use super::ammunition::clear_ammo;
 use super::arena::spawn_positions;
-use super::bot_personalities::{BotPersonality, bot_assignment, bot_profile_for};
+use super::bot_personalities::{BOT_NAMES, BotPersonality, bot_assignment, bot_profile_for};
 use super::data::{STEP, group, vehicle};
 use super::hitboxes::tank_contact_collider;
 use super::math::{Vec2, best_by};
@@ -76,6 +76,35 @@ pub(crate) fn solo_spawn(team: Team, slot: usize) -> Vec2 {
 }
 
 impl Simulation {
+    /// The first name in the round's bot deck that no tank shows and no seat holds, for
+    /// a new fill bot or a bot standing in for an away player. Past the deck, names
+    /// repeat with a number: `NITRO 2`.
+    pub fn unused_bot_name(&self) -> String {
+        let taken = |name: &str| {
+            self.tanks.iter().any(|tank| tank.name == name)
+                || self
+                    .players
+                    .iter()
+                    .flatten()
+                    .any(|player| player.name == name)
+        };
+        // Before the first round deals its deck, the names in their listed order.
+        let deck: &[&str] = if self.bot_names.is_empty() {
+            &BOT_NAMES
+        } else {
+            &self.bot_names
+        };
+        (1..)
+            .flat_map(|round| {
+                deck.iter().map(move |name| match round {
+                    1 => (*name).to_string(),
+                    _ => format!("{name} {round}"),
+                })
+            })
+            .find(|name| !taken(name))
+            .expect("numbered names never run out")
+    }
+
     pub fn add_tank(&mut self, team: Team, human: bool, kind: VehicleKind, slot: usize) -> usize {
         let spawn = if self.game_mode == GameMode::Solo && !human {
             solo_spawn(team, slot)
@@ -108,17 +137,12 @@ impl Simulation {
         };
         let (body, collider) = create_tank_body(self, kind, position);
         let player = self.player_at(team, slot).cloned();
-        let names = &self.bot_names;
         let name = if human {
             player
                 .as_ref()
                 .map_or_else(|| "YOU".to_string(), |player| player.name.clone())
         } else {
-            let mut name = names[ordinal % names.len()].to_string();
-            if ordinal >= names.len() {
-                name += &format!(" {}", ordinal / names.len() + 1);
-            }
-            name
+            self.unused_bot_name()
         };
         // Everything left out starts at zero, empty or its type's default.
         let mut tank = Tank {
@@ -126,6 +150,7 @@ impl Simulation {
             name,
             team,
             human,
+            bot: !human,
             player_id: player.map(|player| player.player_id),
             driver: if human { Driver::Human } else { Driver::Bot },
             kind,

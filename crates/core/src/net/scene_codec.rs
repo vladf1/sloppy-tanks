@@ -350,6 +350,7 @@ wire_fields!(
         NAME = Field::new("name", FieldKind::Text(NAME_BYTES)),
         KIND = Field::new("kind", FieldKind::Choice(&VEHICLE_NAMES)),
         TEAM = Field::new("team", COUNT),
+        BOT = Field::new("bot", FLAG),
     }
 );
 
@@ -805,6 +806,7 @@ fn write_tank(record: &mut WireRecord, simulation: &Simulation, tank: &Tank) {
     record.set_text(NAME, &tank.name);
     set_choice(record, KIND, &VEHICLE_KINDS, Some(tank.kind));
     record.set_count(TEAM, tank.team.index() as u64);
+    record.set_flag(BOT, tank.bot);
 }
 
 fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) {
@@ -1301,6 +1303,7 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
         kind: fields.choice(KIND, &VEHICLE_KINDS)?,
         team: fields.team(TEAM)?,
         human: fields.flag(HUMAN)?,
+        bot: fields.flag(BOT)?,
         alive: fields.flag(ALIVE)?,
         position,
         velocity: Point3::new(

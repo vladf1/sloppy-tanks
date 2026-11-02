@@ -168,8 +168,13 @@ game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
 The Multiplayer tab lists open rooms (it polls only while shown) below a **New room**
-row that holds the new room's match length and Humans only choice. Your saved name
-is prefilled; first-time players get a random bot name they can edit. **Auto**
+row that holds the new room's match length and Humans only choice. You play under a
+name drawn from two fixed word lists (`Swift Falcon`), kept between visits; the dice
+beside it draws another. Nobody types a name other players read: the room seats a join
+that sends any other name under a drawn one. Bots show **BOT** beside their names in the
+kill feed, the scoreboards and the room's player list: fill bots, pilots, and a bot
+standing in for a player who left or paused, which plays under a bot's name and score
+until the player returns. **Auto**
 picks the team with fewer human seats (including reconnect reservations); choosing
 Blue or Red repaints the tank previews. The button where single player has **GO!**
 reads **Create room** for the new room, which starts playing immediately, or

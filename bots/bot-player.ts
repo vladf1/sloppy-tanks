@@ -151,6 +151,7 @@ export class BotPlayer {
       version: server.version,
       contentVersion: server.contentVersion,
       name: this.name,
+      bot: true,
       kind: pick(KINDS, this.random),
       token: this.token,
       roomEpoch: this.token ? this.roomEpoch : undefined,
