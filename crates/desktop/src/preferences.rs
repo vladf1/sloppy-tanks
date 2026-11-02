@@ -40,8 +40,6 @@ pub struct Preferences {
     pub first_person: bool,
     pub zoom: Option<f64>,
     pub volume: f64,
-    pub tank_speed: f64,
-    pub bullet_speed: f64,
     #[serde(
         serialize_with = "graphics_name",
         deserialize_with = "graphics_setting"
@@ -78,8 +76,6 @@ impl Default for Preferences {
             first_person: false,
             zoom: None,
             volume: sloppy_web::catalog::DEFAULT_VOLUME,
-            tank_speed: 1.0,
-            bullet_speed: 1.0,
             graphics: GraphicsSetting::Auto,
             player_name: String::new(),
             debug: false,
@@ -145,7 +141,7 @@ fn page_settings(saved: impl Fn(&str) -> Option<String>) -> Option<(String, bool
 /// The old page's choices, each under `sloppy-` and its name
 /// (`src/game/player-preferences.ts`).
 #[cfg(any(target_arch = "wasm32", test))]
-const PAGE_KEYS: [&str; 13] = [
+const PAGE_KEYS: [&str; 11] = [
     "tank",
     "game-mode",
     "map",
@@ -153,8 +149,6 @@ const PAGE_KEYS: [&str; 13] = [
     "camera",
     "zoom",
     "volume",
-    "tank-speed",
-    "bullet-speed",
     "graphics",
     "player-name",
     "debug",
@@ -188,7 +182,6 @@ impl Preferences {
     #[cfg(any(target_arch = "wasm32", test))]
     fn from_page_keys(saved: impl Fn(&str) -> Option<String>) -> Option<Self> {
         use sloppy_core::net::protocol::{DIFFICULTIES, PLAYER_KINDS};
-        use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
 
         /// The choice `text` names in `table`.
         fn named<T: Copy>(text: Option<String>, table: &[(&str, T)]) -> Option<T> {
@@ -209,9 +202,6 @@ impl Preferences {
                 .and_then(|text| text.trim().parse::<f64>().ok())
                 .filter(|number| number.is_finite())
         };
-        let speed = |name: &str| {
-            number(name).map_or(1.0, |scale| scale.clamp(MIN_SPEED_SCALE, MAX_SPEED_SCALE))
-        };
         let defaults = Self::default();
         Some(Self {
             tank: named(value("tank"), &PLAYER_KINDS).unwrap_or(defaults.tank),
@@ -227,8 +217,6 @@ impl Preferences {
             first_person: is("camera", "first-person"),
             zoom: number("zoom"),
             volume: number("volume").map_or(defaults.volume, |volume| volume.clamp(0.0, 1.0)),
-            tank_speed: speed("tank-speed"),
-            bullet_speed: speed("bullet-speed"),
             graphics: GraphicsSetting::parse(&value("graphics").unwrap_or_default()),
             player_name: value("player-name").unwrap_or_default(),
             debug: is("debug", "on"),
@@ -368,8 +356,6 @@ mod tests {
             ("sloppy-camera", "first-person"),
             ("sloppy-zoom", "41.5"),
             ("sloppy-volume", "0.25"),
-            ("sloppy-tank-speed", "1.5"),
-            ("sloppy-bullet-speed", "0.75"),
             ("sloppy-graphics", "medium"),
             ("sloppy-player-name", "Iron Jack"),
             ("sloppy-debug", "on"),
@@ -388,8 +374,6 @@ mod tests {
                 first_person: true,
                 zoom: Some(41.5),
                 volume: 0.25,
-                tank_speed: 1.5,
-                bullet_speed: 0.75,
                 graphics: GraphicsSetting::parse("medium"),
                 player_name: "Iron Jack".into(),
                 debug: true,
@@ -432,20 +416,12 @@ mod tests {
             ("sloppy-camera", "overhead"),
             ("sloppy-zoom", " "),
             ("sloppy-volume", "loud"),
-            ("sloppy-tank-speed", "9"),
-            ("sloppy-bullet-speed", "NaN"),
             ("sloppy-graphics", "ultra"),
             ("sloppy-debug", "yes"),
             ("sloppy-touch", "maybe"),
         ]);
         let (text, _) = settings(&saved).expect("the old choices");
-        assert_eq!(
-            Preferences::read(&text),
-            Preferences {
-                tank_speed: sloppy_core::sim::speed_tuning::MAX_SPEED_SCALE,
-                ..Preferences::default()
-            }
-        );
+        assert_eq!(Preferences::read(&text), Preferences::default());
         let only_zoom = storage(&[("sloppy-zoom", "52")]);
         let (text, _) = settings(&only_zoom).expect("the old zoom");
         assert_eq!(

@@ -105,7 +105,7 @@ times stronger. Rooms on these levels appear in the room list only on such a pag
 | Shift + scroll     | Zoom                                                     |
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
-| ⚙ button           | Settings: sound, graphics, battle speeds                 |
+| ⚙ button           | Settings: sound, graphics, debug tools, privacy          |
 
 Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel, tablets without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
 
