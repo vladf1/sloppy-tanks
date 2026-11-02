@@ -38,11 +38,11 @@
 // `/health` (`scripts/page-health.ts`). The page's geometry cache keys its files by
 // `SLOPPY_GEOMETRY_VERSION` (`geometryVersion`), which changes only with the models.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contentVersion, geometryVersion } from "./content-version.mjs";
+import { contentVersion, geometryVersion, shaderTablesKey } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -86,6 +86,12 @@ function capture(command, args) {
 
 const fast = process.argv.includes("--fast");
 const profile = fast ? "wasm-fast" : "release";
+// `lto = false` still runs a crate-local ThinLTO pass over the profile's 256 code units;
+// "off" skips it: a sloppy-core edit rebuilt in 14.5 s and 54 CPU-s instead of 18 s and
+// 80, for a smaller binary. It is set here, not in Cargo.toml, whose profiles key the
+// server build and the page's geometry cache: an edit there would restart production's
+// servers and drop every player's cached models.
+const profileSettings = fast ? { CARGO_PROFILE_WASM_FAST_LTO: "off" } : {};
 
 const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
@@ -102,7 +108,7 @@ function run(command, args) {
     const child = spawn(command, args, {
       cwd: root,
       stdio: "inherit",
-      env: { ...process.env, ...stamps },
+      env: { ...process.env, ...profileSettings, ...stamps },
     });
     child.on("error", (error) =>
       reject(
@@ -163,28 +169,28 @@ const builds = process.argv.includes("--labs")
 // (crates/render/src/shader/tables.rs): before it builds, the native `shader-tables`
 // generator writes every variant either backend can ask for into `src/generated/shaders/`,
 // which index.html fetches beside the binary. It writes only the tables of the backends
-// this run builds, so another backend's binary keeps the tables it was built with, and runs
-// again only once Cargo rebuilt it, which a change to the renderer's sources does (about
-// 3 s).
+// this run builds, so another backend's binary keeps the tables it was built with. It is
+// built and run again only once the tables' inputs change (`shaderTablesKey`): rebuilding
+// it after every sloppy-core edit, which it depends on, took 6.5 s of an 18 s fast build.
 const SHADER_TABLES = "src/generated/shaders";
 
 async function shaderTables(backends) {
-  await run("cargo", ["build", "--locked", "-p", "sloppy-render", "--features", "shader-tables"]);
-  const target = process.env.CARGO_TARGET_DIR ?? "target";
-  const generator = `${target}/debug/shader-tables${process.platform === "win32" ? ".exe" : ""}`;
   const at = (path) => resolve(root, path);
-  const built = String(statSync(at(generator)).mtimeMs);
-  // Each backend's stamp names the generator that wrote its tables.
-  const stamp = (backend) => at(`${SHADER_TABLES}/${backend}.generator`);
+  const key = await shaderTablesKey();
+  // Each backend's stamp names the inputs its tables were generated from.
+  const stamp = (backend) => at(`${SHADER_TABLES}/${backend}.key`);
   const stale = backends.filter(
     (backend) =>
       !existsSync(at(`${SHADER_TABLES}/${backend}.json`)) ||
       !existsSync(stamp(backend)) ||
-      readFileSync(stamp(backend), "utf8") !== built,
+      readFileSync(stamp(backend), "utf8") !== key,
   );
   if (stale.length === 0) return;
+  await run("cargo", ["build", "--locked", "-p", "sloppy-render", "--features", "shader-tables"]);
+  const target = process.env.CARGO_TARGET_DIR ?? "target";
+  const generator = `${target}/debug/shader-tables${process.platform === "win32" ? ".exe" : ""}`;
   await run(at(generator), [SHADER_TABLES, ...stale]);
-  for (const backend of stale) await writeFile(stamp(backend), built);
+  for (const backend of stale) await writeFile(stamp(backend), key);
 }
 // ---------------------------------------------------------------------------------------
 
