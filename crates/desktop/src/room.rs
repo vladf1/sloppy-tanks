@@ -910,11 +910,12 @@ mod tests {
             room: room.into(),
             server: server.into(),
             choice: sloppy_core::net::protocol::JoinChoice {
-                name: "Driver".into(),
+                name: "Swift Falcon".into(),
                 kind: sloppy_core::sim::VehicleKind::Balanced,
                 team: None,
                 create: None,
                 existing_room: Some(true),
+                bot: false,
             },
         }
     }

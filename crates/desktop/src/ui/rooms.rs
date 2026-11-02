@@ -9,8 +9,8 @@ use std::time::Duration;
 use web_time::Instant;
 
 use egui::{
-    Align2, Color32, Id, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, pos2,
-    vec2,
+    Align2, Color32, Id, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, Vec2,
+    pos2, vec2,
 };
 
 use super::icons::Art;
@@ -20,10 +20,11 @@ use super::{Action, View};
 use crate::directory::{self, DirectoryRequest};
 use crate::links::{self, Place};
 use crate::preferences::Preferences;
-use crate::room_api::{RoomSelection, player_name, preferred_player_name};
+use crate::room_api::{RoomSelection, preferred_player_name};
+use sloppy_core::net::player_names::player_name;
 use sloppy_core::net::protocol::{
-    DEFAULT_ROUND_MINUTES, JoinChoice, MAX_PLAYER_NAME_LENGTH, RoomPhase, RoomSettings,
-    read_room_code, room_code, stepped_minutes,
+    DEFAULT_ROUND_MINUTES, JoinChoice, RoomPhase, RoomSettings, read_room_code, room_code,
+    stepped_minutes,
 };
 use sloppy_core::net::room_list::{HostedRoom, ROOM_SEATS, ServerList};
 use sloppy_core::sim::Team;
@@ -32,9 +33,10 @@ use sloppy_core::sim::map_options::{MapId, is_extra_level, map_option_for};
 use sloppy_web::battle_report::duration;
 
 /// The list refreshes this often while the tab shows.
-/// Room the name field keeps at its right end for its pencil.
-const PENCIL_ROOM: f32 = 18.0;
 const REFRESH: Duration = Duration::from_secs(5);
+/// The name well's dice button, a square at its right end, and its inset there.
+const DICE_BUTTON: f32 = 30.0;
+const DICE_INSET: f32 = 6.0;
 /// Minutes one press of the length stepper moves.
 const LENGTH_STEP: i32 = 5;
 /// The width of a stood-down action's stripes.
@@ -98,7 +100,7 @@ pub struct RoomsState {
     state: ListState,
     /// The open room chosen, or empty for the new room.
     selected: String,
-    /// `None` until first shown, then the name typed (saved on joining).
+    /// `None` until first shown, then the drawn name to play under (saved on joining).
     name: Option<String>,
     /// `None`: the side with fewer humans.
     team: Option<Team>,
@@ -167,6 +169,17 @@ impl RoomsState {
                 })
             })
             .collect()
+    }
+
+    /// The name to play under: the saved one, or a drawn one the first time the tab
+    /// shows.
+    fn player_name(&mut self, prefs: &Preferences) -> &str {
+        self.name.get_or_insert_with(|| {
+            preferred_player_name(
+                &prefs.player_name,
+                u64::from_le_bytes(directory::random_bytes()),
+            )
+        })
     }
 
     /// Come back from `room` with `notice` saying why: the tab shows with the room
@@ -518,54 +531,42 @@ fn refresh_icon(painter: &Painter, center: Pos2, turn: f32, ink: Color32) {
     ));
 }
 
-/// The name field's pencil (the page's filled 24-unit pencil, drawn in `rect`): its body
-/// and point, and the cap beyond a gap.
-fn pencil_icon(painter: &Painter, rect: Rect) {
-    let at = |x: f32, y: f32| rect.min + vec2(x, y) * (rect.width() / 24.0);
-    let ink = hex(0x90b4d4);
-    painter.add(Shape::convex_polygon(
-        vec![
-            at(15.2, 4.4),
-            at(19.6, 8.8),
-            at(9.0, 19.4),
-            at(3.7, 20.3),
-            at(4.6, 15.0),
-        ],
-        ink,
-        Stroke::NONE,
-    ));
-    painter.add(Shape::convex_polygon(
-        vec![
-            at(16.6, 3.0),
-            at(18.1, 1.5),
-            at(19.0, 1.1),
-            at(19.9, 1.5),
-            at(22.5, 4.1),
-            at(22.9, 5.0),
-            at(22.5, 5.9),
-            at(21.0, 7.4),
-        ],
-        ink,
-        Stroke::NONE,
-    ));
+/// The name well's dice (a 24-unit die drawn in `rect`): a rounded face outlined in
+/// `ink` with its five pips.
+fn dice_icon(painter: &Painter, rect: Rect, ink: Color32) {
+    let unit = rect.width() / 24.0;
+    let at = |x: f32, y: f32| rect.min + vec2(x, y) * unit;
+    painter.rect_stroke(
+        Rect::from_min_max(at(3.5, 3.5), at(20.5, 20.5)),
+        4.0 * unit,
+        Stroke::new(2.0 * unit, ink),
+        StrokeKind::Middle,
+    );
+    for (x, y) in [
+        (8.0, 8.0),
+        (16.0, 8.0),
+        (12.0, 12.0),
+        (8.0, 16.0),
+        (16.0, 16.0),
+    ] {
+        painter.circle_filled(at(x, y), 1.7 * unit, ink);
+    }
 }
 
-/// A text field in a sunken well, like the page's inputs, leaving `icon_room` at its
-/// right end for an icon drawn over the well. Its id is its hint's, not egui's count of
-/// the widgets before it: the room list above it changes as the directory answers, and a
-/// field whose id moved would drop the click that focuses it and its cursor.
+/// A text field in a sunken well, like the page's inputs. Its id is its hint's, not
+/// egui's count of the widgets before it: the room list above it changes as the
+/// directory answers, and a field whose id moved would drop the click that focuses it
+/// and its cursor.
 fn field(
     ui: &mut egui::Ui,
     rect: Rect,
-    icon_room: f32,
     text: &mut String,
     limit: usize,
     hint: &str,
     size: f32,
 ) -> egui::Response {
     well(ui.painter(), rect, 9);
-    let mut inner = rect.shrink2(vec2(12.0, 0.0));
-    inner.max.x -= icon_room;
+    let inner = rect.shrink2(vec2(12.0, 0.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
     child
         .centered_and_justified(|ui| {
@@ -835,7 +836,7 @@ pub fn multiplayer(
         pos2(room_list.right() - 169.0, rooms_head.y - 3.0),
         vec2(102.0, 26.0),
     );
-    let typed = field(ui, code_field, 0.0, &mut state.code, 8, "Room code", 13.0);
+    let typed = field(ui, code_field, &mut state.code, 8, "Room code", 13.0);
     let entered = typed.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
     let find = Rect::from_min_size(
         pos2(room_list.right() - 61.0, rooms_head.y - 3.0),
@@ -931,48 +932,53 @@ pub fn multiplayer(
         );
     }
 
-    // YOUR NAME.
+    // YOUR NAME: the drawn name in a well like the room code's field, which nobody
+    // types in, and the dice that draws another at its right end.
     paint::section_label(
         &painter,
         pos2(name_field.left(), name_field.top() - HEADING_ROW),
         "YOUR NAME",
     );
-    let mut name = state
-        .name
-        .get_or_insert_with(|| {
-            preferred_player_name(
-                &prefs.player_name,
-                u64::from_le_bytes(directory::random_bytes()),
-            )
-        })
-        .clone();
-    // The pencil sits inside the field, at its right end.
-    field(
-        ui,
-        name_field,
-        PENCIL_ROOM,
-        &mut name,
-        MAX_PLAYER_NAME_LENGTH,
-        "Tank driver",
-        15.0,
-    );
+    well(&painter, name_field, 9);
     painter.rect_stroke(
         name_field,
         9,
         Stroke::new(0.5, hexa(0x92b4cf, 0.19)),
         StrokeKind::Inside,
     );
-    pencil_icon(
-        &painter,
-        Rect::from_min_size(
-            pos2(
-                name_field.right() - 13.0 - 16.0,
-                name_field.center().y - 8.0,
-            ),
-            vec2(16.0, 16.0),
+    let dice = Rect::from_min_size(
+        pos2(
+            name_field.right() - DICE_INSET - DICE_BUTTON,
+            name_field.center().y - DICE_BUTTON / 2.0,
         ),
+        Vec2::splat(DICE_BUTTON),
     );
-    state.name = Some(name);
+    paint::text_fit(
+        &painter,
+        pos2(name_field.left() + 12.0, name_field.center().y),
+        Align2::LEFT_CENTER,
+        state.player_name(prefs),
+        bold_font(15.0),
+        hex(0xf5faff),
+        0.0,
+        dice.left() - name_field.left() - 18.0,
+    );
+    if icon_button(
+        ui,
+        dice,
+        "dice",
+        true,
+        "Draw another name",
+        |painter, rect, ink| {
+            dice_icon(
+                painter,
+                Rect::from_center_size(rect.center(), Vec2::splat(18.0)),
+                ink,
+            );
+        },
+    ) {
+        state.name = Some(player_name(u64::from_le_bytes(directory::random_bytes())));
+    }
 
     // TEAM: each choice its least height and an equal share of what the well has more.
     paint::section_label(
@@ -1165,12 +1171,6 @@ pub fn phone_multiplayer(
 ) {
     state.poll(view.debug);
     let new_room_map = prefs.game_options(Team::Blue, view.debug).map_mode;
-    if state.name.is_none() {
-        state.name = Some(preferred_player_name(
-            &prefs.player_name,
-            u64::from_le_bytes(directory::random_bytes()),
-        ));
-    }
     let time = ui.input(|input| input.time);
     let painter = ui.painter().clone();
     well(&painter, status, 12);
@@ -1560,7 +1560,7 @@ pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
         },
         state: ListState::Ready,
         next_poll: Some(Instant::now() + Duration::from_secs(3600)),
-        name: Some("STEELTOE".into()),
+        name: Some("Swift Falcon".into()),
         ..RoomsState::default()
     }
 }
@@ -1568,11 +1568,7 @@ pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
 /// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play. A new
 /// room opens on `map`.
 fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<RoomSelection> {
-    let name = player_name(state.name.as_deref().unwrap_or_default());
-    if name.is_empty() {
-        state.notice = "Enter a name to play.".into();
-        return None;
-    }
+    let name = state.player_name(prefs).to_owned();
     let (room, server, create) = if state.selected.is_empty() {
         let server = state.list.new_room_server()?.to_owned();
         // A phone offers no room rules: its room fills its teams with bots, Easy as its
@@ -1606,6 +1602,7 @@ fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<
             team: state.team,
             existing_room: create.is_none().then_some(true),
             create,
+            bot: false,
         },
     })
 }

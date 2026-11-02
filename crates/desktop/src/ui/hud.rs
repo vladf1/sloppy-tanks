@@ -1118,6 +1118,9 @@ fn toolbar(
         });
 }
 
+/// The type of the kill feed's bot tags.
+const FEED_TAG_SIZE: f32 = 9.5;
+
 /// The kill feed: killer, weapon, victim, newest on top, one fixed-width steel plate
 /// per row with each side's team as a bright edge at its end. A phone's keeps only the
 /// viewer's own kills, under its right-hand keys.
@@ -1223,25 +1226,43 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
         } else {
             Color32::WHITE
         });
-        for (name, color, pos, align) in [
+        // A room's bot carries its tag after its name: between the killer's name and
+        // the weapon, and at the end of the victim's.
+        let tag = paint::bot_tag_width(painter, FEED_TAG_SIZE) + paint::BOT_TAG_GAP;
+        for (name, bot, color, pos, align) in [
             (
                 &entry.killer,
+                entry.killer_bot,
                 killer_color,
                 pos2(center.x - 21.0, center.y),
                 Align2::RIGHT_CENTER,
             ),
             (
                 &entry.victim,
+                entry.victim_bot,
                 victim_color,
                 pos2(center.x + 21.0, center.y),
                 Align2::LEFT_CENTER,
             ),
         ] {
             let name = name.to_uppercase();
-            let shadow = paint::galley(painter, &name, font.clone(), hexa(0, 0.8), 0.7, name_width);
+            let (pos, fit) = match (bot, align == Align2::RIGHT_CENTER) {
+                (false, _) => (pos, name_width),
+                (true, true) => {
+                    paint::bot_tag(
+                        painter,
+                        pos - vec2(tag - paint::BOT_TAG_GAP, 0.0),
+                        FEED_TAG_SIZE,
+                        opacity,
+                    );
+                    (pos - vec2(tag, 0.0), name_width - tag)
+                }
+                (true, false) => (pos, name_width - tag),
+            };
+            let shadow = paint::galley(painter, &name, font.clone(), hexa(0, 0.8), 0.7, fit);
             let at = align.anchor_size(pos, shadow.size());
             painter.galley(at.min + vec2(0.0, 1.0), shadow, Color32::BLACK);
-            paint::text_fit(
+            let shown = paint::text_fit(
                 painter,
                 pos,
                 align,
@@ -1249,8 +1270,16 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
                 font.clone(),
                 fade(color, opacity),
                 0.7,
-                name_width,
+                fit,
             );
+            if bot && align == Align2::LEFT_CENTER {
+                paint::bot_tag(
+                    painter,
+                    pos2(shown.right() + paint::BOT_TAG_GAP, center.y),
+                    FEED_TAG_SIZE,
+                    opacity,
+                );
+            }
         }
         let icon_tint = if own {
             Color32::WHITE

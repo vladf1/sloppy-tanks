@@ -10,6 +10,8 @@ use egui::{
     StrokeKind, Ui, Vec2, pos2, vec2,
 };
 
+use sloppy_web::hud::BOT_TAG;
+
 use super::icons::Art;
 use super::theme::{self, GOLD, bold_font, display_font};
 
@@ -542,6 +544,36 @@ pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> 
     galley(painter, text, font, Color32::WHITE, spacing, f32::INFINITY)
         .size()
         .x
+}
+
+/// The room on each side of a bot tag's letters, and between a name and its tag.
+const BOT_TAG_PADDING: f32 = 4.0;
+pub const BOT_TAG_GAP: f32 = 5.0;
+
+/// The width of the tag beside a room's bot's name ([`bot_tag`]) in `size` point type.
+pub fn bot_tag_width(painter: &Painter, size: f32) -> f32 {
+    text_width(painter, BOT_TAG, bold_font(size), 0.8) + 2.0 * BOT_TAG_PADDING
+}
+
+/// The muted chip beside a room's bot's name (`BOT`, from the engine): grey capitals
+/// on a faint plate, no team colour, with its left end at `left_center`, `alpha`
+/// fading it with its row. Returns its rect.
+pub fn bot_tag(painter: &Painter, left_center: Pos2, size: f32, alpha: f32) -> Rect {
+    let rect = Rect::from_min_size(
+        pos2(left_center.x, left_center.y - (size + 5.0) / 2.0),
+        vec2(bot_tag_width(painter, size), size + 5.0),
+    );
+    painter.rect_filled(rect, 3, hexa(0xc9d6e2, 0.14 * alpha));
+    text(
+        painter,
+        rect.center(),
+        Align2::CENTER_CENTER,
+        BOT_TAG,
+        bold_font(size),
+        hexa(0xb4c2cf, alpha),
+        0.8,
+    );
+    rect
 }
 
 /// A key cap (`kbd`) centred at `center`; returns its rect.
