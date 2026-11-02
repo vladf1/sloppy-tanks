@@ -3,10 +3,10 @@
 //! quality, arena preparation results, the event queue and the local controls' aim.
 //! Frame timing is [`crate::frame_clock`].
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
-use sloppy_core::sim::{SimEvent, SimEventType};
+use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
 use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, RenderTarget, Renderer};
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
@@ -463,24 +463,38 @@ pub fn queue_event(
 }
 
 /// The local controls' aim from the tank at `(x, z)`: the first-person yaw (turned by
-/// the look and the drive stick's sideways push when `turn`), or the angle to the
-/// pointer on the ground, which is also returned.
+/// the look and the drive stick's sideways push when `turn`), the touch fire stick's
+/// assisted aim at the enemies of `state`, or the angle to the pointer on the ground.
+/// The ground point it aims at, if any, is also returned.
 pub fn aim(
-    rig: &mut CameraRig,
+    view: &mut Presentation,
+    state: &RenderState,
     input: &InputFrame,
     (x, z): (f64, f64),
     dt: f64,
     turn: bool,
 ) -> (f64, Option<(f64, f64)>) {
+    let rig = &mut view.rig;
+    view.assist_reticle = false;
     if rig.first_person.enabled {
         if turn {
             let stick = f64::from(input.stick_turn);
             rig.first_person.turn(input.look_pixels, stick, dt);
         }
-        (rig.first_person.yaw, None)
-    } else {
-        let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
-        let (tx, tz) = (f64::from(target.x), f64::from(target.z));
-        ((tx - x).atan2(tz - z), Some((tx, tz)))
+        return (rig.first_person.yaw, None);
     }
+    let stick = (f64::from(input.aim_stick.0), f64::from(input.aim_stick.1));
+    if let Some(assisted) = view
+        .aim_assist
+        .aim(state, &rig.overhead, input.aim_mode, stick)
+    {
+        if let Some((tx, tz)) = assisted.reticle {
+            rig.track_aim(Vec3::new(tx as f32, 0.0, tz as f32), dt);
+            view.assist_reticle = true;
+        }
+        return (assisted.angle, assisted.reticle);
+    }
+    let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
+    let (tx, tz) = (f64::from(target.x), f64::from(target.z));
+    ((tx - x).atan2(tz - z), Some((tx, tz)))
 }

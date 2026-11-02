@@ -6,12 +6,15 @@
     "phase": 0
   },
   "inputSlots": {
+    "aimMode": 19,
+    "aimStickX": 17,
+    "aimStickY": 18,
     "ammoSlot": 8,
     "ammoStep": 9,
     "down": 1,
     "fire": 6,
     "left": 2,
-    "length": 17,
+    "length": 20,
     "lookPixels": 13,
     "mine": 7,
     "pointerX": 10,

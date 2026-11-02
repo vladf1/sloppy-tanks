@@ -35,6 +35,7 @@ use sloppy_core::sim::{
 };
 
 use super::PRESENTATION_EFFECTS;
+use super::aim_assist::AimAssist;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
@@ -984,6 +985,10 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// The touch fire stick's target, and whether its aim has a reticle point this
+    /// frame, which shows the reticle where `hide_reticle` otherwise keeps it hidden.
+    pub aim_assist: AimAssist,
+    pub assist_reticle: bool,
     /// The view's height in CSS pixels (0 until the page says), which keeps the
     /// overhead bars readable on a phone's short screen.
     pub css_height: f64,
@@ -1095,6 +1100,8 @@ impl Presentation {
             crosshair: Mat4::IDENTITY,
             reticle_size: 1.0,
             hide_reticle: false,
+            aim_assist: AimAssist::default(),
+            assist_reticle: false,
             css_height: 0.0,
             bars_hidden: false,
             theme: None,
@@ -2142,7 +2149,9 @@ impl Presentation {
         self.crosshair_visible = state.match_state.phase == MatchPhase::Playing
             && viewer_alive
             && (rig.in_first_person
-                || (!self.hide_reticle && !rig.first_person.enabled && rig.seat_blend == 0.0));
+                || ((!self.hide_reticle || self.assist_reticle)
+                    && !rig.first_person.enabled
+                    && rig.seat_blend == 0.0));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer

@@ -12,6 +12,7 @@
 //! instances of models shared by kind and team, so the renderer batches every
 //! instance of a part into one instanced draw; themed scenery is baked static.
 
+pub mod aim_assist;
 pub mod camera_rig;
 pub mod first_person;
 pub mod generated;

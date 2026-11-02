@@ -53,6 +53,9 @@ pub struct WindowInput {
     /// view, which a pointer lock would freeze; a mouse on the same device (a touch
     /// laptop) still looks with the lock (`fingerLooks`).
     finger_last: bool,
+    /// The last press was a mouse button's: a touch laptop's mouse aims at its
+    /// pointer, not with the fire stick.
+    mouse_last: bool,
     /// An iPad's keyboard, read each frame.
     hardware_keys: HardwareKeys,
 }
@@ -72,6 +75,7 @@ impl WindowInput {
             crate::touch::touched();
             if touch.phase == TouchPhase::Started {
                 self.finger_last = true;
+                self.mouse_last = false;
             }
             if crate::touch::screen()
                 && !self.route_touch(window, overlay, touch, battle.touch.as_ref())
@@ -85,6 +89,7 @@ impl WindowInput {
         } = event
         {
             self.finger_last = false;
+            self.mouse_last = true;
         }
         let keys_to_menus = !battle.keys || overlay.typing();
         let locked = self.pointer.held();
@@ -241,9 +246,11 @@ impl WindowInput {
     }
 
     /// This frame's input for the engine. First person on a touch screen turns the view
-    /// with the stick's sideways push.
+    /// with the stick's sideways push; overhead, the fire stick aims.
     pub fn take_input(&mut self, first_person: bool) -> InputFrame {
-        self.controls.stick_turns = crate::touch::screen() && first_person;
+        let touch = crate::touch::screen();
+        self.controls.stick_turns = touch && first_person;
+        self.controls.touch_aims = touch && !first_person && !self.mouse_last;
         self.controls.take_input()
     }
 

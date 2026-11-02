@@ -972,11 +972,14 @@ impl NetGame {
     /// The controls for this frame: movement relative to first person, the aim from the
     /// pointer, touch stick or first-person yaw, and queued one-shot actions.
     fn local_input(&mut self, input: &InputFrame, dt: f64) -> LocalInput {
-        let Some(viewer) = self.client.display().and_then(RenderState::viewer) else {
+        let Some(display) = self.client.display() else {
+            return LocalInput::default();
+        };
+        let Some(viewer) = display.viewer() else {
             return LocalInput::default();
         };
         let position = (viewer.position.x, viewer.position.z);
-        let (angle, aim_point) = aim(&mut self.view.rig, input, position, dt, true);
+        let (angle, aim_point) = aim(&mut self.view, display, input, position, dt, true);
         let command = self.commands.command(input, angle, true);
         let command = self.view.rig.first_person.steer(command);
         LocalInput {

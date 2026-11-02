@@ -444,7 +444,7 @@ impl Game {
                     self.view.rig.track_aim(point, dt);
                     self.sim.human().aim
                 }
-                _ => aim(&mut self.view.rig, &input, position, dt, alive).0,
+                _ => aim(&mut self.view, &self.state, &input, position, dt, alive).0,
             };
             for _ in 0..steps {
                 let active = self.sim.match_state.phase == MatchPhase::Playing
