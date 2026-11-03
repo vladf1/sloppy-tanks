@@ -192,7 +192,11 @@ function build(target, env = {}) {
       target,
       "-p",
       "sloppy-desktop",
-      ...(singlePlayer ? ["--features", "single-player"] : []),
+      ...(appStore
+        ? ["--features", "app-store"]
+        : singlePlayer
+          ? ["--features", "single-player"]
+          : []),
     ],
     { env: { ...process.env, ...stamps, ...env } },
   );
