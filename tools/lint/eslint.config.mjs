@@ -14,7 +14,7 @@ export default tseslint.config(
   },
   js.configs.recommended,
   {
-    languageOptions: { globals: { ...globals.browser, ...globals.node } },
+    languageOptions: { globals: { ...globals.browser, ...globals.node, Bun: "readonly" } },
     rules: { "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }] },
   },
   {

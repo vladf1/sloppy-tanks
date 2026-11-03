@@ -2,7 +2,7 @@
 // ACES, PCF shadows, planar water, custom effects, jointed and faded models), beside a
 // reference image of the same scene from the game's former Three.js r185 setup and an
 // amplified difference image (references: `lab-references.ts`, `scripts/README.md` Labs).
-// Build the labs engine with `pnpm run wasm:labs`, then open
+// Build the labs engine with `bun run wasm:labs`, then open
 // /sloppy-tanks/tools/render-lab.html on the dev server.
 // `?freeze=<seconds>` pins the effect/water clock for screenshots (the references use
 // 1.25).

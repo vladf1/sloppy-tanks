@@ -15,7 +15,7 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * `--tag pr-12`; when the registry already holds that build (a change outside the
  * server), it only adds the tags instead of rebuilding.
  *
- * `node scripts/server.mjs publish --dev` passes `--dev --tag dev` for the dev servers: a
+ * `bun scripts/server.mjs publish --dev` passes `--dev --tag dev` for the dev servers: a
  * developer's build is tagged `dev-<build>` instead, since CI would take an image tagged
  * with the bare build for its own and could promote it to :production. A dev publish
  * reuses CI's image of the same server build when there is one, else its own earlier one.
@@ -116,7 +116,7 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 } else {
-  const binary = run("node", ["scripts/build-server.mjs", "--vps"]);
+  const binary = run("bun", ["scripts/build-server.mjs", "--vps"]);
   if (binary.status !== 0) process.exit(binary.status ?? 1);
   const result = run("docker", [
     "build",

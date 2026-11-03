@@ -109,7 +109,7 @@ async function deploy() {
     `Deploying the ${server.role} server (content ${version}, build ${build}) to ${server.ssh}`,
   );
   const image = `${SERVER_IMAGE}:${build}`;
-  run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
+  run(process.execPath, ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
   await loadImageOnServer(image);
   // Restarts the server, ending live rooms (clients get room-reset from the graceful
   // shutdown), and rolls back if the new image does not report healthy.
@@ -136,7 +136,7 @@ async function publish() {
   const build = await serverBuild();
   console.log(`Publishing the dev server (content ${version}, build ${build}) as :dev`);
   const result = spawnSync(
-    "node",
+    process.execPath,
     [
       "scripts/build-server-image.mjs",
       "--registry",
@@ -183,7 +183,7 @@ async function runCommand() {
       console.log(`Waiting for ${health.origin}, which checks :dev every 10 seconds`);
       await waitForHealth(
         (status) => status.contentVersion === version && status.serverBuild === build,
-        `content ${version}, build ${build} (pnpm run server:status --dev shows why not)`,
+        `content ${version}, build ${build} (bun run server:status --dev shows why not)`,
       );
       console.log(`The dev server is live at ${server.url}`);
       break;
@@ -205,7 +205,7 @@ async function runCommand() {
       else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
       else if (argument === "resume") ssh("sloppy-tanks-update resume");
       else {
-        console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
+        console.error("Usage: bun run server:auto-update on|off|resume [--dev]");
         process.exit(1);
       }
       ssh("sloppy-tanks-update status");
@@ -235,7 +235,7 @@ async function runCommand() {
     }
     default:
       console.error(
-        "Usage: node scripts/server.mjs publish|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
+        "Usage: bun scripts/server.mjs publish|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
       );
       process.exit(1);
   }

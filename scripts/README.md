@@ -1,8 +1,8 @@
 # Scripts
 
-Browser checks, measurements and asset tools. None of these run in CI: `pnpm run
+Browser checks, measurements and asset tools. None of these run in CI: `bun run
 check` covers formatting, lint, types, the site and server builds, clippy and the Rust
-and Node tests. A passing gate does not verify controls, menu transitions, rendering or
+and Bun tests. A passing gate does not verify controls, menu transitions, rendering or
 cleanup, so play the changed path in the page or the desktop app.
 
 ## Desktop UI gauntlet
@@ -34,9 +34,9 @@ Invoke the repository skill as `$ui-parity-gauntlet` in Codex or
 entry points stay in this repository, with no global skill installation.
 
 ```sh
-pnpm run check:desktop-ui -- --round first
+bun run check:desktop-ui -- --round first
 # After fixing the critic's findings, reuse the frozen reference:
-pnpm run check:desktop-ui -- --round second
+bun run check:desktop-ui -- --round second
 ```
 
 Run on a Mac with Metal and installed Chrome. The default sizes are 1280×800 and
@@ -72,31 +72,31 @@ The stages also run separately:
 
 ```sh
 SLOPPY_UI_SNAPSHOTS=artifacts/performance/desktop-ui/native cargo test --locked -p sloppy-desktop --profile desktop snapshots -- --ignored
-node scripts/desktop-ui-capture.mjs --native artifacts/performance/desktop-ui/native --out artifacts/performance/desktop-ui/reference
-node scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artifacts/performance/desktop-ui/reference artifacts/performance/desktop-ui/review
+bun scripts/desktop-ui-capture.mjs --native artifacts/performance/desktop-ui/native --out artifacts/performance/desktop-ui/reference
+bun scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artifacts/performance/desktop-ui/reference artifacts/performance/desktop-ui/review
 ```
 
 ## Browser checks
 
-The game page is the desktop crate's egui shell (`index.html`, `pnpm run wasm`), drawn on
+The game page is the desktop crate's egui shell (`index.html`, `bun run wasm`), drawn on
 one canvas, so no check drives it through the DOM: a check opens the page with
 `?automation` and reads the shell's state and labelled widgets from `window.sloppyShell`
 (`crates/desktop/src/automation.rs`), then plays it with real mouse, keyboard and CDP touch
-input at those coordinates. Start `pnpm run dev` and pass the URL it prints. Checks drive
+input at those coordinates. Start `bun run dev` and pass the URL it prints. Checks drive
 installed Google Chrome headless with an isolated profile, so no window takes focus; set
 `SLOPPY_HEADED=1` to watch one in a visible window, and `SLOPPY_WEBGL=1` to play the
 page's WebGL2 build. Each exits non-zero on failure and writes screenshots to the ignored
 `artifacts/performance/<check>/`. Shared setup lives in `browser-helpers.mjs`
 (`launchGame()`, `openShell()`, `untilState()`, `clickWidget()`, `fingers()`,
-`tapWidget()`, `shellDebug()`); `pnpm run check:browser` runs them all
+`tapWidget()`, `shellDebug()`); `bun run check:browser` runs them all
 (`browser-checks.mjs`).
 
 ```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/round-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/round-check.mjs
 ```
 
 The room checks start their own game server on a free port from `SLOPPY_SERVER_BIN`
-(default `target/server/sloppy-server`, which `node scripts/build-server.mjs` builds with
+(default `target/server/sloppy-server`, which `bun scripts/build-server.mjs` builds with
 the content version the page plays) and stage outages through `installProbes()` (dropped
 sockets, a hidden page).
 
@@ -121,7 +121,7 @@ The dev server serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
 `tools/tank-surface-check.html`, plus a link to the game with `?debug`, whose
 Battle Setup offers the Stress Grid and Scrap Yard. Each fixture runs the engine's
-`Game` (`pnpm run wasm:engine`) on its own canvas (`tests/engine-fixture.ts`, through
+`Game` (`bun run wasm:engine`) on its own canvas (`tests/engine-fixture.ts`, through
 `tools/game-engine.ts`) and arranges it through the `Game.debug_*` hooks
 (`crates/web/src/game/debug.rs`): `reinforcements` (120 Solo Assault kills, bounded views,
 reset and team mode), `maps` (inspection poses, crate stages, map switches, and both waters
@@ -135,7 +135,7 @@ with a pass/fail verdict show it in a `#result` element starting with `PASS` or
 
 The render lab, effects lab and tank previews use the labs build of the engine
 (`RenderLab`, `EffectsLab`; the `labs` feature of `sloppy-web`), which the game never
-loads: build it with `pnpm run wasm:labs` (into `src/generated/engine-labs/`),
+loads: build it with `bun run wasm:labs` (into `src/generated/engine-labs/`),
 then open the page on the dev server.
 
 | Page or script                                          | Shows or checks                                                                                         |
@@ -143,7 +143,7 @@ then open the page on the dev server.
 | `tools/render-lab.html`, `tools/render-lab-check.mjs`   | A calibration scene (PBR, fog, ACES, shadows, water, effects, joints, fades), reloads, culling, picking |
 | `tools/effects-lab.html`, `tools/effects-lab-check.mjs` | A scripted scene with every effect and munition; bounded pools, no late pipelines, reset                |
 | `tools/tank-surface-check.html`                         | The tank previews at card and gameplay scale                                                            |
-| `tools/game-preview.html`                               | Single player on the game engine without menus (`pnpm run wasm:engine`)                                 |
+| `tools/game-preview.html`                               | Single player on the game engine without menus (`bun run wasm:engine`)                                  |
 
 The labs compare the engine with reference frames of the same scenes drawn by the
 game's former Three.js r185 renderer, captured before Three.js left the project. They
@@ -163,11 +163,11 @@ Server rules (seats, idle watchdog, humans-only, reconnect, host transfer, expir
 covered by the engine's tests (`crates/core/tests/integration/net_match_host.rs`,
 `net_player_controls.rs`, `crates/server/tests/`). Room state travels in binary WebSocket
 frames, deltas against what the client already holds; `wire-view.mjs` decodes them
-through the engine Wasm (one `WireView` per socket, so run `pnpm run wasm:engine` first)
+through the engine Wasm (one `WireView` per socket, so run `bun run wasm:engine` first)
 into the JSON `full` and `snapshot` shapes, and `state-mirror.mjs` applies those and
 asserts the snapshot stream stays contiguous.
 
-`pnpm run server:check:players` runs 4 real player sockets for 15 seconds per map,
+`bun run server:check:players` runs 4 real player sockets for 15 seconds per map,
 including combat, reconnect and results. The traffic bots' `BotPlayer`
 (`bots/bot-player.ts`) drives each socket; the check mirrors every snapshot to prove
 the stream is contiguous and enforces full-state, snapshot-batch and sustained byte
@@ -191,7 +191,7 @@ comfort or account billing capacity; impact-to-feedback excludes projectile flig
 
 ## Measurements
 
-These are manual evidence, not regression gates. Keep them out of `pnpm run
+These are manual evidence, not regression gates. Keep them out of `bun run
 check` and deployment workflows, run baseline and candidate workloads one at a
 time on an otherwise idle machine, and report sample counts with outliers.
 
@@ -202,8 +202,8 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
 | `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |
 | `cargo run --release -p sloppy-web --example allocation_benchmark -- output.json [seed]` | Native allocation requests/bytes and stage timings, plus wire/render/HUD parity hashes |
-| `pnpm run validate`                                                                      | Ten seeded headless matches and reset checks                                           |
-| `node scripts/benchmarks/host-download-benchmark.mjs`                                    | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
+| `bun run validate`                                                                       | Ten seeded headless matches and reset checks                                           |
+| `bun scripts/benchmarks/host-download-benchmark.mjs`                                     | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
 
 - `capture_benchmark` seeds each standard map and both extra levels with one idle
   player, warms up 1200 ticks, then times 400 intervals of three steps (each
@@ -235,7 +235,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
   the human and scoreboard blocks. Compare matching seeds and output hashes from
   saved baseline/candidate executables in alternating order. These instrumented
   native timings do not measure browser render CPU or FPS.
-- `pnpm run validate` writes `artifacts/performance/simulation-results.json`.
+- `bun run validate` writes `artifacts/performance/simulation-results.json`.
   Those are accelerated simulation results, not browser frame rates.
 
 CPU submission times are not GPU timings, and local frame rates are not
@@ -244,26 +244,26 @@ guarantees for other devices.
 ## Assets, build and deployment
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
-  run through the pnpm commands in the root README's Assets section.
+  run through the Bun commands in the root README's Assets section.
   `encode-webp.ts` is their shared encoder (lossless for data tiles, lossy for noisy
   colour artwork such as the drum), `texture-noise.ts` their seeded
   value noise, and `asset-data.ts` holds the ammunition labels and colors, pickup colors
   and atlas layout they paint with (the engine's own copies are in `crates/core`; change
   both together).
 - `generate-previews.mjs` renders the tank selection previews from the game's vehicle
-  models with the labs engine (`tools/tank-surface-check.html`; `pnpm run generate:previews`
+  models with the labs engine (`tools/tank-surface-check.html`; `bun run generate:previews`
   builds that engine first) and packs `public/previews/tanks.webp`.
   `SLOPPY_PREVIEWS_OUT` writes a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and
   each tank is drawn over black and over white to recover its coverage; a soft
   contact shadow, the track footprint projected through the same view, is painted
   under each tank.
-- `generate-desktop-icon.mjs` (`pnpm run generate:desktop-icon`, on any OS) derives
+- `generate-desktop-icon.mjs` (`bun run generate:desktop-icon`, on any OS) derives
   `assets/desktop/mac-app.icns` from the web app's tank icon; `generate:app-icons`
   regenerates it after the web icons. The checked-in icon and its
   source hashes let desktop packaging copy it without invoking Cargo or installing
   the image library in CI; see `assets/texture-sources/README.md`.
-- `app-store-screenshots.mjs` (`pnpm run screenshots:app-store`) builds the iOS simulator
+- `app-store-screenshots.mjs` (`bun run screenshots:app-store`) builds the iOS simulator
   app and the Mac app and captures App Store Connect's screenshots at Apple's landscape
   sizes into `artifacts/app-store/screenshots/<device>/`: iPhone 6.9" (2868×1320) and
   6.3" (2622×1206), iPad 13" (2752×2064) and Mac (2880×1800, or 2560×1600 when the screen

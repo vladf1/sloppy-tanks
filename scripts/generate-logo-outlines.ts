@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 // The page drew the words in Impact, which may not be redistributed; these are Anton's
 // outlines (SIL OFL, `assets/fonts/`), each letter stretched into the box Impact's took
 // in the page's `.setup-brand`, so the logo keeps its old shape on every platform.
-// Run `node --import tsx scripts/generate-logo-outlines.ts` after changing the fit.
+// Run `bun scripts/generate-logo-outlines.ts` after changing the fit.
 
 const FONT = new URL("../assets/fonts/Anton-Regular.ttf", import.meta.url);
 const TARGET = new URL("../crates/desktop/src/ui/icons.rs", import.meta.url);

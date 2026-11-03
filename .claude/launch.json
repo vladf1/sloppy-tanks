@@ -3,7 +3,7 @@
   "configurations": [
     {
       "name": "dev",
-      "runtimeExecutable": "pnpm",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "run",
         "dev"
@@ -16,7 +16,7 @@
       "runtimeExecutable": "/bin/sh",
       "runtimeArgs": [
         "-c",
-        "PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH exec pnpm run tunnel"
+        "PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH exec bun run tunnel"
       ],
       "port": 4179
     },
@@ -28,9 +28,9 @@
     },
     {
       "name": "directory",
-      "runtimeExecutable": "pnpm",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
-        "exec",
+        "run",
         "wrangler",
         "dev",
         "--config",

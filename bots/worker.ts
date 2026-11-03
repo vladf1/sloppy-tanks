@@ -81,7 +81,7 @@ function swarm(env: Env, region: Region): DurableObjectStub<BotSwarm> {
 /** A request to the pilots Worker. Its answer is JSON, or becomes a JSON error that says
  * why there is none (not deployed, or not running beside `wrangler dev`). */
 async function pilots(env: Env, path: string, body?: unknown): Promise<Response> {
-  const missing = "The pilots Worker is not reachable: deploy it (pnpm run pilots:deploy)";
+  const missing = "The pilots Worker is not reachable: deploy it (bun run pilots:deploy)";
   if (!env.PILOTS) {
     return json({ error: missing }, 503);
   }

@@ -10,7 +10,7 @@ production's; compare like files.
 From the repository root:
 
 ```sh
-node scripts/benchmarks/host-download-benchmark.mjs
+bun scripts/benchmarks/host-download-benchmark.mjs
 ```
 
 Each run writes a dated raw JSON artifact to the ignored `artifacts/performance/host-download/`.

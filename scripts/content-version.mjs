@@ -175,6 +175,29 @@ export async function geometryVersion(profile) {
   );
 }
 
+/** What the page's shader tables (`crates/render/src/shader/tables.rs`) are generated
+ * from: the renderer's sources, build script and manifest, the core's `scene` module
+ * (the material defaults that pick shadow keys), the resolved crates (naga translates
+ * WebGL's stages) and the compiler. The rest of the core never reaches them, so
+ * `build-wasm.mjs` regenerates the tables only when their key changes, and a core edit
+ * no longer rebuilds the native generator first. */
+export async function shaderTablesSources() {
+  return [
+    ...(await filesUnder("crates/render/src")),
+    "crates/render/build.rs",
+    "crates/render/Cargo.toml",
+    "crates/core/src/scene.rs",
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain.toml",
+  ];
+}
+
+/** The shader tables' key: a hash of `shaderTablesSources`. */
+export async function shaderTablesKey() {
+  return hashFiles(await shaderTablesSources());
+}
+
 /** The network protocol version, a constant of the shared Rust core both builds compile. */
 export async function protocolVersion() {
   const source = await readFile(new URL("crates/core/src/net/protocol.rs", root), "utf8");
@@ -224,7 +247,7 @@ export async function serverBuild() {
   );
 }
 
-// `node scripts/content-version.mjs` lists the sources clients and the server share;
+// `bun scripts/content-version.mjs` lists the sources clients and the server share;
 // `--geometry` the sources of the page's cached models and their key (a CI check: it fails
 // when a cached model builder reaches beyond them).
 if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv.includes("--geometry")) {

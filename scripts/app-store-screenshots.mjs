@@ -2,10 +2,10 @@
 // (App Store Connect's "Screenshot specifications"), into the ignored
 // artifacts/app-store/screenshots/<device>/NN-<name>.png:
 //
-//   pnpm run screenshots:app-store                       # build both apps, then every device
-//   pnpm run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
-//   pnpm run screenshots:app-store -- --only ipad-13,mac --no-report
-//   pnpm run screenshots:app-store -- --no-build --only mac --shots quarry
+//   bun run screenshots:app-store                       # build both apps, then every device
+//   bun run screenshots:app-store -- --no-build         # the apps artifacts/ already holds
+//   bun run screenshots:app-store -- --only ipad-13,mac --no-report
+//   bun run screenshots:app-store -- --no-build --only mac --shots quarry
 //
 // Each shot is a launch of its own, so `--shots` retakes any of them alone: battle-setup
 // (about 25 s), village, harbor and quarry (about a minute each) and battle-report (20 s:
@@ -261,7 +261,7 @@ let landscapeApp;
 function landscapeIosApp() {
   if (landscapeApp) return landscapeApp;
   if (!existsSync(IOS_APP)) {
-    throw new Error(`${IOS_APP} is missing: run pnpm run ios:simulator, or drop --no-build`);
+    throw new Error(`${IOS_APP} is missing: run bun run ios:simulator, or drop --no-build`);
   }
   landscapeApp = join(scratch, "ios", "Sloppy Tanks.app");
   rmSync(landscapeApp, { recursive: true, force: true });
@@ -380,7 +380,7 @@ function placeMacWindow(pid, [x, y, width, height]) {
 async function captureMac(device) {
   const binary = join(MAC_APP, MAC_BINARY);
   if (!existsSync(binary)) {
-    throw new Error(`${MAC_APP} is missing: run pnpm run desktop:mac, or drop --no-build`);
+    throw new Error(`${MAC_APP} is missing: run bun run desktop:mac, or drop --no-build`);
   }
   // Find out about the permission before the first window rather than at its capture.
   screenCapture([0, 0, 1, 1], join(scratch, "screen-recording-check.png"));
@@ -483,9 +483,13 @@ const ios = devices.filter((device) => !device.mac);
 const mac = devices.find((device) => device.mac);
 if (!process.argv.includes("--no-build")) {
   const build = (mode) =>
-    execFileSync("node", [join(root, "scripts/build-desktop.mjs"), mode, "--single-player"], {
-      stdio: "inherit",
-    });
+    execFileSync(
+      process.execPath,
+      [join(root, "scripts/build-desktop.mjs"), mode, "--single-player"],
+      {
+        stdio: "inherit",
+      },
+    );
   if (ios.length) build("--ios-simulator");
   if (mac) build("--mac");
 }
@@ -517,7 +521,7 @@ console.log(`Screenshots in ${output}`);
 for (const [id, names] of missing) {
   console.error(
     `[${id}] missing ${names.join(", ")}; retake them with\n` +
-      `  pnpm run screenshots:app-store -- --no-build --only ${id} --shots ${names.join(",")}`,
+      `  bun run screenshots:app-store -- --no-build --only ${id} --shots ${names.join(",")}`,
   );
 }
 if (failures.length || missing.size) process.exit(1);

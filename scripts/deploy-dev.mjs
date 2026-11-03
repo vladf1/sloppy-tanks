@@ -17,13 +17,14 @@ const info = JSON.parse(
 // game/network sources, so publish the dev server from this checkout first. It runs on
 // its own machines, which follow the server image's :dev tag, so this never touches
 // production's. The publish waits until every dev server reports this checkout's build.
-run("node", ["scripts/server.mjs", "publish", "--dev"]);
+run(process.execPath, ["scripts/server.mjs", "publish", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
-run("node", ["deploy/site/precompress.mjs", "dist-dev"]);
+run(process.execPath, ["deploy/site/precompress.mjs", "dist-dev"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
-run("wrangler", [
+run(process.execPath, [
+  "tools/deploy/wrangler.mjs",
   "deploy",
   "--config",
   "deploy/site/dev.wrangler.jsonc",

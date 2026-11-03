@@ -17,7 +17,7 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 // and bare-metal scuffs.
 // Tiles horizontally; rows run from the roof (top) to the floor (bottom).
 //
-//   node --import tsx scripts/generate-harbor-textures.ts
+//   bun scripts/generate-harbor-textures.ts
 
 const SIZE = 512;
 const output = fileURLToPath(new URL("../public/textures/harbor/", import.meta.url));

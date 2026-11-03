@@ -15,7 +15,7 @@
 # reboot restarts exactly what was running, and only this script changes it, restarting
 # in the same step. The Quadlet unit reads the pin from a drop-in this script writes
 # beside it. A machine follows its environment's tag: production's :production, which CI
-# moves, or dev's :dev, which `node scripts/server.mjs publish --dev` moves from a
+# moves, or dev's :dev, which `bun scripts/server.mjs publish --dev` moves from a
 # developer's checkout. Anything but `pull` of that tag leaves a hold that auto-update
 # respects until `resume` or such a pull, and on dev until the next publish.
 set -euo pipefail

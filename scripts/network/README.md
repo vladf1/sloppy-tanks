@@ -48,4 +48,4 @@ so uploads stall too. While it is on, expect:
 - the room's **Lapses**, as held controls run out while input is resent;
 - **Late batches** and **Longest batch gap** in the room page's Stats for nerds;
 - the player's own `rtt … ms, N of M segments resent` in the server journal
-  (`pnpm run server:logs`) when they leave the room.
+  (`bun run server:logs`) when they leave the room.

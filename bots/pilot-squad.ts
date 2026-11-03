@@ -274,7 +274,7 @@ export class PilotSquad {
     const version = this.contentVersion;
     const mismatch = (other: string | undefined) =>
       `The pilot engine plays content ${version} but the server runs ${other ?? "nothing"}: ` +
-      "deploy the pilots (pnpm run pilots:deploy) from the commit the server runs";
+      "deploy the pilots (bun run pilots:deploy) from the commit the server runs";
     const { room, host } = this.config;
     if (room) {
       const server = servers.find((listed) => listed.rooms.some((entry) => entry.room === room));

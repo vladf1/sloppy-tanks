@@ -40,11 +40,11 @@ immediately.
 ## Use
 
 ```sh
-pnpm run bots:deploy                    # deploy after changing the load bots or control page
-pnpm run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
-pnpm run bots -- start apac 2           # join whatever rooms are open
-pnpm run bots -- status
-pnpm run bots -- stop apac              # or no region to stop all
+bun run bots:deploy                    # deploy after changing the load bots or control page
+bun run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
+bun run bots -- start apac 2           # join whatever rooms are open
+bun run bots -- status
+bun run bots -- stop apac              # or no region to stop all
 ```
 
 The root URL serves a control page (`control-page.ts`, plain HTML, CSS and script) with
@@ -53,10 +53,13 @@ what it will start, and a card per running region with its own **Stop region**. 
 is no authentication: anyone with the URL can start and stop bots, bounded by the
 32-bot, 8-pilot and 6-hour limits per region. `stop` stops a region's load bots and
 pilots together.
+Cloudflare commands install the pinned Wrangler tools on demand and run Wrangler with
+Node; normal installs and `bun run bots` do not need them (see
+[deployment tools](../tools/deploy/README.md)).
 
 Local development: run both Workers in one session,
-`pnpm exec wrangler dev -c bots/wrangler.jsonc -c bots/pilots.wrangler.jsonc` (after
-`pnpm run pilot:build`), with `DIRECTORY_URL=http://127.0.0.1:8787` in `bots/.dev.vars`
+`bun run wrangler dev -c bots/wrangler.jsonc -c bots/pilots.wrangler.jsonc` (after
+`bun run pilot:build`), with `DIRECTORY_URL=http://127.0.0.1:8787` in `bots/.dev.vars`
 (ignored by Git; both configs read it) so they find a local server, which lists itself.
 The bots Worker alone runs load bots and reports the pilots Worker as unreachable.
 
@@ -65,19 +68,19 @@ The bots Worker alone runs load bots and reports the pilots Worker as unreachabl
 With `--brain` (or **Pilots** on the control page), a region runs up to 8 pilots:
 players driven by the bot brain through the browser's own network client
 ([crates/pilot](../crates/pilot/README.md)), compiled to Wasm
-(`bots/generated/sloppy_pilot.wasm`, built by `pnpm run pilot:build`). They run in the
-pilots Worker, which `pnpm run pilots:deploy` builds and deploys. Deploy it before the
+(`bots/generated/sloppy_pilot.wasm`, built by `bun run pilot:build`). They run in the
+pilots Worker, which `bun run pilots:deploy` builds and deploys. Deploy it before the
 bots Worker the first time, since the bots Worker binds to it. The pilots see the room
 with the region's latency, so they test how the game feels from there: hit
 registration, prediction and lag compensation.
 
 ```sh
-pnpm run pilots:deploy                                        # build the engine and deploy
-pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad     # hunt vlad in that room
-pnpm run bots -- start weur 1 --room ABCD2345 --escort vlad   # fight beside vlad
-pnpm run bots -- start apac 3 --brain --host --map harbor     # make a room, play there
-pnpm run bots -- start enam 4 --brain                         # join the fullest room with 4 free seats
-pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind heavy --env dev
+bun run pilots:deploy                                        # build the engine and deploy
+bun run bots -- start wnam 2 --room ABCD2345 --hunt vlad     # hunt vlad in that room
+bun run bots -- start weur 1 --room ABCD2345 --escort vlad   # fight beside vlad
+bun run bots -- start apac 3 --brain --host --map harbor     # make a room, play there
+bun run bots -- start enam 4 --brain                         # join the fullest room with 4 free seats
+bun run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind heavy --env dev
 ```
 
 - **Room.** All of a region's pilots play one room: the `--room` code (on the server the
@@ -97,7 +100,7 @@ pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind he
   starts a new one and every pilot takes its seat back (`restarts` in the status).
 - **Content version.** The engine is game code, stamped with the checkout's content
   version. A server running another version refuses its pilots, and the region reports
-  both versions. Deploy the pilots Worker (`pnpm run pilots:deploy`) from the commit the
+  both versions. Deploy the pilots Worker (`bun run pilots:deploy`) from the commit the
   target server runs; the load bots have no such tie, and redeploying one Worker leaves
   the other's runs alone. `--env dev` (`environment` in the API, **Servers** on the page)
   plays on the dev server's rooms instead of the Workers' `SERVER_ENVIRONMENT`, for load

@@ -1,14 +1,13 @@
-import { after, before, test } from "node:test";
+import { afterAll, beforeAll, test } from "bun:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
 import { BotPlayer, openSeats, randomRoomCode, type ServerInfo } from "../bots/bot-player";
 import { readStateHeader } from "../bots/state-header";
 
-// The traffic bots drive the real multiplayer server: `pnpm run server:build` (part of
-// `pnpm run check`) builds this binary. CI sets SLOPPY_SERVER_VPS so that is the static
+// The traffic bots drive the real multiplayer server: `bun run server:build` (part of
+// `bun run check`) builds this binary. CI sets SLOPPY_SERVER_VPS so that is the static
 // musl binary its server image ships.
 const SERVER_PATH =
   process.env.SLOPPY_SERVER_VPS === "1"
@@ -25,8 +24,8 @@ const ROOM_CODE = /^[A-Z2-9]{8}$/;
 let server: ChildProcess | undefined;
 let base = "";
 
-before(async () => {
-  assert.ok(existsSync(SERVER), `${SERVER} is missing: run pnpm run server:build first`);
+beforeAll(async () => {
+  assert.ok(existsSync(SERVER), `${SERVER} is missing: run bun run server:build first`);
   const child = spawn(SERVER, [], {
     env: { ...process.env, HOST: "127.0.0.1", PORT: "0" },
     stdio: ["ignore", "pipe", "inherit"],
@@ -45,7 +44,7 @@ before(async () => {
   });
 });
 
-after(() => {
+afterAll(() => {
   server?.kill("SIGTERM");
 });
 
@@ -70,79 +69,84 @@ async function until(
   }
 }
 
-test("traffic bots create a room on the Rust server, drive with accepted input and stay connected", async () => {
-  const health = (await (await fetch(`http://${base}/health`)).json()) as Record<string, unknown>;
-  const info: ServerInfo = {
-    version: Number(health.protocol),
-    contentVersion: String(health.contentVersion),
-  };
-  const room = randomRoomCode();
-  const bots = ["a", "b", "c"].map((id, index) => {
-    const bot = new BotPlayer("bot-" + id, seeded(index + 7));
-    return {
-      bot,
-      closed: undefined as number | undefined,
-      acked: 0,
-      socket: undefined as WebSocket | undefined,
+test(
+  "traffic bots create a room on the Rust server, drive with accepted input and stay connected",
+  async () => {
+    const health = (await (await fetch(`http://${base}/health`)).json()) as Record<string, unknown>;
+    const info: ServerInfo = {
+      version: Number(health.protocol),
+      contentVersion: String(health.contentVersion),
     };
-  });
-  for (const [index, seat] of bots.entries()) {
-    const socket = new WebSocket(`ws://${base}/room/${room}`);
-    seat.socket = socket;
-    socket.on("message", (data: Buffer, isBinary) => {
-      if (!isBinary) {
-        seat.bot.receive(String(data), performance.now());
-        return;
-      }
-      const header = readStateHeader(data);
-      if (header.type === "snapshot") {
-        seat.acked = Math.max(seat.acked, header.ack ?? 0);
-      }
-      seat.bot.receive(data, performance.now());
+    const room = randomRoomCode();
+    const bots = ["a", "b", "c"].map((id, index) => {
+      const bot = new BotPlayer("bot-" + id, seeded(index + 7));
+      return {
+        bot,
+        closed: undefined as number | undefined,
+        acked: 0,
+        socket: undefined as WebSocket | undefined,
+      };
     });
-    socket.on("close", (code) => {
-      seat.closed = code;
-      seat.bot.disconnected();
-    });
-    await new Promise((resolve, reject) => {
-      socket.once("open", resolve);
-      socket.once("error", reject);
-    });
-    seat.bot.join((text) => socket.send(text), info, performance.now(), index === 0);
-    await until(() => seat.bot.phase !== "joining", `bot-${index} to join`);
-  }
-  assert.equal(bots[0].bot.phase, "playing", "The creating bot starts the first round");
+    for (const [index, seat] of bots.entries()) {
+      const socket = new WebSocket(`ws://${base}/room/${room}`);
+      socket.binaryType = "arraybuffer";
+      seat.socket = socket;
+      socket.addEventListener("message", ({ data }: MessageEvent<string | ArrayBuffer>) => {
+        if (typeof data === "string") {
+          seat.bot.receive(data, performance.now());
+          return;
+        }
+        const header = readStateHeader(new Uint8Array(data));
+        if (header.type === "snapshot") {
+          seat.acked = Math.max(seat.acked, header.ack ?? 0);
+        }
+        seat.bot.receive(data, performance.now());
+      });
+      socket.addEventListener("close", ({ code }) => {
+        seat.closed = code;
+        seat.bot.disconnected();
+      });
+      await new Promise((resolve, reject) => {
+        socket.addEventListener("open", resolve, { once: true });
+        socket.addEventListener("error", reject, { once: true });
+      });
+      seat.bot.join((text) => socket.send(text), info, performance.now(), index === 0);
+      await until(() => seat.bot.phase !== "joining", `bot-${index} to join`);
+    }
+    assert.equal(bots[0].bot.phase, "playing", "The creating bot starts the first round");
 
-  const timer = setInterval(
-    () => bots.forEach(({ bot }) => bot.update(performance.now())),
-    STEP_MS,
-  );
-  // Drive until every bot has sent active-rate input the server acknowledged, or
-  // one is dropped; the assertions below say which.
-  await until(
-    () =>
-      bots.some(({ bot, closed }) => closed !== undefined || bot.lastError !== undefined) ||
-      bots.every(({ bot, acked }) => bot.stats.inputs > MIN_INPUTS && acked > 0),
-    "every bot to drive with acknowledged input",
-    DRIVE_TIMEOUT_MS,
-  );
-  clearInterval(timer);
-
-  for (const { bot, closed, acked } of bots) {
-    assert.equal(closed, undefined, "No bot was dropped for stale ticks or invalid messages");
-    assert.equal(bot.lastError, undefined);
-    assert.equal(bot.phase, "playing");
-    assert.ok(
-      bot.stats.inputs > MIN_INPUTS,
-      `Driving bots send active-rate input (${bot.stats.inputs})`,
+    const timer = setInterval(
+      () => bots.forEach(({ bot }) => bot.update(performance.now())),
+      STEP_MS,
     );
-    assert.ok(acked > 0, "The server applied the bot's input");
-  }
-  for (const { bot, socket } of bots) {
-    bot.leave();
-    socket!.close(1000);
-  }
-});
+    // Drive until every bot has sent active-rate input the server acknowledged, or
+    // one is dropped; the assertions below say which.
+    await until(
+      () =>
+        bots.some(({ bot, closed }) => closed !== undefined || bot.lastError !== undefined) ||
+        bots.every(({ bot, acked }) => bot.stats.inputs > MIN_INPUTS && acked > 0),
+      "every bot to drive with acknowledged input",
+      DRIVE_TIMEOUT_MS,
+    );
+    clearInterval(timer);
+
+    for (const { bot, closed, acked } of bots) {
+      assert.equal(closed, undefined, "No bot was dropped for stale ticks or invalid messages");
+      assert.equal(bot.lastError, undefined);
+      assert.equal(bot.phase, "playing");
+      assert.ok(
+        bot.stats.inputs > MIN_INPUTS,
+        `Driving bots send active-rate input (${bot.stats.inputs})`,
+      );
+      assert.ok(acked > 0, "The server applied the bot's input");
+    }
+    for (const { bot, socket } of bots) {
+      bot.leave();
+      socket!.close(1000);
+    }
+  },
+  4 * START_TIMEOUT_MS + DRIVE_TIMEOUT_MS,
+);
 
 test("open seat planning fills occupied compatible rooms first and counts pending bots", () => {
   const rooms = [

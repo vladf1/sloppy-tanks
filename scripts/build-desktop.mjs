@@ -2,13 +2,13 @@
 // `artifacts/desktop/`, or the same app for iPhone and iPad into `artifacts/ios/`, and
 // either for the App Store into `artifacts/mac-app-store/` or `artifacts/ios-app-store/`.
 //
-//   node scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
-//   node scripts/build-desktop.mjs --mac --app-store   # the Mac App Store .pkg for App Store Connect and TestFlight
-//   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
-//   node scripts/build-desktop.mjs             # whichever this machine is
-//   node scripts/build-desktop.mjs --ios               # Sloppy Tanks.app and an .ipa for iPhones and iPads
-//   node scripts/build-desktop.mjs --ios --app-store   # the .ipa for App Store Connect and TestFlight
-//   node scripts/build-desktop.mjs --ios-simulator     # the app for Xcode's iPhone and iPad simulators
+//   bun scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
+//   bun scripts/build-desktop.mjs --mac --app-store   # the Mac App Store .pkg for App Store Connect and TestFlight
+//   bun scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
+//   bun scripts/build-desktop.mjs             # whichever this machine is
+//   bun scripts/build-desktop.mjs --ios               # Sloppy Tanks.app and an .ipa for iPhones and iPads
+//   bun scripts/build-desktop.mjs --ios --app-store   # the .ipa for App Store Connect and TestFlight
+//   bun scripts/build-desktop.mjs --ios-simulator     # the app for Xcode's iPhone and iPad simulators
 //
 // The iOS app is one bundle for both (`UIDeviceFamily` 1 and 2): an iPhone plays the
 // phone edition and an iPad the tablet's (`touch::detect`). Add `--install` to an iOS

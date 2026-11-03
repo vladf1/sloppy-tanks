@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import WebSocket from "ws";
 import { BotPlayer, randomRoomCode } from "../bots/bot-player.ts";
 import { StateMirror } from "./state-mirror.mjs";
 import { contentVersion, protocolVersion } from "./content-version.mjs";
@@ -53,9 +52,12 @@ class Player {
     this.expectedClose = false;
     this.welcome = undefined;
     const socket = new WebSocket(`${endpoint}/room/${this.room}`);
+    socket.binaryType = "arraybuffer";
     this.socket = socket;
-    socket.on("error", (error) => report.errors.push(error.message));
-    socket.on("close", (status, reason) => {
+    socket.addEventListener("error", (event) =>
+      report.errors.push(event.message || "WebSocket error"),
+    );
+    socket.addEventListener("close", ({ code: status, reason }) => {
       if (this.socket !== socket) return;
       this.bot.disconnected();
       if (!this.expectedClose) {
@@ -74,11 +76,11 @@ class Player {
     });
     // Binary state frames are deltas against this connection's earlier ones.
     const wire = createWireView();
-    socket.on("message", (raw, isBinary) => {
+    socket.addEventListener("message", ({ data }) => {
       try {
-        this.bytes += raw.length;
+        const length = typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+        this.bytes += length;
         this.messages++;
-        const data = isBinary ? raw : String(raw);
         this.bot.receive(data, Date.now());
         const m = wire.decode(data);
         if (m.type === "welcome") this.welcome = m;
@@ -89,10 +91,10 @@ class Player {
         }
         if (m.type === "full") {
           this.mirror.applyFull(m, this.lobby);
-          this.fullBytes.push(raw.length);
+          this.fullBytes.push(length);
         }
         if (m.type === "snapshot") {
-          this.snapshotBytes.push(raw.length);
+          this.snapshotBytes.push(length);
           for (const snap of m.snapshots) {
             assert.ok(this.mirror.applySnapshot(snap), "Contiguous valid snapshots");
             const events = snap.events ?? [];
@@ -109,8 +111,8 @@ class Player {
       }
     });
     await new Promise((resolve, reject) => {
-      socket.once("open", resolve);
-      socket.once("error", reject);
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", reject, { once: true });
     });
     this.bot.join((text) => socket.send(text), server, Date.now());
     await until(() => this.lobby && this.welcome, "welcome");

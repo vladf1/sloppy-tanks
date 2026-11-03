@@ -11,7 +11,7 @@ import { chromium } from "playwright";
  */
 export const headless = !process.env.SLOPPY_HEADED;
 
-/** The Vite dev server under test; `pnpm run dev` prints it. */
+/** The Vite dev server under test; `bun run dev` prints it. */
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
 /** SLOPPY_WEBGL=1 opens the game on its WebGL2 build (`?webgl`, `openShell`). */
@@ -428,7 +428,7 @@ export function installProbes(context) {
 
 /**
  * The game server the multiplayer checks start: `SLOPPY_SERVER_BIN`, else the build of
- * `node scripts/build-server.mjs`, which stamps the content version the page plays (a
+ * `bun scripts/build-server.mjs`, which stamps the content version the page plays (a
  * plain `cargo build` reports "test-content", and the page refuses its rooms).
  */
 export const serverBinary = process.env.SLOPPY_SERVER_BIN ?? "target/server/sloppy-server";

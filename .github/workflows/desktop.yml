@@ -33,6 +33,7 @@ on:
       - "Cargo.*"
       - ".cargo/**"
       - "rust-toolchain.toml"
+      - ".bun-version"
       - "scripts/build-desktop.mjs"
       - "scripts/generate-desktop-icon.mjs"
       - "scripts/content-version.mjs"
@@ -61,7 +62,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-macos-check
-          node-dependencies: "false"
+          js-dependencies: "false"
       - run: cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
       - run: cargo test --locked --profile desktop-check -p sloppy-desktop
       # The renderer's and the engine API's desktop-only modules build only with their
@@ -77,7 +78,7 @@ jobs:
         with:
           # Step-level profile overrides are not visible when setup hashes the cache.
           cargo-cache: desktop-macos-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
+          js-dependencies: "false"
       - name: Signing keychain
         if: github.event_name != 'pull_request'
         env:
@@ -104,7 +105,7 @@ jobs:
             printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
             echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
           fi
-      - run: node scripts/build-desktop.mjs --mac
+      - run: bun scripts/build-desktop.mjs --mac
         env:
           # PR artifacts favor compile time; main/local builds retain release's fat LTO.
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
@@ -148,12 +149,12 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: ios-simulator-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
+          js-dependencies: "false"
       # The iOS targets stay out of rust-toolchain.toml, which is part of the content
       # version; the build script adds its own, and clippy needs the simulator's first.
       - run: rustup target add aarch64-apple-ios-sim
       - run: cargo clippy --locked --profile desktop-check --target aarch64-apple-ios-sim -p sloppy-desktop --all-targets -- -D warnings
-      - run: node scripts/build-desktop.mjs --ios-simulator
+      - run: bun scripts/build-desktop.mjs --ios-simulator
         env:
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
           CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
@@ -223,11 +224,11 @@ jobs:
         if: steps.signing.outputs.ready == 'true'
         with:
           cargo-cache: ${{ matrix.cargo-cache }}
-          node-dependencies: "false"
+          js-dependencies: "false"
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
       # processed the build and fails if Apple finds it invalid. The App Store's first
       # release is single player: online rooms and their player names come later.
-      - run: node scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --single-player --upload
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --single-player --upload
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}
@@ -247,8 +248,8 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-windows-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          node-dependencies: "false"
-      - run: node scripts/build-desktop.mjs --windows
+          js-dependencies: "false"
+      - run: bun scripts/build-desktop.mjs --windows
         env:
           CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
           CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
@@ -288,7 +289,7 @@ jobs:
           skip-decompress: true
       - name: Publish the builds
         run: |
-          version="$(node -p 'require("./package.json").version')"
+          version="$(jq -r .version package.json)"
           commit="${GITHUB_SHA::7}"
           tag="desktop-v$version-$commit"
           mkdir release

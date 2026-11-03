@@ -56,7 +56,7 @@ export function verifyDesktopIcon(paths = {}) {
   const mismatches = Object.keys(actual).filter((key) => actual[key] !== expected[key]);
   if (mismatches.length) {
     throw new Error(
-      `The Mac icon differs: ${mismatches.join(", ")}. Run pnpm run generate:desktop-icon and commit the icon and provenance.`,
+      `The Mac icon differs: ${mismatches.join(", ")}. Run bun run generate:desktop-icon and commit the icon and provenance.`,
     );
   }
   return fileURLToPath(iconPath);

@@ -1,6 +1,7 @@
 # Prettier also skips everything .gitignore lists.
 public/
-pnpm-lock.yaml
+bun.lock
 assets/texture-sources/
 scripts/benchmarks/
 .claude/
+bunfig.toml

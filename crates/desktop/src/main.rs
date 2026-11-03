@@ -1,6 +1,6 @@
 //! Sloppy Tanks on macOS, Windows, iPhone, iPad and the web: the game's menus and HUD in egui
 //! over the engine's `Game` and `NetGame` (`crates/web`), in a native window drawn with
-//! wgpu on Metal or Direct3D 12, or built for `wasm32` (`pnpm run wasm`) as the web
+//! wgpu on Metal or Direct3D 12, or built for `wasm32` (`bun run wasm`) as the web
 //! version's page (`index.html`) on the browser's WebGPU. The iPhone and iPad play it
 //! with touch controls (`touch.rs`).
 

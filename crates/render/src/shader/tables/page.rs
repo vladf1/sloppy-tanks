@@ -50,7 +50,7 @@ fn with_tables<T>(read: impl FnOnce(&JsValue) -> T) -> T {
                 panic!(
                     "the shader tables are {backend} format {format} from sources {sources}, \
                      not {BACKEND} format {FORMAT} from {SOURCES}: rebuild the page with \
-                     `pnpm run wasm`"
+                     `bun run wasm`"
                 );
             }
             tables

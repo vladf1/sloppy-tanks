@@ -1,7 +1,7 @@
 {
   // The pilots (bots/pilots-worker.ts). No public address: the bots Worker's control page
   // and API reach it over their PILOTS service binding. Deploy it first, and again from
-  // the commit the game servers run (`pnpm run pilots:deploy`).
+  // the commit the game servers run (`bun run pilots:deploy`).
   "name": "sloppy-tanks-pilots",
   "main": "pilots-worker.ts",
   "compatibility_date": "2026-09-23",

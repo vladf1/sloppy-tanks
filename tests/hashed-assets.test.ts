@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { hashedName, runtimeFiles } from "../scripts/hashed-assets";
 
 test("the page's runtime files are the shell's and the renderer's, not the licences", () => {
