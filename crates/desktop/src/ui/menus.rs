@@ -1503,16 +1503,18 @@ fn settings_body(
             },
         );
     }
-    y = rows.group(painter, y + GROUP_GAP, "DEVELOPER");
-    y = rows.switch_row(
-        ui,
-        painter,
-        y,
-        "debug tools",
-        &mut draft.debug,
-        "Debug tools",
-        "Extra levels and Stats for nerds",
-    );
+    if !cfg!(feature = "app-store") {
+        y = rows.group(painter, y + GROUP_GAP, "DEVELOPER");
+        y = rows.switch_row(
+            ui,
+            painter,
+            y,
+            "debug tools",
+            &mut draft.debug,
+            "Debug tools",
+            "Extra levels and Stats for nerds",
+        );
+    }
     // The App Store wants the privacy policy reachable inside the app.
     y = rows.group(painter, y + GROUP_GAP, "ABOUT");
     let links = rows.control(y, CHOICE_OFFSET, 38.0);

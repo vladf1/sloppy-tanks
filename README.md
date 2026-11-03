@@ -371,6 +371,8 @@ bundle carries a privacy manifest (`PrivacyInfo.xcprivacy`) with Apple's reason 
 required-reason API its executable uses, and the build stops at one the script has no
 reason for (`REQUIRED_REASON_APIS`).
 
+`--app-store` also enables the shell’s `app-store` feature: it includes single player only and hides the Developer settings section. App Store builds label their remaining tab Battle Setup.
+
 `--single-player` builds any of the apps without multiplayer (the `single-player` feature
 of `sloppy-desktop`): Battle Setup shows the Single player tab alone and `--multiplayer`
 and `--room` open nothing. CI's App Store builds are single player for now, so the first

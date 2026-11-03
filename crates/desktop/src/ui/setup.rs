@@ -1932,12 +1932,18 @@ const PLAY_TABS: [(bool, &str, &str); 2] = [
     (true, "MULTIPLAYER", "Online rooms with friends"),
 ];
 
-/// The play tabs this build offers, in their places: single player alone where it
-/// leaves multiplayer out.
+/// Store builds keep the folder heading as Battle Setup.
 fn play_tabs() -> impl Iterator<Item = (bool, &'static str, &'static str)> {
     PLAY_TABS
         .into_iter()
         .filter(|tab| !tab.0 || crate::app::offers_multiplayer())
+        .map(|tab| {
+            if cfg!(feature = "app-store") {
+                (false, "BATTLE SETUP", tab.2)
+            } else {
+                tab
+            }
+        })
 }
 
 /// The page's `clamp(least, share × viewport width, most)` type.

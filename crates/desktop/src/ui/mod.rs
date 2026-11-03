@@ -421,6 +421,81 @@ mod snapshots;
 mod tests {
     use super::*;
 
+    fn menu_text(settings: bool) -> String {
+        fn collect(shape: &egui::Shape, text: &mut String) {
+            match shape {
+                egui::Shape::Text(shape) => {
+                    text.push_str(&shape.galley.job.text);
+                    text.push('\n');
+                }
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        collect(shape, text);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let context = egui::Context::default();
+        theme::install(&context);
+        let prefs = Preferences::default();
+        let mut state = UiState {
+            ready: true,
+            settings_draft: settings.then(|| prefs.clone()),
+            ..UiState::default()
+        };
+        let view = View {
+            prefs: &prefs,
+            in_round: false,
+            phase: MatchPhase::Ready,
+            build: "test",
+            debug: false,
+            room: false,
+        };
+        let mut text = String::new();
+        for _ in 0..3 {
+            let mut output = context.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1280.0, 800.0),
+                    )),
+                    ..Default::default()
+                },
+                |context| {
+                    draw(context, &mut state, &view);
+                },
+            );
+            // This CPU layout check has no GPU texture consumer.
+            output.textures_delta.clear();
+            text.clear();
+            for shape in &output.shapes {
+                collect(&shape.shape, &mut text);
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn store_builds_name_the_tab_battle_setup() {
+        let text = menu_text(false);
+        assert!(text.contains("MAP"));
+        assert_eq!(text.contains("BATTLE SETUP"), cfg!(feature = "app-store"));
+        assert_eq!(text.contains("SINGLE PLAYER"), !cfg!(feature = "app-store"));
+        assert_eq!(
+            text.contains("MULTIPLAYER"),
+            crate::app::offers_multiplayer()
+        );
+    }
+
+    #[test]
+    fn store_settings_omit_the_developer_section() {
+        let text = menu_text(true);
+        assert!(text.contains("ABOUT"));
+        assert_eq!(text.contains("DEVELOPER"), !cfg!(feature = "app-store"));
+        assert_eq!(text.contains("Debug tools"), !cfg!(feature = "app-store"));
+    }
+
     fn line(name: &str) -> KillFeedEntry {
         KillFeedEntry {
             killer: name.to_owned(),

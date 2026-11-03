@@ -19,6 +19,8 @@ webgl = ["sloppy-web/webgl", "dep:egui_glow"]
 # A build without multiplayer (`build-desktop.mjs --single-player`): Battle Setup offers
 # single player alone and the command line opens no room.
 single-player = []
+# Store submissions omit developer controls and online rooms.
+app-store = ["single-player"]
 
 [dependencies]
 sloppy-core.workspace = true
