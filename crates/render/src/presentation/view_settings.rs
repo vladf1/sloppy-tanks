@@ -285,6 +285,8 @@ pub const RETICLE_HEIGHT: f64 = 1.05;
 /// Its size at the default zoom; it scales with the drawn zoom to keep its size
 /// on screen, a little smaller than the target tank so the hit stays visible.
 pub const OVERHEAD_RETICLE_SCALE: f64 = 0.9;
+/// The touch aim line's opacity while the gun reloads, as the reticle's reloading look.
+pub const AIM_LINE_RELOADING: f32 = 0.35;
 /// The overhead aiming plane (`presentation.ts` `groundPlane`).
 pub const AIM_PLANE_HEIGHT: f64 = 1.0;
 /// Tank bars float above the hull; the player's sits higher.

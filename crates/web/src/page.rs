@@ -475,7 +475,7 @@ pub fn aim(
     turn: bool,
 ) -> (f64, Option<(f64, f64)>) {
     let rig = &mut view.rig;
-    view.assist_reticle = false;
+    view.aim_line = None;
     if rig.first_person.enabled {
         if turn {
             let stick = f64::from(input.stick_turn);
@@ -490,11 +490,16 @@ pub fn aim(
     {
         if let Some((tx, tz)) = assisted.reticle {
             rig.track_aim(Vec3::new(tx as f32, 0.0, tz as f32), dt);
-            view.assist_reticle = true;
         }
+        view.aim_line = Some(assisted.angle);
         return (assisted.angle, assisted.reticle);
     }
     let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
     let (tx, tz) = (f64::from(target.x), f64::from(target.z));
-    ((tx - x).atan2(tz - z), Some((tx, tz)))
+    let angle = (tx - x).atan2(tz - z);
+    // A touch screen shows a finger's aim as the line too: the finger hides the point.
+    if view.hide_reticle {
+        view.aim_line = Some(angle);
+    }
+    (angle, Some((tx, tz)))
 }

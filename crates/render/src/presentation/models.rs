@@ -415,6 +415,22 @@ pub fn reticle() -> Node {
     root
 }
 
+/// One leg of the touch aim line, lying flat from the origin to one metre along +z,
+/// in the reticle's two tones: presentation turns it along the leg and stretches it to
+/// the leg's length, and widens it with the zoom like the reticle.
+pub fn aim_line() -> Node {
+    let mut root = Node::group("aim-line");
+    for (width, color, opacity, order) in [(0.3, 0x081626, 0.55, 50), (0.12, 0xfff9da, 0.9, 51)] {
+        let strip = translated(plane_geometry(width, 1.0), 0.0, -0.5, 0.0);
+        root.children.push(flat(mesh(
+            arc(strip),
+            reticle_material(color, opacity),
+            order,
+        )));
+    }
+    root
+}
+
 /// World heights of the player ring's dark rim and yellow paint. The player spawns
 /// on a pad, so both clear the tallest spawn-pad deck (the village and extra-level
 /// badge tops out at 0.2325 m) by more than the depth precision of the farthest

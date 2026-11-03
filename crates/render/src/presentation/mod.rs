@@ -25,6 +25,7 @@ pub mod model_catalog;
 pub mod models;
 pub mod posing;
 pub mod preparation;
+pub mod shell_path;
 pub mod suspension;
 pub mod theme;
 pub mod view_settings;
