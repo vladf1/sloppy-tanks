@@ -18,6 +18,10 @@ use crate::pointer_lock::{self, PointerLock};
 use crate::touch::{Fingers, Play, Showing};
 use crate::ui::touch::TouchView;
 
+/// How long after a finger's last touch a moving cursor is taken for the mouse rather
+/// than the system's emulation of that finger, ms.
+const MOUSE_AFTER_FINGER_MS: f64 = 500.0;
+
 /// Where the battle stands, as input needs to know it.
 pub struct Battle {
     /// The battle has the keyboard: keys drive the tank rather than reach a menu.
@@ -53,6 +57,12 @@ pub struct WindowInput {
     /// view, which a pointer lock would freeze; a mouse on the same device (a touch
     /// laptop) still looks with the lock (`fingerLooks`).
     finger_last: bool,
+    /// The mouse was used last (a button pressed, or the cursor moved away from any
+    /// finger): a touch laptop's mouse aims at its pointer, not with the fire stick.
+    mouse_last: bool,
+    /// When a finger last touched or moved, ms: the system moves the cursor along with a
+    /// finger, so only a cursor moving well after one is the mouse's.
+    finger_ms: Option<f64>,
     /// An iPad's keyboard, read each frame.
     hardware_keys: HardwareKeys,
 }
@@ -70,8 +80,10 @@ impl WindowInput {
     ) -> Option<Request> {
         if let WindowEvent::Touch(touch) = event {
             crate::touch::touched();
+            self.finger_ms = Some(now_ms());
             if touch.phase == TouchPhase::Started {
                 self.finger_last = true;
+                self.mouse_last = false;
             }
             if crate::touch::screen()
                 && !self.route_touch(window, overlay, touch, battle.touch.as_ref())
@@ -85,6 +97,7 @@ impl WindowInput {
         } = event
         {
             self.finger_last = false;
+            self.mouse_last = true;
         }
         let keys_to_menus = !battle.keys || overlay.typing();
         let locked = self.pointer.held();
@@ -111,6 +124,12 @@ impl WindowInput {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                if self
+                    .finger_ms
+                    .is_none_or(|finger| now_ms() - finger >= MOUSE_AFTER_FINGER_MS)
+                {
+                    self.mouse_last = true;
+                }
                 let (width, height, scale) = css_size(window);
                 self.cursor_moved(
                     &overlay.context,
@@ -241,9 +260,11 @@ impl WindowInput {
     }
 
     /// This frame's input for the engine. First person on a touch screen turns the view
-    /// with the stick's sideways push.
+    /// with the stick's sideways push; overhead, the fire stick aims.
     pub fn take_input(&mut self, first_person: bool) -> InputFrame {
-        self.controls.stick_turns = crate::touch::screen() && first_person;
+        let touch = crate::touch::screen();
+        self.controls.stick_turns = touch && first_person;
+        self.controls.touch_aims = touch && !first_person && !self.mouse_last;
         self.controls.take_input()
     }
 

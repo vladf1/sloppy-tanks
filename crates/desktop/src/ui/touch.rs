@@ -1,7 +1,7 @@
 //! The touch controls over the arena (`touch-controls.ts`, `touch-controls.css`): the
-//! drive stick, a light glass ring whose rim lights toward the push; the mine button,
-//! a navy key whose slim gold rim refills as the mine re-arms; the zoom pair over it;
-//! and the coach mark that says to touch the arena until the player has. They are
+//! drive and fire sticks, light glass rings whose rims light toward the push; the mine
+//! button, a navy key whose slim gold rim refills as the mine re-arms; the zoom pair;
+//! and the coach mark that explains the fire stick until the player has used it. They are
 //! painted, not widgets: `crate::touch` hit-tests the same layout, so egui never sees
 //! the fingers that use them.
 
@@ -13,7 +13,7 @@ use super::UiState;
 use super::icons::Art;
 use super::paint::{self, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, bold_font};
-use crate::input::TouchInput;
+use crate::input::{FireStage, TouchInput};
 use crate::touch::{MINE_RADIUS, TouchLayout, ZOOM_RADIUS};
 use sloppy_render::presentation::input::STICK_RADIUS;
 
@@ -72,7 +72,7 @@ pub fn controls(
     };
     let layout = TouchLayout::of(context);
     if touch.acting {
-        stick(&painter, &layout, &touch.input);
+        sticks(&painter, &layout, &touch.input);
     }
     if touch.acting
         && let (Some(hud), Some(mine)) = (&state.hud, layout.mine)
@@ -195,18 +195,68 @@ pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) 
     Shape::mesh(mesh)
 }
 
-fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
-    let phone = crate::touch::phone();
-    let held = input.drive.is_some();
-    let center = layout.stick.center();
-    let base_radius =
-        layout.stick.width() / 2.0 - if phone { PHONE_BASE_INSET } else { BASE_INSET };
-    // Held, the base moves under the thumb (up to `STICK_ANCHOR_SHIFT`) and the knob follows
-    // the finger to the rim.
-    let base = match input.drive {
-        Some((_, origin)) => pos2(origin.0, origin.1),
-        None => center,
+/// The drive stick's look: a blue knob whose rim lights toward the drive.
+const DRIVE_LOOK: StickLook = StickLook {
+    glow: 0x6fd2ff,
+    light: 0xe8f8ff,
+    knob: [0x6f97c4, 0x2b4f7f, 0x12274a],
+    sight: false,
+};
+/// The fire stick's: a gunmetal knob with a gold sight, lit gold toward its aim.
+const FIRE_LOOK: StickLook = StickLook {
+    glow: 0xffb347,
+    light: 0xfff0c8,
+    knob: [0x9a8a72, 0x4f4436, 0x221b14],
+    sight: true,
+};
+
+/// A thumb stick's colours: the rim light's glow and core, the knob face's gradient
+/// from its light to its rim, and whether the knob carries a gun sight.
+struct StickLook {
+    glow: u32,
+    light: u32,
+    knob: [u32; 3],
+    sight: bool,
+}
+
+/// The two thumb sticks: the drive stick, and the fire stick, which aims only while
+/// dragged out and says so when brought back to cancel its shot.
+fn sticks(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
+    let drive = input.drive.map(|(_, origin)| pos2(origin.0, origin.1));
+    stick(
+        painter,
+        layout.stick,
+        drive,
+        input.knob,
+        &DRIVE_LOOK,
+        "DRIVE",
+    );
+    let fire = input.fire.map(|fire| pos2(fire.origin.0, fire.origin.1));
+    let (knob, label) = match input.fire {
+        Some(fire) if fire.stage == FireStage::Cancelled => (fire.knob, "CANCEL"),
+        Some(fire) if fire.stage == FireStage::Aiming => (fire.knob, "FIRE"),
+        // A tap or a hold aims at the target: the knob stays put under the thumb.
+        _ => ((0.0, 0.0), "FIRE"),
     };
+    stick(painter, layout.fire, fire, knob, &FIRE_LOOK, label);
+}
+
+/// One thumb stick in `square`. Held, the base moves under the thumb (`origin`, up to
+/// `STICK_ANCHOR_SHIFT` off centre) and the knob follows the finger (`knob`, in stick
+/// radii) to the rim.
+fn stick(
+    painter: &Painter,
+    square: Rect,
+    origin: Option<Pos2>,
+    knob: (f32, f32),
+    look: &StickLook,
+    name: &str,
+) {
+    let phone = crate::touch::phone();
+    let held = origin.is_some();
+    let center = square.center();
+    let base_radius = square.width() / 2.0 - if phone { PHONE_BASE_INSET } else { BASE_INSET };
+    let base = origin.unwrap_or(center);
     // The faint ring round the knob sits at 39% of the way to the base's corner (a
     // `circle` gradient reaches its box's farthest corner), clear of the knob: its 12%
     // light over the navy there.
@@ -254,15 +304,15 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
         let outer = base + direction * (base_radius - 6.0);
         painter.line_segment([outer, outer - direction * 8.0], Stroke::new(2.0, tick));
     }
-    let (x, y) = input.knob;
+    let (x, y) = knob;
     let push = x.hypot(y);
     if push > 0.0 {
-        // The rim lights toward the drive, brighter the further the knob is pushed.
+        // The rim lights toward the push, brighter the further the knob is pushed.
         let angle = x.atan2(-y);
         let glow = push.min(1.0) * 0.95;
         for (width, color) in [
-            (8.0, hexa(0x6fd2ff, 0.3 * glow)),
-            (3.0, hexa(0xe8f8ff, glow)),
+            (8.0, hexa(look.glow, 0.3 * glow)),
+            (3.0, hexa(look.light, glow)),
         ] {
             paint::arc(
                 painter,
@@ -278,7 +328,7 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     drop_shadow(painter, knob, KNOB_RADIUS);
     painter.circle_filled(knob, KNOB_RADIUS + 3.0, hexa(0x06102a, 0.4));
     if held {
-        painter.circle_filled(knob, KNOB_RADIUS + 8.0, hexa(0x6fd2ff, 0.18));
+        painter.circle_filled(knob, KNOB_RADIUS + 8.0, hexa(look.glow, 0.18));
     }
     // A domed glass cap inside its 2 px rim (`circle at 50% 28%` of the face, out to its
     // farthest corner): lit across its upper half, dark only toward the rim, with a
@@ -292,14 +342,25 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
         light,
         reach,
         &[
-            (0.0, hex(0x6f97c4)),
-            (0.45, hex(0x2b4f7f)),
-            (0.8, hex(0x12274a)),
+            (0.0, hex(look.knob[0])),
+            (0.45, hex(look.knob[1])),
+            (0.8, hex(look.knob[2])),
         ],
     ));
     painter.add(inner_edge(knob, face, 3.0, hexa(0xffffff, 0.28)));
     painter.add(inner_edge(knob, face, -7.0, hexa(0x000000, 0.3)));
-    painter.circle_stroke(knob, KNOB_GRIP, Stroke::new(1.2, hexa(0xffffff, 0.18)));
+    if look.sight {
+        // A gun sight on the knob: a gold ring and four ticks toward its centre.
+        let sight = Stroke::new(1.6, if held { GOLD_HOT } else { GOLD });
+        painter.circle_stroke(knob, KNOB_GRIP - 3.0, sight);
+        for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+            let direction = vec2(dx, dy);
+            let outer = knob + direction * (KNOB_GRIP + 2.0);
+            painter.line_segment([outer, outer - direction * 9.0], sight);
+        }
+    } else {
+        painter.circle_stroke(knob, KNOB_GRIP, Stroke::new(1.2, hexa(0xffffff, 0.18)));
+    }
     painter.circle_stroke(
         knob,
         KNOB_RADIUS - KNOB_RIM / 2.0,
@@ -309,10 +370,10 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     if phone {
         return;
     }
-    let label = pos2(center.x, layout.stick.bottom() + 6.0);
+    let label = pos2(center.x, square.bottom() + 6.0);
     let text = paint::galley(
         painter,
-        "DRIVE",
+        name,
         bold_font(12.0),
         hex(0xe6f0fa),
         2.4,
@@ -446,7 +507,7 @@ fn fire_hint(context: &egui::Context, painter: &Painter, opacity: f32) {
     );
     let title = paint::galley(
         painter,
-        "TOUCH THE ARENA",
+        "FIRE STICK",
         bold_font(12.0),
         Color32::WHITE,
         1.4,
@@ -454,7 +515,7 @@ fn fire_hint(context: &egui::Context, painter: &Painter, opacity: f32) {
     );
     let note = paint::galley(
         painter,
-        "to aim and fire",
+        "tap to fire, drag to aim",
         egui::FontId::proportional(12.0),
         hex(0xd9e8f6),
         0.0,

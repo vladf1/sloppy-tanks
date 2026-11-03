@@ -22,7 +22,10 @@ export const INPUT = {
   zoom: 14,
   toggleView: 15,
   wheelAmmo: 16,
-  length: 17,
+  aimStickX: 17,
+  aimStickY: 18,
+  aimMode: 19,
+  length: 20,
 } as const;
 
 /** The slots of `Game.frame`'s result the preview reads (`frame_slot` in

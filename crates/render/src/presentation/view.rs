@@ -35,6 +35,8 @@ use sloppy_core::sim::{
 };
 
 use super::PRESENTATION_EFFECTS;
+use super::aim_assist::AimAssist;
+use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
@@ -984,6 +986,11 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// The touch fire stick's target.
+    pub aim_assist: AimAssist,
+    /// The turret's aim when touch aims it this frame: the aim line then shows the
+    /// shell's path in place of the reticle.
+    pub touch_aim: Option<TouchAim>,
     /// The view's height in CSS pixels (0 until the page says), which keeps the
     /// overhead bars readable on a phone's short screen.
     pub css_height: f64,
@@ -993,6 +1000,7 @@ pub struct Presentation {
     theme: Option<Theme>,
     library: Library,
     reticle: ReticleModel,
+    aim_line: AimLine,
     player_ring: InstanceId,
     pulse: InstanceId,
     scenery: HashMap<&'static str, SceneryView>,
@@ -1082,6 +1090,7 @@ impl Presentation {
             reloading: joint_index(&renderer, reticle_model, joint::RETICLE_RELOADING),
             confirmed: joint_index(&renderer, reticle_model, joint::RETICLE_CONFIRMED),
         };
+        let aim_line = AimLine::new(&mut renderer);
         let (_, player_ring) = hud(&mut renderer, &own::player_ring());
         let (_, pulse) = hud(&mut renderer, &own::spawn_pulse());
         let mut random = CosmeticRandom::seeded(seed);
@@ -1095,11 +1104,14 @@ impl Presentation {
             crosshair: Mat4::IDENTITY,
             reticle_size: 1.0,
             hide_reticle: false,
+            aim_assist: AimAssist::default(),
+            touch_aim: None,
             css_height: 0.0,
             bars_hidden: false,
             theme: None,
             library: Library::default(),
             reticle,
+            aim_line,
             player_ring,
             pulse,
             scenery: HashMap::new(),
@@ -2139,14 +2151,27 @@ impl Presentation {
         // neither reticle fits the view while the camera flies between them.
         let rig = &self.rig;
         let viewer_alive = state.viewer().is_some_and(|viewer| viewer.alive);
-        self.crosshair_visible = state.match_state.phase == MatchPhase::Playing
-            && viewer_alive
+        let aiming = state.match_state.phase == MatchPhase::Playing && viewer_alive;
+        let overhead = !rig.first_person.enabled && rig.seat_blend == 0.0;
+        self.crosshair_visible = aiming
             && (rig.in_first_person
-                || (!self.hide_reticle && !rig.first_person.enabled && rig.seat_blend == 0.0));
+                || (!self.hide_reticle && self.touch_aim.is_none() && overhead));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer
             .set_transform(self.reticle.instance, self.crosshair);
+        let aim = self.touch_aim.filter(|_| aiming && overhead);
+        let follow = self.rig.follow;
+        let scale = (self.rig.view_zoom / CAMERA.default_zoom).clamp(0.5, 1.6);
+        self.aim_line.update(
+            &mut self.renderer,
+            state,
+            aim,
+            (follow.x, follow.z),
+            scale,
+            alpha,
+            dt,
+        );
         self.renderer.render(self.time as f32)
     }
 

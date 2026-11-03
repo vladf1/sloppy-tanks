@@ -62,6 +62,7 @@ impl Presentation {
     /// ([`Self::build_step`]).
     pub fn begin_build(&mut self, state: &RenderState) {
         self.rig.snap_seat = true;
+        self.aim_assist.clear();
         if let Some(viewer) = state.viewer() {
             self.rig.first_person.yaw = viewer.aim;
         }

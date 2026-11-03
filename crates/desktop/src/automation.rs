@@ -101,6 +101,7 @@ impl From<egui::Rect> for Area {
 #[serde(rename_all = "camelCase")]
 pub struct TouchControls {
     pub stick: Area,
+    pub fire: Area,
     /// The mine button's centre, where the edition has one.
     pub mine: Option<[f32; 2]>,
     pub zoom_in: Area,
@@ -111,6 +112,7 @@ impl From<&crate::touch::TouchLayout> for TouchControls {
     fn from(layout: &crate::touch::TouchLayout) -> Self {
         Self {
             stick: layout.stick.into(),
+            fire: layout.fire.into(),
             mine: layout.mine.map(|mine| [mine.x, mine.y]),
             zoom_in: layout.zoom_in.into(),
             zoom_out: layout.zoom_out.into(),

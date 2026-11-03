@@ -1,7 +1,8 @@
 // Touch play in headless Chrome with real multi-touch (CDP touch events). A tablet
 // (1180×820, a coarse pointer, pixel ratio 2): GO by a finger, the stick drives, a finger
 // on the arena fires, both at once and either one lifting leaves the other at work, the
-// mine button drops a mine, the zoom keys step the camera, the toolbar's pause pauses and
+// fire stick fires on a tap, aims along a drag and fires on its release, and fires nothing
+// when the drag comes back to the middle, the mine button drops a mine, the zoom keys step the camera, the toolbar's pause pauses and
 // hides the controls. Settings' Touch controls: Off is saved, turns the controls off and
 // holds over a touch and a reload; Auto brings them back. A desktop with a touch screen
 // (a fine pointer): keyboard and mouse until a finger touches the page on Auto, the mouse
@@ -136,6 +137,37 @@ try {
     assert.ok(shots(now) > shots(before), "the arena finger fires on after the stick lifts");
     await touch.end(4);
     assert.equal((await nextFrame(page)).arenaFinger, false);
+
+    // The fire stick: a tap fires once.
+    const fire = middle(layout.fire);
+    await page.waitForTimeout(600);
+    before = await debug(page);
+    await touch.start(5, ...fire);
+    await touch.end(5);
+    now = await settled(page, 400);
+    assert.equal(shots(now) - shots(before), 1, "a tap on the fire stick fires once");
+    // A drag aims along it and fires only once it lets go: screen left is the world's -x.
+    await page.waitForTimeout(600);
+    before = await debug(page);
+    await touch.start(6, ...fire);
+    await touch.move(6, fire[0] - 30, fire[1]);
+    await touch.move(6, fire[0] - 60, fire[1]);
+    now = await settled(page, 300);
+    assert.equal(shots(now), shots(before), "a drag only aims");
+    assert.ok(Math.sin(now.human.aim) < -0.5, `the turret turns left: ${now.human.aim}`);
+    await shot("fire-stick-drag");
+    await touch.end(6);
+    now = await settled(page, 400);
+    assert.equal(shots(now) - shots(before), 1, "the drag fires as it lets go");
+    // Dragged back to the middle, it fires nothing.
+    await page.waitForTimeout(600);
+    before = await debug(page);
+    await touch.start(7, ...fire);
+    await touch.move(7, fire[0] + 60, fire[1]);
+    await touch.move(7, fire[0] + 3, fire[1]);
+    await touch.end(7);
+    now = await settled(page, 400);
+    assert.equal(shots(now), shots(before), "a cancelled drag fires nothing");
 
     // The mine button drops a mine.
     assert.ok(layout.mine, "a tablet has a mine button");

@@ -100,7 +100,7 @@ use crate::nerd_rows::{GameStats, SceneStats, StatsSection, game_sections};
 use crate::page::{
     BakedPixels, CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED,
     PageError, PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result,
-    queue_event,
+    queue_event, touch_fires,
 };
 use crate::recap::{RoundRecap, round_recap};
 use crate::sounds::SoundPlanner;
@@ -402,7 +402,7 @@ impl Game {
     /// One animation frame: steps the simulation at the fixed rate, routes
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
-        let input = InputFrame::from_slice(input);
+        let mut input = InputFrame::from_slice(input);
         self.sounds.set_clock(now);
         // A paced frame runs at its smoothed time; skipped, it only takes the input.
         let in_flight = self.view.renderer.frames_in_flight();
@@ -444,8 +444,9 @@ impl Game {
                     self.view.rig.track_aim(point, dt);
                     self.sim.human().aim
                 }
-                _ => aim(&mut self.view.rig, &input, position, dt, alive).0,
+                _ => aim(&mut self.view, &self.state, &input, position, dt, alive).0,
             };
+            input.fire |= touch_fires(&self.view, &self.state, position);
             for _ in 0..steps {
                 let active = self.sim.match_state.phase == MatchPhase::Playing
                     && self.sim.tanks[human].alive;

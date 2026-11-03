@@ -7,6 +7,8 @@
 use sloppy_core::sim::ammunition::{AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS};
 use sloppy_core::sim::{AmmoSelection, VehicleCommand};
 
+use super::aim_assist::AimMode;
+
 /// Metres of zoom per Shift + wheel notch or touch zoom key (the page's `ZOOM_STEP`,
 /// `controls.ts`).
 pub const ZOOM_STEP: f64 = 2.0;
@@ -62,7 +64,12 @@ pub mod slot {
     /// Plain wheel since the last frame: -1 previous ammo, +1 next, 0 none.
     /// Throttled here like the TypeScript scroll interval.
     pub const WHEEL_AMMO: usize = 16;
-    pub const LENGTH: usize = 17;
+    /// The touch fire stick's direction on screen (x right, y down), and what aims the
+    /// turret ([`AimMode`](crate::presentation::aim_assist::AimMode)'s code).
+    pub const AIM_STICK_X: usize = 17;
+    pub const AIM_STICK_Y: usize = 18;
+    pub const AIM_MODE: usize = 19;
+    pub const LENGTH: usize = 20;
 }
 
 /// One frame of raw control state.
@@ -83,6 +90,8 @@ pub struct InputFrame {
     pub zoom: f64,
     pub toggle_view: bool,
     pub wheel_ammo: i8,
+    pub aim_stick: (f32, f32),
+    pub aim_mode: AimMode,
 }
 
 fn sign(value: f32) -> i8 {
@@ -127,6 +136,8 @@ impl InputFrame {
             zoom: get(slot::ZOOM) as f64,
             toggle_view: on(slot::TOGGLE_VIEW),
             wheel_ammo: sign(get(slot::WHEEL_AMMO)),
+            aim_stick: (get(slot::AIM_STICK_X), get(slot::AIM_STICK_Y)),
+            aim_mode: AimMode::from_code(get(slot::AIM_MODE)),
         }
     }
 
@@ -152,6 +163,9 @@ impl InputFrame {
         packed[slot::ZOOM] = self.zoom as f32;
         packed[slot::TOGGLE_VIEW] = flag(self.toggle_view);
         packed[slot::WHEEL_AMMO] = f32::from(self.wheel_ammo);
+        packed[slot::AIM_STICK_X] = self.aim_stick.0;
+        packed[slot::AIM_STICK_Y] = self.aim_stick.1;
+        packed[slot::AIM_MODE] = self.aim_mode.code();
         packed
     }
 }
@@ -245,6 +259,8 @@ mod tests {
             zoom: 2.0,
             toggle_view: true,
             wheel_ammo: 1,
+            aim_stick: (0.5, -1.0),
+            aim_mode: AimMode::Manual,
             ..InputFrame::default()
         };
         assert_eq!(InputFrame::from_slice(&input.pack()), input);

@@ -3,13 +3,15 @@
 //! quality, arena preparation results, the event queue and the local controls' aim.
 //! Frame timing is [`crate::frame_clock`].
 
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
-use sloppy_core::sim::{SimEvent, SimEventType};
+use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
 use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, RenderTarget, Renderer};
+use sloppy_render::presentation::aim_line::TouchAim;
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
+use sloppy_render::presentation::shell_path;
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::{
@@ -463,24 +465,61 @@ pub fn queue_event(
 }
 
 /// The local controls' aim from the tank at `(x, z)`: the first-person yaw (turned by
-/// the look and the drive stick's sideways push when `turn`), or the angle to the
-/// pointer on the ground, which is also returned.
+/// the look and the drive stick's sideways push when `turn`), the touch fire stick's
+/// assisted aim at the enemies of `state`, or the angle to the pointer on the ground.
+/// The ground point it aims at, if any, is also returned.
 pub fn aim(
-    rig: &mut CameraRig,
+    view: &mut Presentation,
+    state: &RenderState,
     input: &InputFrame,
     (x, z): (f64, f64),
     dt: f64,
     turn: bool,
 ) -> (f64, Option<(f64, f64)>) {
+    let rig = &mut view.rig;
+    view.touch_aim = None;
     if rig.first_person.enabled {
         if turn {
             let stick = f64::from(input.stick_turn);
             rig.first_person.turn(input.look_pixels, stick, dt);
         }
-        (rig.first_person.yaw, None)
-    } else {
-        let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
-        let (tx, tz) = (f64::from(target.x), f64::from(target.z));
-        ((tx - x).atan2(tz - z), Some((tx, tz)))
+        return (rig.first_person.yaw, None);
     }
+    let stick = (f64::from(input.aim_stick.0), f64::from(input.aim_stick.1));
+    if let Some(assisted) = view
+        .aim_assist
+        .aim(state, &rig.overhead, input.aim_mode, stick)
+    {
+        if let Some((tx, tz)) = assisted.reticle {
+            rig.track_aim(Vec3::new(tx as f32, 0.0, tz as f32), dt);
+        }
+        view.touch_aim = Some(TouchAim {
+            angle: assisted.angle,
+            target: assisted.target,
+        });
+        return (assisted.angle, assisted.reticle);
+    }
+    let target = rig.aim(Vec2::new(input.pointer.0, input.pointer.1));
+    let (tx, tz) = (f64::from(target.x), f64::from(target.z));
+    let angle = (tx - x).atan2(tz - z);
+    // A touch screen shows a finger's aim as the line too: the finger hides the point.
+    if view.hide_reticle {
+        view.touch_aim = Some(TouchAim {
+            angle,
+            target: None,
+        });
+    }
+    (angle, Some((tx, tz)))
+}
+
+/// Whether touch fires by itself this frame: while touch aims overhead, a shell from
+/// the tank at `(x, z)` along the aim line is on an enemy (the line drawn hot), so the
+/// fire stick only aims and the gun fires as it reloads. A mouse never does.
+pub fn touch_fires(view: &Presentation, state: &RenderState, (x, z): (f64, f64)) -> bool {
+    let (Some(aim), Some(viewer)) = (view.touch_aim, state.viewer()) else {
+        return false;
+    };
+    let mut legs = Vec::with_capacity(shell_path::MAX_LEGS);
+    shell_path::trace(state, viewer, (x, z), aim.angle, &mut legs);
+    shell_path::on_target(state, viewer, &legs, aim.target).is_some()
 }

@@ -52,6 +52,9 @@ fn copies() -> Value {
             "zoom": slot::ZOOM,
             "toggleView": slot::TOGGLE_VIEW,
             "wheelAmmo": slot::WHEEL_AMMO,
+            "aimStickX": slot::AIM_STICK_X,
+            "aimStickY": slot::AIM_STICK_Y,
+            "aimMode": slot::AIM_MODE,
             "length": slot::LENGTH,
         },
         "frameSlots": {

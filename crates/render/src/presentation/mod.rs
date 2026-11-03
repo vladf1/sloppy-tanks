@@ -12,6 +12,7 @@
 //! instances of models shared by kind and team, so the renderer batches every
 //! instance of a part into one instanced draw; themed scenery is baked static.
 
+pub mod aim_assist;
 pub mod camera_rig;
 pub mod first_person;
 pub mod generated;
@@ -24,11 +25,14 @@ pub mod model_catalog;
 pub mod models;
 pub mod posing;
 pub mod preparation;
+pub mod shell_path;
 pub mod suspension;
 pub mod theme;
 pub mod view_settings;
 pub mod wreck_library;
 
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub mod aim_line;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod view;
 
