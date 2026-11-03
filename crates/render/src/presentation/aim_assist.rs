@@ -18,6 +18,7 @@ use sloppy_core::sim::RenderState;
 use sloppy_core::sim::data::weapon;
 use sloppy_core::sim::math::angle_delta;
 use sloppy_core::sim::render_state::{RenderCover, RenderTank};
+use sloppy_core::sim::tank_dimensions::tank_hull;
 
 use super::view_settings::AIM_PLANE_HEIGHT;
 use crate::camera::PerspectiveCamera;
@@ -202,7 +203,12 @@ fn candidates(
                 at.0 + tank.velocity.x * flight,
                 at.1 + tank.velocity.z * flight,
             );
-            lane_clear(&state.covers, from, at).then_some(Candidate {
+            let hulls_clear = state
+                .tanks
+                .iter()
+                .filter(|other| other.alive && other.id != viewer.id && other.id != tank.id)
+                .all(|other| !hull_in_lane(other, from, at));
+            (hulls_clear && lane_clear(&state.covers, from, at)).then_some(Candidate {
                 id: tank.id,
                 aim,
                 distance,
@@ -279,6 +285,25 @@ fn lane_clear(covers: &[RenderCover], from: (f64, f64), to: (f64, f64)) -> bool 
         );
         !segment_meets_box(local(from), local(to), half)
     })
+}
+
+/// Whether `tank`'s hull stands in a shell's lane from `from` to `to`: an ally stops a
+/// shell as a wall does (`projectiles.rs`), so a target behind one is out of reach.
+fn hull_in_lane(tank: &RenderTank, from: (f64, f64), to: (f64, f64)) -> bool {
+    let hull = tank_hull(tank.kind);
+    let (sin, cos) = tank.heading.sin_cos();
+    let local = |(x, z): (f64, f64)| {
+        let (dx, dz) = (x - tank.position.x, z - tank.position.z);
+        (
+            dx * cos - dz * sin - hull.center.x,
+            dx * sin + dz * cos - hull.center.z,
+        )
+    };
+    let half = (
+        (hull.size.x / 2.0 - GRAZE).max(0.0),
+        (hull.size.z / 2.0 - GRAZE).max(0.0),
+    );
+    segment_meets_box(local(from), local(to), half)
 }
 
 /// Whether the segment from `a` to `b` touches the box of half extents `half` about the
@@ -407,6 +432,24 @@ mod tests {
             .aim(&state, &camera, AimMode::Track, (0.0, 0.0))
             .unwrap();
         assert_eq!(aim.target, Some(3));
+    }
+
+    #[test]
+    fn a_tank_in_the_lane_hides_the_enemy_behind_it() {
+        // An ally halfway to the nearer enemy: the open lane to the further one wins.
+        let (mut state, camera) = scene(&[(2, 0.0, 12.0), (3, 20.0, 0.0)], Vec::new());
+        state.tanks.push(tank(4, Team::Blue, 0.0, 6.0));
+        let mut assist = AimAssist::default();
+        let aim = assist
+            .aim(&state, &camera, AimMode::Track, (0.0, 0.0))
+            .unwrap();
+        assert_eq!(aim.target, Some(3));
+        // Out of the lane, it hides nothing.
+        state.tanks[3].position.x = 5.0;
+        let aim = assist
+            .aim(&state, &camera, AimMode::Track, (0.0, 0.0))
+            .unwrap();
+        assert_eq!(aim.target, Some(2));
     }
 
     #[test]

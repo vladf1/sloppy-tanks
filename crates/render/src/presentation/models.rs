@@ -452,10 +452,10 @@ fn chevron_outline(w: f64, back: f64, tip: f64, t: f64) -> [[f64; 2]; 6] {
 }
 
 /// The touch aim line's mark, a chevron pointing the way the shell flies (+z), about
-/// a metre across: presentation strings them along the shell's path.
+/// three quarters of a metre across: presentation strings them along the shell's path.
 pub fn aim_chevron() -> Node {
     let g = AIM_OUTLINE;
-    let (w, back, tip, t) = (0.5, -0.3, 0.3, 0.26);
+    let (w, back, tip, t) = (0.375, -0.3, 0.3, 0.26);
     aim_mark(
         "aim-chevron",
         &chevron_outline(w + g, back - g, tip + g, t + 2.0 * g),

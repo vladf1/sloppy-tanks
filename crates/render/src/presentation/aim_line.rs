@@ -30,7 +30,7 @@ const PALE: u32 = 0xfff9da;
 const HOT: u32 = 0xff5a2e;
 /// Metres between chevrons at the default zoom, and how fast they drift along the
 /// path, metres a second: slow enough to read as the shell's way, not as motion.
-const SPACING: f64 = 1.5;
+const SPACING: f64 = 1.2;
 const MARCH_SPEED: f64 = 2.2;
 /// Metres of path drawn at the default zoom: about the screen's reach from the tank,
 /// fading over the last `FADE`. A path onto a tank is drawn up to `TANK_REACH`, so the
@@ -46,7 +46,7 @@ const END_GAP: f64 = 0.7;
 /// The chevrons' opacity ahead of the reload's front.
 const RELOADING: f64 = 0.3;
 /// The most chevrons a path draws: `TANK_REACH` at the default spacing.
-const MAX_MARKS: usize = 48;
+const MAX_MARKS: usize = 60;
 /// Metres the brackets stand off a hull's hit box, how much wider they start when a
 /// tank becomes the target, and how long they take to close in, seconds.
 const BRACKET_MARGIN: f64 = 0.35;
