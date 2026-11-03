@@ -18,11 +18,31 @@ const SIGHT_HEIGHT: f64 = 1.0;
 /// The most legs a path draws: ricochet shells bounce three times.
 pub const MAX_LEGS: usize = 4;
 
+/// What ends a leg of the path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stop {
+    /// The shell's flight runs out.
+    Range,
+    /// A cover's face turns it onto the next leg.
+    Bounce,
+    /// A cover takes it.
+    Cover,
+    /// The tank of this id takes it.
+    Tank(u32),
+}
+
 /// One straight leg of the path on the ground plane, from `start` to `end`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Leg {
     pub start: (f64, f64),
     pub end: (f64, f64),
+    pub stop: Stop,
+}
+
+impl Leg {
+    pub fn length(&self) -> f64 {
+        (self.end.0 - self.start.0).hypot(self.end.1 - self.start.1)
+    }
 }
 
 /// A box on the ground plane: its centre, its yaw (the game's bearing of its local +z)
@@ -116,6 +136,13 @@ fn hull_footprint(tank: &RenderTank) -> Footprint {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Hit {
+    /// A cover, by the face's outward normal (none when the leg starts inside it).
+    Cover(Option<(f64, f64)>),
+    Tank(u32),
+}
+
 /// The legs of the path a shell of `viewer`'s selected ammunition takes when fired at
 /// `angle` from the hull at `from`, into `legs` (cleared first). The first leg starts
 /// at the muzzle and none is longer than the shell's whole flight.
@@ -142,27 +169,39 @@ pub fn trace(
             .filter(|cover| cover.alive && cover.position.y + cover.h / 2.0 >= SIGHT_HEIGHT)
             .filter_map(|cover| {
                 let (t, normal) = cover_footprint(cover).entry(start, end)?;
-                Some((t, normal))
+                Some((t, Hit::Cover(normal)))
             });
         let tanks = state
             .tanks
             .iter()
             .filter(|tank| tank.alive && (ricocheted || tank.id != viewer.id))
-            .filter_map(|tank| Some((hull_footprint(tank).entry(start, end)?.0, None)));
+            .filter_map(|tank| {
+                Some((
+                    hull_footprint(tank).entry(start, end)?.0,
+                    Hit::Tank(tank.id),
+                ))
+            });
         let hit = covers.chain(tanks).min_by(|a, b| a.0.total_cmp(&b.0));
         let t = hit.map_or(1.0, |(t, _)| t);
         let stop = (
             start.0 + (end.0 - start.0) * t,
             start.1 + (end.1 - start.1) * t,
         );
-        legs.push(Leg { start, end: stop });
-        range *= 1.0 - t;
         // Only a cover's face turns a shell; a tank, a start inside a cover or the end
         // of its flight stops it.
-        let Some((_, Some(normal))) = hit else { break };
-        if bounces == 0 {
-            break;
-        }
+        let (ends, normal) = match hit {
+            None => (Stop::Range, None),
+            Some((_, Hit::Tank(id))) => (Stop::Tank(id), None),
+            Some((_, Hit::Cover(Some(normal)))) if bounces > 0 => (Stop::Bounce, Some(normal)),
+            Some((_, Hit::Cover(_))) => (Stop::Cover, None),
+        };
+        legs.push(Leg {
+            start,
+            end: stop,
+            stop: ends,
+        });
+        range *= 1.0 - t;
+        let Some(normal) = normal else { break };
         bounces -= 1;
         ricocheted = true;
         let dot = direction.0 * normal.0 + direction.1 * normal.1;
@@ -250,6 +289,7 @@ mod tests {
         let legs = path(&state, 0.0);
         assert_eq!(legs.len(), 1);
         let leg = legs[0];
+        assert_eq!(leg.stop, Stop::Cover);
         assert!((leg.start.1 - tank_muzzle(Default::default()).z).abs() < 1e-9);
         assert!(
             (leg.end.1 - (9.5 - SHELL_HIT_RADIUS)).abs() < 1e-9,
@@ -271,6 +311,7 @@ mod tests {
         let legs = path(&state, 0.0);
         assert_eq!(legs.len(), 1);
         assert!(legs[0].end.1 < 12.0 && legs[0].end.1 > 9.0, "{legs:?}");
+        assert_eq!(legs[0].stop, Stop::Tank(2));
     }
 
     #[test]
@@ -283,6 +324,7 @@ mod tests {
         let range = weapon(Weapon::default()).speed * COMBAT.projectile_lifetime;
         assert_eq!(legs.len(), 1);
         assert!((legs[0].end.0 - range).abs() < 1e-9, "{legs:?}");
+        assert_eq!(legs[0].stop, Stop::Range);
     }
 
     #[test]
@@ -297,9 +339,12 @@ mod tests {
         // Off the far wall and straight back into its own hull.
         assert_eq!(legs.len(), 2, "{legs:?}");
         assert!(legs[1].end.1 > 0.0 && legs[1].end.1 < 3.0, "{legs:?}");
+        assert_eq!((legs[0].stop, legs[1].stop), (Stop::Bounce, Stop::Tank(1)));
         // A slanted shot zigzags between the walls until its bounces run out.
         let legs = path(&state, 0.6);
         assert_eq!(legs.len(), MAX_LEGS, "{legs:?}");
         assert!(legs[1].end.1 < -5.0 && legs[2].end.1 > 5.0, "{legs:?}");
+        // The last bounce spent, the wall it meets takes the shell.
+        assert_eq!(legs[MAX_LEGS - 1].stop, Stop::Cover);
     }
 }

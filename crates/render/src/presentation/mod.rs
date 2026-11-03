@@ -32,6 +32,8 @@ pub mod view_settings;
 pub mod wreck_library;
 
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub mod aim_line;
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod view;
 
 #[cfg(any(target_arch = "wasm32", feature = "native"))]

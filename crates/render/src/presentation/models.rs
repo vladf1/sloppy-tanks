@@ -415,20 +415,89 @@ pub fn reticle() -> Node {
     root
 }
 
-/// One leg of the touch aim line, lying flat from the origin to one metre along +z,
-/// in the reticle's two tones: presentation turns it along the leg and stretches it to
-/// the leg's length, and widens it with the zoom like the reticle.
-pub fn aim_line() -> Node {
-    let mut root = Node::group("aim-line");
-    for (width, color, opacity, order) in [(0.3, 0x081626, 0.55, 50), (0.12, 0xfff9da, 0.9, 51)] {
-        let strip = translated(plane_geometry(width, 1.0), 0.0, -0.5, 0.0);
-        root.children.push(flat(mesh(
-            arc(strip),
-            reticle_material(color, opacity),
-            order,
-        )));
+/// The aim marks' ink is white, which presentation tints (pale, or hot on a target);
+/// the dark outline frames it on sand and snow alike, as the reticle's does.
+const AIM_OUTLINE: f64 = 0.07;
+
+/// A touch aim mark lying flat, from the ink's outline on the ground plane (x, z),
+/// with the outline drawn `AIM_OUTLINE` wider beneath it.
+fn aim_mark(name: &str, outline: &[[f64; 2]], ink: &[[f64; 2]]) -> Node {
+    // `flat` lays the shape's -y along +z.
+    let ground = |points: &[[f64; 2]]| {
+        let points: Vec<[f64; 2]> = points.iter().map(|&[x, z]| [x, -z]).collect();
+        arc(polygon(&points))
+    };
+    let mut root = Node::group(name);
+    for (shape, color, opacity, order) in [
+        (ground(outline), 0x081626, 0.7, 50),
+        (ground(ink), 0xffffff, 1.0, 51),
+    ] {
+        root.children
+            .push(flat(mesh(shape, reticle_material(color, opacity), order)));
     }
     root
+}
+
+/// A chevron pointing along +z, `w` wide each side, from `back` to `tip`, its arms
+/// `t` thick along z.
+fn chevron_outline(w: f64, back: f64, tip: f64, t: f64) -> [[f64; 2]; 6] {
+    [
+        [-w, back],
+        [-w, back + t],
+        [0.0, tip],
+        [w, back + t],
+        [w, back],
+        [0.0, tip - t],
+    ]
+}
+
+/// The touch aim line's mark, a chevron pointing the way the shell flies (+z), about
+/// a metre across: presentation strings them along the shell's path.
+pub fn aim_chevron() -> Node {
+    let g = AIM_OUTLINE;
+    let (w, back, tip, t) = (0.5, -0.3, 0.3, 0.26);
+    aim_mark(
+        "aim-chevron",
+        &chevron_outline(w + g, back - g, tip + g, t + 2.0 * g),
+        &chevron_outline(w, back, tip, t),
+    )
+}
+
+/// Where the aim line's shell ricochets: a small diamond.
+pub fn aim_bounce() -> Node {
+    let diamond = |r: f64| [[0.0, r], [r, 0.0], [0.0, -r], [-r, 0.0]];
+    aim_mark("aim-bounce", &diamond(0.3 + AIM_OUTLINE), &diamond(0.3))
+}
+
+/// Where the aim line's shell stops against a wall or a friendly hull: a bar across
+/// the way it flies (+z).
+pub fn aim_stop() -> Node {
+    let bar = |w: f64, d: f64| [[-w, -d], [w, -d], [w, d], [-w, d]];
+    aim_mark(
+        "aim-stop",
+        &bar(0.62 + AIM_OUTLINE, 0.1 + AIM_OUTLINE),
+        &bar(0.62, 0.1),
+    )
+}
+
+/// One corner of the brackets round a targeted tank: an L whose corner sits at the
+/// origin and whose arms run back along -x and -z, so a quarter turn places the next.
+pub fn aim_bracket() -> Node {
+    let corner = |a: f64, t: f64, g: f64| {
+        [
+            [g, g],
+            [-a - g, g],
+            [-a - g, -t - g],
+            [-t - g, -t - g],
+            [-t - g, -a - g],
+            [g, -a - g],
+        ]
+    };
+    aim_mark(
+        "aim-bracket",
+        &corner(1.0, 0.24, AIM_OUTLINE),
+        &corner(1.0, 0.24, 0.0),
+    )
 }
 
 /// World heights of the player ring's dark rim and yellow paint. The player spawns

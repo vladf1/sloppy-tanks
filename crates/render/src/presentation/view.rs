@@ -36,6 +36,7 @@ use sloppy_core::sim::{
 
 use super::PRESENTATION_EFFECTS;
 use super::aim_assist::AimAssist;
+use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
@@ -52,15 +53,14 @@ use super::model_catalog::{
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
 use super::preparation::Preparation;
-use super::shell_path::{self, Leg, MAX_LEGS};
 use super::suspension::{MotionInput, TankMotion, engine_shudder};
 use super::theme::{
     SHADOW_BIAS, SHADOW_FILTER_RADIUS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR,
     Theme, ThemeLook, theme_look,
 };
 use super::view_settings::{
-    AIM_LINE_RELOADING, BAR_HEIGHT, CAMERA, CAMERA_FEEL, FEEDBACK, FIRST_PERSON,
-    OVERHEAD_RETICLE_SCALE, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
+    BAR_HEIGHT, CAMERA, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, OVERHEAD_RETICLE_SCALE,
+    PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
 };
 use super::wreck_library::{SAMPLE_WRECK, age_materials, library_wrecks};
 use crate::camera::PerspectiveCamera;
@@ -988,9 +988,9 @@ pub struct Presentation {
     pub hide_reticle: bool,
     /// The touch fire stick's target.
     pub aim_assist: AimAssist,
-    /// The turret's angle when touch aims it this frame: the aim line then shows the
+    /// The turret's aim when touch aims it this frame: the aim line then shows the
     /// shell's path in place of the reticle.
-    pub aim_line: Option<f64>,
+    pub touch_aim: Option<TouchAim>,
     /// The view's height in CSS pixels (0 until the page says), which keeps the
     /// overhead bars readable on a phone's short screen.
     pub css_height: f64,
@@ -1000,9 +1000,7 @@ pub struct Presentation {
     theme: Option<Theme>,
     library: Library,
     reticle: ReticleModel,
-    /// One instance of the aim line per leg of the shell's path, and the path.
-    aim_legs: [InstanceId; MAX_LEGS],
-    shell_path: Vec<Leg>,
+    aim_line: AimLine,
     player_ring: InstanceId,
     pulse: InstanceId,
     scenery: HashMap<&'static str, SceneryView>,
@@ -1092,20 +1090,7 @@ impl Presentation {
             reloading: joint_index(&renderer, reticle_model, joint::RETICLE_RELOADING),
             confirmed: joint_index(&renderer, reticle_model, joint::RETICLE_CONFIRMED),
         };
-        let (aim_line, first_leg) = hud(&mut renderer, &own::aim_line());
-        let aim_legs = std::array::from_fn(|leg| {
-            let instance = if leg == 0 {
-                first_leg
-            } else {
-                let instance = renderer
-                    .add_instance(aim_line, Mat4::IDENTITY, Lifetime::Shared)
-                    .expect("model just added");
-                renderer.set_visible(instance, false);
-                instance
-            };
-            renderer.set_reflected(instance, false);
-            instance
-        });
+        let aim_line = AimLine::new(&mut renderer);
         let (_, player_ring) = hud(&mut renderer, &own::player_ring());
         let (_, pulse) = hud(&mut renderer, &own::spawn_pulse());
         let mut random = CosmeticRandom::seeded(seed);
@@ -1120,14 +1105,13 @@ impl Presentation {
             reticle_size: 1.0,
             hide_reticle: false,
             aim_assist: AimAssist::default(),
-            aim_line: None,
+            touch_aim: None,
             css_height: 0.0,
             bars_hidden: false,
             theme: None,
             library: Library::default(),
             reticle,
-            aim_legs,
-            shell_path: Vec::with_capacity(MAX_LEGS),
+            aim_line,
             player_ring,
             pulse,
             scenery: HashMap::new(),
@@ -2170,47 +2154,25 @@ impl Presentation {
         let aiming = state.match_state.phase == MatchPhase::Playing && viewer_alive;
         let overhead = !rig.first_person.enabled && rig.seat_blend == 0.0;
         self.crosshair_visible = aiming
-            && (rig.in_first_person || (!self.hide_reticle && self.aim_line.is_none() && overhead));
+            && (rig.in_first_person
+                || (!self.hide_reticle && self.touch_aim.is_none() && overhead));
         self.renderer
             .set_visible(self.reticle.instance, self.crosshair_visible);
         self.renderer
             .set_transform(self.reticle.instance, self.crosshair);
-        let line = self.aim_line.filter(|_| aiming && overhead);
-        self.update_aim_line(state, line);
+        let aim = self.touch_aim.filter(|_| aiming && overhead);
+        let follow = self.rig.follow;
+        let scale = (self.rig.view_zoom / CAMERA.default_zoom).clamp(0.5, 1.6);
+        self.aim_line.update(
+            &mut self.renderer,
+            state,
+            aim,
+            (follow.x, follow.z),
+            scale,
+            alpha,
+            dt,
+        );
         self.renderer.render(self.time as f32)
-    }
-
-    /// Lay the aim line along the path a shell fired at `angle` takes, or hide it. It
-    /// widens with the zoom like the reticle and dims while the gun reloads.
-    fn update_aim_line(&mut self, state: &RenderState, angle: Option<f64>) {
-        self.shell_path.clear();
-        if let (Some(angle), Some(viewer)) = (angle, state.viewer()) {
-            let follow = self.rig.follow;
-            let from = (follow.x, follow.z);
-            shell_path::trace(state, viewer, from, angle, &mut self.shell_path);
-        }
-        let width = (self.rig.view_zoom / CAMERA.default_zoom).clamp(0.5, 1.6) as f32;
-        let ready = state.viewer().is_none_or(|viewer| viewer.cooldown <= 0.0);
-        for (index, &instance) in self.aim_legs.iter().enumerate() {
-            let Some(leg) = self.shell_path.get(index) else {
-                self.renderer.set_visible(instance, false);
-                continue;
-            };
-            let (dx, dz) = (leg.end.0 - leg.start.0, leg.end.1 - leg.start.1);
-            let world = Mat4::from_scale_rotation_translation(
-                Vec3::new(width, 1.0, dx.hypot(dz) as f32),
-                Quat::from_rotation_y(dx.atan2(dz) as f32),
-                Vec3::new(
-                    leg.start.0 as f32,
-                    RETICLE_HEIGHT as f32,
-                    leg.start.1 as f32,
-                ),
-            );
-            self.renderer.set_visible(instance, true);
-            self.renderer.set_transform(instance, world);
-            self.renderer
-                .set_opacity(instance, if ready { 1.0 } else { AIM_LINE_RELOADING });
-        }
     }
 
     fn update_scenery(&mut self) {
