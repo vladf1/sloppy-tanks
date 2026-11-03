@@ -54,9 +54,6 @@ const BRACKET_OPEN: f64 = 1.6;
 const BRACKET_CLOSE_SECONDS: f64 = 0.18;
 /// The brackets' opacity round a tracked tank the shell cannot reach.
 const BLOCKED_OPACITY: f32 = 0.65;
-/// How far ahead of a tracked tank's hull, metres, the line may pass and still be on
-/// it: the assist leads a tank at full speed by about two metres at its range.
-const LEAD_SLACK: f64 = 3.0;
 
 /// What touch aims this frame: the turret's angle and the enemy the fire stick tracks.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -147,45 +144,18 @@ impl AimLine {
         if let (Some(aim), Some(viewer)) = (aim, viewer) {
             shell_path::trace(state, viewer, from, aim.angle, &mut self.path);
         }
-        // The enemy the shell would hit, if it can be hurt.
-        let struck = match self.path.last().map(|leg| leg.stop) {
-            Some(Stop::Tank(id)) => state.tanks.iter().find(|tank| {
-                tank.id == id
-                    && viewer.is_some_and(|viewer| tank.team != viewer.team)
-                    && tank.protection <= 0.0
-            }),
-            _ => None,
-        };
         let tracked = aim
             .and_then(|aim| aim.target)
             .and_then(|id| state.tanks.iter().find(|tank| tank.id == id && tank.alive));
-        let target = struck.or(tracked);
-        let on_target = struck.is_some() || tracked.is_some_and(|tank| self.passes(tank));
+        let on = viewer.and_then(|viewer| {
+            shell_path::on_target(state, viewer, &self.path, aim.and_then(|aim| aim.target))
+        });
+        let target = on.or(tracked);
+        let on_target = on.is_some();
         let charge = viewer.map_or(1.0, reload_charge);
         self.march = (self.march + dt * MARCH_SPEED / SPACING).fract();
         self.lay_marks(renderer, scale, charge, on_target);
         self.lay_brackets(renderer, target, on_target, scale, alpha, dt);
-    }
-
-    /// Whether the path runs past `tank` close ahead of its hull before anything stops
-    /// it: where a led shell meets a tank still driving into it.
-    fn passes(&self, tank: &RenderTank) -> bool {
-        let reach = tank_hull(tank.kind).size.z / 2.0 + LEAD_SLACK;
-        let at = (tank.position.x, tank.position.z);
-        self.path.iter().any(|leg| {
-            let length = leg.length();
-            if length <= 0.0 {
-                return false;
-            }
-            let direction = (
-                (leg.end.0 - leg.start.0) / length,
-                (leg.end.1 - leg.start.1) / length,
-            );
-            let offset = (at.0 - leg.start.0, at.1 - leg.start.1);
-            let along = offset.0 * direction.0 + offset.1 * direction.1;
-            let aside = offset.0 * direction.1 - offset.1 * direction.0;
-            (0.0..=length).contains(&along) && aside.abs() <= reach
-        })
     }
 
     fn lay_marks(&mut self, renderer: &mut Renderer, scale: f64, charge: f64, hot: bool) {

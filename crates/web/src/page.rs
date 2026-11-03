@@ -11,6 +11,7 @@ use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, RenderTarget, Renderer};
 use sloppy_render::presentation::aim_line::TouchAim;
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
+use sloppy_render::presentation::shell_path;
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::{
@@ -509,4 +510,16 @@ pub fn aim(
         });
     }
     (angle, Some((tx, tz)))
+}
+
+/// Whether touch fires by itself this frame: while touch aims overhead, a shell from
+/// the tank at `(x, z)` along the aim line is on an enemy (the line drawn hot), so the
+/// fire stick only aims and the gun fires as it reloads. A mouse never does.
+pub fn touch_fires(view: &Presentation, state: &RenderState, (x, z): (f64, f64)) -> bool {
+    let (Some(aim), Some(viewer)) = (view.touch_aim, state.viewer()) else {
+        return false;
+    };
+    let mut legs = Vec::with_capacity(shell_path::MAX_LEGS);
+    shell_path::trace(state, viewer, (x, z), aim.angle, &mut legs);
+    shell_path::on_target(state, viewer, &legs, aim.target).is_some()
 }

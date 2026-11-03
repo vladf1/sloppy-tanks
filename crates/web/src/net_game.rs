@@ -103,7 +103,7 @@ use crate::nerd_rows::{
 use crate::page::{
     BakedPixels, CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED,
     PageError, PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result,
-    queue_event,
+    queue_event, touch_fires,
 };
 use crate::room_notices::RoomNotice;
 use crate::room_text::RoomText;
@@ -980,6 +980,10 @@ impl NetGame {
         };
         let position = (viewer.position.x, viewer.position.z);
         let (angle, aim_point) = aim(&mut self.view, display, input, position, dt, true);
+        let input = &InputFrame {
+            fire: input.fire || touch_fires(&self.view, display, position),
+            ..*input
+        };
         let command = self.commands.command(input, angle, true);
         let command = self.view.rig.first_person.steer(command);
         LocalInput {

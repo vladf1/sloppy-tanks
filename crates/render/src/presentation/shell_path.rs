@@ -15,6 +15,9 @@ use sloppy_core::sim::tank_dimensions::{tank_hull, tank_muzzle};
 
 /// Covers lower than the sight line (`Simulation::visible`) let a shell over them.
 const SIGHT_HEIGHT: f64 = 1.0;
+/// How far ahead of a tracked tank's hull, metres, a path may pass and still be on it:
+/// the assist leads a tank at full speed by about two metres at its range.
+const LEAD_SLACK: f64 = 3.0;
 /// The most legs a path draws: ricochet shells bounce three times.
 pub const MAX_LEGS: usize = 4;
 
@@ -229,6 +232,49 @@ pub fn trace(
     }
 }
 
+/// The enemy a shell along `legs` is on: the one it would hit, or `tracked` when the
+/// path runs close ahead of its hull before anything stops it (the assist leads a
+/// moving tank, which drives into the shell). A tank still under spawn protection takes
+/// no damage, so no shell is on it. Touch play draws the line hot and fires by itself
+/// while this is some tank.
+pub fn on_target<'a>(
+    state: &'a RenderState,
+    viewer: &RenderTank,
+    legs: &[Leg],
+    tracked: Option<u32>,
+) -> Option<&'a RenderTank> {
+    let enemy = |id: u32| {
+        state.tanks.iter().find(|tank| {
+            tank.id == id && tank.alive && tank.team != viewer.team && tank.protection <= 0.0
+        })
+    };
+    let struck = match legs.last().map(|leg| leg.stop) {
+        Some(Stop::Tank(id)) => enemy(id),
+        _ => None,
+    };
+    struck.or_else(|| tracked.and_then(enemy).filter(|tank| passes(legs, tank)))
+}
+
+/// Whether the path runs past `tank` close ahead of its hull.
+fn passes(legs: &[Leg], tank: &RenderTank) -> bool {
+    let reach = tank_hull(tank.kind).size.z / 2.0 + LEAD_SLACK;
+    let at = (tank.position.x, tank.position.z);
+    legs.iter().any(|leg| {
+        let length = leg.length();
+        if length <= 0.0 {
+            return false;
+        }
+        let direction = (
+            (leg.end.0 - leg.start.0) / length,
+            (leg.end.1 - leg.start.1) / length,
+        );
+        let offset = (at.0 - leg.start.0, at.1 - leg.start.1);
+        let along = offset.0 * direction.0 + offset.1 * direction.1;
+        let aside = offset.0 * direction.1 - offset.1 * direction.0;
+        (0.0..=length).contains(&along) && aside.abs() <= reach
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +371,39 @@ mod tests {
         assert_eq!(legs.len(), 1);
         assert!((legs[0].end.0 - range).abs() < 1e-9, "{legs:?}");
         assert_eq!(legs[0].stop, Stop::Range);
+    }
+
+    #[test]
+    fn a_shell_is_on_an_enemy_it_hits_or_leads_but_not_a_friend_or_a_protected_tank() {
+        let mut protected = tank(4, Team::Red, 0.0, 30.0);
+        protected.protection = 2.0;
+        let state = scene(
+            vec![
+                tank(1, Team::Blue, 0.0, 0.0),
+                tank(2, Team::Red, 0.0, 12.0),
+                // Beside the lane, which a shell at 0.25 rad passes 2.5 m off.
+                tank(3, Team::Red, 2.5, 20.0),
+                protected,
+                tank(5, Team::Blue, 0.0, 40.0),
+            ],
+            vec![],
+        );
+        let viewer = state.viewer().unwrap();
+        let on = |angle: f64, tracked: Option<u32>| {
+            on_target(&state, viewer, &path(&state, angle), tracked).map(|tank| tank.id)
+        };
+        assert_eq!(on(0.0, None), Some(2));
+        // Past the first, the lane runs 2.5 m ahead of the tracked tank: on it, as the
+        // assist leads it, but on no untracked tank.
+        assert_eq!(on(0.25, Some(3)), Some(3));
+        assert_eq!(on(0.25, None), None);
+        assert_eq!(on(0.6, Some(3)), None, "the lane passes too far from it");
+        // A protected enemy and a friend are no targets.
+        let mut legs = path(&state, 0.0);
+        legs[0].stop = Stop::Tank(4);
+        assert!(on_target(&state, viewer, &legs, None).is_none());
+        legs[0].stop = Stop::Tank(5);
+        assert!(on_target(&state, viewer, &legs, None).is_none());
     }
 
     #[test]
