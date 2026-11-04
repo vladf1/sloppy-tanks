@@ -180,7 +180,6 @@ jobs:
             profile-secret: IOS_APP_STORE_PROFILE
             profile-variable: SLOPPY_IOS_PROFILE
             cargo-cache: ios-device-fat-1
-          # Built for macOS 12 (MACOSX_DEPLOYMENT_TARGET), unlike the macOS app's job.
           - name: macOS app
             platform: mac
             profile-secret: MAC_APP_STORE_PROFILE
@@ -299,7 +298,7 @@ jobs:
           cat > notes.md <<NOTES
           Sloppy Tanks $version for the desktop, built from $commit on main.
 
-          - **macOS** (Apple silicon, macOS 11 or newer): \`Sloppy-Tanks-macOS.pkg\` installs the app in Applications, and \`Sloppy-Tanks-macOS.zip\` holds the app itself. Both are signed and notarized.
+          - **macOS** (Apple silicon, macOS 12 or newer): \`Sloppy-Tanks-macOS.pkg\` installs the app in Applications, and \`Sloppy-Tanks-macOS.zip\` holds the app itself. Both are signed and notarized.
           - **Windows** (64-bit Windows 10 or newer): \`Sloppy-Tanks-Windows.exe\` runs as it is. It is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**.
 
           Multiplayer needs the game version the servers run: when an update reaches them, download the new release.
