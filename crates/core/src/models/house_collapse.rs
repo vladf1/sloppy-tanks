@@ -24,6 +24,8 @@ const WALL_EDGE: f64 = 0.2;
 /// How far above and below the deck top a roof's torn edge runs: the shingles,
 /// and the deck with a lath under it.
 const SHINGLE_EDGE: f64 = 0.05;
+/// The top of a roof's torn covering over the deck: no higher than its sheet.
+const COVER_TOP: f64 = 0.004;
 const DECK_EDGE: f64 = 0.06;
 /// Splinters along a torn edge: one about every this many metres.
 const SPLINTER_SPACING: f64 = 0.38;
@@ -242,6 +244,15 @@ fn outside_openings(a: DVec2, b: DVec2, openings: &[[f64; 4]]) -> Vec<(DVec2, DV
         .collect()
 }
 
+/// Whether something reaching `reach` from `q` (a wall's plane) could show in one of
+/// its `openings`.
+fn near_opening(q: DVec2, reach: f64, openings: &[[f64; 4]]) -> bool {
+    let r = reach + 0.1;
+    openings
+        .iter()
+        .any(|o| q.x > o[0] - r && q.x < o[2] + r && q.y > o[1] - r && q.y < o[3] + r)
+}
+
 /// The unit plane direction out of the shard across its edge `a`–`b`.
 fn outward(region: &ShardRegion, a: DVec2, b: DVec2) -> DVec2 {
     let d = (b - a).normalize_or_zero();
@@ -270,10 +281,10 @@ pub(super) fn wall_breaks(
         let n = outward(&shape.region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         for (a, b) in outside_openings(a, b, openings) {
-            // The cut through the wall: weathered timber, dark in the crack while
-            // the cottage stands in its shards.
+            // The cut through the wall: charred and shadowed timber, a dark hairline
+            // while the cottage still stands in its shards.
             kit.quad(
-                Surface::Wood,
+                Surface::Dark,
                 [at(a, 0.0), at(b, 0.0), at(b, WALL_EDGE), at(a, WALL_EDGE)],
                 facing,
             );
@@ -302,30 +313,36 @@ pub(super) fn wall_breaks(
                         rng.range(-0.35, 0.35),
                     ),
                 );
-                kit.block(
-                    if rng.next() < 0.75 {
-                        Surface::Siding
-                    } else {
-                        Surface::Splinters
-                    },
-                    DVec3::new(reach, rng.range(0.07, 0.13), 0.025),
-                    frame,
-                );
+                let coat = if rng.next() < 0.75 {
+                    Surface::Siding
+                } else {
+                    Surface::Splinters
+                };
+                let size = DVec3::new(reach, rng.range(0.07, 0.13), 0.025);
+                // None by an opening, whose reveal would show it while the cottage
+                // still stands.
+                if !near_opening(q, reach, openings) {
+                    kit.block(coat, size, frame);
+                }
             }
             if length > 0.5 {
-                // A stud snapped across the crack, standing out of the torn edge.
+                // A stud snapped across the crack, standing out of the torn edge
+                // inside the wall's thickness, so the standing shards hide it (and no
+                // window shows it) until they part.
                 let q = a + (b - a) * rng.range(0.3, 0.7);
-                let reach = rng.range(0.18, 0.42);
+                let reach = rng.range(0.12, 0.2);
                 let along = plane.s * n.x + plane.t * n.y;
                 let up = plane.s * -n.y + plane.t * n.x;
-                let center = at(q + n * (reach / 2.0 - 0.05), WALL_EDGE + 0.03);
+                let center = at(q + n * (reach / 2.0 - 0.05), WALL_EDGE * 0.5);
                 let frame = DMat4::from_cols(
                     along.extend(0.0),
                     up.extend(0.0),
                     out.extend(0.0),
                     center.extend(1.0),
                 ) * pose(DVec3::ZERO, DVec3::new(0.0, 0.0, rng.range(-0.35, 0.35)));
-                kit.block(Surface::Wood, DVec3::new(reach, 0.09, 0.06), frame);
+                if !near_opening(q, reach, openings) {
+                    kit.block(Surface::Wood, DVec3::new(reach, 0.09, 0.06), frame);
+                }
             }
         }
     }
@@ -348,20 +365,15 @@ pub(super) fn roof_breaks(
         let n = outward(&shape.region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         let depth = roof.thick + DECK_EDGE;
-        // The torn covering is its own colour and the deck under it weathered
-        // timber, so a crack shows no pale seam across the roof before it opens.
+        // The torn covering is its own colour, flush with it, and the deck under it
+        // dark, so a crack shows no seam across the roof before it opens.
         kit.quad(
             Surface::Roof,
-            [
-                at(a, SHINGLE_EDGE),
-                at(b, SHINGLE_EDGE),
-                at(b, 0.0),
-                at(a, 0.0),
-            ],
+            [at(a, COVER_TOP), at(b, COVER_TOP), at(b, 0.0), at(a, 0.0)],
             facing,
         );
         kit.quad(
-            Surface::Wood,
+            Surface::Dark,
             [at(a, 0.0), at(b, 0.0), at(b, -depth), at(a, -depth)],
             facing,
         );
@@ -470,8 +482,8 @@ pub(super) fn chimney_breaks(
 /// (m) the halves slip along it.
 const FOLD_WIDTH: f64 = 0.95;
 const REFOLD_WIDTH: f64 = 1.25;
-const WALL_FOLD: (f64, f64) = (0.03, 0.07);
-const ROOF_FOLD: (f64, f64) = (0.05, 0.1);
+const WALL_FOLD: (f64, f64) = (0.015, 0.035);
+const ROOF_FOLD: (f64, f64) = (0.02, 0.04);
 const FOLD_WANDER: f64 = 0.18;
 const FOLD_SLIP: f64 = 0.04;
 /// Wall pieces taller than this (m) also break across, along a line wandering
@@ -677,7 +689,7 @@ fn fold_once(
 /// How much a collapse piece's paint varies across it (darkest, range): patches
 /// of dust, soot and damp over every finish, so a broken panel reads as a worn,
 /// filthy board rather than a clean painted card.
-const MOTTLE: (f32, f32) = (0.84, 0.2);
+const MOTTLE: (f32, f32) = (0.9, 0.12);
 /// Size (m) of the patches.
 const MOTTLE_SCALE: f64 = 0.8;
 

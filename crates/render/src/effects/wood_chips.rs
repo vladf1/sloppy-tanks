@@ -125,7 +125,7 @@ const CHIP: Cut = Cut {
 /// framing, lumps of plaster and a trim board or two, thrown out of the face in a
 /// cone this wide (radians), fast enough that a few clear the yard.
 const SIDING_PIECES: [usize; 2] = [11, 5];
-const SIDING_BOARDS: usize = 3;
+const SIDING_BOARDS: usize = 5;
 const SIDING_CONE: f64 = 1.4;
 const SIDING_SPEED: [f64; 2] = [1.2, 4.5];
 /// Seconds after a cottage gives way when its walls burst: once they have begun
@@ -155,13 +155,24 @@ const SHINGLE: Cut = Cut {
     thickness: [0.018, 0.01],
 };
 const HOUSE_BURST_SPEED: [f64; 2] = [1.0, 4.0];
-/// Plaster and lath from inside the wall: pale lumps, thicker than wood chips.
+/// Plaster and lath from inside the wall: lumps thicker than wood chips, grey with
+/// the lath's dirt in them, so the spill under a wall is not paper-white.
 const PLASTER_LUMP: Cut = Cut {
     length: [0.1, 0.12],
     width: [0.08, 0.1],
     thickness: [0.05, 0.04],
 };
-const PLASTER: [u32; 2] = [0xcfc4b0, 0xb7aa94];
+const PLASTER: [u32; 2] = [0x9d968a, 0x7a7266];
+/// A cottage hit's pieces are mostly its painted boards and their dark weathered
+/// backs, and few freshly split pale ones.
+const SIDING_MIX: Mix = Mix {
+    slivers: 0.3,
+    shards: 0.6,
+    fresh: 0.2,
+    boards: 0.75,
+};
+/// How a cottage hit's pieces are shaded: [darkest, range].
+const SIDING_SHADE: (f64, f64) = (0.62, 0.26);
 /// A torn length of painted clapboard, wider and longer than a crate's board.
 const SIDING_BOARD: Cut = Cut {
     length: [0.45, 0.5],
@@ -480,8 +491,8 @@ impl WoodChips {
                 (SHARD, hex_to_linear(paint))
             } else if roll < 0.6 {
                 (
-                    pick_cut(random, HIT_MIX),
-                    wood_color(random, HIT_MIX, paint),
+                    pick_cut(random, SIDING_MIX),
+                    wood_color(random, SIDING_MIX, paint),
                 )
             } else {
                 let [pale, dark] = PLASTER.map(hex_to_linear);
@@ -491,7 +502,7 @@ impl WoodChips {
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let color = shade(color, 0.82 + random.next_f64() * 0.22);
+            let color = shade(color, SIDING_SHADE.0 + random.next_f64() * SIDING_SHADE.1);
             let direction = turned(out, (random.next_f64() - 0.5) * SIDING_CONE);
             let elevation = 0.1 + random.next_f64() * 0.8;
             // Most drop at the wall's foot; a few fly out across the yard.
