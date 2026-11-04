@@ -63,25 +63,20 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-  # After the site is live, point :production at this commit's server image, and
-  # content-<hash> too: machines pinned to an app release's content version follow that
-  # tag, so they get later server-only fixes but never another game. The machines pull on
-  # `bun run server:update`, or by themselves when auto-update is on
-  # (crates/server/README.md); nothing here connects to them.
+  # After the site is live, point :production at this commit's server image. The VPS
+  # pulls it on `bun run server:update`, or by itself when auto-update is on
+  # (crates/server/README.md); nothing here connects to the server.
   promote-server:
     needs: [check, deploy]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
     steps:
-      - name: Point :production and content-<hash> at this commit's server image
+      - name: Point :production at this commit's server image
         run: |
           echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
-          docker buildx imagetools create --tag "$REGISTRY:production" \
-            --tag "$REGISTRY:content-$CONTENT_VERSION" "$IMAGE"
+          docker buildx imagetools create --tag ghcr.io/vladf1/sloppy-tanks-server:production "$IMAGE"
         env:
-          REGISTRY: ghcr.io/vladf1/sloppy-tanks-server
           IMAGE: ${{ needs.check.outputs.server-image }}
-          CONTENT_VERSION: ${{ needs.check.outputs.server-content-version }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}

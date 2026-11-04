@@ -167,8 +167,7 @@ page-shell tests against it, then builds the image and pushes it to
 | `pr-<number>`         | each pull request push                           | That pull request's latest server             |
 | `main`, `sha-…`       | each push to `main`                              | Main's latest server, and per commit          |
 | `production`          | the deploy workflow, after the site deploys      | What production should run                    |
-| `content-<hash>`      | the deploy workflow, after the site deploys      | Main's latest server for that content version |
-| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | The App Store builds' `content-<hash>`        |
+| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | The App Store builds' `sha-…`                 |
 | `app-store`           | `bun run server:release-app`                     | What the App Store machines should run        |
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
@@ -178,10 +177,6 @@ records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When
 first ships a server build a pull request already built, it restamps that image's
 release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
-
-`content-<hash>` never moves to another content version, only to a later server build of
-the same one, so what follows it (`app-store`, [App Store machines](#app-store-machines))
-keeps serving the clients of that version and still gets server-only fixes from main.
 
 The dev servers follow the same package's `dev` tag. `server:publish --dev`, which
 `deploy:dev` runs, points it at the package's image of the checkout's server build when
@@ -325,21 +320,23 @@ one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the f
 release it runs production's image.
 
 Each run of the Apps workflow that uploads to TestFlight points `:app-store-candidate` at
-its builds' `content-<hash>` image (the run fails before building when main has not
-deployed that content version yet). When Apple has approved the iOS and the Mac version,
-release both together in App Store Connect (each set to release manually) and run:
+its commit's server image, `sha-<commit>` (the run fails before building when main's build
+has not pushed it yet). When Apple has approved the iOS and the Mac version, release both
+together in App Store Connect (each set to release manually) and run:
 
 ```sh
 bun run server:release-app                  # :app-store := :app-store-candidate, then wait
-bun run server:release-app --image content-<hash>   # release another content version
+bun run server:release-app --image sha-<commit>   # release another commit's server
 ```
 
 It needs Docker logged in to ghcr.io like `server:publish`, and waits until every App
 Store machine reports the released content version: each switches once its rooms are
-empty, or after ten minutes. Only the latest release plays online: an older app then finds
+empty, or after ten minutes. A released image stays as it is: a later server-only fix
+reaches the App Store machines with the next release, or with `--image`. Only the latest release plays online: an older app then finds
 no server of its version, says so, and offers UPDATE, which opens its App Store page.
-Single player keeps working. The other `server:*` commands take `--app-store` as they take
-`--dev`; `server:deploy --app-store` refuses a checkout's build without `--force`.
+Single player keeps working. `server:update`, `rollback`, `deploy`, `auto-update`,
+`status`, `logs` and `stats` take `--app-store` as they take `--dev`;
+`server:deploy --app-store` refuses a checkout's build without `--force`.
 
 ## Monitoring
 

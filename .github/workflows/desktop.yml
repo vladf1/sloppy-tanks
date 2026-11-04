@@ -7,8 +7,8 @@
 # and macOS apps for the App Store and uploads them to App Store Connect, where TestFlight
 # offers them to testers once Apple has processed them. They list the app-store
 # environment's servers, which play the released apps' content version, so the job first
-# checks that the deploy workflow has published content-<hash> for it and, after both
-# uploads, points :app-store-candidate at that image; `bun run server:release-app` moves
+# checks that main's build pushed this commit's server image (sha-<commit>) and, after
+# both uploads, points :app-store-candidate at it; `bun run server:release-app` moves
 # :app-store there once Apple has approved and released them (crates/server/README.md).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
@@ -175,7 +175,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     outputs:
-      content-version: ${{ steps.server-image.outputs.content-version }}
+      server-image: ${{ steps.server-image.outputs.image }}
     strategy:
       fail-fast: false
       matrix:
@@ -229,22 +229,21 @@ jobs:
         with:
           cargo-cache: ${{ matrix.cargo-cache }}
           js-dependencies: "false"
-      # Only a content version main has deployed has a server image to release; a run
-      # started before this commit's deploy finished fails here and can be run again.
-      - name: Check the server image for this content version
+      # The App Store machines will run this commit's server image, which main's build
+      # pushes; a run started before that build finished fails here and can be run again.
+      - name: Check this commit's server image
         id: server-image
         if: steps.signing.outputs.ready == 'true'
         run: |
-          version=$(bun -e "import { contentVersion } from './scripts/content-version.mjs';
-            console.log(await contentVersion())")
+          tag="sha-${GITHUB_SHA::12}"
           token=$(curl -fsS "https://ghcr.io/token?scope=repository:$NAME:pull" |
             sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
           if ! curl -fsS --head --output /dev/null --header "Authorization: Bearer $token" \
-            --header "Accept: $MANIFEST_TYPES" "https://ghcr.io/v2/$NAME/manifests/content-$version"; then
-            echo "::error::ghcr.io/$NAME has no content-$version: deploy this commit to production first."
+            --header "Accept: $MANIFEST_TYPES" "https://ghcr.io/v2/$NAME/manifests/$tag"; then
+            echo "::error::ghcr.io/$NAME has no $tag yet: wait for main's build of this commit."
             exit 1
           fi
-          echo "content-version=$version" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$NAME:$tag" >> "$GITHUB_OUTPUT"
         env:
           NAME: vladf1/sloppy-tanks-server
           MANIFEST_TYPES: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
@@ -262,12 +261,12 @@ jobs:
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/app-store-profile" "$RUNNER_TEMP/app-store-connect.p8"
 
-  # Once both apps reached TestFlight, their content version's server image becomes the
-  # candidate that `bun run server:release-app` releases to the App Store machines.
+  # Once both apps reached TestFlight, their commit's server image becomes the candidate
+  # that `bun run server:release-app` releases to the App Store machines.
   app-store-candidate:
     name: App Store server candidate
     needs: testflight
-    if: needs.testflight.outputs.content-version != ''
+    if: needs.testflight.outputs.server-image != ''
     runs-on: ubuntu-24.04
     permissions:
       packages: write
@@ -275,12 +274,11 @@ jobs:
       - name: Point :app-store-candidate at the App Store builds' server image
         run: |
           echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
-          docker buildx imagetools create --tag "$REGISTRY:app-store-candidate" \
-            "$REGISTRY:content-$CONTENT_VERSION"
-          echo "App Store builds of content \`$CONTENT_VERSION\` are the server candidate: run \`bun run server:release-app\` when Apple releases them." >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools create --tag ghcr.io/vladf1/sloppy-tanks-server:app-store-candidate \
+            "$IMAGE"
+          echo "\`$IMAGE\` is the App Store server candidate: run \`bun run server:release-app\` when Apple releases these builds." >> "$GITHUB_STEP_SUMMARY"
         env:
-          REGISTRY: ghcr.io/vladf1/sloppy-tanks-server
-          CONTENT_VERSION: ${{ needs.testflight.outputs.content-version }}
+          IMAGE: ${{ needs.testflight.outputs.server-image }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACTOR: ${{ github.actor }}
 
