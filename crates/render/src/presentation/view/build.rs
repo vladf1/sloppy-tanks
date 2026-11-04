@@ -7,7 +7,7 @@
 
 use sloppy_core::models::round_texture_files;
 use sloppy_core::sim::render_state::RenderCover;
-use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
+use sloppy_core::sim::timber_layout::{TimberHit, TimberWall, timber_parts};
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
 
 use super::{
@@ -271,6 +271,21 @@ impl Presentation {
                     self.sample_models
                         .push(self.renderer.add_model(&model.root, Lifetime::Round));
                 }
+            }
+            // A cottage's look follows its marks rather than its health: one with a
+            // big breach and a holed roof registers every damaged finish.
+            if cover.kind == CoverKind::House && seen.insert("house-marks".into()) {
+                let mark = |x: f64, y: f64, z: f64, size: f64| TimberHit { x, y, z, size };
+                let damaged = RenderCover {
+                    timber_hits: vec![
+                        mark(0.0, 1.0, cover.d / 2.0, 5.0),
+                        mark(cover.w * 0.25, cover.h - 0.4, 0.5, 2.0),
+                    ],
+                    ..cover.clone()
+                };
+                let model = model_catalog::cover_model(&damaged, 0);
+                self.sample_models
+                    .push(self.renderer.add_model(&model.root, Lifetime::Round));
             }
             if cover.kind == CoverKind::Timber && seen.insert("timber-parts".into()) {
                 let wall = TimberWall {

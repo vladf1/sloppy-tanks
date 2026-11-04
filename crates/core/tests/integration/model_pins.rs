@@ -96,8 +96,8 @@ fn village_covers_are_pinned() {
         "village covers",
         covers_pin(MapId::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0xdf29_d15a_f4a0_ae39),
-            (MAC_RELEASE, 0x9511_c809_8f19_b1e4),
+            (MAC_DEBUG, 0xd4fa_f23f_dfa9_5196),
+            (MAC_RELEASE, 0x5f35_1d23_0fcd_34e5),
             (LINUX_DEBUG, 0xdbe1_f1ac_5041_349e),
         ]),
     );

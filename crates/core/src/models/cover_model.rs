@@ -3,7 +3,7 @@
 //! `cover_model` returns the unbatched tree like the TypeScript: a group at the
 //! cover's x/z whose direct mesh children presentation batches (`batch`) before
 //! drawing. Trees are delegated to [`tree_model`]; timber walls and cargo crates
-//! are rebuilt when their damage stage or hit count changes.
+//! are rebuilt when their damage stage or marks change.
 
 use std::f64::consts::PI;
 
@@ -26,7 +26,7 @@ use super::timber_model::add_timber_parts;
 use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
-use crate::sim::house_layout::{house_damage_stage, is_house_heap};
+use crate::sim::house_layout::is_house_heap;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
@@ -78,8 +78,9 @@ impl From<&RenderCover> for CoverShape {
 }
 
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
-/// timber uses [`timber_damage_stage`] and cottages [`house_damage_stage`]; other
-/// kinds have one look.
+/// timber uses [`timber_damage_stage`]. A cottage's look follows its marks alone
+/// (where it was struck, not how much health it has left), and other kinds have one
+/// look.
 pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     match kind {
         CoverKind::Cargo => {
@@ -92,13 +93,12 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
             }
         }
         CoverKind::Timber => timber_damage_stage(hp, max_hp),
-        CoverKind::House => house_damage_stage(hp, max_hp),
         _ => 0,
     }
 }
 
 /// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`] or
-/// the timber, crate or cottage hit count changes.
+/// the timber, crate or cottage marks change.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
     if c.kind == CoverKind::Tree {
         return tree_model(
@@ -134,7 +134,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
         // Every shell holes a cottage where it struck; an untouched one keeps its
         // place in the static covers' draws.
-        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, damage_stage, &c.timber_hits),
+        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, &c.timber_hits),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {

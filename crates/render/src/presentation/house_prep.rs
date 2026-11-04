@@ -11,10 +11,10 @@
 
 use std::collections::HashMap;
 
-use sloppy_core::models::{HousePieces, PieceStep, cover_damage_stage};
+use sloppy_core::models::{HousePieces, PieceStep};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::CoverKind;
-use sloppy_core::sim::house_layout::HousePiece;
+use sloppy_core::sim::house_layout::{HousePiece, house_damage_stage};
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment};
 use sloppy_core::sim::timber_layout::TimberHit;
 
@@ -96,7 +96,7 @@ impl<M> HousePreparation<M> {
             .filter(|cover| {
                 cover.kind == CoverKind::House
                     && cover.alive
-                    && cover_damage_stage(cover.kind, cover.hp, cover.max_hp) >= PREPARE_STAGE
+                    && house_damage_stage(cover.hp, cover.max_hp) >= PREPARE_STAGE
             })
             .min_by(|a, b| {
                 (a.hp / a.max_hp)

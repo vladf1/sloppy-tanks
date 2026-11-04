@@ -2,14 +2,19 @@
 //! they are built from, the heap of rubble they leave as low cover, navigation
 //! through the opened footprint and rebuilding in place.
 
-use crate::support;
+use crate::{net_support, support};
 
 use glam::DVec3;
+use sloppy_core::net::replication::{StateMirror, StateStream};
+use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::damage::MAX_HOUSE_MARKS;
 use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
     HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, is_house_heap,
 };
+use sloppy_core::sim::math::Point3;
+use sloppy_core::sim::timber_layout::TimberHit;
 
 use sloppy_core::sim::math::{Random, Vec2};
 use sloppy_core::sim::{
@@ -78,11 +83,9 @@ fn every_village_cottage_takes_fifteen_shells_and_keeps_their_marks() {
         shell(&mut s, house);
         assert!(s.covers[house].alive, "standing after {i} shells");
     }
-    assert_eq!(
-        s.covers[house].timber_hits.len(),
-        6,
-        "it keeps the marks of the first shells to hit it"
-    );
+    let marks = &s.covers[house].timber_hits;
+    assert_eq!(marks.len(), 1, "shells on one spot grow one breach");
+    assert!(marks[0].size > 4.0, "{marks:?}");
     shell(&mut s, house);
     assert!(!s.covers[house].alive, "down after {COTTAGE_SHELLS} shells");
 }
@@ -380,4 +383,178 @@ fn every_cottage_collapses_into_stubs_round_a_mound_under_its_roof() {
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
     // Five on arm64; the x86-64 CI's physics leaves one more on edge.
     assert!(standing.len() <= 6, "{standing:?}");
+}
+
+/// A standard shell striking the cottage's build-frame point `local` (at hull height
+/// unless `local.y` says otherwise), as `projectiles` reports a hit.
+fn shell_at(s: &mut Simulation, house: usize, local: DVec3) {
+    // Fired by nobody in particular: the lone cottage's arena has no tanks.
+    let (id, team) = (0, Team::Blue);
+    let c = &s.covers[house];
+    let p = design(s, house).to_world(local);
+    let impact = Point3::new(c.x + p.x, local.y, c.z + p.z);
+    s.damage_cover(house, SHELL, id, team, None, Some(impact));
+}
+
+/// The cottage part each of its marks struck.
+fn struck(s: &Simulation, house: usize) -> Vec<HousePart> {
+    let design = design(s, house);
+    s.covers[house]
+        .timber_hits
+        .iter()
+        .map(|mark| design.struck_part(mark))
+        .collect()
+}
+
+#[test]
+fn shells_on_one_wall_mark_only_that_wall_and_grow_its_breach() {
+    let (mut s, house) = lone_cottage();
+    let (w, d) = {
+        let design = design(&s, house);
+        (design.w, design.d)
+    };
+    let front = DVec3::new(0.6, 1.0, d / 2.0);
+    let mut sizes = Vec::new();
+    for _ in 1..COTTAGE_SHELLS {
+        shell_at(&mut s, house, front);
+        assert_eq!(struck(&s, house), vec![HousePart::FrontWall]);
+        sizes.push(s.covers[house].timber_hits[0].size);
+    }
+    assert!(
+        sizes.windows(2).all(|pair| pair[1] >= pair[0]) && sizes[sizes.len() - 1] > sizes[0] * 3.0,
+        "every shell grows the breach it lands on: {sizes:?}"
+    );
+    // A shell on another wall opens a breach there, leaving the first as it was.
+    let first = s.covers[house].timber_hits[0];
+    let (id, team) = (0, Team::Blue);
+    let c = &s.covers[house];
+    let p = design(&s, house).to_world(DVec3::new(w / 2.0, 1.0, -0.8));
+    let impact = Point3::new(c.x + p.x, 1.0, c.z + p.z);
+    s.damage_cover(house, 1.0, id, team, None, Some(impact));
+    assert_eq!(
+        struck(&s, house),
+        vec![HousePart::FrontWall, HousePart::RightWall]
+    );
+    assert_eq!(s.covers[house].timber_hits[0], first);
+    // Nothing on the roof unless a blast struck it there.
+    let (h, ridge) = (s.covers[house].h, design(&s, house).roof().ridge);
+    assert!(!struck(&s, house).iter().any(|part| part.is_roof()));
+    s.covers[house].hp = HOUSE_HEALTH;
+    shell_at(&mut s, house, DVec3::new(-w * 0.2, ridge - 0.3, 0.4));
+    let parts = struck(&s, house);
+    assert_eq!(parts.len(), 3);
+    assert!(parts[2].is_roof(), "{parts:?} at {h}");
+}
+
+#[test]
+fn a_cottage_keeps_a_bounded_number_of_marks_and_no_random_draw() {
+    let (mut s, house) = lone_cottage();
+    let rng = s.rng.clone();
+    let d = design(&s, house);
+    // Shells spread over every wall and the roof, far more than a cottage remembers,
+    // none of them felling it.
+    for k in 0..60 {
+        let t = f64::from(k) * 0.61;
+        let local = match k % 5 {
+            0 => DVec3::new((t.sin()) * d.w * 0.45, 1.0, d.d / 2.0),
+            1 => DVec3::new(-d.w / 2.0, 0.6 + (k % 3) as f64 * 0.6, t.cos() * d.d * 0.45),
+            2 => DVec3::new(d.w / 2.0, 1.2, t.sin() * d.d * 0.45),
+            3 => DVec3::new(t.cos() * d.w * 0.45, 1.0, -d.d / 2.0),
+            _ => DVec3::new(
+                t.sin() * d.w * 0.3,
+                d.roof().ridge - 0.4,
+                t.cos() * d.d * 0.4,
+            ),
+        };
+        shell_at(&mut s, house, local);
+        s.covers[house].hp = HOUSE_HEALTH;
+        let marks = &s.covers[house].timber_hits;
+        assert!(marks.len() <= MAX_HOUSE_MARKS, "{}", marks.len());
+        assert!(
+            marks
+                .iter()
+                .all(|mark| mark.size.is_finite() && mark.size <= 6.0)
+        );
+    }
+    assert_eq!(s.covers[house].timber_hits.len(), MAX_HOUSE_MARKS);
+    assert_eq!(
+        s.rng, rng,
+        "marking a cottage draws nothing from the match's stream"
+    );
+}
+
+#[test]
+fn a_cottages_marks_reach_room_clients_and_late_joiners() {
+    use net_support::{apply_batch, baseline, batch};
+    use sloppy_core::net::multiplayer_simulation::{
+        MultiplayerOptions, create_multiplayer_simulation,
+    };
+    use sloppy_core::net::scene_codec::MirrorScene;
+    use sloppy_core::sim::map_options::MapId;
+    use sloppy_core::sim::types::{PlayerAssignment, VehicleKind};
+    let players = [PlayerAssignment {
+        player_id: "one".into(),
+        name: "One".into(),
+        team: Team::Blue,
+        slot: 0,
+        kind: VehicleKind::Balanced,
+    }];
+    let mut s = create_multiplayer_simulation(
+        4242.0,
+        &players,
+        MultiplayerOptions {
+            map_mode: Some(MapId::Village),
+            ..MultiplayerOptions::default()
+        },
+    )
+    .unwrap();
+    s.start();
+    let house = houses(&s)[0];
+    let id = s.covers[house].id;
+    let viewer = s.human().id;
+    let mut stream = StateStream::new("room", 1);
+    let mut mirror = StateMirror::default();
+    let scene = Scene::capture(&s);
+    mirror
+        .apply_full(
+            &baseline(&stream.full(0, 0, [], || scene.clone())),
+            "room",
+            1,
+        )
+        .unwrap();
+    let d = design(&s, house);
+    let same = |shown: &[TimberHit], marks: &[TimberHit]| {
+        shown.len() == marks.len()
+            && shown.iter().zip(marks).all(|(a, b)| {
+                [a.x - b.x, a.y - b.y, a.z - b.z, a.size - b.size]
+                    .iter()
+                    .all(|delta| delta.abs() < 0.01)
+            })
+    };
+    for tick in 1..=6 {
+        shell_at(&mut s, house, DVec3::new(0.4, 1.0, d.d / 2.0));
+        if tick == 4 {
+            shell_at(&mut s, house, DVec3::new(-d.w / 2.0, 1.0, 0.5));
+        }
+        let mut next = Scene::capture(&s);
+        let body = stream.snapshot(&mut next, tick, &[], &[]);
+        apply_batch(&mut mirror, &batch(1, 0, stream.seq, &[(tick, body)]));
+        let shown = mirror.render(viewer).unwrap();
+        let cover = shown.covers.iter().find(|cover| cover.id == id).unwrap();
+        assert!(
+            same(&cover.timber_hits, &s.covers[house].timber_hits),
+            "tick {tick}: {:?} against {:?}",
+            cover.timber_hits,
+            s.covers[house].timber_hits
+        );
+    }
+    // A client joining now sees the breaches already there.
+    let scene = Scene::capture(&s);
+    let late = MirrorScene::from_scene(scene)
+        .unwrap()
+        .render(viewer)
+        .unwrap();
+    let cover = late.covers.iter().find(|cover| cover.id == id).unwrap();
+    assert_eq!(cover.timber_hits.len(), 2);
+    assert!(same(&cover.timber_hits, &s.covers[house].timber_hits));
 }

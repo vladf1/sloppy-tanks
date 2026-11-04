@@ -1,6 +1,7 @@
 //! The damage paths for tanks and cover, and blasts. Every tank or cover hit routes through
 //! these helpers so team immunity, XP attribution and destruction chains stay consistent.
 
+use glam::DVec3;
 use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
@@ -8,7 +9,7 @@ use super::arena::CoverDef;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
-use super::data::group;
+use super::data::{group, weapon};
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
 use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed};
@@ -24,14 +25,57 @@ use super::timber_layout::TimberHit;
 use super::tower_layout::TOWER_BASE;
 use super::tree_proportions::tree_proportions;
 use super::types::{
-    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent, SimEventType,
-    Team, VehicleKind,
+    Cover, CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
+    SimEventType, Team, VehicleKind, Weapon,
 };
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
 
-/// Remembered impact marks per timber wall, cargo crate or cottage.
+/// Remembered impact marks per timber wall or cargo crate.
 const MAX_TIMBER_MARKS: usize = 6;
+/// Breaches a cottage remembers. Each grows with the shells that land on it, so a
+/// cottage under fire from one spot keeps one breach getting bigger; once it has this
+/// many, every further shell enlarges the nearest.
+pub const MAX_HOUSE_MARKS: usize = 8;
+/// A shell landing within this reach of a breach (metres, plus [`HOUSE_MARK_REACH`]
+/// per unit of the breach's size, as a grown breach is wider) enlarges it rather
+/// than opening its own.
+const HOUSE_MARK_MERGE: f64 = 0.8;
+const HOUSE_MARK_REACH: f64 = 0.35;
+/// How much a standard shell grows a breach (a first shell opens one of size 1), and
+/// the largest a breach grows: by then it has torn out the wall between its openings.
+const HOUSE_MARK_GROWTH: f64 = 0.4;
+const HOUSE_MARK_LARGEST: f64 = 6.0;
+/// The most and least a single hit counts for, in standard shells.
+const HOUSE_MARK_SHELLS: (f64, f64) = (0.5, 2.0);
+
+/// Mark a cottage where it was struck (relative to the cover, like every cover mark):
+/// a breach of its own, or the nearest one grown. Looks only: no collider, shell lane
+/// or path changes, and no random draw.
+fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
+    let hit = TimberHit {
+        x: impact.map_or(0.0, |point| point.x - cover.x),
+        y: impact.map_or_else(|| 1f64.min(cover.h * 0.5), |point| point.y),
+        z: impact.map_or(-cover.d / 2.0, |point| point.z - cover.z),
+        size: 1.0,
+    };
+    let shells = (amount / weapon(Weapon::Standard).damage)
+        .clamp(HOUSE_MARK_SHELLS.0, HOUSE_MARK_SHELLS.1);
+    let marks = &mut cover.timber_hits;
+    let reach = |mark: &TimberHit| {
+        let gap = DVec3::new(mark.x - hit.x, mark.y - hit.y, mark.z - hit.z).length();
+        gap - (HOUSE_MARK_MERGE + HOUSE_MARK_REACH * mark.size)
+    };
+    // The first nearest on a tie, so the choice never depends on float noise.
+    let nearest = (0..marks.len()).min_by(|&a, &b| reach(&marks[a]).total_cmp(&reach(&marks[b])));
+    match nearest {
+        Some(index) if reach(&marks[index]) < 0.0 || marks.len() >= MAX_HOUSE_MARKS => {
+            let mark = &mut marks[index];
+            mark.size = (mark.size + HOUSE_MARK_GROWTH * shells).min(HOUSE_MARK_LARGEST);
+        }
+        _ => marks.push(hit),
+    }
+}
 
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and
 /// its offset from the body origin (the trunk's mid-height).
@@ -199,11 +243,9 @@ impl Simulation {
         let previous_hp = cover.hp;
         cover.hp -= amount;
         if cover.hp > 0.0 {
-            if matches!(
-                cover.kind,
-                CoverKind::Timber | CoverKind::Cargo | CoverKind::House
-            ) && amount > 0.0
-            {
+            if cover.kind == CoverKind::House && amount > 0.0 {
+                mark_house(cover, amount, impact);
+            } else if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) && amount > 0.0 {
                 let marks = &mut cover.timber_hits;
                 if marks.len() < MAX_TIMBER_MARKS {
                     let size = if marks.is_empty() {

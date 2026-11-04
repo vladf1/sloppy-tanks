@@ -18,7 +18,7 @@
 //!   levels use [`create_arena_floor`] and [`create_spawn_pads`].
 //! - Cover: [`cover_model`] from a [`CoverShape`] (convertible from
 //!   [`RenderCover`](crate::sim::render_state::RenderCover)); rebuild when
-//!   [`cover_damage_stage`] or the timber hit count changes. Trees:
+//!   [`cover_damage_stage`] or the timber, crate or cottage marks change. Trees:
 //!   [`tree_model`], whose boughs drop by [`tree_branch_stage`] /
 //!   [`branch_drop_stage`] (node names in [`tree_part`]). Detached timber members:
 //!   [`timber_part_model`].

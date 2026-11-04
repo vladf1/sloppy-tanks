@@ -18,15 +18,22 @@ use serde::{Deserialize, Serialize};
 
 use super::house_fracture::{Crack, EdgeKind, PartPlane, ShardRegion, Side};
 use super::math::{Random, js_round};
+use super::timber_layout::TimberHit;
 
 /// Hit points of a cottage: fifteen standard shells, more than three watchtowers,
 /// so levelling one is a deliberate effort rather than the work of stray fire (in
 /// seeded bot battles every cottage stands after a minute and most after five).
 pub const HOUSE_HEALTH: f64 = 600.0;
-/// Health fractions below which a cottage shows heavier damage: broken windows and
-/// more holes, then a sagging, holed roof and a toppled chimney.
+/// Health fractions below which a cottage counts as damaged, then as wrecked (a few
+/// shells from falling). Its look follows its marks, not these: presentation only
+/// uses them to cut a wrecked cottage's collapse pieces ahead of its fall.
 const DAMAGED: f64 = 0.8;
 const WRECKED: f64 = 0.45;
+/// Marks this far up a cottage's ridge height or higher struck its roof: shells fly at
+/// hull height, so only a blast from above marks a roof.
+const ROOF_MARK: f64 = 0.75;
+/// How near the stack (plan metres) a roof strike topples the chimney.
+const CHIMNEY_STRIKE: f64 = 1.4;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
@@ -79,7 +86,7 @@ pub fn is_house_heap(h: f64) -> bool {
     (h - HOUSE_HEAP.height).abs() < 1e-6
 }
 
-/// Damage look of a standing cottage: 0 intact, 1 damaged, 2 wrecked.
+/// How near a standing cottage is to falling: 0 intact, 1 damaged, 2 wrecked.
 pub fn house_damage_stage(hp: f64, max_hp: f64) -> u32 {
     if hp > max_hp * DAMAGED {
         0
@@ -88,6 +95,22 @@ pub fn house_damage_stage(hp: f64, max_hp: f64) -> u32 {
     } else {
         2
     }
+}
+
+/// Whether a mark at height `y` struck the roof of a cottage `h` to its ridge rather
+/// than one of its walls ([`ROOF_MARK`]).
+pub fn is_roof_mark(y: f64, h: f64) -> bool {
+    y >= h * ROOF_MARK
+}
+
+/// Whether a strike on the roof toppled the chimney of a cottage box `w` by `d` (world
+/// axes) and `h` high: a roof mark (cover-relative, as the simulation keeps them)
+/// near its stack. Wall shells never reach it.
+pub fn chimney_struck(w: f64, d: f64, h: f64, marks: &[TimberHit]) -> bool {
+    let flue = chimney_flue(w, d, h);
+    marks.iter().any(|mark| {
+        is_roof_mark(mark.y, h) && (mark.x - flue.x).hypot(mark.z - flue.z) < CHIMNEY_STRIKE
+    })
 }
 
 /// Quarter turns about +y that put a cottage's door toward its street: the row
@@ -737,12 +760,40 @@ impl HouseDesign {
     /// The chimney pot's mouth in the build frame. It keeps its world place
     /// ([`chimney_flue`]) however the cottage turns, where the village's smoke rises.
     pub fn flue(&self) -> DVec3 {
-        let (world_w, world_d) = if self.turns.rem_euclid(2) == 0 {
+        let (world_w, world_d) = self.world_box();
+        self.to_local(chimney_flue(world_w, world_d, self.h))
+    }
+
+    /// The cover box's width and depth along the world's x and z.
+    pub fn world_box(&self) -> (f64, f64) {
+        if self.turns.rem_euclid(2) == 0 {
             (self.w, self.d)
         } else {
             (self.d, self.w)
-        };
-        self.to_local(chimney_flue(world_w, world_d, self.h))
+        }
+    }
+
+    /// The part of the cottage a mark (cover-relative, world axes, as the simulation
+    /// keeps them) struck: the roof slope under a roof mark ([`is_roof_mark`]),
+    /// otherwise the wall whose face it lies nearest.
+    pub fn struck_part(&self, mark: &TimberHit) -> HousePart {
+        let local = self.to_local(DVec3::new(mark.x, mark.y, mark.z));
+        if is_roof_mark(mark.y, self.h) {
+            return HousePart::roof(&self.roof(), local.x, local.z);
+        }
+        let front = (local.z.abs() / (self.d / 2.0)) >= (local.x.abs() / (self.w / 2.0));
+        HousePart::wall(match (front, local.z > 0.0, local.x > 0.0) {
+            (true, true, _) => 0,
+            (true, false, _) => 1,
+            (false, _, true) => 2,
+            (false, _, false) => 3,
+        })
+    }
+
+    /// Whether a roof strike among `marks` toppled the chimney ([`chimney_struck`]).
+    pub fn chimney_struck(&self, marks: &[TimberHit]) -> bool {
+        let (w, d) = self.world_box();
+        chimney_struck(w, d, self.h, marks)
     }
 
     /// The chimney stack's bottom (below where it meets the roof) and its top (under

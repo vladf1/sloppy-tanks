@@ -20,6 +20,7 @@ use sloppy_core::models::{
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
+use sloppy_core::sim::house_layout::chimney_struck;
 use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
@@ -375,9 +376,9 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
 /// Where a fallen chimney's smoke is sent, out of sight below the ground.
 const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
 
-/// Whether a cottage's chimney is up: it topples when the cottage is wrecked.
+/// Whether a cottage's chimney is up: a strike on the roof by its stack topples it.
 fn chimney_stands(cover: &RenderCover) -> bool {
-    cover.alive && cover_damage_stage(cover.kind, cover.hp, cover.max_hp) < 2
+    cover.alive && !chimney_struck(cover.w, cover.d, cover.h, &cover.timber_hits)
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.

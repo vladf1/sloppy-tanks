@@ -25,7 +25,7 @@ use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
-use sloppy_core::sim::timber_layout::TimberPart;
+use sloppy_core::sim::timber_layout::{TimberHit, TimberPart};
 use sloppy_core::sim::tower_layout::TowerPiece;
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
@@ -718,6 +718,18 @@ struct TreeView {
     shudder: Option<(Vec3, f64)>,
 }
 
+/// A fingerprint of a cover's marks, to notice any that changed without keeping a
+/// copy of them per cover or allocating each frame.
+fn marks_print(marks: &[TimberHit]) -> u64 {
+    marks.iter().fold(marks.len() as u64, |print, mark| {
+        [mark.x, mark.y, mark.z, mark.size]
+            .into_iter()
+            .fold(print, |print, value| {
+                (print ^ value.to_bits()).wrapping_mul(0x0100_0000_01b3)
+            })
+    })
+}
+
 struct CoverView {
     instance: InstanceId,
     /// The cover's joint when it lives in the round's combined static-cover
@@ -725,7 +737,9 @@ struct CoverView {
     joint: Option<usize>,
     key: String,
     stage: u32,
-    hits: usize,
+    /// The marks it shows ([`marks_print`]): a shell that grows a cottage's breach
+    /// changes a mark without adding one.
+    marks: u64,
     /// Rebuilt towers reuse rubble identities but choose a new look on collapse.
     debris_seed: Option<f64>,
     movable: bool,
@@ -1697,7 +1711,7 @@ impl Presentation {
                 joint: None,
                 key,
                 stage,
-                hits: cover.timber_hits.len(),
+                marks: marks_print(&cover.timber_hits),
                 debris_seed: cover.debris_seed,
                 movable: cover.motion.is_some(),
                 scale,
@@ -1847,7 +1861,7 @@ impl Presentation {
                     joint: Some(joint),
                     key,
                     stage,
-                    hits: cover.timber_hits.len(),
+                    marks: marks_print(&cover.timber_hits),
                     debris_seed: cover.debris_seed,
                     movable: false,
                     scale: Vec3::ONE,
@@ -2540,7 +2554,6 @@ impl Presentation {
                         cover.w,
                         cover.d,
                         cover.h,
-                        stage,
                         &cover.timber_hits,
                     )))
                 } else {
@@ -2625,7 +2638,7 @@ impl Presentation {
                         || (matches!(
                             cover.kind,
                             CoverKind::Timber | CoverKind::Cargo | CoverKind::House
-                        ) && view.hits != cover.timber_hits.len()))
+                        ) && view.marks != marks_print(&cover.timber_hits)))
             });
             // A blast that marks several crates, walls or cottages at once rebuilds them
             // over a few frames on a slow device: one step a frame at least, more while
