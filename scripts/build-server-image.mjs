@@ -138,6 +138,8 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
   ]);
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
-// CI reads the image name to promote it after the deploy gate.
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `image=${image}\n`);
+// CI reads the image name and its content version to promote them after the deploy gate.
+if (process.env.GITHUB_OUTPUT) {
+  appendFileSync(process.env.GITHUB_OUTPUT, `image=${image}\ncontent-version=${version}\n`);
+}
 console.log(`Built ${image} (release ${release}, content ${version}, commit ${commit})`);

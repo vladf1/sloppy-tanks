@@ -5,8 +5,10 @@
 # window, audio and GPU dependencies need system libraries there.
 # Run by hand on main (`gh workflow run desktop.yml --ref main`), it also builds the iOS
 # and macOS apps for the App Store and uploads them to App Store Connect, where TestFlight
-# offers them to testers once Apple has processed them, for now without multiplayer
-# (`--single-player`).
+# offers them to testers once Apple has processed them. Their rooms need a server of
+# their content version for as long as players run them, so the job first checks that the
+# deploy workflow has published content-<hash> for it and prints the hash, which a machine
+# kept for the release follows (crates/server/README.md, Pinned machines).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -225,10 +227,27 @@ jobs:
         with:
           cargo-cache: ${{ matrix.cargo-cache }}
           js-dependencies: "false"
+      # Only a content version main has deployed has a server image to pin; a run started
+      # before this commit's deploy finished fails here and can be run again.
+      - name: Check the server image for this content version
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          version=$(bun -e "import { contentVersion } from './scripts/content-version.mjs';
+            console.log(await contentVersion())")
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:$NAME:pull" |
+            sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+          if ! curl -fsS --head --output /dev/null --header "Authorization: Bearer $token" \
+            --header "Accept: $MANIFEST_TYPES" "https://ghcr.io/v2/$NAME/manifests/content-$version"; then
+            echo "::error::ghcr.io/$NAME has no content-$version: deploy this commit to production first."
+            exit 1
+          fi
+          echo "Content version \`$version\`: pin a machine to it with \`SERVER_TAG=content-$version\`." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          NAME: vladf1/sloppy-tanks-server
+          MANIFEST_TYPES: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
-      # processed the build and fails if Apple finds it invalid. The App Store's first
-      # release is single player: online rooms and their player names come later.
-      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --single-player --upload
+      # processed the build and fails if Apple finds it invalid.
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}

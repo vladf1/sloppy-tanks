@@ -264,6 +264,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
         commit: Some("27e68e8".into()),
         dirty: false,
         built_at: Some("2026-10-02T14:02:23.799Z".into()),
+        tag: Some("content-af58644e963e30a14d7a8c3d".into()),
     };
     let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
         .await
@@ -274,6 +275,7 @@ async fn reports_the_image_build_stamps_like_the_page() {
     assert_eq!(body["commit"], "27e68e8");
     assert_eq!(body["dirty"], false);
     assert_eq!(body["builtAt"], "2026-10-02T14:02:23.799Z");
+    assert_eq!(body["tag"], "content-af58644e963e30a14d7a8c3d");
     server.close().await;
 }
 

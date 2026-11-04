@@ -22,6 +22,9 @@ export interface Announcement {
   commit?: string;
   dirty?: boolean;
   builtAt?: string;
+  /** The image tag a machine pinned to one follows (`content-<hash>` for an app release);
+   * absent when it follows its environment's. */
+  tag?: string;
   /** When the server process started, ISO 8601. */
   startedAt?: string;
   /** The process's CPU time over its latest 10 s sample, in percent of one core. */
@@ -88,6 +91,7 @@ export function parseAnnouncement(body: string): Announcement | undefined {
       commit: optional("commit"),
       dirty: value.dirty as boolean | undefined,
       builtAt: optional("builtAt"),
+      tag: optional("tag"),
       startedAt,
       cpuPercent: optionalAmount("cpuPercent", MAX_CPUS * 100),
       cpus,

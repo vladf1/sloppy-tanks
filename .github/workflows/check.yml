@@ -31,6 +31,9 @@ on:
       server-image:
         description: The server image this commit built or found, tagged with its server build.
         value: ${{ jobs.server.outputs.image }}
+      server-content-version:
+        description: The content version that image serves, which names its content-<hash> tag.
+        value: ${{ jobs.server.outputs.content-version }}
 
 permissions:
   contents: read
@@ -98,6 +101,7 @@ jobs:
       packages: write
     outputs:
       image: ${{ steps.image.outputs.image }}
+      content-version: ${{ steps.image.outputs.content-version }}
     env:
       SLOPPY_SERVER_VPS: "1"
       SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server

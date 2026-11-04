@@ -475,6 +475,10 @@ struct Health<'a> {
     dirty: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     built_at: Option<&'a str>,
+    /// The tag a pinned machine follows (`SERVER_TAG`); absent when it follows its
+    /// environment's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tag: Option<&'a str>,
 }
 
 fn health(build: &BuildInfo) -> Health<'_> {
@@ -486,6 +490,7 @@ fn health(build: &BuildInfo) -> Health<'_> {
         commit: build.commit.as_deref(),
         dirty: build.commit.as_ref().map(|_| build.dirty),
         built_at: build.built_at.as_deref(),
+        tag: build.tag.as_deref(),
     }
 }
 

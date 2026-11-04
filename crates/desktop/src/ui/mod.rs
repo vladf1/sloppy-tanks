@@ -477,15 +477,13 @@ mod tests {
     }
 
     #[test]
-    fn store_builds_name_the_tab_battle_setup() {
+    fn single_player_builds_name_the_tab_battle_setup() {
         let text = menu_text(false);
+        let multiplayer = crate::app::offers_multiplayer();
         assert!(text.contains("MAP"));
-        assert_eq!(text.contains("BATTLE SETUP"), cfg!(feature = "app-store"));
-        assert_eq!(text.contains("SINGLE PLAYER"), !cfg!(feature = "app-store"));
-        assert_eq!(
-            text.contains("MULTIPLAYER"),
-            crate::app::offers_multiplayer()
-        );
+        assert_eq!(text.contains("BATTLE SETUP"), !multiplayer);
+        assert_eq!(text.contains("SINGLE PLAYER"), multiplayer);
+        assert_eq!(text.contains("MULTIPLAYER"), multiplayer);
     }
 
     #[test]

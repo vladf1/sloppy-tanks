@@ -371,12 +371,19 @@ bundle carries a privacy manifest (`PrivacyInfo.xcprivacy`) with Apple's reason 
 required-reason API its executable uses, and the build stops at one the script has no
 reason for (`REQUIRED_REASON_APIS`).
 
-`--app-store` also enables the shell’s `app-store` feature: it includes single player only and hides the Developer settings section. App Store builds label their remaining tab Battle Setup.
+`--app-store` also enables the shell’s `app-store` feature, which hides the Developer
+settings section.
+
+The App Store's builds play online, on a server of their content version. Production's
+machines follow main's, so each release that players install keeps a machine of its own
+pinned to `content-<hash>`, the hash the Apps workflow prints in its summary (it fails
+before building when main has not deployed that content version yet): create the machine
+before the release reaches players and destroy the previous release's once nobody plays it
+([Pinned machines](crates/server/README.md#pinned-machines)).
 
 `--single-player` builds any of the apps without multiplayer (the `single-player` feature
-of `sloppy-desktop`): Battle Setup shows the Single player tab alone and `--multiplayer`
-and `--room` open nothing. CI's App Store builds are single player for now, so the first
-release leaves online rooms and their player names out of review. The store listing points at two pages the site serves beside
+of `sloppy-desktop`): Battle Setup shows the Single player tab alone, labelled Battle
+Setup, and `--multiplayer` and `--room` open nothing. The store listing points at two pages the site serves beside
 the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
 every app and the page also open from Settings' About row; keep the privacy policy true
 to what the game sends. The web page's Battle Setup links to the apps' App Store page in

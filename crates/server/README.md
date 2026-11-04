@@ -161,12 +161,13 @@ The `server` job in `.github/workflows/check.yml` builds the binary once, runs t
 page-shell tests against it, then builds the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag             | Moved by                                    | Meaning                                       |
-| --------------- | ------------------------------------------- | --------------------------------------------- |
-| `<serverBuild>` | main's first build of it                    | One image per server build (`/health`'s hash) |
-| `pr-<number>`   | each pull request push                      | That pull request's latest server             |
-| `main`, `sha-…` | each push to `main`                         | Main's latest server, and per commit          |
-| `production`    | the deploy workflow, after the site deploys | What production should run                    |
+| Tag              | Moved by                                    | Meaning                                       |
+| ---------------- | ------------------------------------------- | --------------------------------------------- |
+| `<serverBuild>`  | main's first build of it                    | One image per server build (`/health`'s hash) |
+| `pr-<number>`    | each pull request push                      | That pull request's latest server             |
+| `main`, `sha-…`  | each push to `main`                         | Main's latest server, and per commit          |
+| `production`     | the deploy workflow, after the site deploys | What production should run                    |
+| `content-<hash>` | the deploy workflow, after the site deploys | Main's latest server for that content version |
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
@@ -175,6 +176,10 @@ records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When
 first ships a server build a pull request already built, it restamps that image's
 release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
+
+`content-<hash>` never moves to another content version, only to a later server build of
+the same one, so a machine pinned to it keeps serving the clients of that version
+([Pinned machines](#pinned-machines)) and still gets server-only fixes from main.
 
 The dev servers follow the same package's `dev` tag. `server:publish --dev`, which
 `deploy:dev` runs, points it at the package's image of the checkout's server build when
@@ -306,6 +311,23 @@ the address. To retire a machine, destroy it: it leaves the directory 45 seconds
 its server stops. The scripts trust a new machine's host key on first contact and refuse
 a changed one, so after a Reinstall, or a new machine at an old address, remove the old
 key with `ssh-keygen -R <ip>`.
+
+### Pinned machines
+
+A client plays only on a server with its content version, and the App Store's builds
+update only when Apple approves them and players install them, while `:production` moves
+with every content change on main. A machine kept for an app release therefore follows
+that release's `content-<hash>` instead: create it from the same startup script with
+`SERVER_TAG=content-<hash>` uncommented, the hash the Apps workflow printed for the
+release (`/health`'s `contentVersion` of a build from that commit). It lists itself under
+its environment like any machine, and the apps of that release open rooms on it while
+the page and newer apps skip it. Destroy it once nobody plays that release.
+
+The server reports the tag in `/health` and the directory (`tag`), and the `server:*`
+scripts leave pinned machines out of what they do to the environment's: `server:update`,
+`server:rollback`, `server:deploy` and `publish --dev` act on one only when `--ip` names
+it, and `server:check-if-redeployment-required` only when `SLOPPY_SERVER_URL` does.
+`server:update --ip <ip>` alone pulls the pinned tag.
 
 ## Monitoring
 
