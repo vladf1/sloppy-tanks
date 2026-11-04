@@ -161,13 +161,15 @@ The `server` job in `.github/workflows/check.yml` builds the binary once, runs t
 page-shell tests against it, then builds the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag              | Moved by                                    | Meaning                                       |
-| ---------------- | ------------------------------------------- | --------------------------------------------- |
-| `<serverBuild>`  | main's first build of it                    | One image per server build (`/health`'s hash) |
-| `pr-<number>`    | each pull request push                      | That pull request's latest server             |
-| `main`, `sha-…`  | each push to `main`                         | Main's latest server, and per commit          |
-| `production`     | the deploy workflow, after the site deploys | What production should run                    |
-| `content-<hash>` | the deploy workflow, after the site deploys | Main's latest server for that content version |
+| Tag                   | Moved by                                         | Meaning                                       |
+| --------------------- | ------------------------------------------------ | --------------------------------------------- |
+| `<serverBuild>`       | main's first build of it                         | One image per server build (`/health`'s hash) |
+| `pr-<number>`         | each pull request push                           | That pull request's latest server             |
+| `main`, `sha-…`       | each push to `main`                              | Main's latest server, and per commit          |
+| `production`          | the deploy workflow, after the site deploys      | What production should run                    |
+| `content-<hash>`      | the deploy workflow, after the site deploys      | Main's latest server for that content version |
+| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | The App Store builds' `content-<hash>`        |
+| `app-store`           | `bun run server:release-app`                     | What the App Store machines should run        |
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
@@ -178,8 +180,8 @@ release, commit and time over the same binary layer; later builds keep them. Pul
 connects to the machines. Fork pull requests build the image without pushing.
 
 `content-<hash>` never moves to another content version, only to a later server build of
-the same one, so a machine pinned to it keeps serving the clients of that version
-([Pinned machines](#pinned-machines)) and still gets server-only fixes from main.
+the same one, so what follows it (`app-store`, [App Store machines](#app-store-machines))
+keeps serving the clients of that version and still gets server-only fixes from main.
 
 The dev servers follow the same package's `dev` tag. `server:publish --dev`, which
 `deploy:dev` runs, points it at the package's image of the checkout's server build when
@@ -238,7 +240,8 @@ bun run server:auto-update resume    # lift a hold (below) so auto-update follow
 bun run server:deploy                # SSH fallback: build here, copy the image, switch
 ```
 
-Each acts on production's machine; `--dev` picks the dev site's.
+Each acts on production's machine; `--dev` picks the dev site's and `--app-store` the
+App Store apps' ([App Store machines](#app-store-machines)).
 
 With auto-update on, as every machine is by default, production's timer checks
 `:production` every 10 seconds. A new image waits until nobody holds a seat (the
@@ -312,22 +315,31 @@ its server stops. The scripts trust a new machine's host key on first contact an
 a changed one, so after a Reinstall, or a new machine at an old address, remove the old
 key with `ssh-keygen -R <ip>`.
 
-### Pinned machines
+### App Store machines
 
-A client plays only on a server with its content version, and the App Store's builds
-update only when Apple approves them and players install them, while `:production` moves
-with every content change on main. A machine kept for an app release therefore follows
-that release's `content-<hash>` instead: create it from the same startup script with
-`SERVER_TAG=content-<hash>` uncommented, the hash the Apps workflow printed for the
-release (`/health`'s `contentVersion` of a build from that commit). It lists itself under
-its environment like any machine, and the apps of that release open rooms on it while
-the page and newer apps skip it. Destroy it once nobody plays that release.
+A client plays only on a server with its content version. `:production` moves with every
+content change on main, while the App Store's apps change only when Apple releases a
+version and players install it, so they play in an environment of their own, `app-store`
+(the build sets `SLOPPY_SERVER_ENVIRONMENT`), whose machines follow `:app-store`. Create
+one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the first
+release it runs production's image.
 
-The server reports the tag in `/health` and the directory (`tag`), and the `server:*`
-scripts leave pinned machines out of what they do to the environment's: `server:update`,
-`server:rollback`, `server:deploy` and `publish --dev` act on one only when `--ip` names
-it, and `server:check-if-redeployment-required` only when `SLOPPY_SERVER_URL` does.
-`server:update --ip <ip>` alone pulls the pinned tag.
+Each run of the Apps workflow that uploads to TestFlight points `:app-store-candidate` at
+its builds' `content-<hash>` image (the run fails before building when main has not
+deployed that content version yet). When Apple has approved the iOS and the Mac version,
+release both together in App Store Connect (each set to release manually) and run:
+
+```sh
+bun run server:release-app                  # :app-store := :app-store-candidate, then wait
+bun run server:release-app --image content-<hash>   # release another content version
+```
+
+It needs Docker logged in to ghcr.io like `server:publish`, and waits until every App
+Store machine reports the released content version: each switches once its rooms are
+empty, or after ten minutes. Only the latest release plays online: an older app then finds
+no server of its version, says so, and offers UPDATE, which opens its App Store page.
+Single player keeps working. The other `server:*` commands take `--app-store` as they take
+`--dev`; `server:deploy --app-store` refuses a checkout's build without `--force`.
 
 ## Monitoring
 

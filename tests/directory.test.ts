@@ -42,13 +42,14 @@ const server = (url: string, rooms: RoomListing[]): ListedServer => ({
 
 test("the directory has one list per game server environment", () => {
   // The startup scripts name each machine's environment.
-  const scripts = ["production", "dev"].map(
+  const scripts = ["production", "dev", "app-store"].map(
     (name) =>
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/SERVER_ENVIRONMENT=(\S+)/)?.[1],
   );
   assert.deepEqual([...ENVIRONMENTS].sort(), scripts.sort());
   assert.equal(parseEnvironment("production"), "production");
   assert.equal(parseEnvironment("dev"), "dev");
+  assert.equal(parseEnvironment("app-store"), "app-store");
   for (const value of [null, "", "Production", "staging"]) {
     assert.equal(parseEnvironment(value), undefined);
   }
@@ -79,7 +80,6 @@ test("an announcement keeps its declared /health fields and rooms checked as the
     version: "1.2.3.4",
     ...health,
     dirty: false,
-    tag: "content-af58644e963e30a14d7a8c3d",
     startedAt: "2026-10-27T09:41:05.123Z",
     cpuPercent: 3.4,
     cpus: 1,
@@ -101,7 +101,6 @@ test("an announcement keeps its declared /health fields and rooms checked as the
     { ...health, contentVersion: "", rooms: [] },
     { ...health, version: 1, rooms: [] },
     { ...health, dirty: "no", rooms: [] },
-    { ...health, tag: "", rooms: [] },
     { ...health, startedAt: "yesterday", rooms: [] },
     { ...health, cpuPercent: -1, rooms: [] },
     { ...health, cpuPercent: "3", rooms: [] },

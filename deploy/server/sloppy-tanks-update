@@ -3,9 +3,9 @@
 # state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
 # scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag, or on a dev machine
-#                                     following :dev, production's while :dev holds nothing)
-#                                     and switch now
+#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag, or production's while
+#                                     a dev or App Store machine's tag holds nothing) and
+#                                     switch now
 #   sloppy-tanks-update local IMAGE   switch to an image already loaded here (SSH deploy)
 #   sloppy-tanks-update rollback      switch back to the previous image
 #   sloppy-tanks-update resume        let auto-update follow its tag again
@@ -15,13 +15,12 @@
 # The sloppy-tanks unit runs the image ID in /var/lib/sloppy-tanks/image, so a crash or
 # reboot restarts exactly what was running, and only this script changes it, restarting
 # in the same step. The Quadlet unit reads the pin from a drop-in this script writes
-# beside it. A machine follows one tag, fixed when it is created: SERVER_TAG in its
-# server.env, else its environment's, production's :production, which CI moves, or dev's
-# :dev, which `bun scripts/server.mjs publish --dev` moves from a developer's checkout. A
-# machine kept for an app release sets SERVER_TAG=content-<hash>, which CI moves only to
-# later server builds of that content version. Anything but `pull` of the followed tag
-# leaves a hold that auto-update respects until `resume` or such a pull, and on dev until
-# the next publish.
+# beside it. A machine follows the tag named after its environment: production's
+# :production, which CI moves; dev's :dev, which `bun scripts/server.mjs publish --dev`
+# moves from a developer's checkout; or app-store's :app-store, the released App Store
+# apps' content version, which `bun scripts/server.mjs release-app` moves. Anything but
+# `pull` of that tag leaves a hold that auto-update respects until `resume` or such a
+# pull, and on dev until the next publish.
 set -euo pipefail
 
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
@@ -61,15 +60,10 @@ failing_file=$STATE/check-failing
 failed_file=$STATE/failed
 mkdir -p "$STATE"
 
-# The tag auto-update follows: server.env's SERVER_TAG (the provider's user data writes the
-# file), else the machine's environment's.
-setting() { sed -n "s/^$1=//p" /etc/sloppy-tanks/server.env 2>/dev/null || true; }
-environment=$(setting SERVER_ENVIRONMENT)
-tag=$(setting SERVER_TAG)
-if [[ -z $tag && $environment == dev ]]; then
-  tag=dev
-fi
-follow=$REGISTRY:${tag:-production}
+# The machine's environment (server.env, which the provider's user data writes)
+# names the tag auto-update follows.
+environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
+follow=$REGISTRY:${environment:-production}
 
 # One change at a time. The timer skips a check while another runs.
 exec 9>/run/lock/sloppy-tanks-update.lock
@@ -294,10 +288,10 @@ case $command in
     # tag moves again rather than until the next check.
     digest=""
     if [[ $ref == "$follow" ]]; then digest=$(remote_digest) || true; fi
-    # A dev machine created before anything was published to :dev runs production's server
-    # meanwhile, so it is up and listed; auto-update still follows :dev and switches to the
-    # first publish.
-    if [[ $ref == "$follow" && -z $digest && $follow == "$REGISTRY:dev" ]]; then
+    # A machine created before anything was published to its tag (:dev, :app-store) runs
+    # production's server meanwhile, so it is up and listed; auto-update still follows its
+    # tag and switches to the first publish or release.
+    if [[ $ref == "$follow" && -z $digest && $follow != "$REGISTRY:production" ]]; then
       ref=$REGISTRY:production
       echo "Nothing to read on $follow; starting $ref until a publish moves it"
     fi

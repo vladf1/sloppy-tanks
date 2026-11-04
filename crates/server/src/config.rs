@@ -19,17 +19,12 @@ pub struct BuildInfo {
     /// The tree had uncommitted changes (`SLOPPY_COMMIT` ends in `-dirty`).
     pub dirty: bool,
     pub built_at: Option<String>,
-    /// The image tag the machine follows when it is pinned to one (`SERVER_TAG` in its
-    /// server.env, such as `content-<hash>` for an app release), so the scripts can leave
-    /// it out of what they do to the environment's machines. None follows the
-    /// environment's tag.
-    pub tag: Option<String>,
 }
 
 impl BuildInfo {
     /// Reads `SLOPPY_RELEASE`, `SLOPPY_COMMIT` (a full hash, `-dirty` when the tree had
-    /// local changes) and `SLOPPY_BUILT_AT`, which the image sets empty when it was built
-    /// without them, and the machine's `SERVER_TAG`.
+    /// local changes) and `SLOPPY_BUILT_AT`; the image sets them empty when it was built
+    /// without them.
     pub fn from_env(lookup: &impl Fn(&str) -> Option<String>) -> Self {
         let present = |name| lookup(name).filter(|text: &String| !text.is_empty());
         let stamp = present("SLOPPY_COMMIT");
@@ -43,7 +38,6 @@ impl BuildInfo {
             commit: hash.map(|hash| hash.chars().take(SHORT_COMMIT_LENGTH).collect()),
             dirty,
             built_at: present("SLOPPY_BUILT_AT"),
-            tag: present("SERVER_TAG"),
         }
     }
 }
@@ -221,12 +215,5 @@ mod tests {
         assert!(dirty.dirty);
         assert_eq!(dirty.built_at, None);
         assert_eq!(dirty.release, None);
-        assert_eq!(dirty.tag, None);
-        let pinned = settings(&[("SERVER_TAG", "content-af58644e963e30a14d7a8c3d")]).unwrap();
-        assert_eq!(
-            pinned.build.tag.as_deref(),
-            Some("content-af58644e963e30a14d7a8c3d")
-        );
-        assert_eq!(settings(&[("SERVER_TAG", "")]).unwrap().build.tag, None);
     }
 }

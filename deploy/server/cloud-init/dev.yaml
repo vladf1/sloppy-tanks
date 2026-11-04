@@ -7,8 +7,5 @@ write_files:
     content: |
       SERVER_ENVIRONMENT=dev
       DIRECTORY_URL=https://directory.sloppytanks.com
-      # A machine kept for an app release follows that release's content version instead
-      # of :dev: uncomment and fill in the hash its build printed.
-      # SERVER_TAG=content-<hash>
 runcmd:
   - curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash

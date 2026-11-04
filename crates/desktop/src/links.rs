@@ -137,9 +137,10 @@ pub fn invite_link(room: &str) -> String {
     }
 }
 
-/// The apps' App Store page, which the web version points to (App Store Connect's Apple
-/// ID for the app; the page shows the app once Apple releases it).
-#[cfg(target_arch = "wasm32")]
+/// The apps' App Store page, which the web version points to and an App Store app opens
+/// to update (App Store Connect's Apple ID for the app; the page shows the app once Apple
+/// releases it).
+#[cfg(any(target_arch = "wasm32", feature = "app-store"))]
 pub const APP_STORE: &str = "https://apps.apple.com/app/sloppy-tanks/id6829385069";
 
 /// Open one of the site's own pages (`privacy.html`, `support.html`) in the browser: a

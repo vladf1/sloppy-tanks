@@ -1,5 +1,5 @@
 import { contentVersion, protocolVersion, serverBuild } from "./content-version.mjs";
-import { gameServers } from "./servers.mjs";
+import { environment, gameServers } from "./servers.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
  * with what the live server reports: the protocol and content version decide whether
@@ -9,17 +9,18 @@ import { gameServers } from "./servers.mjs";
  * It also reports whether the live page that uses this server can join it; a page that
  * cannot is a warning, since the page deploy may simply not have caught up yet.
  * It checks the first server the directory lists for production, or with `--dev` for the
- * dev site; SLOPPY_SERVER_URL checks another server,
+ * dev site (`--app-store` for the App Store apps', which have no page); SLOPPY_SERVER_URL
+ * checks another server,
  * such as a local one, and SLOPPY_PAGE_URL the page beside it. */
 const HEALTH_TIMEOUT_MS = 10_000;
 const PRODUCTION_PAGE_URL = "https://sloppytanks.com/";
 const DEV_PAGE_URL = "https://dev.sloppytanks.com/";
-const dev = process.argv.includes("--dev");
+const role = environment(process.argv);
+const PAGE_URLS = { production: PRODUCTION_PAGE_URL, dev: DEV_PAGE_URL };
 // The address players use, as they reach it.
-const endpoint = process.env.SLOPPY_SERVER_URL ?? (await gameServers(dev))[0].url;
+const endpoint = process.env.SLOPPY_SERVER_URL ?? (await gameServers(role))[0].url;
 const pageUrl =
-  process.env.SLOPPY_PAGE_URL ??
-  (process.env.SLOPPY_SERVER_URL ? undefined : dev ? DEV_PAGE_URL : PRODUCTION_PAGE_URL);
+  process.env.SLOPPY_PAGE_URL ?? (process.env.SLOPPY_SERVER_URL ? undefined : PAGE_URLS[role]);
 
 async function readHealth(url) {
   const response = await fetch(url, {

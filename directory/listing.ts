@@ -1,8 +1,9 @@
 // The server directory's rules (worker.ts), free of Cloudflare imports so node tests run them.
 import { readRooms, type RoomListing } from "./room-listing";
 
-/** Each environment lists its own game servers: production's and the dev site's. */
-export const ENVIRONMENTS = ["production", "dev"] as const;
+/** Each environment lists its own game servers: production's, the dev site's, and the App
+ * Store apps', which run the released apps' content version rather than main's. */
+export const ENVIRONMENTS = ["production", "dev", "app-store"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
 /** Game servers announce at least every 15 s, so an entry outlives two missed announcements. */
@@ -22,9 +23,6 @@ export interface Announcement {
   commit?: string;
   dirty?: boolean;
   builtAt?: string;
-  /** The image tag a machine pinned to one follows (`content-<hash>` for an app release);
-   * absent when it follows its environment's. */
-  tag?: string;
   /** When the server process started, ISO 8601. */
   startedAt?: string;
   /** The process's CPU time over its latest 10 s sample, in percent of one core. */
@@ -91,7 +89,6 @@ export function parseAnnouncement(body: string): Announcement | undefined {
       commit: optional("commit"),
       dirty: value.dirty as boolean | undefined,
       builtAt: optional("builtAt"),
-      tag: optional("tag"),
       startedAt,
       cpuPercent: optionalAmount("cpuPercent", MAX_CPUS * 100),
       cpus,

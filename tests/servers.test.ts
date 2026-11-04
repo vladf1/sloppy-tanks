@@ -26,7 +26,7 @@ test("the production build, the traffic bots, the pilots and the startup scripts
     read("../crates/pilot/src/command_line.rs").match(/DEFAULT_DIRECTORY: &str = "([^"]+)"/)?.[1],
     DIRECTORY_URL,
   );
-  for (const name of ["production", "dev"]) {
+  for (const name of ["production", "dev", "app-store"]) {
     assert.equal(
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/DIRECTORY_URL=(\S+)/)?.[1],
       DIRECTORY_URL,

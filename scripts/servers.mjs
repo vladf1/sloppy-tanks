@@ -39,29 +39,27 @@ export const SSH_OPTIONS = [
   "ControlPersist=60",
 ];
 
-/** The environment of production's machines, or with `dev` the dev site's. */
-export const environment = (dev) => (dev ? "dev" : "production");
+/** The environment a command line names: the dev site's with `--dev`, the App Store apps'
+ * with `--app-store`, else production's. */
+export function environment(args) {
+  if (args.includes("--dev")) return "dev";
+  return args.includes("--app-store") ? "app-store" : "production";
+}
 
-/** The machines the directory lists for production, or with `dev` the dev site's, that
- * follow the environment's tag; with `ip`, that one machine, listed or not (one whose
- * server is down, or still booting, or one pinned to a tag of its own). Listing none is an
+/** The machines the directory lists for `role`, an environment; with `ip`, that one
+ * machine, listed or not (one whose server is down, or still booting). Listing none is an
  * error unless `noneListed` allows it. */
-export async function gameServers(dev, ip, noneListed = false) {
-  if (ip) return [serverMachine(environment(dev), ip)];
-  const list = `${DIRECTORY_URL}/servers?environment=${environment(dev)}`;
+export async function gameServers(role, ip, noneListed = false) {
+  if (ip) return [serverMachine(role, ip)];
+  const list = `${DIRECTORY_URL}/servers?environment=${role}`;
   const response = await fetch(list, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`${list} answered ${response.status}`);
-  // A machine pinned to an app release's content version (SERVER_TAG) keeps its own
-  // server: publishing, updating or checking the environment's leaves it out.
-  const servers = (await response.json()).servers.filter(({ tag }) => !tag);
+  const { servers } = await response.json();
   if (!servers.length && !noneListed) {
     throw new Error(`${list} lists no running server; name a machine with --ip`);
   }
   return servers.map(({ url }) =>
-    serverMachine(
-      environment(dev),
-      url.match(/^wss:\/\/([\d-]+)\.nip\.io$/)[1].replaceAll("-", "."),
-    ),
+    serverMachine(role, url.match(/^wss:\/\/([\d-]+)\.nip\.io$/)[1].replaceAll("-", ".")),
   );
 }
 

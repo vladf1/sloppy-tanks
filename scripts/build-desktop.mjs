@@ -178,6 +178,8 @@ function ensureTargets(targets) {
   if (missing.length) run("rustup", ["target", "add", ...missing]);
 }
 
+const APP_STORE_SERVERS = { SLOPPY_SERVER_ENVIRONMENT: "app-store" };
+
 /** Build the app for `target` and return its executable's path. */
 function build(target, env = {}) {
   run(
@@ -195,7 +197,9 @@ function build(target, env = {}) {
       ...(appStore ? ["--features", "app-store"] : []),
       ...(singlePlayer ? ["--features", "single-player"] : []),
     ],
-    { env: { ...process.env, ...stamps, ...env } },
+    // The App Store apps list the app-store environment's servers, which run the released
+    // apps' content version (crates/server/README.md); SLOPPY_SERVER_ENVIRONMENT overrides it.
+    { env: { ...(appStore ? APP_STORE_SERVERS : {}), ...process.env, ...stamps, ...env } },
   );
   const extension = target.includes("windows") ? ".exe" : "";
   return join(root, "target", target, PROFILE, BINARY + extension);

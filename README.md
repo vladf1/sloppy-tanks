@@ -374,12 +374,11 @@ reason for (`REQUIRED_REASON_APIS`).
 `--app-store` also enables the shell’s `app-store` feature, which hides the Developer
 settings section.
 
-The App Store's builds play online, on a server of their content version. Production's
-machines follow main's, so each release that players install keeps a machine of its own
-pinned to `content-<hash>`, the hash the Apps workflow prints in its summary (it fails
-before building when main has not deployed that content version yet): create the machine
-before the release reaches players and destroy the previous release's once nobody plays it
-([Pinned machines](crates/server/README.md#pinned-machines)).
+The App Store's builds play online in the `app-store` environment, whose machines run
+the released apps' content version rather than main's: release the iOS and Mac versions
+together in App Store Connect, then run `bun run server:release-app`
+([App Store machines](crates/server/README.md#app-store-machines)). Only the latest
+release plays online; an older app offers UPDATE, which opens its App Store page.
 
 `--single-player` builds any of the apps without multiplayer (the `single-player` feature
 of `sloppy-desktop`): Battle Setup shows the Single player tab alone, labelled Battle
