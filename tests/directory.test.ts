@@ -42,13 +42,14 @@ const server = (url: string, rooms: RoomListing[]): ListedServer => ({
 
 test("the directory has one list per game server environment", () => {
   // The startup scripts name each machine's environment.
-  const scripts = ["production", "dev"].map(
+  const scripts = ["production", "dev", "app-store"].map(
     (name) =>
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/SERVER_ENVIRONMENT=(\S+)/)?.[1],
   );
   assert.deepEqual([...ENVIRONMENTS].sort(), scripts.sort());
   assert.equal(parseEnvironment("production"), "production");
   assert.equal(parseEnvironment("dev"), "dev");
+  assert.equal(parseEnvironment("app-store"), "app-store");
   for (const value of [null, "", "Production", "staging"]) {
     assert.equal(parseEnvironment(value), undefined);
   }

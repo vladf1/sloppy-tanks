@@ -324,6 +324,11 @@ impl RoomsState {
         self.selected = room.to_owned();
     }
 
+    /// Game servers are up, but none plays this build's version: a newer game reached them.
+    fn outdated(&self) -> bool {
+        !self.list.servers.is_empty() && self.list.new_room_server().is_none()
+    }
+
     /// The status line and its hint: what the action button will do, or what is wrong.
     fn prompt(&self) -> (String, String) {
         match &self.state {
@@ -347,9 +352,13 @@ impl RoomsState {
                 format!("Ready to join room {}", self.selected),
                 "Hit JOIN ROOM to play.".into(),
             ),
-            _ if self.list.new_room_server().is_none() => (
+            _ if self.outdated() => (
                 WORDS.outdated_prompt.into(),
                 "The game server runs another version.".into(),
+            ),
+            _ if self.list.new_room_server().is_none() => (
+                "No game server is up".into(),
+                "Try again in a few minutes.".into(),
             ),
             _ => (
                 "Ready to create a room".into(),
@@ -1056,12 +1065,21 @@ pub fn multiplayer(
 
 /// CREATE ROOM, or JOIN ROOM with an open room chosen, in `rect`; true when pressed.
 /// With no server to create on it stands down (`.room-action .primary:disabled`): dark
-/// glass and grey type, and offline a lock and why under its name.
+/// glass and grey type, and offline a lock and why under its name. An App Store app the
+/// servers have moved past offers UPDATE instead, which opens its App Store page: the
+/// servers play only the latest release.
 fn room_action(ui: &mut egui::Ui, art: &Art, rect: Rect, state: &RoomsState) -> bool {
     let joining = !state.selected.is_empty();
     let label = if joining { "JOIN ROOM" } else { "CREATE ROOM" };
     if joining || state.list.new_room_server().is_some() {
         return paint::action_button(ui, art, rect, label, ROOM_ACTION_LETTERING, true).clicked();
+    }
+    #[cfg(feature = "app-store")]
+    if state.outdated() {
+        if paint::action_button(ui, art, rect, "UPDATE", ROOM_ACTION_LETTERING, true).clicked() {
+            links::open_url(ui.ctx(), links::APP_STORE);
+        }
+        return false;
     }
     let response = ui.interact(rect, Id::unique("room action"), Sense::hover());
     paint::labelled(&response, false, label);
@@ -1636,6 +1654,22 @@ mod tests {
             .iter()
             .map(|room| room.room.as_str())
             .collect()
+    }
+
+    /// Servers of another version mean this game is out of date; no server at all means
+    /// none is up, which an update would not fix (an App Store machine before the first
+    /// release).
+    #[test]
+    fn only_servers_of_another_version_ask_for_an_update() {
+        let mut state = answered(Vec::new());
+        assert!(!state.outdated());
+        assert_eq!(state.prompt().0, "Ready to create a room");
+        state.list.servers[0].content_version = "another".into();
+        assert!(state.outdated());
+        assert_eq!(state.prompt().0, WORDS.outdated_prompt);
+        state.list.servers.clear();
+        assert!(!state.outdated());
+        assert_eq!(state.prompt().0, "No game server is up");
     }
 
     /// A room on an extra level, picked by its code without the debug tools, stays

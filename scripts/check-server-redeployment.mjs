@@ -16,7 +16,8 @@ const PRODUCTION_PAGE_URL = "https://sloppytanks.com/";
 const DEV_PAGE_URL = "https://dev.sloppytanks.com/";
 const dev = process.argv.includes("--dev");
 // The address players use, as they reach it.
-const endpoint = process.env.SLOPPY_SERVER_URL ?? (await gameServers(dev))[0].url;
+const endpoint =
+  process.env.SLOPPY_SERVER_URL ?? (await gameServers(dev ? "dev" : "production"))[0].url;
 const pageUrl =
   process.env.SLOPPY_PAGE_URL ??
   (process.env.SLOPPY_SERVER_URL ? undefined : dev ? DEV_PAGE_URL : PRODUCTION_PAGE_URL);

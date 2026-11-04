@@ -5,8 +5,11 @@
 # window, audio and GPU dependencies need system libraries there.
 # Run by hand on main (`gh workflow run desktop.yml --ref main`), it also builds the iOS
 # and macOS apps for the App Store and uploads them to App Store Connect, where TestFlight
-# offers them to testers once Apple has processed them, for now without multiplayer
-# (`--single-player`).
+# offers them to testers once Apple has processed them. They list the app-store
+# environment's servers, which play the released apps' content version, so the job first
+# checks that main's build pushed this commit's server image (sha-<commit>) and, after
+# both uploads, points :app-store-candidate at it; `bun run server:release-app` moves
+# :app-store there once Apple has approved and released them (crates/server/README.md).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -171,6 +174,8 @@ jobs:
     needs: [macos-check, ios]
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
+    outputs:
+      server-image: ${{ steps.server-image.outputs.image }}
     strategy:
       fail-fast: false
       matrix:
@@ -224,10 +229,27 @@ jobs:
         with:
           cargo-cache: ${{ matrix.cargo-cache }}
           js-dependencies: "false"
+      # The App Store machines will run this commit's server image, which main's build
+      # pushes; a run started before that build finished fails here and can be run again.
+      - name: Check this commit's server image
+        id: server-image
+        if: steps.signing.outputs.ready == 'true'
+        run: |
+          tag="sha-${GITHUB_SHA::12}"
+          token=$(curl -fsS "https://ghcr.io/token?scope=repository:$NAME:pull" |
+            sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+          if ! curl -fsS --head --output /dev/null --header "Authorization: Bearer $token" \
+            --header "Accept: $MANIFEST_TYPES" "https://ghcr.io/v2/$NAME/manifests/$tag"; then
+            echo "::error::ghcr.io/$NAME has no $tag yet: wait for main's build of this commit."
+            exit 1
+          fi
+          echo "image=ghcr.io/$NAME:$tag" >> "$GITHUB_OUTPUT"
+        env:
+          NAME: vladf1/sloppy-tanks-server
+          MANIFEST_TYPES: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
-      # processed the build and fails if Apple finds it invalid. The App Store's first
-      # release is single player: online rooms and their player names come later.
-      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --single-player --upload
+      # processed the build and fails if Apple finds it invalid.
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}
@@ -238,6 +260,27 @@ jobs:
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/app-store-profile" "$RUNNER_TEMP/app-store-connect.p8"
+
+  # Once both apps reached TestFlight, their commit's server image becomes the candidate
+  # that `bun run server:release-app` releases to the App Store machines.
+  app-store-candidate:
+    name: App Store server candidate
+    needs: testflight
+    if: needs.testflight.outputs.server-image != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - name: Point :app-store-candidate at the App Store builds' server image
+        run: |
+          echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          docker buildx imagetools create --tag ghcr.io/vladf1/sloppy-tanks-server:app-store-candidate \
+            "$IMAGE"
+          echo "\`$IMAGE\` is the App Store server candidate: run \`bun run server:release-app\` when Apple releases these builds." >> "$GITHUB_STEP_SUMMARY"
+        env:
+          IMAGE: ${{ needs.testflight.outputs.server-image }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACTOR: ${{ github.actor }}
 
   windows:
     name: Windows app

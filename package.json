@@ -58,6 +58,7 @@
     "server:deploy": "bun run server:deploy-check && bun scripts/server.mjs deploy",
     "server:publish": "bun run server:deploy-check && bun scripts/server.mjs publish",
     "server:update": "bun scripts/server.mjs update",
+    "server:release-app": "bun scripts/server.mjs release-app",
     "server:rollback": "bun scripts/server.mjs rollback",
     "server:auto-update": "bun scripts/server.mjs auto-update",
     "server:logs": "bun scripts/server.mjs logs",

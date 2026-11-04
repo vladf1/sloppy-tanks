@@ -1,8 +1,9 @@
 // The server directory's rules (worker.ts), free of Cloudflare imports so node tests run them.
 import { readRooms, type RoomListing } from "./room-listing";
 
-/** Each environment lists its own game servers: production's and the dev site's. */
-export const ENVIRONMENTS = ["production", "dev"] as const;
+/** Each environment lists its own game servers: production's, the dev site's, and the App
+ * Store apps', which run the released apps' content version rather than main's. */
+export const ENVIRONMENTS = ["production", "dev", "app-store"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
 /** Game servers announce at least every 15 s, so an entry outlives two missed announcements. */

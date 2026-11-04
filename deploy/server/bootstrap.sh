@@ -2,13 +2,14 @@
 # A game server machine's whole setup, run as root by cloud-init at its first boot from the
 # provider's user data (deploy/server/cloud-init/), so a machine needs no SSH from a
 # developer's Mac: a change here reaches a machine when it is created again. The user data
-# writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production or dev, and
-# DIRECTORY_URL), which the server's unit and the updater read. This fetches the other
+# writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production, dev or
+# app-store, and DIRECTORY_URL), which the server's unit and the updater read. This fetches the other
 # files in deploy/server/ from the repository at SLOPPY_REF (main), installs Podman, the
 # server's and Caddy's Quadlet units and the image updater, allows key-only SSH and only
 # SSH, 80 and 443 through ufw, serves the nip.io name of the machine's IPv4 address and
-# starts the image its environment follows (CI's :production, or dev's latest publish on
-# :dev); the server then appears in the directory under its environment.
+# starts the image its environment follows (CI's :production, dev's latest publish on :dev
+# or the App Store release on :app-store); the server then appears in the directory under
+# its environment.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 SOURCE="https://raw.githubusercontent.com/vladf1/sloppy-tanks/${SLOPPY_REF:-main}/deploy/server"
@@ -58,9 +59,9 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
-# The first image pins the server's unit, which Quadlet generates only then. A dev machine
-# created before anything was published to :dev starts production's image, which
-# auto-update replaces at the first publish. Should the registry not answer now, the
+# The first image pins the server's unit, which Quadlet generates only then. A dev or App
+# Store machine created before anything was published to its tag starts production's
+# image, which auto-update replaces at the first publish. Should the registry not answer now, the
 # rest of the setup stands and auto-update starts the server once it can read the tag.
 [[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull ||
   echo "Could not pull a server image; auto-update starts one once it can read its tag" >&2

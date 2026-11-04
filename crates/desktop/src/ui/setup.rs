@@ -1932,16 +1932,17 @@ const PLAY_TABS: [(bool, &str, &str); 2] = [
     (true, "MULTIPLAYER", "Online rooms with friends"),
 ];
 
-/// Store builds keep the folder heading as Battle Setup.
+/// A build without multiplayer keeps its one tab's heading as Battle Setup.
 fn play_tabs() -> impl Iterator<Item = (bool, &'static str, &'static str)> {
+    let multiplayer = crate::app::offers_multiplayer();
     PLAY_TABS
         .into_iter()
-        .filter(|tab| !tab.0 || crate::app::offers_multiplayer())
-        .map(|tab| {
-            if cfg!(feature = "app-store") {
-                (false, "BATTLE SETUP", tab.2)
-            } else {
+        .filter(move |tab| !tab.0 || multiplayer)
+        .map(move |tab| {
+            if multiplayer {
                 tab
+            } else {
+                (false, "BATTLE SETUP", tab.2)
             }
         })
 }
