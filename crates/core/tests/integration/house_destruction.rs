@@ -473,7 +473,7 @@ fn a_cottage_keeps_a_bounded_number_of_marks_and_no_random_draw() {
         assert!(
             marks
                 .iter()
-                .all(|mark| mark.size.is_finite() && mark.size <= 6.0)
+                .all(|mark| mark.size.is_finite() && mark.size <= 8.0)
         );
     }
     assert_eq!(s.covers[house].timber_hits.len(), MAX_HOUSE_MARKS);

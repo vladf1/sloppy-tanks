@@ -12,7 +12,7 @@ use super::combat_rules::{COMBAT, MINE};
 use super::data::{group, weapon};
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
-use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed};
+use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed, is_roof_mark};
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
@@ -42,10 +42,13 @@ pub const MAX_HOUSE_MARKS: usize = 8;
 /// than opening its own.
 const HOUSE_MARK_MERGE: f64 = 0.8;
 const HOUSE_MARK_REACH: f64 = 0.35;
+/// A roof strike enlarges a roof hole only this close (m): a blast tears the sheet
+/// where it lands, so strikes a step apart open holes of their own.
+const ROOF_MARK_MERGE: f64 = 0.55;
 /// How much a standard shell grows a breach (a first shell opens one of size 1), and
 /// the largest a breach grows: by then it has torn out the wall between its openings.
 const HOUSE_MARK_GROWTH: f64 = 0.4;
-const HOUSE_MARK_LARGEST: f64 = 6.0;
+const HOUSE_MARK_LARGEST: f64 = 8.0;
 /// The most and least a single hit counts for, in standard shells.
 const HOUSE_MARK_SHELLS: (f64, f64) = (0.5, 2.0);
 
@@ -62,9 +65,14 @@ fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
     let shells = (amount / weapon(Weapon::Standard).damage)
         .clamp(HOUSE_MARK_SHELLS.0, HOUSE_MARK_SHELLS.1);
     let marks = &mut cover.timber_hits;
+    let roof = is_roof_mark(hit.y, cover.h);
     let reach = |mark: &TimberHit| {
         let gap = DVec3::new(mark.x - hit.x, mark.y - hit.y, mark.z - hit.z).length();
-        gap - (HOUSE_MARK_MERGE + HOUSE_MARK_REACH * mark.size)
+        if roof {
+            gap - ROOF_MARK_MERGE
+        } else {
+            gap - (HOUSE_MARK_MERGE + HOUSE_MARK_REACH * mark.size)
+        }
     };
     // The first nearest on a tie, so the choice never depends on float noise.
     let nearest = (0..marks.len()).min_by(|&a, &b| reach(&marks[a]).total_cmp(&reach(&marks[b])));

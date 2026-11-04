@@ -270,8 +270,10 @@ pub(super) fn wall_breaks(
         let n = outward(&shape.region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         for (a, b) in outside_openings(a, b, openings) {
+            // The cut through the wall: weathered timber, dark in the crack while
+            // the cottage stands in its shards.
             kit.quad(
-                Surface::Splinters,
+                Surface::Wood,
                 [at(a, 0.0), at(b, 0.0), at(b, WALL_EDGE), at(a, WALL_EDGE)],
                 facing,
             );
@@ -346,14 +348,21 @@ pub(super) fn roof_breaks(
         let n = outward(&shape.region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         let depth = roof.thick + DECK_EDGE;
+        // The torn covering is its own colour and the deck under it weathered
+        // timber, so a crack shows no pale seam across the roof before it opens.
         kit.quad(
-            Surface::Splinters,
+            Surface::Roof,
             [
                 at(a, SHINGLE_EDGE),
                 at(b, SHINGLE_EDGE),
-                at(b, -depth),
-                at(a, -depth),
+                at(b, 0.0),
+                at(a, 0.0),
             ],
+            facing,
+        );
+        kit.quad(
+            Surface::Wood,
+            [at(a, 0.0), at(b, 0.0), at(b, -depth), at(a, -depth)],
             facing,
         );
         let length = (b - a).length();
@@ -461,8 +470,8 @@ pub(super) fn chimney_breaks(
 /// (m) the halves slip along it.
 const FOLD_WIDTH: f64 = 0.95;
 const REFOLD_WIDTH: f64 = 1.25;
-const WALL_FOLD: (f64, f64) = (0.1, 0.2);
-const ROOF_FOLD: (f64, f64) = (0.16, 0.3);
+const WALL_FOLD: (f64, f64) = (0.03, 0.07);
+const ROOF_FOLD: (f64, f64) = (0.05, 0.1);
 const FOLD_WANDER: f64 = 0.18;
 const FOLD_SLIP: f64 = 0.04;
 /// Wall pieces taller than this (m) also break across, along a line wandering
@@ -668,7 +677,7 @@ fn fold_once(
 /// How much a collapse piece's paint varies across it (darkest, range): patches
 /// of dust, soot and damp over every finish, so a broken panel reads as a worn,
 /// filthy board rather than a clean painted card.
-const MOTTLE: (f32, f32) = (0.62, 0.4);
+const MOTTLE: (f32, f32) = (0.84, 0.2);
 /// Size (m) of the patches.
 const MOTTLE_SCALE: f64 = 0.8;
 
