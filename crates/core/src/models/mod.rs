@@ -135,7 +135,9 @@ beyond_geometry! {
     pub use effects_props::{aged_wreck_material, wreck_brightness};
     pub use flags::{FLAG_CLOTH_NODE, flags_model};
 }
-pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
+pub use house_model::{
+    HouseCoverBuild, HousePieces, PieceStep, heap_prop_footprints, heap_prop_name, house_pieces,
+};
 beyond_geometry! {
     pub use pickup_visuals::{
         LOAD_SCALE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,

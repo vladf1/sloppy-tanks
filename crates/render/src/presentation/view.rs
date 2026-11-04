@@ -11,16 +11,16 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, HouseCoverBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
     cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
-    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
-    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
-    tree_foliage, tree_part, wreck_brightness, wreck_model,
+    heap_prop_footprints, heap_prop_name, house_pieces, part, pickup_cube, pickup_signal,
+    pickup_tile_offset, release_tank_models, tank_model, timber_debris_model, timber_part_model,
+    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
-use sloppy_core::sim::house_layout::HousePiece;
+use sloppy_core::sim::house_layout::{HousePiece, is_house_heap};
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -746,7 +746,25 @@ struct CoverView {
     scale: Vec3,
     world: Mat4,
     tree: Option<TreeView>,
+    /// A cottage heap's lot, each part shown as it stood until a piece of the
+    /// collapse comes down on it.
+    props: Vec<HeapProp>,
 }
+
+/// A part of a collapsed cottage's lot ([`heap_prop_footprints`]): its joints as it
+/// stood and crushed, its world footprint `[x0, z0, x1, z1]`, and whether the wreck
+/// has come down on it yet.
+struct HeapProp {
+    up: usize,
+    down: usize,
+    footprint: [f64; 4],
+    crushed: bool,
+}
+
+/// A collapse piece whose centre is lower than this (m) over a heap prop's
+/// footprint, or within the reach (m) past it, has come down on it: lower than any
+/// piece of a standing wall, so nothing is crushed before the wreck falls.
+const PROP_CRUSH: (f64, f64) = (0.7, 0.25);
 
 /// A hit cover's new look being built over a few frames while its last one shows.
 struct CoverLook {
@@ -1717,8 +1735,29 @@ impl Presentation {
                 scale,
                 world,
                 tree,
+                props: self.heap_props(cover, model),
             },
         );
+    }
+
+    /// The lot parts of a cottage heap with its own model, as they stood.
+    fn heap_props(&self, cover: &RenderCover, model: ModelId) -> Vec<HeapProp> {
+        if cover.kind != CoverKind::Rubble || !is_house_heap(cover.h) {
+            return Vec::new();
+        }
+        let seed = cover.debris_seed.unwrap_or(0.0);
+        heap_prop_footprints(cover.x, cover.z, cover.w, cover.d, seed)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(k, footprint)| {
+                Some(HeapProp {
+                    up: self.renderer.model_node(model, &heap_prop_name(k, false))?,
+                    down: self.renderer.model_node(model, &heap_prop_name(k, true))?,
+                    footprint,
+                    crushed: false,
+                })
+            })
+            .collect()
     }
 
     /// Install a cover's view, retiring the look it replaces.
@@ -1867,6 +1906,7 @@ impl Presentation {
                     scale: Vec3::ONE,
                     world: Mat4::IDENTITY,
                     tree: tree_view,
+                    props: Vec::new(),
                 },
             );
         }
@@ -2713,6 +2753,25 @@ impl Presentation {
                     .set_node_visible(view.instance, tree.crown, !stump);
                 self.renderer
                     .set_node_visible(view.instance, tree.cut, stump);
+            }
+            for prop in view.props.iter_mut().filter(|prop| !prop.crushed) {
+                let [x0, z0, x1, z1] = prop.footprint;
+                let reach = PROP_CRUSH.1;
+                prop.crushed = state.fragments.iter().any(|fragment| {
+                    let p = &fragment.position;
+                    fragment.house_piece.is_some()
+                        && p.y < PROP_CRUSH.0
+                        && p.x > x0 - reach
+                        && p.x < x1 + reach
+                        && p.z > z0 - reach
+                        && p.z < z1 + reach
+                });
+                if prop.crushed {
+                    self.renderer
+                        .set_node_visible(view.instance, prop.up, false);
+                    self.renderer
+                        .set_node_visible(view.instance, prop.down, true);
+                }
             }
             let shown = cover.alive || stump;
             match view.joint {

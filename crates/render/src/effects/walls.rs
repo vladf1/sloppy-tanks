@@ -115,7 +115,18 @@ pub struct Walls {
     mask: Vec<u64>,
     candidates: Vec<u32>,
     gathered: Vec<(u32, f32)>,
+    /// The cottages standing at the last sync, and those fallen since, whose boxes
+    /// still hold the smoke round them until it has drifted off (until the match
+    /// time given), so a breach's dust does not drop into the wreck the frame the
+    /// cottage falls.
+    standing: Vec<u32>,
+    fallen: Vec<(WallBox, f64)>,
 }
+
+/// How long (s) a fallen cottage's box keeps holding the smoke round it, and how many
+/// such boxes are kept at once.
+const FALLEN_HOLD: f64 = 1.5;
+const MAX_FALLEN: usize = 4;
 
 /// A wall box in the puffs' single precision: centre x and z, half width and depth,
 /// height.
@@ -309,6 +320,40 @@ fn push_puff(
 impl Walls {
     pub fn sync(&mut self, state: &RenderState) {
         self.boxes.clear();
+        let now = state.elapsed;
+        self.fallen
+            .retain(|(_, until)| *until > now && *until - now <= FALLEN_HOLD);
+        for cover in state
+            .covers
+            .iter()
+            .filter(|cover| cover.kind == CoverKind::House)
+        {
+            if !cover.alive && self.standing.contains(&cover.id) && self.fallen.len() < MAX_FALLEN {
+                let box_ = WallBox {
+                    x: cover.x,
+                    z: cover.z,
+                    half_w: cover.w * 0.5,
+                    half_d: cover.d * 0.5,
+                    height: cover.h,
+                    // Smoke only: no shell strikes it now.
+                    material: None,
+                    marked: false,
+                    color: cover.color,
+                    trim: cover.color,
+                    roof: cover.color,
+                };
+                self.fallen.push((box_, now + FALLEN_HOLD));
+            }
+        }
+        self.standing.clear();
+        self.standing.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| cover.kind == CoverKind::House && cover.alive)
+                .map(|cover| cover.id),
+        );
+        self.boxes.extend(self.fallen.iter().map(|(box_, _)| *box_));
         for cover in state.covers.iter().filter(|cover| cover.alive) {
             let material = match cover.kind {
                 CoverKind::Container | CoverKind::Hedgehog => Some(WallMaterial::Steel),
@@ -346,6 +391,8 @@ impl Walls {
 
     pub fn clear(&mut self) {
         self.boxes.clear();
+        self.standing.clear();
+        self.fallen.clear();
         self.soft = [[0.0; 4]; 4];
     }
 
