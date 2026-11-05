@@ -272,7 +272,9 @@ impl<H> SettledShards<H> {
             let parts = merged(
                 members.iter().map(|id| {
                     let shard = &self.shards[id];
-                    (&shard.node, shard.pose.expect("posed"))
+                    // A roof slab come to rest shows it fell: dented and bent.
+                    let dent = (shard.lasting == Lasting::Scraps).then_some(*id);
+                    (&shard.node, shard.pose.expect("posed"), dent)
                 }),
                 true,
                 false,
@@ -347,7 +349,7 @@ impl<H> SettledShards<H> {
             chunk
                 .iter()
                 .filter(|(.., scraps)| scraps.is_none())
-                .map(|(node, pose, _)| (node, *pose)),
+                .map(|(node, pose, _)| (node, *pose, None)),
             false,
             true,
         );
@@ -400,17 +402,104 @@ impl<H> SettledShards<H> {
 /// its shards, walls included. Remains (`pressed`) lie squashed toward the ground,
 /// heights scaled down and normals tilted to match.
 fn merged<'a>(
-    shards: impl Iterator<Item = (&'a Node, Pose)>,
+    shards: impl Iterator<Item = (&'a Node, Pose, Option<u32>)>,
     casts: bool,
     pressed: bool,
 ) -> Vec<MergedPart> {
-    let mut parts = Vec::new();
+    let mut parts: Vec<MergedPart> = Vec::new();
     let mut slots = HashMap::new();
-    for (node, (position, rotation)) in shards {
+    for (node, (position, rotation), dent) in shards {
         let pose = Mat4::from_rotation_translation(rotation, position);
+        let before: Vec<usize> = parts.iter().map(|part| part.data.vertices.len()).collect();
         gather(node, pose, casts, pressed, &mut parts, &mut slots);
+        if let Some(id) = dent {
+            let ranges: Vec<(usize, usize)> = parts
+                .iter()
+                .enumerate()
+                .map(|(k, part)| {
+                    (
+                        before.get(k).copied().unwrap_or(0),
+                        part.data.vertices.len(),
+                    )
+                })
+                .collect();
+            let mut vertices: Vec<&mut Vertex> = Vec::new();
+            for (part, &(from, to)) in parts.iter_mut().zip(&ranges) {
+                vertices.extend(part.data.vertices[from..to].iter_mut());
+            }
+            buckle(&mut vertices, (position, rotation), id);
+        }
     }
     parts
+}
+
+/// How a roof slab come to rest shows it fell ([`buckle`]): the share of its length
+/// along its run where it creases (from, span), how far (rad) the part past the
+/// crease bends down, and how much (m) its edges ripple, over what length (m).
+const CREASE_AT: (f32, f32) = (0.3, 0.4);
+const CREASE_BEND: (f32, f32) = (0.07, 0.16);
+const EDGE_RIPPLE: f32 = 0.06;
+const RIPPLE_LENGTH: f32 = 0.45;
+
+/// Bend a resting roof slab's vertices (at `pose`, seeded by its fragment `id`):
+/// folded down across a crease where it came down on what lies under it, its far
+/// end dipping into the pile, and its edges rippled where they struck, so a sheet
+/// in the heap reads as one that fell rather than one laid there whole.
+fn buckle(vertices: &mut [&mut Vertex], (position, rotation): Pose, id: u32) {
+    if vertices.is_empty() {
+        return;
+    }
+    let inverse = rotation.inverse();
+    let local: Vec<Vec3> = vertices
+        .iter()
+        .map(|v| inverse * (Vec3::from(v.position) - position))
+        .collect();
+    let low = local.iter().copied().fold(Vec3::splat(f32::MAX), Vec3::min);
+    let high = local.iter().copied().fold(Vec3::splat(f32::MIN), Vec3::max);
+    let mut seed = id.wrapping_mul(0x2545_f491) ^ 0x9e37_79b9;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed % 10_000) as f32 / 10_000.0
+    };
+    // Crease across its longer side, toward one end or the other.
+    let along_x = high.x - low.x >= high.z - low.z;
+    let (from, to) = if along_x {
+        (low.x, high.x)
+    } else {
+        (low.z, high.z)
+    };
+    let at = CREASE_AT.0 + CREASE_AT.1 * next();
+    let flip = next() < 0.5;
+    let crease = from + (to - from) * if flip { 1.0 - at } else { at };
+    let bend = (CREASE_BEND.0 + (CREASE_BEND.1 - CREASE_BEND.0) * next()).tan();
+    let phase = next() * std::f32::consts::TAU;
+    let (across_low, across_high) = if along_x {
+        (low.z, high.z)
+    } else {
+        (low.x, high.x)
+    };
+    let half = ((across_high - across_low) * 0.5).max(1e-3);
+    let middle = (across_high + across_low) * 0.5;
+    for (vertex, p) in vertices.iter_mut().zip(local) {
+        let (s, t) = if along_x { (p.x, p.z) } else { (p.z, p.x) };
+        let past = if flip { crease - s } else { s - crease };
+        let mut drop = past.max(0.0) * bend;
+        // Edges ripple where they struck, the more the nearer the edge.
+        let edge = ((t - middle).abs() / half).clamp(0.0, 1.0).powi(4);
+        drop += EDGE_RIPPLE * edge * (s / RIPPLE_LENGTH + phase).sin();
+        let moved = p - Vec3::Y * drop;
+        vertex.position = (rotation * moved + position).into();
+        if past > 0.0 {
+            // Its face past the crease turns down with it.
+            let hinge = if along_x { Vec3::Z } else { Vec3::X };
+            let sign = if flip == along_x { 1.0 } else { -1.0 };
+            let normal = inverse * Vec3::from(vertex.normal);
+            let turned = Quat::from_axis_angle(hinge, sign * bend.atan()) * normal;
+            vertex.normal = (rotation * turned).into();
+        }
+    }
 }
 
 fn gather(
@@ -468,7 +557,7 @@ fn gather(
 /// at `pose`, cut to [`SCRAPS`] torn patches of its own frame placed by its
 /// fragment `id`, crumpled and pressed like the rest of the remains.
 fn add_scraps(parts: &mut Vec<MergedPart>, node: &Node, pose: Pose, id: u32) {
-    let mut whole = merged(std::iter::once((node, pose)), false, false);
+    let mut whole = merged(std::iter::once((node, pose, None)), false, false);
     let (position, rotation) = pose;
     let inverse = rotation.inverse();
     let patches = scrap_patches(id);
@@ -788,6 +877,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_resting_roof_slab_creases_down_past_one_line_and_keeps_its_place() {
+        let pose = (Vec3::new(5.0, 1.2, -3.0), Quat::from_rotation_y(0.4));
+        let parts = merged(std::iter::once((&slab(), pose, Some(11))), true, false);
+        let flat = merged(std::iter::once((&slab(), pose, None)), true, false);
+        let local = |v: &Vertex| pose.1.inverse() * (Vec3::from(v.position) - pose.0);
+        let mut drops = Vec::new();
+        for (bent, plain) in parts[0].data.vertices.iter().zip(&flat[0].data.vertices) {
+            let (b, p) = (local(bent), local(plain));
+            // Only bent down (or rippled at an edge) in its own frame, never moved
+            // across, and never far.
+            assert!((b.x - p.x).abs() < 1e-4 && (b.z - p.z).abs() < 1e-4);
+            drops.push(p.y - b.y);
+        }
+        let most = drops.iter().copied().fold(f32::MIN, f32::max);
+        let least = drops.iter().copied().fold(f32::MAX, f32::min);
+        assert!(most > 0.05 && most < 1.0, "{drops:?}");
+        assert!(least >= -EDGE_RIPPLE - 1e-4, "{drops:?}");
+        // Bent, not lowered whole: its corners drop by different amounts.
+        assert!(most - least > 0.005, "{drops:?}");
+    }
+
     /// How long building a fallen cottage's roof scraps takes, natively, for every
     /// village cottage (`cargo test --release -p sloppy-render scraps_timing --
     /// --ignored --nocapture`): the remains build up to [`CHUNK_SHARDS`] shards a
@@ -815,7 +926,7 @@ mod tests {
                     slabs += 1;
                 } else if piece.part.wall_index().is_some() {
                     let start = std::time::Instant::now();
-                    let _ = merged(std::iter::once((node, pose)), false, true);
+                    let _ = merged(std::iter::once((node, pose, None)), false, true);
                     worst_pressed = worst_pressed.max(start.elapsed().as_secs_f64() * 1000.0);
                 }
             }
@@ -846,7 +957,13 @@ mod tests {
             pieces.sort_by_key(|(_, node)| std::cmp::Reverse(size(node)));
             for chunk in pieces.chunks(CHUNK_SHARDS) {
                 let start = std::time::Instant::now();
-                let parts = merged(chunk.iter().map(|(_, node)| (node, pose)), true, false);
+                let parts = merged(
+                    chunk
+                        .iter()
+                        .map(|(piece, node)| (node, pose, piece.part.is_roof().then_some(7))),
+                    true,
+                    false,
+                );
                 worst_chunk = worst_chunk.max(start.elapsed().as_secs_f64() * 1000.0);
                 worst_vertices =
                     worst_vertices.max(parts.iter().map(|p| p.data.vertices.len()).sum());

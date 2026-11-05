@@ -628,8 +628,12 @@ const ROOF_HOLD: f64 = 0.9;
 /// freed to turn after [`ROOF_HOLD`], how long (s) more it may be held for that,
 /// and the fastest it may then spin (rad/s) while the wreck settles.
 const ROOF_LANDED: f32 = 2.0;
+/// The soonest (s) a wall-driven collapse's roof slab, landed, may turn.
+const ROOF_LAND_SOONEST: f64 = 0.55;
 const ROOF_HOLD_MORE: f64 = 0.8;
 const ROOF_SPIN: f32 = 4.0;
+/// The fastest (m/s) such a slab may rise, knocked by what it lands on.
+const ROOF_RISE: f32 = 0.3;
 /// Seconds the roof hangs before it gives way onto the buckling walls, and how
 /// fast (m/s) it starts down.
 const ROOF_GIVE: f64 = 0.2;
@@ -1207,11 +1211,21 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                     && leads_fall(cover, piece, slope_out(cover, piece.part));
                 contain(body, cover, if leads { LEAD_CONTAINED } else { CONTAINED });
                 // Come down through its walls, a slab settles on the wreck rather
-                // than tumbling over on it.
-                if piece.part.is_roof() && age < TOPPLE_WINDOW.1 && !caved_in(cover) {
+                // than tumbling over on it, or being knocked back up off what it
+                // lands on (a ridge slab bounced 0.6 m and sat level on the far
+                // walls' tops above the heap for half a second).
+                if piece.part.is_roof()
+                    && age < TOPPLE_WINDOW.1
+                    && fragment.house_kicked.is_none()
+                    && !caved_in(cover)
+                {
                     let spin = body.angvel();
                     if spin.length() > ROOF_SPIN {
                         body.set_angvel(spin * (ROOF_SPIN / spin.length()), false);
+                    }
+                    let v = body.linvel();
+                    if v.y > ROOF_RISE {
+                        body.set_linvel(Vector::new(v.x, ROOF_RISE, v.z), false);
                     }
                 }
             }
@@ -1269,11 +1283,13 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 }
             }
         }
-        if piece.part.is_roof() && age >= ROOF_HOLD {
+        if piece.part.is_roof() && age >= ROOF_LAND_SOONEST {
             let body = &mut simulation.world.bodies[fragment.body];
-            // Still falling fast, it keeps its pitch until it lands (or a moment
-            // more): freed mid-fall, the knock of landing spun it over onto its
-            // rafters.
+            // It keeps its pitch while it falls, and is freed to turn once it has
+            // come down on the wreck (or a moment after the roof would have):
+            // freed mid-fall, the knock of landing spun it over onto its rafters,
+            // and held on after landing it sat level on the walls' tops like a
+            // shelf.
             let landed = body.linvel().length() < ROOF_LANDED || age >= ROOF_HOLD + ROOF_HOLD_MORE;
             if body.is_rotation_locked()[0] && landed {
                 body.lock_rotations(false, true);
@@ -1360,7 +1376,6 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             && !sliver(fragment)
             && age >= TOPPLE_WINDOW.0
             && (age < TOPPLE_WINDOW.1 || thrown)
-            && body.linvel().length() < LAY_SLOWER
         {
             let local = fragment.house_id.and_then(|id| {
                 simulation
@@ -1373,14 +1388,24 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 let normal = *body.rotation() * local;
                 let tipped = fragment.house_topples >= LAY_AFTER;
                 let leaning = still && age >= LAY_LEANING_AFTER && normal.y.abs() < LEANING_UP;
-                if normal.y.abs() < LAID && (tipped || leaning) {
+                // Turned its fill and still held up, it is left as it rests, so the
+                // pile comes to rest rather than shoving on.
+                let most = if thrown { LAY_TICKS_THROWN } else { LAY_TICKS };
+                let turning = fragment.house_topples < LAY_AFTER + most;
+                // A roof slab rolling over the pile's edge onto its rafters is
+                // turned back, shingles up, while it still can be.
+                let rolling_over =
+                    piece.part.is_roof() && normal.y < ROLLING_OVER && normal.y > -ROLLING_OVER;
+                let slow = body.linvel().length() < LAY_SLOWER;
+                let laying = slow && normal.y.abs() < LAID && (tipped || leaning);
+                if (laying || rolling_over) && turning {
                     fragment.house_topples = fragment.house_topples.saturating_add(1).max(LAY_AFTER);
                     let low = body
                         .colliders()
                         .iter()
                         .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
                         .fold(f32::INFINITY, f32::min);
-                    lay_down(body, normal, low);
+                    lay_down(body, normal, low, rolling_over);
                     continue;
                 }
             }
@@ -1665,6 +1690,14 @@ const LAY_RATE: f32 = 2.5;
 /// Tips a wall shard is given before it is laid down instead, and how slow (m/s)
 /// it must be moving: not one still in flight.
 const LAY_AFTER: u8 = INWARD_TOPPLES;
+/// The most ticks a shard is turned down for (well past a half turn at
+/// [`LAY_RATE`]), and one a shell threw about: one still held up then is wedged,
+/// and left, so the pile comes to rest.
+const LAY_TICKS: u8 = 240;
+const LAY_TICKS_THROWN: u8 = 60;
+/// How far past upright (its top's normal's rise either side of level) a roof
+/// slab is turned back shingles up rather than let roll over onto its rafters.
+const ROLLING_OVER: f32 = 0.35;
 const LAY_SLOWER: f32 = 1.5;
 /// A shard come to rest leaning up steeper than this (its face's normal's rise,
 /// about 40 degrees) this long (s) into the collapse is laid down too.
@@ -1686,12 +1719,16 @@ pub fn sliver(fragment: &Fragment) -> bool {
 pub const SLIVER: f64 = 0.45;
 
 /// Turn a wall shard or roof slab whose face points along `normal` a step toward lying on the
-/// side its face leans to, over its foot (at `low`, its lowest height): its pose is
+/// side its face leans to (face up when `up`), over its foot (at `low`, its lowest height): its pose is
 /// turned, not its speed, so what it is wedged against cannot hold it up on edge
 /// (a tip's shove, or a steady spin, was stopped by a stub of wall or the mound it
 /// leant on, and it rocked back); the pile pushes it out of whatever it turns into.
-fn lay_down(body: &mut rapier3d::prelude::RigidBody, normal: Vector, low: f32) {
-    let target = if normal.y >= 0.0 { Vector::Y } else { -Vector::Y };
+fn lay_down(body: &mut rapier3d::prelude::RigidBody, normal: Vector, low: f32, up: bool) {
+    let target = if up || normal.y >= 0.0 {
+        Vector::Y
+    } else {
+        -Vector::Y
+    };
     let axis = normal.cross(target);
     let off = axis.length();
     if off < 1e-4 {
