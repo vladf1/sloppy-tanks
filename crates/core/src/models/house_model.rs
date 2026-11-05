@@ -257,6 +257,15 @@ fn wallpaper(palette: &Palette) -> Arc<Material> {
     ))
 }
 
+/// [`wallpaper`] in a broken cottage's open rooms.
+fn shaded_wallpaper(palette: &Palette) -> Arc<Material> {
+    satin(scale_hex_color(wallpaper(palette).color.0, ROOM_SHADE))
+}
+
+/// How much darker a broken cottage's rooms are drawn than their paint: they stand in
+/// the shade of their walls and roof, which the lighting does not shadow inside.
+const ROOM_SHADE: f64 = 0.78;
+
 /// Kit texture density per finish: brick walls at the brick's scale.
 fn cottage_uv(walls: WallFinish) -> impl Fn(Surface) -> f64 {
     move |surface| match surface {
@@ -296,6 +305,17 @@ fn add_weathered(
     palette: &Palette,
     walls: WallFinish,
 ) {
+    add_finished(group, meshes, palette, walls, false);
+}
+
+/// [`add_weathered`], its rooms' lining shaded when `rooms` (a broken cottage's).
+fn add_finished(
+    group: &mut Node,
+    meshes: KitMeshes<Surface>,
+    palette: &Palette,
+    walls: WallFinish,
+    rooms: bool,
+) {
     for (surface, mesh) in meshes {
         let material = match surface {
             Surface::Siding => {
@@ -304,6 +324,7 @@ fn add_weathered(
                     ..(*cottage_material(Surface::Siding, palette, walls)).clone()
                 })
             }
+            Surface::Lining if rooms => shaded_wallpaper(palette),
             Surface::Lining => wallpaper(palette),
             _ => cottage_material(surface, palette, walls),
         };
@@ -419,7 +440,7 @@ pub(super) fn paint_cottage(
     // siding mesh carries the vertex colours its draw expects.
     let mut meshes = meshes;
     grime(&mut meshes, design.h);
-    add_weathered(group, meshes, palette, design.style.walls);
+    add_finished(group, meshes, palette, design.style.walls, true);
 }
 
 /// A cottage's shingle courses, weathered as the standing roof's.
@@ -1773,19 +1794,52 @@ fn gable_deck(parts: &mut Parts, roof: &Roof) {
         } else {
             HousePart::LeftRoof
         };
-        // A falling slab shows the boards of its deck, not a painted soffit.
-        // The painted soffit, on the roof's parts as it stood.
-        let deck = Surface::Trim;
+        let split = parts.split;
         let kit = parts.kit(piece);
-        let section = |z: f64| {
+        // The deck between `outer` and `inner` (m out from the ridge).
+        let section = |z: f64, outer: f64, inner: f64| {
+            // Exactly the eave's and the ridge's heights at their ends.
+            let under = |x: f64| {
+                if x <= 0.0 {
+                    roof.ridge
+                } else if x >= xe {
+                    ye
+                } else {
+                    ye + (roof.ridge - ye) * (1.0 - x / xe)
+                }
+            };
+            // The ridge line at +0, as the deck always had it.
+            let across = |x: f64| if x == 0.0 { 0.0 } else { side * x };
             vec![
-                DVec3::new(side * xe, ye, z),
-                DVec3::new(0.0, roof.ridge, z),
-                DVec3::new(0.0, roof.ridge + t, z),
-                DVec3::new(side * xe, ye + t, z),
+                DVec3::new(across(outer), under(outer), z),
+                DVec3::new(across(inner), under(inner), z),
+                DVec3::new(across(inner), under(inner) + t, z),
+                DVec3::new(across(outer), under(outer) + t, z),
             ]
         };
-        kit.solid_skipping(deck, &[section(-zr), section(zr)], Some(DECK_TOP));
+        if split {
+            // A broken roof shows the raw boards of its deck from inside, and keeps
+            // its painted soffit only under the overhang, outside the wall line.
+            let wall = (xe - EAVE_OVERHANG).clamp(0.0, xe);
+            let deck = section;
+            kit.solid_skipping(
+                Surface::Trim,
+                &[deck(-zr, xe, wall), deck(zr, xe, wall)],
+                Some(DECK_TOP),
+            );
+            kit.solid_skipping(
+                Surface::Sheathing,
+                &[deck(-zr, wall, 0.0), deck(zr, wall, 0.0)],
+                Some(DECK_TOP),
+            );
+        } else {
+            // The painted soffit, on the roof as it stands whole.
+            kit.solid_skipping(
+                Surface::Trim,
+                &[section(-zr, xe, 0.0), section(zr, xe, 0.0)],
+                Some(DECK_TOP),
+            );
+        }
         // Fascia on the eave ends, standing below the soffit.
         kit.block(
             Surface::Trim,
@@ -1944,7 +1998,7 @@ fn slope_underside(kit: &mut Kit<Surface>, slope: &Slope, thick: f64) {
         (slope.length, -slope.half_ridge),
     ];
     let low = corners.map(|(s, a)| slope.at(s, a, -thick));
-    kit.quad(Surface::Wood, low, -slope.normal);
+    kit.quad(Surface::Sheathing, low, -slope.normal);
     let high = corners.map(|(s, a)| slope.at(s, a, 0.0));
     let middle = high.iter().copied().sum::<DVec3>() / 4.0;
     for i in 0..4 {

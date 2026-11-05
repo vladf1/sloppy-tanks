@@ -30,6 +30,14 @@ const OUTER: f64 = 25.0;
 const ON_LINE: f64 = 1e-6;
 /// An attic floor's boards over its plastered ceiling (m), and the ground floor's.
 const FLOOR_BOARDS: f64 = 0.04;
+/// Floorboards' width (m), and their seams' width and how proud of them they are
+/// drawn, as are a partition's studs of its plaster.
+const BOARD_WIDTH: f64 = 0.16;
+const SEAM_WIDTH: f64 = 0.012;
+const SEAM_PROUD: f64 = 0.003;
+/// A partition's studs: their spacing and width (m).
+const STUD_SPACING: f64 = 0.45;
+const STUD_WIDTH: f64 = 0.045;
 /// How far (m) the footing stands proud of the wall's face.
 const PLINTH_LIP: f64 = 0.05;
 /// A part's side this close (m) to the cottage's outline is on its face.
@@ -307,7 +315,7 @@ fn rooms_into(group: &mut Node, layout: &HouseStructure, pieces: &CottagePieces,
         let size = part.max - part.min;
         let middle = part.center();
         match part.kind {
-            // Boards over a plastered ceiling.
+            // Boards over a plastered ceiling, their seams dark between them.
             PartKind::Floor => {
                 let boards = DVec3::new(size.x, FLOOR_BOARDS, size.z);
                 rooms.block(
@@ -315,6 +323,15 @@ fn rooms_into(group: &mut Node, layout: &HouseStructure, pieces: &CottagePieces,
                     boards,
                     DMat4::from_translation(DVec3::new(middle.x, part.max.y - FLOOR_BOARDS / 2.0, middle.z)),
                 );
+                let seams = (size.z / BOARD_WIDTH).floor() as usize;
+                for k in 1..seams {
+                    let z = part.min.z + size.z * k as f64 / seams as f64;
+                    rooms.block(
+                        Surface::Sheathing,
+                        DVec3::new(size.x, SEAM_PROUD, SEAM_WIDTH),
+                        DMat4::from_translation(DVec3::new(middle.x, part.max.y + SEAM_PROUD / 2.0, z)),
+                    );
+                }
                 let ceiling = DVec3::new(size.x, size.y - FLOOR_BOARDS, size.z);
                 rooms.block(
                     Surface::Lining,
@@ -322,8 +339,18 @@ fn rooms_into(group: &mut Node, layout: &HouseStructure, pieces: &CottagePieces,
                     DMat4::from_translation(DVec3::new(middle.x, part.min.y + ceiling.y / 2.0, middle.z)),
                 );
             }
+            // Lath and plaster on studs, which stand proud of it where it is torn.
             PartKind::Partition => {
                 rooms.block(Surface::Lining, size, DMat4::from_translation(middle));
+                let studs = (size.x / STUD_SPACING).round().max(1.0) as usize;
+                for k in 0..=studs {
+                    let x = part.min.x + size.x * k as f64 / studs as f64;
+                    rooms.block(
+                        Surface::Wood,
+                        DVec3::new(STUD_WIDTH, size.y, size.z + 2.0 * SEAM_PROUD),
+                        DMat4::from_translation(DVec3::new(x, middle.y, middle.z)),
+                    );
+                }
             }
             _ => {}
         }
