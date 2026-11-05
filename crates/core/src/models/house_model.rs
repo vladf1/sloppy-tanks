@@ -48,8 +48,8 @@ use crate::geometry::{Mesh, narrow, octahedron_geometry, widen};
 use crate::scene::{Material, Node};
 use crate::sim::house_layout::{
     CHIMNEY, EAVE_OVERHANG, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, PLINTH, PieceShape,
-    RAFTER_DEPTH, Roof, RoofCover, RoofForm, Shutters, WALL_DEPTH, WING_OVERHANG, WallFinish, Wing,
-    heap_house, is_roof_mark,
+    RAFTER_DEPTH, Roof, RoofBreaks, RoofCover, RoofForm, Shutters, WALL_DEPTH, WING_OVERHANG,
+    WallFinish, Wing, heap_house, is_roof_mark, window_columns,
 };
 use crate::sim::math::Random;
 use crate::sim::timber_layout::TimberHit;
@@ -152,8 +152,16 @@ const EAVE_DROP_WIDTH: f64 = 2.4;
 const EAVE_BREAK_END: f64 = 0.35;
 const EAVE_BREAK_JOIN: f64 = 0.3;
 /// How deep (m) in from the eave wall's face the wall over a breach turns with its
-/// eave section.
-const EAVE_WALL_BAND: f64 = 0.35;
+/// eave section: the wall and the room behind the breach, whose ceiling hangs
+/// from the rafters. Left where they stood, the ceiling's joists stood up
+/// through the dropped sheet like rafter tails.
+const EAVE_WALL_BAND: f64 = ROOM_DEPTH + WALL_DEPTH + 0.1;
+/// How far (m) under a breach's top the wall that turns with its eave section
+/// starts: the top plate hanging across the breach is nailed to the rafters and
+/// goes down with them, the studs hanging from it snapping under it. Left behind,
+/// the plate and stud tops stood up through the dropped sheet and threw a comb
+/// of shadows across it.
+const EAVE_PLATE: f64 = 0.16;
 /// A breach reaching this close (m) to its wall's end has eaten the corner post.
 const CORNER_REACH: f64 = 0.3;
 /// Patches of shingles a shelled roof has shed round each roof hole, and over a
@@ -660,7 +668,10 @@ impl HousePieces {
     /// halves are cut, or start the next piece (folding its shard into halves).
     pub fn step(&mut self) -> PieceStep {
         let Some(shapes) = &self.shapes else {
-            self.shapes = Some(self.design.pieces());
+            self.shapes = Some(
+                self.design
+                    .pieces(&house_roof_breaks(&self.design, &self.hits)),
+            );
             return PieceStep::Cut;
         };
         let Some(kits) = &mut self.kits else {
@@ -1289,7 +1300,7 @@ fn eave_breaks(design: &HouseDesign, roof: &Roof, holes: &[Vec<Hole>; 4]) -> Vec
                 side,
                 from,
                 to,
-                below: top.min(roof.eave_y) - 0.05,
+                below: top.min(roof.eave_y) - EAVE_PLATE,
                 face: side * design.w / 2.0,
                 ridge: roof.ridge,
                 pitch: roof.pitch,
@@ -1299,6 +1310,88 @@ fn eave_breaks(design: &HouseDesign, roof: &Roof, holes: &[Vec<Hole>; 4]) -> Vec
     }
     breaks
 }
+
+/// A breach in an eave wall up under its eave that has not broken the eave (one
+/// of [`EAVE_CUE_SIZE`] shells or more, its top within [`EAVE_CUE_REACH`] of the
+/// wall's): the smoke out of it has blackened the siding above it up to the
+/// eave, and the blast up the wall knocked the roof's sheets over it loose, one or
+/// two slipped askew down off the eave, their ends lifted. From the gameplay
+/// camera, which sees little of the wall under the eave, the slipped sheets break
+/// the eave's line over the breached side.
+fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks: &[EaveBreak]) {
+    let frames = wall_frames(design.w, design.d);
+    for index in [2, 3] {
+        let (frame, _) = frames[index];
+        let side = frame.transform_vector3(DVec3::Z).x.signum();
+        let piece = if side > 0.0 {
+            HousePart::RightRoof
+        } else {
+            HousePart::LeftRoof
+        };
+        let along = |u: f64| frame.transform_point3(DVec3::new(u, 0.0, 0.0)).z;
+        let cues: Vec<([f64; 4], f64, f64)> = parts.holes[index]
+            .iter()
+            .filter(|hole| {
+                hole.bounds[3] >= roof.wall - EAVE_CUE_REACH && hole.size >= EAVE_CUE_SIZE
+            })
+            .map(|hole| (hole.bounds, hole.size, hole.seed))
+            .collect();
+        for ([u0, _, u1, y1], size, seed) in cues {
+            let (a, b) = (along(u0), along(u1));
+            let (z0, z1) = (a.min(b), a.max(b));
+            if breaks
+                .iter()
+                .any(|section| section.side == side && section.to > z0 && section.from < z1)
+            {
+                continue;
+            }
+            let mut rng = Random::new(seed + 29.0);
+            let (mid, width) = ((u0 + u1) / 2.0, u1 - u0);
+            let top = roof.wall - 0.02;
+            if top > y1 + 0.1 {
+                let at = |u: f64, y: f64| frame.transform_point3(DVec3::new(u, y, 0.008));
+                let spread = rng.range(0.55, 0.7);
+                parts.kit(HousePart::wall(index)).quad(
+                    Surface::Soot,
+                    [
+                        at(mid - width * 0.4, y1),
+                        at(mid + width * 0.4, y1),
+                        at(mid + width * spread, top),
+                        at(mid - width * spread, top),
+                    ],
+                    frame.transform_vector3(DVec3::Z),
+                );
+            }
+            let count = if size >= 1.5 * EAVE_CUE_SIZE { 2 } else { 1 };
+            let kit = parts.kit(piece);
+            for k in 0..count {
+                let z = (z0 + (z1 - z0) * (0.35 + 0.3 * f64::from(k)) + rng.range(-0.12, 0.12))
+                    .clamp(-roof.rake_z + 0.4, roof.rake_z - 0.4);
+                let length = rng.range(0.7, 1.0);
+                let x = roof.eave_x - length / 2.0 + rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
+                let y = roof.top(side * x.min(roof.eave_x - 0.05), z) + 0.03;
+                let tilt = roof.pitch.atan() - rng.range(0.05, 0.12);
+                kit.block(
+                    Surface::Roof,
+                    DVec3::new(length, 0.022, SHEET_WIDTH),
+                    DMat4::from_translation(DVec3::new(side * x, y, z))
+                        * DMat4::from_rotation_y(
+                            rng.range(0.15, 0.32) * if k == 0 { 1.0 } else { -1.0 },
+                        )
+                        * DMat4::from_rotation_z(-side * tilt),
+                );
+            }
+        }
+    }
+}
+
+/// How many shells a breach under the eave must have taken, and how near the wall's
+/// top it must reach (m), to blacken the siding over it and knock sheets loose; how
+/// far (m) such a sheet has slipped down past the eave, and its width.
+const EAVE_CUE_SIZE: f64 = 2.0;
+const EAVE_CUE_REACH: f64 = 1.4;
+const SHEET_SLIP: (f64, f64) = (0.22, 0.38);
+const SHEET_WIDTH: f64 = 0.44;
 
 /// The torn edges of a broken eave section ([`EaveBreak`]), hidden inside the deck
 /// while it lies flush: along each of its lines from ridge to eave the cut through
@@ -1951,13 +2044,7 @@ fn wall_role(design: &HouseDesign, index: usize) -> WallRole {
 /// Window centres along a wall: either side of the door, a pair or one on a
 /// gable or long wall.
 fn window_positions(role: WallRole, half: f64) -> Vec<f64> {
-    if role.door || (role.gable && half >= 2.8) {
-        vec![-half * 0.54, half * 0.54]
-    } else if half >= 2.75 {
-        vec![-half * 0.48, half * 0.48]
-    } else {
-        vec![0.0]
-    }
+    window_columns(role.door, role.gable, half)
 }
 
 fn window_opening(u: f64, roof: &Roof) -> Opening {
@@ -3438,39 +3525,32 @@ fn house_base(parts: &mut Parts, design: &HouseDesign) {
     }
 }
 
-/// Wall `index` with its openings, holes, trim and dressing: one of a cottage's
-/// sections ([`PartsCut`]).
-#[allow(clippy::too_many_arguments)]
-fn house_wall(
-    parts: &mut Parts,
-    design: &HouseDesign,
-    roof: &Roof,
-    build: Build,
-    hits: &[TimberHit],
-    rng: &mut Random,
-    index: usize,
-) {
-    let standing = build == Build::Standing;
-    let (frame, half) = wall_frames(design.w, design.d)[index];
+/// A wall's openings and what its breaches keep clear of.
+struct WallOpenings {
+    /// Its windows, the ground floor's first.
+    windows: Vec<Opening>,
+    ground_floor: usize,
+    /// The windows, the door and the gable vent.
+    openings: Vec<Opening>,
+    /// Round each opening (in `openings` order), then the door canopy and a
+    /// two-storey house's belt course.
+    keepouts: Vec<Keepout>,
+    door_opening: Opening,
+    vent_opening: Opening,
+    vent: bool,
+    two_storey: bool,
+}
+
+/// The openings of wall `index`, which its breaches keep clear of.
+fn wall_openings(design: &HouseDesign, roof: &Roof, index: usize) -> WallOpenings {
+    let half = wall_frames(design.w, design.d)[index].1;
+    let role = wall_role(design, index);
     let door_opening = Opening {
         u: 0.0,
         y: PLINTH,
         width: DOOR_WIDTH,
         height: DOOR_HEIGHT,
     };
-    let door_edge = DOOR_WIDTH / 2.0 + CASING;
-    let brick = design.style.walls == WallFinish::Brick;
-    let role = wall_role(design, index);
-    let piece = HousePart::wall(index);
-    let mut outline = vec![
-        DVec2::new(-half, PLINTH),
-        DVec2::new(half, PLINTH),
-        DVec2::new(half, roof.wall),
-    ];
-    if role.gable {
-        outline.push(DVec2::new(0.0, roof.ridge));
-    }
-    outline.push(DVec2::new(-half, roof.wall));
     let mut windows: Vec<Opening> = window_positions(role, half)
         .into_iter()
         .map(|u| window_opening(u, roof))
@@ -3520,6 +3600,87 @@ fn house_wall(
         let belt = belt_line(roof);
         keepouts.push([-half, belt - BELT, half, belt + BELT]);
     }
+    WallOpenings {
+        windows,
+        ground_floor,
+        openings,
+        keepouts,
+        door_opening,
+        vent_opening,
+        vent,
+        two_storey,
+    }
+}
+
+/// What had broken a cottage's roof before it fell, from its marks: the eave
+/// sections its breaches dropped and the holes shells tore in its roof, which its
+/// collapse breaks along ([`HouseDesign::pieces`]).
+pub fn house_roof_breaks(design: &HouseDesign, hits: &[TimberHit]) -> RoofBreaks {
+    let roof = design.roof();
+    let mut holes: [Vec<Hole>; 4] = Default::default();
+    for index in [2, 3] {
+        let half = wall_frames(design.w, design.d)[index].1;
+        let openings = wall_openings(design, &roof, index);
+        holes[index] = wall_holes(
+            design,
+            hits,
+            index,
+            half,
+            roof.wall,
+            &openings.windows,
+            &openings.keepouts[openings.windows.len()..],
+        )
+        .0;
+    }
+    RoofBreaks {
+        eave_spans: eave_breaks(design, &roof, &holes)
+            .iter()
+            .map(|section| (section.side, section.from, section.to))
+            .collect(),
+        holes: roof_holes(design, &roof, hits)
+            .iter()
+            .map(|hole| hole.plan)
+            .collect(),
+    }
+}
+
+/// Wall `index` with its openings, holes, trim and dressing: one of a cottage's
+/// sections ([`PartsCut`]).
+#[allow(clippy::too_many_arguments)]
+fn house_wall(
+    parts: &mut Parts,
+    design: &HouseDesign,
+    roof: &Roof,
+    build: Build,
+    hits: &[TimberHit],
+    rng: &mut Random,
+    index: usize,
+) {
+    let standing = build == Build::Standing;
+    let (frame, half) = wall_frames(design.w, design.d)[index];
+    let door_edge = DOOR_WIDTH / 2.0 + CASING;
+    let brick = design.style.walls == WallFinish::Brick;
+    let role = wall_role(design, index);
+    let piece = HousePart::wall(index);
+    let mut outline = vec![
+        DVec2::new(-half, PLINTH),
+        DVec2::new(half, PLINTH),
+        DVec2::new(half, roof.wall),
+    ];
+    if role.gable {
+        outline.push(DVec2::new(0.0, roof.ridge));
+    }
+    outline.push(DVec2::new(-half, roof.wall));
+    let WallOpenings {
+        windows,
+        ground_floor,
+        openings,
+        keepouts,
+        door_opening,
+        vent_opening,
+        vent,
+        two_storey,
+    } = wall_openings(design, roof, index);
     let (holes, blasted, torn_out) = wall_holes(
         design,
         hits,
@@ -3814,6 +3975,7 @@ fn house_roof(
     for section in &breaks {
         eave_break_edges(parts, roof, section);
     }
+    breach_eave_cues(parts, design, roof, &breaks);
     shed_shingles(parts, design, roof, roof_holes);
 
     if !parts.split {
@@ -7347,7 +7509,7 @@ mod tests {
         for &(x, z, w, d, h) in picks.map(|pick| pick.expect("both roof covers in the village")) {
             let pieces = house_pieces(x, z, w, d, h, &[]);
             let design = HouseDesign::of(x, z, w, d, h);
-            assert_eq!(pieces.len(), design.pieces().len());
+            assert_eq!(pieces.len(), design.pieces(&RoofBreaks::default()).len());
             // A piece is drawn in the standing cottage's finishes, so it costs at most
             // the draws the standing cottage does.
             for (piece, node) in &pieces {

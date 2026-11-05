@@ -137,7 +137,7 @@ beyond_geometry! {
 }
 pub use house_model::{
     HOUSE_MOUND, HOUSE_ROOM, HouseCoverBuild, HousePieces, PieceStep, heap_prop_footprints,
-    heap_prop_name, house_pieces,
+    heap_prop_name, house_pieces, house_roof_breaks,
 };
 beyond_geometry! {
     pub use pickup_visuals::{

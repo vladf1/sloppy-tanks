@@ -147,6 +147,13 @@ const WALL_CHUNK: Cut = Cut {
 /// How far a collapse's flying pieces are dulled toward its dust, so they read
 /// as dusty wood and plaster in the cloud rather than bright paint chips.
 const HOUSE_BURST_DUST: (u32, f32) = (0x7d7366, 0.5);
+/// A shell in a fallen cottage's pile throws this many pieces and up to this many
+/// more, the first few lengths of board, out (m/s) and up (m/s) as
+/// [`between`] spans.
+const RUBBLE_PIECES: [usize; 2] = [10, 5];
+const RUBBLE_BOARDS: usize = 3;
+const RUBBLE_SPEED: [f64; 2] = [0.6, 2.4];
+const RUBBLE_LIFT: [f64; 2] = [2.0, 3.5];
 /// Plaster and lath out of a collapsing cottage's walls, dulled by the fall.
 const HOUSE_PLASTER: [u32; 2] = [0xa99d89, 0x857a69];
 const SHINGLE: Cut = Cut {
@@ -460,6 +467,7 @@ impl WoodChips {
         match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
+            (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
             (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
                 self.shatter(event, random)
             }
@@ -518,6 +526,52 @@ impl WoodChips {
                 speed * elevation.sin(),
                 direction[1] * speed * elevation.cos(),
             );
+            let piece = wood_piece(random, cut, position, velocity, color);
+            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+        }
+        self.changed = true;
+    }
+
+    /// A shell bursting in a fallen cottage's pile: lengths of its painted boards
+    /// (`event.color`), splinters, plaster and scraps of roofing thrown up and out
+    /// all round the burst, most dropping back within a couple of metres, while
+    /// the simulation throws the pile's own pieces near it.
+    fn rubble_hit(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let paint = event.color.unwrap_or(CRATE_WOOD);
+        let height = event.height.unwrap_or(HIT_HEIGHT);
+        let count = RUBBLE_PIECES[0] + (random.next_f64() * RUBBLE_PIECES[1] as f64) as usize;
+        for i in 0..count {
+            let roll = random.next_f64();
+            let (cut, color) = if i < RUBBLE_BOARDS {
+                (SIDING_BOARD, hex_to_linear(paint))
+            } else if roll < 0.45 {
+                (
+                    pick_cut(random, BURST_MIX),
+                    wood_color(random, BURST_MIX, paint),
+                )
+            } else if roll < 0.7 {
+                (SHINGLE, hex_to_linear(paint))
+            } else {
+                let [pale, dark] = HOUSE_PLASTER.map(hex_to_linear);
+                let k = random.next_f64() as f32;
+                (
+                    PLASTER_LUMP,
+                    [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
+                )
+            };
+            let dust = hex_to_linear(HOUSE_BURST_DUST.0);
+            let shaded = shade(color, 0.66 + random.next_f64() * 0.22);
+            let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * HOUSE_BURST_DUST.1);
+            let out = heading(random);
+            let reach = random.next_f64() * 0.35;
+            let position = DVec3::new(
+                event.x + out[0] * reach,
+                (height + (random.next_f64() - 0.5) * 0.4).max(0.15),
+                event.z + out[1] * reach,
+            );
+            // Up more than out, so most land within a couple of metres.
+            let speed = between(random, RUBBLE_SPEED);
+            let velocity = DVec3::new(out[0] * speed, between(random, RUBBLE_LIFT), out[1] * speed);
             let piece = wood_piece(random, cut, position, velocity, color);
             push(&mut self.wood, MAX_WOOD_CHIPS, piece);
         }

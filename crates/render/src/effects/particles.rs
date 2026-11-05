@@ -262,7 +262,9 @@ impl ParticleEffects {
         if cover_effect && event.cover_kind == Some(CoverKind::Cargo) {
             return false;
         }
-        let timber = cover_effect && event.cover_kind == Some(CoverKind::Timber);
+        // A shell in a fallen cottage's pile chips its timber like a timber wall's.
+        let rubble = event.kind == T::Impact && event.cover_kind == Some(CoverKind::House);
+        let timber = cover_effect && event.cover_kind == Some(CoverKind::Timber) || rubble;
         let tree = cover_effect && event.cover_kind == Some(CoverKind::Tree);
         let chip_hit = event.kind == T::Impact && (tree || timber);
         // A felled tree's falling trunk and crown carry the moment: the snap

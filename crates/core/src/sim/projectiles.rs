@@ -15,9 +15,11 @@ use super::debris_physics::{
     blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
 };
 use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
+use super::house_layout::{heap_house, is_house_heap};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
+use super::scenery_pieces::kick_house_rubble;
 use super::shooter_rewind::{ShooterRewind, target_ticks};
 use super::simulation::{ProjectileMove, Simulation};
 use super::tank_dimensions::tank_muzzle;
@@ -442,6 +444,16 @@ fn impact_event(x: f64, z: f64, size: f64, color: u32) -> SimEvent {
     impact
 }
 
+/// The way a shell flies, as a unit vector on the ground (+z when it stands still).
+fn shell_heading(shot: &Shot) -> Vec2 {
+    let speed = shot.vx.hypot(shot.vz);
+    if speed > 0.0 {
+        Vec2::new(shot.vx / speed, shot.vz / speed)
+    } else {
+        Vec2::new(0.0, 1.0)
+    }
+}
+
 fn remove_shot(simulation: &mut Simulation, id: u32) {
     if let Some(index) = simulation.shots.iter().position(|shot| shot.id == id) {
         simulation.shots.remove(index);
@@ -545,6 +557,9 @@ fn resolve_contact(
         Contact::Debris { fragment: fi } => {
             let fragment = &simulation.fragments[fi];
             let timber = fragment.timber_part.is_some();
+            // A piece of a fallen cottage's pile: the burst throws it and the
+            // pieces round it about, in their own paint and dust.
+            let rubble = fragment.house_piece.is_some();
             let fragment_color = fragment.color;
             let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
             let body = &simulation.world.bodies[fragment.body];
@@ -567,6 +582,8 @@ fn resolve_contact(
                 .unwrap_or(shell_point);
             if shot.weapon == Weapon::Rocket {
                 rocket_blast(simulation, &shot);
+            } else if rubble {
+                kick_house_rubble(simulation, point, shell_heading(&shot));
             } else {
                 hit_projectile_debris(simulation, fi, &shot, point);
             }
@@ -574,10 +591,18 @@ fn resolve_contact(
                 point.x,
                 point.z,
                 0.6,
-                if timber { fragment_color } else { shot_color },
+                if timber || rubble {
+                    fragment_color
+                } else {
+                    shot_color
+                },
             );
             impact.height = Some(point.y);
-            impact.cover_kind = timber.then_some(CoverKind::Timber);
+            impact.cover_kind = if timber {
+                Some(CoverKind::Timber)
+            } else {
+                rubble.then_some(CoverKind::House)
+            };
             simulation.events.push(impact);
         }
         Contact::Tank { tank: ti } => {
@@ -646,6 +671,25 @@ fn resolve_contact(
                 }
                 hit_movable_cover(simulation, ci, &shot);
             }
+            // A cottage's heap: the burst throws the loose pieces lying on it.
+            let heap = cover
+                .map(|ci| &simulation.covers[ci])
+                .filter(|cover| cover.kind == CoverKind::Rubble && is_house_heap(cover.h))
+                .map(|cover| {
+                    cover.debris_seed.map_or(cover.color, |seed| {
+                        heap_house(cover.x, cover.z, cover.w, cover.d, seed, cover.h)
+                            .1
+                            .style
+                            .siding
+                    })
+                });
+            if shot.weapon != Weapon::Rocket && heap.is_some() {
+                kick_house_rubble(
+                    simulation,
+                    Point3::new(shot.x, shot.combat_y(), shot.z),
+                    shell_heading(&shot),
+                );
+            }
             if shot.weapon == Weapon::Rocket {
                 rocket_blast(simulation, &shot);
             } else if let Some(ci) = cover {
@@ -700,6 +744,11 @@ fn resolve_contact(
                 impact.from = cover
                     .kick
                     .map(|kick| Point3::new(shot.x - kick.x, y, shot.z - kick.z));
+            }
+            if let Some(paint) = heap {
+                impact.cover_kind = Some(CoverKind::House);
+                impact.height = Some(shot.combat_y());
+                impact.color = Some(paint);
             }
             simulation.events.push(impact);
         }

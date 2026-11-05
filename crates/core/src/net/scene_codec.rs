@@ -107,7 +107,7 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("ladder", TowerPiece::Ladder),
 ];
 /// Every shard a cottage breaks into, part by part (as [`HousePiece::ALL`]).
-pub const HOUSE_PIECES: [(&str, HousePiece); 51] = [
+pub const HOUSE_PIECES: [(&str, HousePiece); 59] = [
     ("front-wall-0", HousePiece::new(HousePart::FrontWall, 0)),
     ("front-wall-1", HousePiece::new(HousePart::FrontWall, 1)),
     ("front-wall-2", HousePiece::new(HousePart::FrontWall, 2)),
@@ -144,10 +144,18 @@ pub const HOUSE_PIECES: [(&str, HousePiece); 51] = [
     ("right-roof-1", HousePiece::new(HousePart::RightRoof, 1)),
     ("right-roof-2", HousePiece::new(HousePart::RightRoof, 2)),
     ("right-roof-3", HousePiece::new(HousePart::RightRoof, 3)),
+    ("right-roof-4", HousePiece::new(HousePart::RightRoof, 4)),
+    ("right-roof-5", HousePiece::new(HousePart::RightRoof, 5)),
+    ("right-roof-6", HousePiece::new(HousePart::RightRoof, 6)),
+    ("right-roof-7", HousePiece::new(HousePart::RightRoof, 7)),
     ("left-roof-0", HousePiece::new(HousePart::LeftRoof, 0)),
     ("left-roof-1", HousePiece::new(HousePart::LeftRoof, 1)),
     ("left-roof-2", HousePiece::new(HousePart::LeftRoof, 2)),
     ("left-roof-3", HousePiece::new(HousePart::LeftRoof, 3)),
+    ("left-roof-4", HousePiece::new(HousePart::LeftRoof, 4)),
+    ("left-roof-5", HousePiece::new(HousePart::LeftRoof, 5)),
+    ("left-roof-6", HousePiece::new(HousePart::LeftRoof, 6)),
+    ("left-roof-7", HousePiece::new(HousePart::LeftRoof, 7)),
     ("front-roof-0", HousePiece::new(HousePart::FrontRoof, 0)),
     ("front-roof-1", HousePiece::new(HousePart::FrontRoof, 1)),
     ("front-roof-2", HousePiece::new(HousePart::FrontRoof, 2)),
@@ -298,7 +306,7 @@ const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
-const HOUSE_NAMES: [&str; 51] = names(&HOUSE_PIECES);
+const HOUSE_NAMES: [&str; 59] = names(&HOUSE_PIECES);
 
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);

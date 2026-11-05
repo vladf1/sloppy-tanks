@@ -422,6 +422,17 @@ impl Walls {
     /// The hard wall a shell struck at `(x, y, z)`: steel or stone, the nearest face
     /// and the room around the point.
     pub fn strike(&self, x: f64, y: f64, z: f64) -> Option<Strike> {
+        // The shell that felled a cottage struck its wall, which is falling pieces
+        // now, not the heap of rubble inside it: a face found on the heap put the
+        // hit's burst and flash inside the cottage, where the flash lit the far
+        // gable through the falling walls.
+        let inside = |wall: &WallBox| {
+            (x - wall.x).abs() - wall.half_w < STRIKE_REACH
+                && (z - wall.z).abs() - wall.half_d < STRIKE_REACH
+        };
+        if self.fallen.iter().any(|(wall, _)| inside(wall)) {
+            return None;
+        }
         let mut best: Option<(f64, Strike)> = None;
         for wall in &self.boxes {
             let Some(material) = wall.material else {

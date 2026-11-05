@@ -1003,7 +1003,11 @@ impl ExplosionEffects {
             && event.height.is_none())
         .then(|| self.walls.strike(event.x, 1.0, event.z))
         .flatten();
+        // A shell bursting in a fallen cottage's pile: a dull hit in its dust.
+        let rubble =
+            event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::House);
         let struck = match event.kind {
+            SimEventType::Impact if rubble => Some(Struck::Stone),
             SimEventType::Impact if event.cover_kind.is_none() => Some(if event.height.is_some() {
                 Struck::Steel
             } else if strike.is_some_and(|strike| strike.material == WallMaterial::Steel) {
@@ -1121,6 +1125,14 @@ impl ExplosionEffects {
                     ),
                 };
                 wall_mark = Some((strike, blast.phase, blast.dust));
+            }
+            if rubble {
+                // Plaster, lath and paint dust off the pile, not the ground's.
+                let paint = event.color.unwrap_or(PLASTER_DUST);
+                blast.dust = scaled(
+                    mixed(linear(paint), linear(PLASTER_DUST), SIDING_PLASTER),
+                    SIDING_DUST_SHADE,
+                );
             }
         }
         if let Some(wood) = wood {

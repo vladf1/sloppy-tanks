@@ -11,8 +11,8 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::damage::MAX_HOUSE_MARKS;
 use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
-    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, WALL_DEPTH, heap_house,
-    heap_seed, is_house_heap,
+    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, RoofBreaks, WALL_DEPTH,
+    heap_house, heap_seed, is_house_heap,
 };
 use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
@@ -121,7 +121,7 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
     assert!(!s.covers[house].alive);
     assert!(event_count(&s, SimEventType::Destroy) >= 1);
     let pieces: Vec<HousePiece> = s.fragments.iter().filter_map(|f| f.house_piece).collect();
-    let shapes = design.pieces();
+    let shapes = design.pieces(&RoofBreaks::default());
     assert_eq!(pieces.len(), shapes.len(), "every part falls once");
     for (piece, shape) in pieces.iter().zip(&shapes) {
         assert_eq!(*piece, shape.piece);
@@ -194,7 +194,7 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
         s.fragments.iter().any(|f| f.house_piece.is_some()),
         "the collapse stays to be seen"
     );
-    tick(&mut s, 6.0);
+    tick(&mut s, 13.0);
     assert!(s.fragments.is_empty());
     assert_eq!(s.world.bodies.len(), bodies);
 }
@@ -440,7 +440,11 @@ fn extra_level_cottages_are_built_and_fall_like_the_villages() {
         assert!((corner.x.abs() - w / 2.0).abs() < 1e-9, "{x} {z}");
         assert!((corner.z.abs() - d / 2.0).abs() < 1e-9, "{x} {z}");
         let (inside_w, inside_d) = (design.w / 2.0 - WALL_DEPTH, design.d / 2.0 - WALL_DEPTH);
-        for slab in design.pieces().iter().filter(|p| p.piece.part.is_roof()) {
+        for slab in design
+            .pieces(&RoofBreaks::default())
+            .iter()
+            .filter(|p| p.piece.part.is_roof())
+        {
             for p in &slab.hull {
                 assert!(p.x.abs() < inside_w && p.z.abs() < inside_d, "{x} {z} {p}");
             }
@@ -719,7 +723,7 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
     let d = design(&s, house);
     let wall = fall(DVec3::new(0.4, 1.0, d.d / 2.0), 0.35);
     // The fingerprint of the fall as it was before roof-driven collapses caved in.
-    assert_eq!(speeds_print(&wall), -126_108);
+    assert_eq!(speeds_print(&wall), -234_181);
     let roof = fall(DVec3::new(0.5, d.h - 0.35, 0.3), 0.35);
     let mean = |fall: &Fall, pick: &dyn Fn(HousePiece) -> bool, of: &dyn Fn(DVec3) -> f64| {
         let values: Vec<f64> = fall
@@ -759,4 +763,139 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
             .filter(|(piece, ..)| piece.part.is_roof())
             .all(|(_, _, v, _)| v.y < -1.0)
     );
+}
+
+/// A lone cottage shelled down through one wall, left `seconds` to settle.
+fn fallen_cottage(seconds: f64) -> (Simulation, usize) {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    while s.covers[house].alive {
+        shell_at(&mut s, house, DVec3::new(0.4, 1.0, d.d / 2.0));
+    }
+    tick(&mut s, seconds);
+    (s, house)
+}
+
+/// Each cottage piece's id, position and speed.
+fn pile(s: &Simulation) -> Vec<(u32, DVec3, f32)> {
+    s.fragments
+        .iter()
+        .filter(|f| {
+            f.house_piece
+                .is_some_and(|piece| piece.part != HousePart::Mound)
+        })
+        .map(|f| {
+            let body = &s.world.bodies[f.body];
+            let p = body.translation();
+            let p = DVec3::new(f64::from(p.x), f64::from(p.y), f64::from(p.z));
+            (f.id, p, body.linvel().length())
+        })
+        .collect()
+}
+
+#[test]
+fn a_shell_into_a_fallen_cottage_throws_the_pieces_near_it_and_leaves_the_rest() {
+    let (mut s, house) = fallen_cottage(8.0);
+    let before = pile(&s);
+    assert!(
+        before.iter().all(|(_, _, speed)| *speed < 0.3),
+        "the pile has settled"
+    );
+    // A standard shell flown at hull height through the pile's middle from the
+    // open front, as a tank would fire into it.
+    let (c, d) = (s.covers[house].clone(), design(&s, house));
+    let from = at(&s, house, DVec3::new(0.0, 0.0, d.d / 2.0 + 14.0));
+    let to = at(&s, house, DVec3::ZERO);
+    let (dx, dz) = (to.x - from.x, to.z - from.z);
+    let length = dx.hypot(dz);
+    let speed = weapon(Weapon::Standard).speed;
+    let id = s.allocate_id();
+    s.shots.push(sloppy_core::sim::Shot {
+        id,
+        x: from.x,
+        z: from.z,
+        vx: dx / length * speed,
+        vz: dz / length * speed,
+        team: Team::Blue,
+        owner: 0,
+        weapon: Weapon::Standard,
+        damage: SHELL,
+        life: 3.0,
+        ..Default::default()
+    });
+    let rng = s.rng.state;
+    let mut burst = None;
+    for _ in 0..90 {
+        s.events.clear();
+        idle(&mut s);
+        if let Some(event) = s.events.iter().find(|event| {
+            event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::House)
+        }) {
+            burst = Some((event.x, event.z));
+            break;
+        }
+    }
+    let (x, z) = burst.expect("the shell bursts in the pile as rubble");
+    assert_eq!(s.rng.state, rng, "throwing the pile draws nothing");
+    assert!((x - c.x).abs() < c.w && (z - c.z).abs() < c.d);
+    // Pieces near the burst are thrown up; those far from it lie as they were.
+    let thrown = pile(&s);
+    let near = |p: DVec3| ((p.x - x).powi(2) + (p.z - z).powi(2)).sqrt();
+    assert!(
+        thrown
+            .iter()
+            .any(|(_, p, speed)| near(*p) < 2.5 && *speed > 0.8),
+        "{thrown:?}"
+    );
+    for ((_, p, _), (_, q, speed)) in before.iter().zip(&thrown) {
+        if near(*p) > 4.5 {
+            assert!(*speed < 0.3 && p.distance(*q) < 0.05, "{p} moved to {q}");
+        }
+    }
+    // They land again nearby and settle.
+    tick(&mut s, 2.0);
+    for (_, p, speed) in pile(&s) {
+        assert!(speed < 0.5, "settled again ({p})");
+        assert!(
+            (p.x - c.x).abs() < c.w && (p.z - c.z).abs() < c.d,
+            "{p} stays by the heap"
+        );
+    }
+}
+
+#[test]
+fn a_fallen_cottages_pieces_sink_one_at_a_time_from_the_top_of_the_pile() {
+    let (mut s, _) = fallen_cottage(12.0);
+    let all = pile(&s).len();
+    assert!(all > 20, "{all}");
+    let mut counts = Vec::new();
+    for _ in 0..8 {
+        tick(&mut s, 1.0);
+        counts.push(pile(&s).len());
+    }
+    // From 13 s to 21 s the pile goes down over several seconds, never more than
+    // a third of it in any one second.
+    assert_eq!(counts[counts.len() - 1], 0, "{counts:?}");
+    let mut last = all;
+    let mut steps = 0;
+    for &count in &counts {
+        assert!(last - count <= all / 3 + 1, "{all} {counts:?}");
+        steps += usize::from(count < last);
+        last = count;
+    }
+    assert!(steps >= 4, "{counts:?}");
+}
+
+#[test]
+fn every_piece_a_cottage_breaks_into_reaches_room_clients_by_name() {
+    use sloppy_core::net::scene_codec::HOUSE_PIECES;
+    assert_eq!(HOUSE_PIECES.len(), HousePiece::ALL.len());
+    for piece in HousePiece::ALL {
+        assert!(
+            HOUSE_PIECES
+                .iter()
+                .any(|(name, named)| *named == piece && *name == String::from(piece)),
+            "{piece:?}"
+        );
+    }
 }

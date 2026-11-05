@@ -601,7 +601,7 @@ const CAVE_FOLD: f64 = 0.9;
 const CAVE_DROP: f64 = 1.2;
 const CAVE_RIDGE_DROP: f64 = 1.4;
 /// How fast (m/s) the walls under a caving roof are drawn in beneath it.
-const CAVE_BUCKLE: f64 = 0.9;
+const CAVE_BUCKLE: f64 = 1.3;
 /// Damping that settles the heavy shards into the pile instead of tumbling; a
 /// roof slab's spin is held harder, so a knock from a wall does not flip it.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
@@ -652,10 +652,20 @@ const BOARD_THROW: (f64, f64) = (2.0, 4.5);
 const BOARD_CLEARANCE: f64 = 0.4;
 /// The chimney's brick, for its tint and dust.
 const CHIMNEY_BRICK: u32 = 0x9c4a32;
-/// Seconds a cottage's pieces lie on its heap before they sink into it: long
-/// enough that the collapse settles into a pile that stays a while; the heap
-/// carries the cottage's remains on for the rest of the round.
-const HOUSE_PIECE_LIFE: f64 = 12.0;
+/// Seconds a cottage's pieces lie on its heap before the first of them sinks into
+/// it: long enough that the collapse settles into a pile that stays a while; the
+/// heap carries the cottage's remains on for the rest of the round. They sink one
+/// at a time from the top of the pile down ([`sink_delay`]).
+const HOUSE_PIECE_LIFE: f64 = 12.5;
+/// A shell bursting in a fallen cottage's pile throws the pieces about it: those
+/// within this reach (m) of the burst, harder the nearer, are thrown out from it
+/// (m/s), up (m/s) and spun (rad/s), a piece longer than [`RUBBLE_KICK_SIZE`] (m)
+/// the less the longer (down to [`RUBBLE_KICK_LEAST`] of it), so boards and scraps
+/// fly where a roof slab only lurches. The rest of the pile stays as it lies.
+const RUBBLE_KICK_REACH: f64 = 1.8;
+const RUBBLE_KICK: (f64, f64, f64) = (3.6, 3.8, 4.0);
+const RUBBLE_KICK_SIZE: f64 = 1.0;
+const RUBBLE_KICK_LEAST: f64 = 0.3;
 /// Seconds after a collapse when its slowed, lying shards are held by heavier
 /// damping (linear, angular), so the pile comes to rest instead of creeping, the
 /// speeds (m/s, rad/s) below which a shard counts as slowed and the height (m) of
@@ -720,7 +730,10 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
     let fall = if caved { DVec3::ZERO } else { fall };
     let turn = Quat4::yaw(design.yaw());
     let frames = wall_frames(design.w, design.d);
-    for shape in design.pieces() {
+    // It breaks where it was broken: along the eave sections its breaches dropped
+    // and through its roof's holes, as its pieces are drawn.
+    let breaks = crate::models::house_roof_breaks(&design, &cover.timber_hits);
+    for shape in design.pieces(&breaks) {
         let part = shape.piece.part;
         let local: Vec<f32> = shape
             .hull
@@ -1062,11 +1075,9 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         .iter_mut()
         .filter(|fragment| breakup.pieces.contains(&fragment.id))
     {
-        let life = if fragment.house_piece.is_some() {
-            HOUSE_PIECE_LIFE
-        } else {
-            LOOSE_LIFE
-        } + DEBRIS_CLEANUP_SECONDS;
+        let life = fragment.house_piece.map_or(LOOSE_LIFE, |piece| {
+            HOUSE_PIECE_LIFE + sink_delay(piece)
+        }) + DEBRIS_CLEANUP_SECONDS;
         fragment.life = life;
         fragment.expires_at = Some(simulation.elapsed + life);
     }
@@ -1088,6 +1099,26 @@ fn caved_in(cover: &Cover) -> bool {
     roof > walls
 }
 
+/// Seconds after [`HOUSE_PIECE_LIFE`] a cottage's piece sinks into its heap: the
+/// roof's slabs first, as they lie on top of the pile, then the chimney, the walls'
+/// upper shards and the stubs last, each a little apart from the next, so the pile
+/// goes down a piece at a time and nothing is left resting on a piece that sank.
+/// The piece alone decides, so every peer agrees and the settling knows its age.
+fn sink_delay(piece: HousePiece) -> f64 {
+    let shard = f64::from(piece.shard);
+    match piece.part.wall_index() {
+        Some(wall) if lower_wall(piece) => 4.6 + wall as f64 * 0.25 + shard * 0.17,
+        Some(wall) => 2.4 + wall as f64 * 0.3 + shard * 0.21,
+        None => match piece.part {
+            HousePart::Chimney => 1.0 + shard * 0.5,
+            HousePart::LeftRoof => 0.15 + shard * 0.29,
+            HousePart::FrontRoof => 0.5 + shard * 0.29,
+            HousePart::BackRoof => 0.65 + shard * 0.29,
+            _ => shard * 0.29,
+        },
+    }
+}
+
 /// Whether a wall shard is a lower one, standing under its wall's split.
 fn lower_wall(piece: HousePiece) -> bool {
     piece.part.wall_index().is_some_and(|wall| wall != 1) && piece.shard.is_multiple_of(2)
@@ -1097,7 +1128,6 @@ fn lower_wall(piece: HousePiece) -> bool {
 /// collapse has had time to come down is held by heavy damping until something
 /// throws it about again.
 pub fn settle_house_pieces(simulation: &mut Simulation) {
-    let full = HOUSE_PIECE_LIFE + DEBRIS_CLEANUP_SECONDS;
     for fragment in &mut simulation.fragments {
         let Some(piece) = fragment.house_piece else {
             continue;
@@ -1105,7 +1135,7 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         if piece.part == HousePart::Mound {
             continue;
         }
-        let age = full - fragment.life;
+        let age = HOUSE_PIECE_LIFE + sink_delay(piece) + DEBRIS_CLEANUP_SECONDS - fragment.life;
         if piece.part.is_roof() || piece.part == HousePart::Chimney {
             // The roof and chimney come down on the wreck, not across the yard: a
             // slab sliding out past the footprint's edge is stopped there.
@@ -1280,6 +1310,70 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
         }
+    }
+}
+
+/// A shell bursting at `point` in a fallen cottage's pile, flying along `along`
+/// (a unit vector): every loose piece of the pile within [`RUBBLE_KICK_REACH`] of
+/// the burst is thrown out from it, up and spun, the nearer and the smaller the
+/// harder, and let go of the settled pile's damping until it lands again. The
+/// stubs led down into the heap and the mound under it stay; the rest of the pile
+/// is left as it lies. It draws no random numbers.
+pub fn kick_house_rubble(simulation: &mut Simulation, point: Point3, along: Vec2) {
+    let at = vector(point.x, point.y, point.z);
+    let world = &mut simulation.world;
+    for fragment in &simulation.fragments {
+        let Some(piece) = fragment.house_piece else {
+            continue;
+        };
+        if piece.part == HousePart::Mound
+            || fragment.house_stub.is_some()
+            || fragment.life <= DEBRIS_CLEANUP_SECONDS
+        {
+            continue;
+        }
+        let body = &world.bodies[fragment.body];
+        let Some(&handle) = body.colliders().first() else {
+            continue;
+        };
+        let collider = &world.colliders[handle];
+        let nearest = collider
+            .shape()
+            .project_point(collider.position(), at, true)
+            .point;
+        let distance = f64::from((nearest - at).length());
+        if distance >= RUBBLE_KICK_REACH {
+            continue;
+        }
+        let reach = 1.0 - distance / RUBBLE_KICK_REACH;
+        let length = fragment
+            .dimensions
+            .map_or(RUBBLE_KICK_SIZE, |size| size.x.max(size.y).max(size.z));
+        let share = (RUBBLE_KICK_SIZE / length).clamp(RUBBLE_KICK_LEAST, 1.0) * reach;
+        let center = from_vector(body.center_of_mass());
+        let away = Vec2::new(center.x - point.x, center.z - point.z);
+        let away = if away.x.hypot(away.z) > 0.05 {
+            let length = away.x.hypot(away.z);
+            Vec2::new(away.x / length + along.x * 0.5, away.z / length + along.z * 0.5)
+        } else {
+            along
+        };
+        let length = away.x.hypot(away.z).max(1e-6);
+        let (out, lift, spin) = RUBBLE_KICK;
+        let throw = vector(
+            away.x / length * out * share,
+            lift * share,
+            away.z / length * out * share,
+        );
+        let turn = vector(away.z / length, 0.0, -away.x / length) * (spin * share) as f32;
+        let body = &mut world.bodies[fragment.body];
+        if body.body_type() != RigidBodyType::Dynamic {
+            continue;
+        }
+        body.set_linear_damping(SHARD_DAMPING.0);
+        body.set_angular_damping(SHARD_DAMPING.1);
+        body.set_linvel(body.linvel() + throw, true);
+        body.set_angvel(body.angvel() + turn, true);
     }
 }
 
