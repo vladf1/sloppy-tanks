@@ -56,6 +56,8 @@ const SCRAP_SIZE: (f32, f32) = (0.45, 1.0);
 const SCRAP_SPREAD: f32 = 1.6;
 const CRUMPLE: f32 = 0.09;
 const CRUMPLE_LENGTH: f32 = 0.37;
+/// How far (share of a scrap's size) its corners may lie from its middle.
+const PATCH_CORNER: f32 = 1.15;
 
 /// Seconds a shard keeps still before it may join a chunk, and how long a cottage's
 /// pile must go without another shard coming to rest before fewer than
@@ -475,7 +477,14 @@ fn add_scraps(parts: &mut Vec<MergedPart>, node: &Node, pose: Pose, id: u32) {
         for triangle in source.indices.as_chunks::<3>().0 {
             let corners = triangle.map(|i| source.vertices[i as usize]);
             let local = corners.map(|v| inverse * (Vec3::from(v.position) - position));
-            for patch in &patches {
+            let low = local[0].min(local[1]).min(local[2]);
+            let high = local[0].max(local[1]).max(local[2]);
+            for patch in patches.iter().filter(|patch| {
+                low.x <= patch.high.x
+                    && high.x >= patch.low.x
+                    && low.z <= patch.high.y
+                    && high.z >= patch.low.y
+            }) {
                 let mut polygon: Vec<(Vertex, Vec3)> = corners.iter().copied().zip(local).collect();
                 for edge in &patch.edges {
                     polygon = clip_polygon(&polygon, *edge);
@@ -523,6 +532,9 @@ fn add_scraps(parts: &mut Vec<MergedPart>, node: &Node, pose: Pose, id: u32) {
 struct Patch {
     edges: Vec<(glam::Vec2, f32)>,
     phase: f32,
+    /// Bounds (x, z) holding the patch, to skip the triangles far from it.
+    low: glam::Vec2,
+    high: glam::Vec2,
 }
 
 /// [`SCRAPS`] patches for the slab of fragment `id`: skewed, unevenly cut
@@ -553,9 +565,14 @@ fn scrap_patches(id: u32) -> Vec<Patch> {
                     (normal, normal.dot(center) + reach)
                 })
                 .collect();
+            // No corner lies further from the middle: two sides at most 0.65 of
+            // its size out, meeting at no less than 56 degrees.
+            let reach = glam::Vec2::splat(size * PATCH_CORNER);
             Patch {
                 edges,
                 phase: next() * std::f32::consts::TAU,
+                low: center - reach,
+                high: center + reach,
             }
         })
         .collect()
@@ -768,5 +785,45 @@ mod tests {
                 assert!(local.x.abs() <= 2.0 + 1e-3 && local.z.abs() <= 2.0 + 1e-3);
             }
         }
+    }
+
+    /// How long building a fallen cottage's roof scraps takes, natively, for every
+    /// village cottage (`cargo test --release -p sloppy-render scraps_timing --
+    /// --ignored --nocapture`): the remains build up to [`CHUNK_SHARDS`] shards a
+    /// frame.
+    #[test]
+    #[ignore]
+    fn scraps_timing() {
+        use sloppy_core::sim::{CoverKind, Simulation};
+        let village = Simulation::with_seed(2024.0);
+        let pose = (Vec3::new(0.0, 1.0, 0.0), Quat::from_rotation_x(0.3));
+        let (mut worst_slab, mut worst_house, mut total, mut slabs) = (0.0f64, 0.0f64, 0.0, 0);
+        let mut worst_pressed = 0.0f64;
+        for cover in village.covers.iter().filter(|c| c.kind == CoverKind::House) {
+            let pieces =
+                sloppy_core::models::house_pieces(cover.x, cover.z, cover.w, cover.d, cover.h, &[]);
+            let mut house = 0.0;
+            for (piece, node) in &pieces {
+                if piece.part.is_roof() {
+                    let start = std::time::Instant::now();
+                    let mut parts = Vec::new();
+                    add_scraps(&mut parts, node, pose, 7 + slabs as u32);
+                    let ms = start.elapsed().as_secs_f64() * 1000.0;
+                    worst_slab = worst_slab.max(ms);
+                    house += ms;
+                    slabs += 1;
+                } else if piece.part.wall_index().is_some() {
+                    let start = std::time::Instant::now();
+                    let _ = merged(std::iter::once((node, pose)), false, true);
+                    worst_pressed = worst_pressed.max(start.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            worst_house = worst_house.max(house);
+            total += house;
+        }
+        println!(
+            "roof slabs {slabs}: worst slab {worst_slab:.3} ms, worst cottage {worst_house:.3} ms, mean cottage {:.3} ms; worst pressed wall shard {worst_pressed:.3} ms",
+            total / 14.0
+        );
     }
 }

@@ -100,6 +100,12 @@ const FOOTPRINT_LOBE: f64 = 7.5;
 const PLASTER_DUST: u32 = 0xb9ab95;
 /// A cottage's collapse dust: plaster, mortar and soot together.
 const RUBBLE_DUST: u32 = 0x8e8476;
+/// How far (m) round a fallen cottage landing debris raises the wreck's dust, the
+/// share of the soil's dust in it, how far it is drawn to grey and its shade.
+const RUIN_DUST_REACH: f64 = 4.0;
+const RUIN_DUST_SOIL: f64 = 0.25;
+const RUIN_DUST_MUTING: f64 = 0.5;
+const RUIN_DUST_SHADE: f64 = 0.6;
 /// A shell through a cottage's siding: the share of plaster in its dust against
 /// the paint, and the shade the dust takes so it never glows over the wall.
 const SIDING_PLASTER: f64 = 0.7;
@@ -1005,6 +1011,7 @@ impl ExplosionEffects {
 
     /// A skirt of the ground's dust rolling out low from `(x, z)` at `scale`.
     fn dust_skirt(&mut self, x: f64, z: f64, scale: f64, phase: f64) {
+        let dust = self.landing_dust(x, z);
         let blast = &mut self.blasts[self.cursor];
         self.cursor = (self.cursor + 1) % MAX_EXPLOSIONS;
         *blast = Blast {
@@ -1015,9 +1022,24 @@ impl ExplosionEffects {
             scale,
             phase,
             tempo: 1.0,
-            dust: self.ground.dust(x, z),
+            dust,
             ..Blast::default()
         };
+    }
+
+    /// The dust a piece landing at `(x, z)` raises: the ground's, or on and round a
+    /// fallen cottage the wreck's own: crushed plaster and mortar with a little of
+    /// the soil, muted and darkened, since the ground's dust (the lanes' ochre)
+    /// thinning over the grass round a pile read as mustard-yellow blobs.
+    fn landing_dust(&self, x: f64, z: f64) -> [f64; 3] {
+        let ground = self.ground.dust(x, z);
+        if self.walls.in_ruin(x, z, RUIN_DUST_REACH) {
+            let dust = mixed(linear(RUBBLE_DUST), ground, RUIN_DUST_SOIL);
+            let grey = 0.2126 * dust[0] + 0.7152 * dust[1] + 0.0722 * dust[2];
+            scaled(mixed(dust, [grey; 3], RUIN_DUST_MUTING), RUIN_DUST_SHADE)
+        } else {
+            ground
+        }
     }
 
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {

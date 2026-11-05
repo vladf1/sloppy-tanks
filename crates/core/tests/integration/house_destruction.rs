@@ -17,7 +17,7 @@ use sloppy_core::sim::house_layout::{
     WALL_DEPTH, heap_house, heap_seed, is_house_heap, wall_frames,
 };
 use sloppy_core::sim::math::Point3;
-use sloppy_core::sim::scenery_pieces::MOUND_SINK;
+use sloppy_core::sim::scenery_pieces::{MOUND_SINK, sliver};
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::TimberHit;
@@ -304,7 +304,8 @@ fn every_cottage_collapses_into_stubs_round_a_mound_under_its_roof() {
     } = ruins;
     assert!(flipped.len() <= 5, "{flipped:?}");
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
-    // Five on arm64; the x86-64 CI's physics leaves one more on edge.
+    // None on arm64 (debug and release): a shard left on edge is laid down. The
+    // limit leaves the x86-64 CI's physics room.
     assert!(standing.len() <= 6, "{standing:?}");
 }
 
@@ -400,7 +401,8 @@ impl Ruins {
                     if (0.03..0.6).contains(&face.y) {
                         stubs += 1;
                     }
-                } else if face.y.abs() < 0.5 {
+                } else if face.y.abs() < 0.5 && !sliver(fragment) {
+                    // A sliver as narrow as the wall is thick has no edge to stand on.
                     on_edge.push(format!("{x} {z}: {}", String::from(piece)));
                 }
             }
@@ -480,8 +482,7 @@ fn extra_level_cottages_are_built_and_fall_like_the_villages() {
     // Their slabs at about the village's rate: none turns over on arm64.
     assert!(flipped.len() <= 4, "{flipped:?} of {slabs}");
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
-    // None on arm64 since their pieces settle into the heap rather than on its top;
-    // the village's limit, as the x86-64 CI's physics leaves more on edge.
+    // None on arm64, as in the village; the village's limit for the x86-64 CI.
     assert!(standing.len() <= 6, "{standing:?}");
 }
 
@@ -1197,4 +1198,32 @@ fn a_fallen_cottages_garden_is_crushed_a_stretch_at_a_time() {
         }
     }
     assert!(gardens > 0);
+}
+
+/// A felled cottage's chimney does not ride the fallen roof standing: once down on
+/// the wreck its stack crumbles away into the pile, and the bricks strewn round it
+/// lie on with the pile instead of vanishing with the loose boards.
+#[test]
+fn a_fallen_chimney_crumbles_into_bricks_that_lie_with_the_pile() {
+    let (s, _) = fallen_cottage(3.0);
+    let stack = |f: &&sloppy_core::sim::Fragment| {
+        f.house_piece.is_some_and(|p| p.part == HousePart::Chimney)
+    };
+    let bricks = |s: &Simulation| {
+        s.fragments
+            .iter()
+            .filter(|f| f.house_piece.is_none() && f.color == 0x9c4a32)
+            .count()
+    };
+    assert!(
+        s.fragments
+            .iter()
+            .filter(stack)
+            .all(|f| f.life <= sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS),
+        "the stack is crumbling away"
+    );
+    assert!(bricks(&s) >= 10, "{} bricks", bricks(&s));
+    let (s, _) = fallen_cottage(8.0);
+    assert!(s.fragments.iter().filter(stack).count() == 0);
+    assert!(bricks(&s) >= 10, "{} bricks at 8 s", bricks(&s));
 }
