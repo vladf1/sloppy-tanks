@@ -660,6 +660,25 @@ impl WoodChips {
             .chain(&self.scraps)
     }
 
+    /// Drop every piece over the box `half_w` × `half_d` about `(x, z)`, flying or
+    /// lying: a rebuilt cottage's footprint and yard.
+    pub fn clear_round(&mut self, x: f64, z: f64, half_w: f64, half_d: f64) {
+        let outside = |piece: &Piece| {
+            (piece.position.x - x).abs() > half_w || (piece.position.z - z).abs() > half_d
+        };
+        for pieces in [
+            &mut self.wood,
+            &mut self.boards,
+            &mut self.lumps,
+            &mut self.scraps,
+            &mut self.straw,
+        ] {
+            let before = pieces.len();
+            pieces.retain(outside);
+            self.changed |= pieces.len() != before;
+        }
+    }
+
     /// Put a new piece in its shape's pool, dropping that pool's oldest when full.
     fn add(&mut self, piece: Piece) {
         let (pieces, capacity) = match piece.shape {

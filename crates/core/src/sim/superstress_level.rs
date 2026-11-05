@@ -227,6 +227,11 @@ fn rebuild_cover(simulation: &mut Simulation) {
         simulation.covers[i].fallen_at = None;
         simulation.restore_cover(i);
         let cover = &simulation.covers[i];
+        // A cottage stands again quietly: an impact on its pile would throw boards out
+        // of it over the new roof.
+        if cover.kind == CoverKind::House {
+            continue;
+        }
         let mut rebuilt = SimEvent::at(SimEventType::Impact, cover.x, cover.z);
         rebuilt.id = Some(cover.id);
         rebuilt.cover_kind = Some(cover.kind);

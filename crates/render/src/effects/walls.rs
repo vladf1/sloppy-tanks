@@ -111,6 +111,8 @@ pub struct Walls {
     /// The footprints of the cottages lying fallen, as `[x, z, half width, half
     /// depth]`, where landing debris raises the wreck's dust, not the ground's.
     ruins: Vec<[f64; 4]>,
+    /// The fallen cottages that stood again at the last sync (rebuilt), as `ruins`.
+    pub rebuilt: Vec<[f64; 4]>,
 }
 
 /// How long (s) a fallen cottage's box keeps holding the smoke round it, and how many
@@ -334,7 +336,7 @@ impl Walls {
                 self.fallen.push((box_, now + FALLEN_HOLD));
             }
         }
-        self.ruins.clear();
+        let was: Vec<[f64; 4]> = std::mem::take(&mut self.ruins);
         self.ruins.extend(
             state
                 .covers
@@ -342,6 +344,15 @@ impl Walls {
                 .filter(|cover| cover.kind == CoverKind::House && !cover.alive)
                 .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
         );
+        self.rebuilt.clear();
+        self.rebuilt.extend(was.into_iter().filter(|ruin| {
+            state.covers.iter().any(|cover| {
+                cover.kind == CoverKind::House
+                    && cover.alive
+                    && cover.x == ruin[0]
+                    && cover.z == ruin[1]
+            })
+        }));
         self.standing.clear();
         self.standing.extend(
             state
@@ -390,6 +401,7 @@ impl Walls {
         self.standing.clear();
         self.fallen.clear();
         self.ruins.clear();
+        self.rebuilt.clear();
         self.soft = [[0.0; 4]; 4];
     }
 

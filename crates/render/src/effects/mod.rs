@@ -72,6 +72,9 @@ pub const FLASH_DECAY: f32 = 2.0;
 pub const LIGHT_CUTOFF: f32 = 0.05;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
+/// How far (m) round a rebuilt cottage its old splinters and boards are cleared: its
+/// yard, where the critics saw last round's boards round a new cottage.
+const REBUILT_CLEARANCE: f64 = 3.0;
 /// The muzzle flash light's color.
 pub const MUZZLE_FLASH_COLOR: u32 = 0xffc070;
 /// Every puff the shared puff pool may hold: blasts, muzzle smoke, burning wrecks.
@@ -262,6 +265,11 @@ impl EffectSystems {
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
         self.particles.explosions.walls.sync(state);
+        // A rebuilt cottage stands clear of its old splinters and boards.
+        for &[x, z, half_w, half_d] in &self.particles.explosions.walls.rebuilt {
+            self.wood
+                .clear_round(x, z, half_w + REBUILT_CLEARANCE, half_d + REBUILT_CLEARANCE);
+        }
         let ground = Ground::from_theme(&state.map_theme);
         self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
