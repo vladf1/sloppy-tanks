@@ -71,6 +71,12 @@ const BURST_BOARDS: usize = 10;
 /// within [fewest, most].
 const SHATTER_PIECES_PER_METRE: f64 = 7.0;
 const SHATTER_PIECES: [usize; 2] = [8, 22];
+/// A cottage's broken part throws this many pieces per metre of its size, within
+/// [fewest, most], out (m/s) and up (m/s) as [`between`] spans.
+const PART_PIECES_PER_METRE: f64 = 3.0;
+const PART_PIECES: [usize; 2] = [4, 9];
+const PART_SPEED: [f64; 2] = [0.6, 2.2];
+const PART_LIFT: [f64; 2] = [0.4, 1.8];
 /// A destroyed crate without its height stood about this tall.
 pub(super) const CRATE_HEIGHT: f64 = 2.4;
 /// Of a burst, this share only tumbles out around the crate's foot, this share is
@@ -701,10 +707,10 @@ impl WoodChips {
             (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
             (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
-            (
-                SimEventType::Shatter,
-                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::House),
-            ) => self.shatter(event, random),
+            (SimEventType::Shatter, Some(CoverKind::House)) => self.house_shatter(event, random),
+            (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
+                self.shatter(event, random)
+            }
             _ => {}
         }
     }
@@ -905,6 +911,57 @@ impl WoodChips {
                 0.5 + random.next_f64() * 2.5,
                 direction[1] * speed,
             );
+            let piece = wood_piece(random, cut, position, velocity, color);
+            self.add(piece);
+        }
+        self.changed = true;
+    }
+
+    /// A cottage's part broken out where it stood: a few pieces sized to what broke
+    /// (lengths of its painted boards, a chunk of wall still nailed together, a
+    /// broken stud, a lump of plaster), thrown on the way the shell went and mostly
+    /// falling within a few metres of it.
+    fn house_shatter(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let size = event.size.unwrap_or(1.0);
+        let height = event.height.unwrap_or(HIT_HEIGHT);
+        let along = event
+            .from
+            .and_then(|from| horizontal(event.x - from.x, event.z - from.z));
+        let paint = event.color.unwrap_or(CRATE_WOOD);
+        let count =
+            ((size * PART_PIECES_PER_METRE).round() as usize).clamp(PART_PIECES[0], PART_PIECES[1]);
+        for i in 0..count {
+            let offset = heading(random).map(|v| v * size * 0.4 * random.next_f64());
+            let position = DVec3::new(
+                event.x + offset[0],
+                (height + (random.next_f64() - 0.5) * size * 0.4).max(0.1),
+                event.z + offset[1],
+            );
+            let speed = between(random, PART_SPEED);
+            let spread = turned(
+                along.unwrap_or_else(|| heading(random)),
+                (random.next_f64() - 0.5) * 2.0,
+            );
+            let velocity = DVec3::new(
+                spread[0] * speed,
+                between(random, PART_LIFT),
+                spread[1] * speed,
+            );
+            let painted = |random: &mut CosmeticRandom| {
+                shade(
+                    hex_to_linear(paint),
+                    between(random, [SIDING_SHADE.0, SIDING_SHADE.1]),
+                )
+            };
+            let (cut, color) = match i % 4 {
+                0 if i == 0 => (WALL_CHUNK, painted(random)),
+                0 | 2 => (SIDING_BOARD, painted(random)),
+                1 => (STUD, wood_color(random, SIDING_MIX, FRESH_WOOD[1])),
+                _ => (
+                    PLASTER_LUMP,
+                    shade(hex_to_linear(PLASTER[(i / 4) % PLASTER.len()]), 1.0),
+                ),
+            };
             let piece = wood_piece(random, cut, position, velocity, color);
             self.add(piece);
         }
