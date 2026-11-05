@@ -1,6 +1,7 @@
 //! The Scrap Yard: the Stress Grid's 30 tanks packed into a compact yard with over 100
 //! destructibles (watchtowers among them), cover that rebuilds in place and debris that
-//! lingers until the budget needs room. Its cottages stand for good, like the village's.
+//! lingers until the budget needs room. Its cottages fall like the village's and rise
+//! again like the rest of its cover.
 //! Level behaviour lives here and reaches the game only through `Simulation::after_step`,
 //! `restore_cover` and the map's scale.
 
@@ -49,16 +50,7 @@ fn sized(kind: Piece, x: f64, z: f64) -> CoverDef {
         Piece::Cargo => CoverDef::new(CoverKind::Cargo, x, z, 2.8, 2.8, 2.4, 80.0, 0xb47a49),
         Piece::Drum => CoverDef::drum(x, z),
         Piece::Tree => CoverDef::new(CoverKind::Tree, x, z, 2.6, 2.6, 5.8, 80.0, 0x218f55),
-        Piece::House => CoverDef::new(
-            CoverKind::House,
-            x,
-            z,
-            5.0,
-            6.0,
-            4.6,
-            f64::INFINITY,
-            0xb87b4c,
-        ),
+        Piece::House => CoverDef::house(x, z, 5.0, 6.0, 4.6, 0xb87b4c),
         Piece::Tower => CoverDef::tower(x, z),
     }
 }
@@ -162,8 +154,8 @@ fn superstress_layout() -> Vec<CoverDef> {
     yard.put(Piece::Cargo, 16.0, 9.0);
     yard.put(Piece::Cargo, 20.0, 41.6);
 
-    // Watchtowers overlook the plaza from beyond its fences and rebuild back over their
-    // rubble; a permanent cottage stands by each team's spawn.
+    // Watchtowers overlook the plaza from beyond its fences and a cottage stands by each
+    // team's spawn; both rebuild back over the rubble their collapse leaves.
     yard.put(Piece::Tower, 0.0, 26.5);
     yard.put(Piece::House, -38.0, 33.8);
 

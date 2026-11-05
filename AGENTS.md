@@ -516,18 +516,19 @@ while the server directory lists every room and Battle Setup shows them only on 
 `?debug` page. Room clients learn a level
 from the replicated scene (`map.theme`, `map.scale`).
 
-The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 75
-destructible objects and an 80-fragment cap). It should remain useful for
-finding body, navigation, destruction, and resource-growth regressions, not be
-weakened to make a normal match look healthy.
+The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 83
+destructible objects, eight of them cottages, and an 80-fragment cap). It should
+remain useful for finding body, navigation, destruction, and resource-growth
+regressions, not be weakened to make a normal match look healthy.
 
 The Scrap Yard (`superstress`) packs the same 30 tanks into a yard at
 `SUPERSTRESS_SCALE` of the standard arena, with over 100 destructibles, a
-240-fragment budget, cover that rebuilds in place and debris that lingers until
-the budget needs room. Its rules live in `sim/superstress_level.rs` and reach the
-game only through `Simulation::after_step`, `restore_cover` and the map's `scale`;
-keep level behaviour there rather than branching on it in shared code. Author
-its placements in standard-arena coordinates so the scale stays one knob. Both
+240-fragment budget, cover (its two cottages too) that rebuilds in place and
+debris that lingers until the budget needs room. Its rules live in
+`sim/superstress_level.rs` and reach the game only through
+`Simulation::after_step`, `restore_cover` and the map's `scale`; keep level
+behaviour there rather than branching on it in shared code. Author its
+placements in standard-arena coordinates so the scale stays one knob. Both
 levels give players a near-invulnerable hull and boosted pickups, online and
 offline.
 

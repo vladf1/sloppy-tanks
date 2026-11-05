@@ -11,9 +11,12 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::damage::MAX_HOUSE_MARKS;
 use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
-    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, is_house_heap,
+    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, WALL_DEPTH, heap_house,
+    heap_seed, is_house_heap,
 };
 use sloppy_core::sim::math::Point3;
+use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
+use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::TimberHit;
 
 use sloppy_core::sim::math::{Random, Vec2};
@@ -283,10 +286,37 @@ fn a_drum_blast_beside_a_cottage_hurts_it_once() {
 #[test]
 fn every_cottage_collapses_into_stubs_round_a_mound_under_its_roof() {
     let village = village();
-    let (mut flipped, mut steep, mut slabs, mut standing) = (Vec::new(), Vec::new(), 0, Vec::new());
+    let mut ruins = Ruins::default();
     for house in houses(&village) {
         let c = &village.covers[house];
-        let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
+        ruins.collapse_alone(c.x, c.z, c.w, c.d, c.h);
+    }
+    let Ruins {
+        flipped,
+        steep,
+        slabs,
+        standing,
+    } = ruins;
+    assert!(flipped.len() <= 5, "{flipped:?}");
+    assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
+    // Five on arm64; the x86-64 CI's physics leaves one more on edge.
+    assert!(standing.len() <= 6, "{standing:?}");
+}
+
+/// What the collapses of a set of cottages left: roof slabs turned over onto their
+/// rafters and left steep, of how many, and upper wall shards left on edge.
+#[derive(Default)]
+struct Ruins {
+    flipped: Vec<String>,
+    steep: Vec<String>,
+    slabs: usize,
+    standing: Vec<String>,
+}
+
+impl Ruins {
+    /// Collapse the cottage box `x, z, w, d, h` alone in an empty arena, check what
+    /// holds for each cottage and add what the set is judged on.
+    fn collapse_alone(&mut self, x: f64, z: f64, w: f64, d: f64, h: f64) {
         let mut s = Simulation::with_seed(731.0);
         clear_arena(&mut s, &[]);
         let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
@@ -349,9 +379,11 @@ fn every_cottage_collapses_into_stubs_round_a_mound_under_its_roof() {
                 .normalize();
                 let up = (rotation * top).y;
                 if up < -0.3 {
-                    flipped.push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
+                    self.flipped
+                        .push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
                 } else if up < 0.3 {
-                    steep.push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
+                    self.steep
+                        .push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
                 }
             } else if let Some(wall) = piece.part.wall_index() {
                 let out = walls[wall].1;
@@ -376,12 +408,69 @@ fn every_cottage_collapses_into_stubs_round_a_mound_under_its_roof() {
             "{x} {z}: {stubs} of {lower} stubs stand"
         );
         assert!(on_edge.len() <= 2, "{on_edge:?}");
-        slabs += roof_slabs;
-        standing.extend(on_edge);
+        self.slabs += roof_slabs;
+        self.standing.extend(on_edge);
     }
-    assert!(flipped.len() <= 5, "{flipped:?}");
+}
+
+/// Every cottage box of the extra levels (the Stress Grid's eight and the Scrap Yard's
+/// two), placed as their layouts place them.
+fn extra_level_cottages() -> Vec<(f64, f64, f64, f64, f64)> {
+    [&STRESS_TEST_MAP, &SUPERSTRESS_MAP]
+        .into_iter()
+        .flat_map(|map| (map.layout)())
+        .filter(|cover| cover.kind == CoverKind::House)
+        .map(|cover| (cover.x, cover.z, cover.w, cover.d, cover.h))
+        .collect()
+}
+
+/// The extra levels' cottages are other sizes, heights and places than the
+/// village's, so each is checked against what makes a village cottage fall: a
+/// design that fills its box, roof slabs that fall inside its walls, a heap along
+/// its back wall that leaves the front open and can be traced back to its cottage,
+/// and a collapse into the same ruin.
+#[test]
+fn extra_level_cottages_are_built_and_fall_like_the_villages() {
+    let cottages = extra_level_cottages();
+    assert_eq!(cottages.len(), 10);
+    let mut ruins = Ruins::default();
+    for &(x, z, w, d, h) in &cottages {
+        let design = HouseDesign::of(x, z, w, d, h);
+        let corner = design.to_world(DVec3::new(design.w / 2.0, 0.0, design.d / 2.0));
+        assert!((corner.x.abs() - w / 2.0).abs() < 1e-9, "{x} {z}");
+        assert!((corner.z.abs() - d / 2.0).abs() < 1e-9, "{x} {z}");
+        let (inside_w, inside_d) = (design.w / 2.0 - WALL_DEPTH, design.d / 2.0 - WALL_DEPTH);
+        for slab in design.pieces().iter().filter(|p| p.piece.part.is_roof()) {
+            for p in &slab.hull {
+                assert!(p.x.abs() < inside_w && p.z.abs() < inside_d, "{x} {z} {p}");
+            }
+        }
+        let (center, size) = design.heap();
+        assert!(
+            center.z + size.z / 2.0 < 0.0,
+            "{x} {z}: the heap lies at the back"
+        );
+        assert!(design.open_floor() > 3.0, "{x} {z}");
+        let seed = heap_seed(0.37, &design);
+        let (offset, size) = design.heap_box();
+        let (found_at, found) = heap_house(x + offset.x, z + offset.y, size.x, size.y, seed, h);
+        assert!((found_at.x - x).abs() < 1e-6 && (found_at.y - z).abs() < 1e-6);
+        assert_eq!(
+            found.style, design.style,
+            "{x} {z}: the heap knows its cottage"
+        );
+        ruins.collapse_alone(x, z, w, d, h);
+    }
+    let Ruins {
+        flipped,
+        steep,
+        slabs,
+        standing,
+    } = ruins;
+    // Their some ninety slabs at about the village's rate: three turn over on arm64.
+    assert!(flipped.len() <= 4, "{flipped:?} of {slabs}");
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
-    // Five on arm64; the x86-64 CI's physics leaves one more on edge.
+    // Five on arm64, as in the village; allow the x86-64 CI's one more.
     assert!(standing.len() <= 6, "{standing:?}");
 }
 

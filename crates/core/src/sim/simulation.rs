@@ -518,13 +518,25 @@ impl Simulation {
             }
         }
         if self.covers[index].kind == CoverKind::House {
-            // A rebuilt cottage clears the heap its collapse left.
+            // A rebuilt cottage clears the heap its collapse left and the pieces still
+            // lying on it: the mound is a fixed body that would stand inside the new
+            // walls, and its shards would be thrown out of them.
             let cover = &self.covers[index];
             let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
             let (offset, _) = design.heap_box();
-            let (x, z) = (cover.x + offset.x, cover.z + offset.y);
+            let (x, z, id) = (cover.x + offset.x, cover.z + offset.y, cover.id);
             if let Some(rubble) = self.rubble_at(x, z, true) {
                 self.retire_cover(rubble);
+            }
+            let pieces: Vec<RigidBodyHandle> = self
+                .fragments
+                .iter()
+                .filter(|fragment| fragment.house_id == Some(id))
+                .map(|fragment| fragment.body)
+                .collect();
+            self.fragments.retain(|fragment| fragment.house_id != Some(id));
+            for body in pieces {
+                self.remove_body(body);
             }
         }
         // A felled tree keeps its body as the stump footprint.
