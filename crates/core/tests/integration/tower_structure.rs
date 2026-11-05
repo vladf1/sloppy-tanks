@@ -612,8 +612,9 @@ fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
     assert!(mirror.fragments.is_empty(), "nothing falls in a mirror");
 }
 
-/// Once a piece of a landed tower has come to rest it stays as it lies until it sinks:
-/// it neither turns (stands up, rolls over, rights itself) nor rises.
+/// A landed piece comes to rest within a moment of the landing, and then stays as it
+/// lies until it clears: it neither turns (stands up, rolls over, rights itself) nor
+/// rises.
 #[test]
 fn settled_pieces_stay_as_they_lie() {
     for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
@@ -630,7 +631,13 @@ fn settled_pieces_stay_as_they_lie() {
         for _ in 0..(14.0 / STEP) as usize {
             idle(&mut s);
             for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
-                if !fragment.tower_landing.is_some_and(|landing| landing.rested) {
+                let landing = fragment.tower_landing.unwrap_or_default();
+                let age = s.elapsed - fragment.created_at.unwrap_or(s.elapsed);
+                assert!(
+                    !landing.landed || landing.rested || age < 1.5,
+                    "corner {corner}: a piece still moving {age} s after it landed"
+                );
+                if !landing.rested {
                     continue;
                 }
                 let body = &s.world.bodies[fragment.body];

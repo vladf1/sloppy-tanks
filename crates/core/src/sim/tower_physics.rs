@@ -68,9 +68,15 @@ const PART_DEADLINE: f64 = 24.0;
 /// A landed piece slower than this (m/s and rad/s) for [`REST_HOLD`] seconds has come to
 /// rest: it can no longer turn, so it stays as it lies until it sinks (it can still be
 /// shoved along or drop if what it lies on goes).
-const REST_SPEED: f32 = 0.15;
-const REST_SPIN: f32 = 0.35;
-const REST_HOLD: f64 = 0.3;
+const REST_SPEED: f32 = 0.3;
+const REST_SPIN: f32 = 0.6;
+const REST_HOLD: f64 = 0.2;
+/// A landed piece is damped to rest this long (s) after the landing, and rests for good
+/// by this long after it, still or not: the rocking is over within about a second.
+const LANDED_SETTLE: f64 = 0.8;
+const LANDED_REST: f64 = 1.3;
+/// Seconds earlier a resting piece clears for every metre its middle lies up the pile.
+const CLEAR_TOP_FIRST: f64 = 1.2;
 /// A falling frame counts as at rest no sooner than this (s) after it came loose.
 const REST_AFTER: f64 = 1.0;
 /// Nobody: the owner a falling tower's damage to the cover it lands on is credited to.
@@ -828,27 +834,42 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                 .landed = true;
         }
         let elapsed = simulation.elapsed;
+        let fragment = &mut simulation.fragments[index];
         let body = &mut simulation.world.bodies[handle];
-        let landing = simulation.fragments[index]
-            .tower_landing
-            .get_or_insert_default();
+        let landing = fragment.tower_landing.get_or_insert_default();
         landing.velocity = now;
-        if !landing.rested && (landing.landed || age > REST_AFTER) {
+        let can_rest = landing.landed || parts.len() == 1;
+        if !landing.rested && (can_rest || age > REST_AFTER) {
             let still = body.linvel().length() < REST_SPEED && body.angvel().length() < REST_SPIN;
             match (still, landing.still_since) {
                 (false, _) => landing.still_since = None,
                 (true, None) => landing.still_since = Some(elapsed),
-                (true, Some(since))
-                    if elapsed - since >= REST_HOLD && (landing.landed || parts.len() == 1) =>
-                {
-                    landing.rested = true;
-                    body.lock_rotations(true, false);
-                    body.set_angvel(rapier3d::prelude::Vector::ZERO, false);
-                }
                 _ => {}
             }
+            let held = landing
+                .still_since
+                .is_some_and(|since| elapsed - since >= REST_HOLD);
+            // A landed piece has done its rocking within a moment of the landing: it
+            // rests then, still or not, and no longer turns.
+            if can_rest && (held || (landing.landed && age > LANDED_REST)) {
+                // It neither turns nor rises any more: shoved, it slides. The pile clears
+                // from the top, so nothing it lies on goes from under it first.
+                landing.rested = true;
+                body.lock_rotations(true, false);
+                body.set_enabled_translations(true, false, true, false);
+                body.set_angvel(rapier3d::prelude::Vector::ZERO, false);
+                let mut velocity = body.linvel();
+                velocity.y = 0.0;
+                body.set_linvel(velocity, false);
+                // The pile clears from the top down, so nothing fades through what
+                // lies over it.
+                let height = f64::from(body.center_of_mass().y).max(0.0);
+                fragment.life = (fragment.life - height * CLEAR_TOP_FIRST)
+                    .max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
+            }
         }
-        let (linear, angular) = house_debris_damping(if landing.rested { f64::INFINITY } else { age });
+        let settled = landing.rested || (landing.landed && age > LANDED_SETTLE);
+        let (linear, angular) = house_debris_damping(if settled { f64::INFINITY } else { age });
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);

@@ -3469,7 +3469,9 @@ impl Presentation {
         Some(FragmentView {
             instance,
             look,
-            sink: None,
+            // A watchtower's pieces fade where they lie, the pile's top first, rather
+            // than sinking through what lies under them.
+            sink: fragment.tower_parts.is_some().then_some(0.0),
             fades: fragment.tree_cover_id.is_none(),
             timber: fragment.timber_part.clone(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),
