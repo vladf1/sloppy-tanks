@@ -902,11 +902,10 @@ pub fn crush_house_parts(simulation: &mut Simulation, contacts: &[ContactForce])
             else {
                 continue;
             };
-            if !simulation
-                .fragments
-                .iter()
-                .any(|fragment| fragment.body == body && fragment.house_parts.is_some())
-            {
+            if !simulation.fragments.iter().any(|fragment| {
+                fragment.body == body
+                    && (fragment.house_parts.is_some() || fragment.tower_parts.is_some())
+            }) {
                 continue;
             }
             let impulse = f64::from(contact.total_force_magnitude) * STEP;
@@ -1005,6 +1004,7 @@ pub fn fragment_with_collider(simulation: &Simulation, collider: ColliderHandle)
     simulation.fragments.iter().position(|fragment| {
         fragment.body == body
             && (fragment.house_parts.is_some()
+                || fragment.tower_parts.is_some()
                 || simulation.world.bodies[body].colliders().first() == Some(&collider))
     })
 }

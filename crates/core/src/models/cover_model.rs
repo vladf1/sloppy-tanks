@@ -23,7 +23,7 @@ use super::quarry_surfaces::{
     sandstone_rock, sandstone_rubble,
 };
 use super::timber_model::add_timber_parts;
-use super::tower_model::{rubble, tower};
+use super::tower_model::tower;
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
 use crate::sim::house_structure::PartSet;
@@ -54,11 +54,9 @@ pub struct CoverShape {
     pub d: f64,
     pub h: f64,
     pub color: u32,
-    /// Chosen at collapse so rubble stays stable when its model is rebuilt.
-    pub debris_seed: Option<f64>,
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// A cottage's parts broken or fallen from it.
+    /// A cottage's or a watchtower's parts broken or fallen from it.
     pub broken: PartSet,
 }
 
@@ -72,7 +70,6 @@ impl From<&RenderCover> for CoverShape {
             d: cover.d,
             h: cover.h,
             color: cover.color,
-            debris_seed: cover.debris_seed,
             timber_hits: cover.timber_hits.clone(),
             timber_join: cover.timber_join,
             broken: cover.broken,
@@ -167,8 +164,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
                 );
             }
         }
-        CoverKind::Tower => tower(group, c.color),
-        CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
+        // The parts of a watchtower that still stand, its footings for good; an
+        // untouched one is the model every tower shares.
+        CoverKind::Tower => tower(group, c.color, &c.broken),
         CoverKind::Tree => unreachable!("trees return early"),
         CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {
             fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);

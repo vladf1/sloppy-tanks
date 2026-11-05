@@ -144,7 +144,7 @@ beyond_geometry! {
         pickup_pallet, pickup_parcel, pickup_signal, pickup_tile_offset,
     };
     pub use timber_model::{timber_debris_model, timber_part_model};
-    pub use tower_model::tower_piece_model;
+    pub use tower_model::tower_debris;
 }
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,

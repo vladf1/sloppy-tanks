@@ -262,7 +262,7 @@ fn complete_reset_restores_counts_cover_pickups_scores_nav_and_rng() {
     let blocked = s.nav.blocked.clone();
     let rng = s.rng.state;
     let (id, team) = (s.human().id, s.human_team);
-    // Collapsing towers append rubble; like the TS copy, only the original covers are hit.
+    // Every cover takes the damage once.
     for c in 0..s.covers.len() {
         s.damage_cover(c, 999.0, id, team, None, None);
     }

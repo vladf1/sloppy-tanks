@@ -12,7 +12,6 @@ use super::humvee_tactics::HumveeTactics;
 pub use super::kinds::{CoverKind, FragmentShape, PickupKind, Team, VehicleKind, WreckPart};
 pub use super::math::{Point3, Quat4, Vec2};
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart, TimberWall};
-use super::tower_layout::TowerPiece;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -354,20 +353,20 @@ pub struct Cover {
     pub body: RigidBodyHandle,
     pub collider: ColliderHandle,
     pub color: u32,
-    /// Chosen at collapse so rubble stays stable when its model is rebuilt.
-    pub debris_seed: Option<f64>,
     /// Bounded, persistent impact marks of a timber wall or a cargo crate, in
     /// coordinates relative to the cover.
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// Direction of the last hit on a timber wall, a cargo crate or the
-    /// watchtower, which its pieces are thrown or topple along when it breaks.
+    /// Direction of the last hit on a timber wall or a cargo crate, which its pieces
+    /// are thrown along when it breaks.
     pub kick: Option<Vec2>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
     pub fallen_at: Option<f64>,
     /// A cottage's structure: its parts, which of them are gone and their colliders.
     pub structure: Option<super::house_physics::StructureState>,
+    /// A watchtower's structure: which of its parts are gone and their colliders.
+    pub tower: Option<super::tower_physics::TowerState>,
 }
 
 /// Planar projectile state. vx/vz are metres per second; life is remaining seconds.
@@ -456,8 +455,12 @@ pub struct Fragment {
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
     pub timber_part: Option<TimberPart>,
-    /// The watchtower part this piece is drawn as.
-    pub tower_piece: Option<TowerPiece>,
+    /// The watchtower whose parts this body is.
+    pub tower_id: Option<u32>,
+    /// The parts of a watchtower this body is (they fell together).
+    pub tower_parts: Option<super::house_structure::PartSet>,
+    /// Its velocity last tick, to tell a hard landing.
+    pub tower_velocity: Option<Point3>,
     /// The section of a broken cargo crate this piece is drawn as.
     pub crate_piece: Option<CratePiece>,
     /// The cottage whose parts this body is.

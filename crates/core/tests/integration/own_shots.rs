@@ -184,7 +184,6 @@ fn a_predicted_shell_stops_at_cover_and_a_ricochet_bounces_off_it() {
             color: 0x888888,
             timber_join: None,
             timber_bays: None,
-            debris_seed: None,
         });
         sim.world.step();
         let cover = predictor(&sim, viewer);
@@ -424,12 +423,26 @@ struct HostFlight {
 /// tick 1, as the host flies it for two seconds and as her prediction draws it from the
 /// scene a client holds. `crack` damages every part a little first, as a fight would.
 fn through_cottage(weapon: Weapon, x: f64, crack: bool) -> (HostFlight, HostFlight) {
+    through(
+        &CoverDef::house(0.0, 9.0, 7.0, 5.0, 4.9, 0xb87b4c),
+        weapon,
+        x,
+        crack,
+    )
+}
+
+/// [`through_cottage`] across `structure`, a cottage or a watchtower.
+fn through(structure: &CoverDef, weapon: Weapon, x: f64, crack: bool) -> (HostFlight, HostFlight) {
     let (mut sim, viewer) = alone(VehicleKind::Balanced);
-    let house = sim.add_cover(&CoverDef::house(0.0, 9.0, 7.0, 5.0, 4.9, 0xb87b4c));
+    let cover = sim.add_cover(structure);
     place_tank(&mut sim, 0, x, 0.0, Some(0.0));
     if crack {
-        let state = sim.covers[house].structure.as_mut().unwrap();
-        state.damage.iter_mut().for_each(|damage| *damage += 0.5);
+        if let Some(state) = sim.covers[cover].structure.as_mut() {
+            state.damage.iter_mut().for_each(|damage| *damage += 0.5);
+        }
+        if let Some(state) = sim.covers[cover].tower.as_mut() {
+            state.damage.iter_mut().for_each(|damage| *damage += 0.5);
+        }
     }
     sim.world.step();
     let cover = predictor(&sim, viewer);
@@ -519,6 +532,55 @@ fn a_predicted_shell_through_a_cottage_flies_and_bursts_as_the_hosts() {
         // Across the cottage's front: posts, panels, windows and the door.
         for x in [-3.3, -2.4, -1.1, -0.3, 0.4, 1.6, 2.8] {
             let (host, predicted) = through_cottage(weapon, x, false);
+            let case = format!("{weapon:?} at x {x}");
+            match (host.end, predicted.end) {
+                (Some(host_end), Some(end)) => assert!(
+                    (end - host_end).abs() <= 1.0,
+                    "{case}: drawn until {end}, the host's ended at {host_end}"
+                ),
+                (None, None) => {}
+                (host_end, end) => panic!("{case}: drawn until {end:?}, host {host_end:?}"),
+            }
+            for effect in &predicted.effects {
+                assert!(
+                    shown(effect, &host.effects),
+                    "{case}: {:?} at {} not the host's {:?}",
+                    effect.1.kind,
+                    effect.0,
+                    host.effects
+                );
+            }
+            for effect in &host.effects {
+                assert!(
+                    shown(effect, &predicted.effects),
+                    "{case}: the host's {:?} at {} unforeseen in {:?}",
+                    effect.1.kind,
+                    effect.0,
+                    predicted.effects
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_predicted_shell_through_a_watchtower_flies_and_bursts_as_the_hosts() {
+    // A watchtower at (0, 9): its legs at x ±2.55, its footings under them.
+    let tower = CoverDef::tower(0.0, 9.0);
+    for weapon in [
+        Weapon::Standard,
+        Weapon::Ricochet,
+        Weapon::Piercing,
+        Weapon::Rocket,
+    ] {
+        // Between the legs, at a leg and beside it. An armour-piercing round along a
+        // bent breaks its first leg and brings the frame down onto its own path, where it
+        // stops at the falling frame: a client cannot foresee that, so it is left out.
+        for x in [-2.55f64, -2.3, 0.0, 1.0, 2.5, 2.7] {
+            if weapon == Weapon::Piercing && x.abs() > 2.4 {
+                continue;
+            }
+            let (host, predicted) = through(&tower, weapon, x, false);
             let case = format!("{weapon:?} at x {x}");
             match (host.end, predicted.end) {
                 (Some(host_end), Some(end)) => assert!(

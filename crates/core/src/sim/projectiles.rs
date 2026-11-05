@@ -16,6 +16,8 @@ use super::debris_physics::{
 };
 use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::house_physics::{FUSE_DISTANCE, HE_BLAST_RADIUS, fragment_with_collider, house_debris};
+use super::tower_physics::tower_debris;
+use super::tower_structure::tower_structure;
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
@@ -557,9 +559,11 @@ fn resolve_contact(
             let mine = simulation.mines.remove(mi);
             simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
         }
-        Contact::Debris { fragment: fi } if house_debris(&simulation.fragments[fi]) => {
-            // A cottage's fallen part: the shell shoves it and bursts (a rocket
-            // goes off), an armour-piercing round shoves it and stops.
+        Contact::Debris { fragment: fi }
+            if house_debris(&simulation.fragments[fi]) || tower_debris(&simulation.fragments[fi]) =>
+        {
+            // A cottage's or a watchtower's fallen parts: the shell shoves them and
+            // bursts (a rocket goes off), an armour-piercing round shoves them and stops.
             let body = simulation.fragments[fi].body;
             let color = simulation.fragments[fi].color;
             let along = shell_heading(&shot);
@@ -683,13 +687,20 @@ fn resolve_contact(
             let (cover, part) = simulation.house_part(collider).expect("checked by the guard");
             remove = strike_house_part(simulation, si, cover, part);
         }
+        // A watchtower's timber and ladder; its concrete footings take a shell like
+        // other concrete.
+        Contact::World { collider, .. }
+            if simulation
+                .tower_part(collider)
+                .is_some_and(|(_, part)| tower_structure().parts[part].strength.is_finite()) =>
+        {
+            let (cover, part) = simulation.tower_part(collider).expect("checked by the guard");
+            remove = strike_tower_part(simulation, si, cover, part);
+        }
         Contact::World { collider, normal } => {
             let cover = simulation.cover_by_collider.get(&collider).copied();
             if let Some(ci) = cover {
-                if matches!(
-                    simulation.covers[ci].kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
-                ) {
+                if matches!(simulation.covers[ci].kind, CoverKind::Timber | CoverKind::Cargo) {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {
                         simulation.covers[ci].kick =
@@ -786,6 +797,50 @@ fn burst_in_house(simulation: &mut Simulation, shot: &Shot) {
         shot.damage,
         Some((shot.owner, shot.team)),
     );
+    simulation.tower_blast(
+        point,
+        HE_BLAST_RADIUS,
+        shot.damage,
+        Some((shot.owner, shot.team)),
+    );
+}
+
+/// A shell striking a standing part of a watchtower, as [`strike_house_part`] has it at
+/// a cottage's: a rocket breaks it and bursts, an armour-piercing round breaks it and
+/// flies on, an HE round breaks a part it can and flies on [`FUSE_DISTANCE`] (bursting
+/// at once against one it cannot, such as a leg, or on a second strike). Returns
+/// whether the shell is spent.
+fn strike_tower_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
+    let shot = simulation.shots[si].clone();
+    let point = Point3::new(shot.x, shot.combat_y(), shot.z);
+    let along = shell_heading(&shot);
+    let by = Some((shot.owner, shot.team));
+    let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
+    impact.id = Some(simulation.covers[cover].id);
+    impact.height = Some(point.y);
+    match shot.weapon {
+        Weapon::Rocket => {
+            simulation.events.push(impact);
+            simulation.strike_tower(cover, part, shot.damage, true, point, along, by);
+            rocket_blast(simulation, &shot);
+            true
+        }
+        Weapon::Piercing => {
+            simulation.strike_tower(cover, part, shot.damage, true, point, along, by);
+            false
+        }
+        _ => {
+            let broke = simulation.strike_tower(cover, part, shot.damage, false, point, along, by);
+            if broke && shot.fuse.is_none() {
+                simulation.shots[si].fuse = Some(FUSE_DISTANCE);
+                false
+            } else {
+                simulation.events.push(impact);
+                burst_in_house(simulation, &shot);
+                true
+            }
+        }
+    }
 }
 
 /// A shell striking a standing part of a cottage. A rocket breaks it and bursts; an

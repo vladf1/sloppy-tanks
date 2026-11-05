@@ -102,9 +102,6 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         | CoverKind::Tower => String::new(),
         CoverKind::Rock => format!("v{}", quarry_rock_variant(cover.x, cover.z)),
         CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
-        CoverKind::Rubble if cover.debris_seed.is_some() => {
-            format!("s{}", cover.debris_seed.unwrap_or(0.0))
-        }
         _ => format!("@{}/{}", cover.x, cover.z),
     };
     let hits: Vec<String> = cover

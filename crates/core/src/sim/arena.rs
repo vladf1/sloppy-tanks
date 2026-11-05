@@ -21,7 +21,6 @@ pub struct CoverDef {
     pub timber_join: Option<TimberJoin>,
     /// How many independently breakable bays a timber run splits into.
     pub timber_bays: Option<usize>,
-    pub debris_seed: Option<f64>,
 }
 
 /// Outer walls are this thick, grown outward from the arena edge so most of a gun
@@ -64,7 +63,6 @@ impl CoverDef {
             color,
             timber_join: None,
             timber_bays: None,
-            debris_seed: None,
         }
     }
 

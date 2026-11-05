@@ -1,41 +1,42 @@
-//! The watchtower and what its collapse leaves behind.
+//! The watchtower, part by part.
 //!
-//! Intact: four sawn posts in steel shoes stand on the two concrete footings
-//! ([`TOWER_BASE`]); X-braces on opposite faces of each bent and a girt between
-//! them, knee braces out to outrigger beams, main beams and joists under a plank
-//! deck with rim boards; a railed walkway round a clapboard lookout cabin whose
-//! windows carry top-hinged awning shutters propped open; a hipped
-//! standing-seam roof with an anemometer mast; a steel ladder up the front and a
-//! searchlight on the corner post.
+//! Four sawn posts in steel shoes stand on the two low concrete footings
+//! ([`TOWER_BASE`]); X-braces on every face with a girt across each, knee braces out
+//! to outrigger beams, main beams and joists under a plank deck with rim boards; a
+//! railed walkway round a clapboard lookout cabin whose windows carry top-hinged
+//! awning shutters propped open; a hipped standing-seam roof with an anemometer mast;
+//! a steel ladder up the front and a searchlight on the corner post.
 //!
-//! The tower is built from the pieces it falls apart into ([`TowerPiece`]), each
-//! in tower coordinates, so [`tower_piece_model`] draws a collapse piece exactly
-//! as that part looked. The footings and shoes stay as the rubble.
+//! The model is built from the parts of the tower's structure (`tower_structure`),
+//! each in tower coordinates where its collider is: [`tower`] draws the parts still
+//! standing (an untouched tower is one model every tower shares) and [`tower_debris`]
+//! the parts falling together as one body.
 
 use std::f64::consts::PI;
-use std::sync::Arc;
 
-use glam::{DMat3, DMat4, DQuat, DVec2, DVec3};
+use glam::{DMat4, DVec2, DVec3};
 
 use super::batching::batch;
 use super::building_kit::{
-    Glazing, Opening, Palette, Surface, add_building, door, uv_per_metre, wall, wall_with_breaches,
-    window,
+    Glazing, Opening, Palette, Surface, add_building, door, uv_per_metre, wall, window,
 };
 use super::concrete_surfaces::concrete_wall;
 use super::house_model::wall_frames;
-use super::model_primitives::{adopt_children, put, rotated};
+use super::model_primitives::{put, rotated};
 use super::tank_kit::{Kit, aim, pose};
 use super::timber_model::timber_member;
-use crate::geometry::Mesh;
 use crate::geometry::math::js_round;
 use crate::scene::Node;
-use crate::sim::math::Random;
+use crate::sim::house_structure::PartSet;
 use crate::sim::tower_layout::{
-    BEAM, CABIN_TOP, CABIN_WALL, CABIN_X, CABIN_Z, DECK_TOP, DECK_X, DECK_Z, FACE_BRACE_LOW,
-    JOIST_DEPTH, LADDER_HALF, LADDER_TOP, LADDER_X, LADDER_Z, PLANK, POST, POST_BREAK, POST_TOP,
-    RAIL_HEIGHT, RAIL_INSET, ROOF_EDGE, ROOF_OVERHANG, ROOF_PITCH, TOWER_BASE, TowerPiece,
+    BEAM, BENT_BRACE_LOW, CABIN_TOP, CABIN_WALL, CABIN_X, CABIN_Z, DECK_TOP, DECK_X, DECK_Z,
+    GIRT_Y, JOIST_DEPTH, LADDER_HALF, LADDER_TOP, LADDER_X, LADDER_Z, OUTRIGGER_Y, PLANK, POST,
+    POST_TOP, RAIL_HEIGHT, RAIL_INSET, ROOF_EDGE, ROOF_OVERHANG, ROOF_PITCH, SHOE_TOP, TOWER_BASE,
     WINDOW_HEIGHT, WINDOW_SILL, roof_apex,
+};
+use crate::sim::tower_structure::{
+    CORNERS, DECKS, FACES, FOOTINGS, LADDER, LOWER_LEGS, Member, RAILINGS, ROOF, UPPER_LEGS,
+    WALLS, bent_members, face_members, knee_member, tower_structure,
 };
 
 const TOWER_POST: u32 = 0x887454;
@@ -51,12 +52,12 @@ const AWNING_OPEN: f64 = 1.1;
 const SEAM_SPACING: f64 = 0.45;
 /// The railing gap above the ladder.
 const GAP: (f64, f64) = (1.3, 2.2);
-/// Top of the steel shoes the posts stand in; posts snap just below it.
-const SHOE_TOP: f64 = 1.35;
-/// Lowest point of the X-braces within each bent.
-const BENT_BRACE_LOW: f64 = 1.45;
-/// Height of the outrigger beams under the joists' overhang.
-const OUTRIGGER_Y: f64 = POST_TOP + BEAM - 0.09;
+/// The splintered stub a post leaves in its shoe when its lower lift is shot out:
+/// how far it reaches over the shoe and its section (inside the post while it stands).
+const STUB_OVER: f64 = 0.16;
+const STUB: f64 = 0.33;
+/// Falling parts smaller than this (m) across cast no shadow.
+const SHADOWLESS_UNDER: f64 = 1.8;
 
 fn palette(color: u32) -> Palette {
     Palette {
@@ -65,17 +66,6 @@ fn palette(color: u32) -> Palette {
         accent: TOWER_SHUTTERS,
         roof: TOWER_ROOF,
     }
-}
-
-/// A concrete footing at `x`, the shared base of the intact tower and its rubble.
-pub(super) fn tower_foundation(group: &mut Node, x: f64) {
-    put(
-        group,
-        concrete_wall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
-        x,
-        TOWER_BASE.height / 2.0,
-        0.0,
-    );
 }
 
 /// A post section `height` long.
@@ -94,111 +84,182 @@ fn member(
     seed: i32,
     color: u32,
 ) -> Node {
-    let along = to - from;
-    let x = along.normalize();
-    let z = (normal - x * normal.dot(x)).normalize();
-    let y = z.cross(x);
-    let mut node = timber_member(DVec3::new(along.length(), width, depth), seed, color);
-    node.rotation = DQuat::from_mat3(&DMat3::from_cols(x, y, z));
-    node.position = (from + to) / 2.0;
+    framed(
+        &Member {
+            from,
+            to,
+            width,
+            depth,
+            normal,
+        },
+        seed,
+        color,
+    )
+}
+
+/// A member of the structure, drawn where its collider is.
+fn framed(member: &Member, seed: i32, color: u32) -> Node {
+    let (center, half, rotation) = member.frame();
+    let mut node = timber_member(half * 2.0, seed, color);
+    node.rotation = rotation;
+    node.position = center;
     node
 }
 
-/// The intact watchtower, its cabin painted `color`.
-pub(super) fn tower(group: &mut Node, color: u32) {
-    let mut kit = Kit::new();
-    for side in [-1.0, 1.0] {
-        tower_foundation(group, side * TOWER_BASE.offset);
-        shoes(&mut kit, side * TOWER_BASE.offset);
-    }
-    add_building(group, kit.finish_scaled(uv_per_metre), &palette(color));
-    for piece in TowerPiece::ALL {
-        group
-            .children
-            .extend(piece_parts(piece, color, false).children);
-    }
+/// The watchtower's standing parts (those not in `broken`), its cabin painted
+/// `color`.
+pub(super) fn tower(group: &mut Node, color: u32, broken: &PartSet) {
+    let standing = (0..tower_structure().parts.len()).filter(|&index| !broken.contains(index));
+    parts_model(group, color, standing);
 }
 
-/// A collapse piece drawn as the part it was, centred on its collider and
-/// batched: the model a falling piece of the watchtower moves.
-pub fn tower_piece_model(piece: TowerPiece, color: u32) -> Node {
-    let mut parts = piece_parts(piece, color, true);
-    parts.position = -DVec3::from_array(piece.bounds().center);
-    let mut root = Node::default();
-    adopt_children(&mut root, parts);
-    batch(&mut root);
+/// The parts `parts` of a watchtower painted `color`, fallen together: drawn about the
+/// tower's ground centre, where their body started, and batched.
+pub fn tower_debris(color: u32, parts: &PartSet) -> Node {
+    let mut node = Node::default();
+    parts_model(&mut node, color, parts.iter());
+    batch(&mut node);
+    // A small piece casts no shadow: only the big sections' shadows show from the
+    // battlefield.
+    let layout = tower_structure();
+    let (low, high) = parts.iter().fold(
+        (DVec3::INFINITY, DVec3::NEG_INFINITY),
+        |(low, high), index| (low.min(layout.parts[index].min), high.max(layout.parts[index].max)),
+    );
+    if (high - low).max_element() < SHADOWLESS_UNDER {
+        uncast(&mut node);
+    }
+    let mut root = Node::group("tower-debris");
+    root.children.push(node);
     root
 }
 
-/// One piece's members and finishes in tower coordinates; a `broken` piece (one
-/// falling from the collapse) has its window glass shattered out of the frames.
-fn piece_parts(piece: TowerPiece, color: u32, broken: bool) -> Node {
-    let mut group = Node::default();
+fn uncast(node: &mut Node) {
+    if let Some(drawable) = &mut node.drawable {
+        drawable.cast_shadow = false;
+    }
+    for child in &mut node.children {
+        uncast(child);
+    }
+}
+
+/// The members and finishes of `parts` in tower coordinates.
+fn parts_model(group: &mut Node, color: u32, parts: impl Iterator<Item = usize>) {
     let mut kit = Kit::new();
-    let side = piece.side();
-    match piece {
-        TowerPiece::WestBent | TowerPiece::EastBent => bent(&mut group, &mut kit, side),
-        TowerPiece::BackBracing | TowerPiece::FrontBracing => face_bracing(&mut group, side),
-        TowerPiece::WestDeck | TowerPiece::EastDeck => {
-            deck_half(&mut group, side);
-            railing_half(&mut group, side);
-            if side < 0.0 {
-                searchlight(&mut kit);
-            }
-        }
-        TowerPiece::FrontWall
-        | TowerPiece::BackWall
-        | TowerPiece::WestWall
-        | TowerPiece::EastWall => cabin_wall(&mut kit, piece, broken),
-        TowerPiece::Roof if broken => torn_roof(&mut kit),
-        TowerPiece::Roof => hip_roof(&mut kit),
-        TowerPiece::Ladder => ladder(&mut kit),
+    for part in parts {
+        part_model(group, &mut kit, part);
     }
-    let mut meshes = kit.finish_scaled(uv_per_metre);
-    if broken {
-        for (surface, mesh) in &mut meshes {
-            if *surface == Surface::Glass {
-                *mesh = Arc::new(shattered(mesh, piece as u32));
-            }
-        }
-    }
-    add_building(&mut group, meshes, &palette(color));
-    group
+    add_building(group, kit.finish_scaled(uv_per_metre), &palette(color));
 }
 
-/// The jagged shards a pane leaves in its frame when it breaks: from each corner
-/// of each glass triangle, a shard reaching a random way along its two edges.
-fn shattered(glass: &Mesh, seed: u32) -> Mesh {
-    let mut rng = Random::new(f64::from(seed) * 9.73 + 3.1);
-    let mut mesh = Mesh::default();
-    for ((corners, normals), uvs) in glass
-        .positions
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .zip(glass.normals.as_chunks::<3>().0)
-        .zip(glass.uvs.as_chunks::<3>().0)
-    {
-        let at = |i: usize| DVec3::from_array(corners[i % 3].map(f64::from));
-        for i in 0..3 {
-            let (a, b, c) = (at(i), at(i + 1), at(i + 2));
-            let reach = [rng.range(0.15, 0.5), rng.range(0.15, 0.5)];
-            for p in [a, a + (b - a) * reach[0], a + (c - a) * reach[1]] {
-                mesh.positions.push(p.as_vec3().to_array());
-                mesh.normals.push(normals[i]);
-                mesh.uvs.push(uvs[i]);
-            }
+/// One part's members (timber nodes into `group`) and finishes (into `kit`).
+fn part_model(group: &mut Node, kit: &mut Kit<Surface>, part: usize) {
+    let mut next = seeds(700 + 37 * part as i32);
+    let corner_of = |legs: &[usize; 4]| legs.iter().position(|&leg| leg == part);
+    if let Some(side) = FOOTINGS.iter().position(|&footing| footing == part) {
+        footing(group, kit, if side == 0 { -1.0 } else { 1.0 }, &mut next);
+    } else if let Some(corner) = corner_of(&LOWER_LEGS) {
+        let (sx, sz) = CORNERS[corner];
+        let low = TOWER_BASE.height + 0.03;
+        put(
+            group,
+            post(GIRT_Y - low, next()),
+            sx * TOWER_BASE.offset,
+            (GIRT_Y + low) / 2.0,
+            sz * TOWER_BASE.post_z,
+        );
+    } else if let Some(corner) = corner_of(&UPPER_LEGS) {
+        let (sx, sz) = CORNERS[corner];
+        put(
+            group,
+            post(POST_TOP - GIRT_Y, next()),
+            sx * TOWER_BASE.offset,
+            (POST_TOP + GIRT_Y) / 2.0,
+            sz * TOWER_BASE.post_z,
+        );
+        group
+            .children
+            .push(framed(&knee_member(corner), next(), TOWER_BRACE));
+    } else if let Some(face) = FACES.iter().position(|members| members.contains(&part)) {
+        let k = FACES[face].iter().position(|&member| member == part).expect("a member");
+        let members = match face {
+            0 => bent_members(-1.0),
+            1 => bent_members(1.0),
+            2 => face_members(-1.0),
+            _ => face_members(1.0),
+        };
+        group.children.push(framed(&members[k], next(), TOWER_BRACE));
+        if face < 2 && k < 2 {
+            // The bolts through a bent's brace crossing.
+            let side = if face == 0 { -1.0 } else { 1.0 };
+            let x = side * TOWER_BASE.offset;
+            let out = if k == 0 { 1.0 } else { -1.0 };
+            kit.block(
+                Surface::Iron,
+                DVec3::new(0.02, 0.06, 0.06),
+                DMat4::from_translation(DVec3::new(
+                    x + side * out * (POST / 2.0 + 0.125),
+                    (BENT_BRACE_LOW + POST_TOP - 0.2) / 2.0,
+                    0.0,
+                )),
+            );
         }
+    } else if let Some(side) = DECKS.iter().position(|&deck| deck == part) {
+        deck_half(group, if side == 0 { -1.0 } else { 1.0 });
+    } else if let Some(side) = RAILINGS.iter().position(|&railing| railing == part) {
+        railing_half(group, if side == 0 { -1.0 } else { 1.0 });
+        if side == 0 {
+            searchlight(kit);
+        }
+    } else if let Some(wall) = WALLS.iter().position(|&wall| wall == part) {
+        cabin_wall(kit, wall);
+    } else if part == ROOF {
+        hip_roof(kit);
+    } else if part == LADDER {
+        ladder(kit);
     }
-    mesh
 }
 
-/// Seeds for one piece's members, distinct between pieces.
+/// Seeds for one part's members, distinct between parts.
 fn seeds(start: i32) -> impl FnMut() -> i32 {
     let mut seed = start;
     move || {
         seed += 1;
         seed
+    }
+}
+
+/// A concrete footing at `side` with its steel shoes, and in each shoe the
+/// splintered stub its post leaves when the leg is shot out (hidden inside the post
+/// while it stands).
+fn footing(group: &mut Node, kit: &mut Kit<Surface>, side: f64, next: &mut impl FnMut() -> i32) {
+    let x = side * TOWER_BASE.offset;
+    put(
+        group,
+        concrete_wall(TOWER_BASE.width, TOWER_BASE.height, TOWER_BASE.depth),
+        x,
+        TOWER_BASE.height / 2.0,
+        0.0,
+    );
+    shoes(kit, x);
+    for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
+        let base = TOWER_BASE.height + 0.03;
+        let height = SHOE_TOP + STUB_OVER - base;
+        let seed = next();
+        put(
+            group,
+            timber_member(DVec3::new(STUB, height, STUB), seed, TOWER_POST),
+            x,
+            base + height / 2.0,
+            z,
+        );
+        let splinter = rotated(
+            timber_member(DVec3::new(0.09, 0.16, 0.12), seed + 1, 0xc5a073),
+            0.0,
+            0.0,
+            0.3 * side,
+        );
+        put(group, splinter, x + 0.04 * side, base + height + 0.03, z);
     }
 }
 
@@ -237,98 +298,6 @@ fn shoes(kit: &mut Kit<Surface>, x: f64) {
             );
         }
     }
-}
-
-/// One bent: two posts from the break to the beams, X-braces on its outer and
-/// inner faces with a girt between, knee braces out to the outrigger beams, and
-/// the bolts through the brace crossing.
-fn bent(group: &mut Node, kit: &mut Kit<Surface>, side: f64) {
-    let mut next = seeds(700 + js_round(side * 50.0) as i32);
-    let x = side * TOWER_BASE.offset;
-    for z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
-        put(
-            group,
-            post(POST_TOP - POST_BREAK + 0.05, next()),
-            x,
-            (POST_TOP + POST_BREAK - 0.05) / 2.0,
-            z,
-        );
-    }
-    for (face, rise) in [(1.0, 1.0), (-1.0, -1.0)] {
-        let bx = x + side * face * (POST / 2.0 + 0.04);
-        let z = TOWER_BASE.post_z * rise;
-        group.children.push(member(
-            DVec3::new(bx, BENT_BRACE_LOW, -z),
-            DVec3::new(bx, POST_TOP - 0.2, z),
-            0.18,
-            0.08,
-            DVec3::X,
-            next(),
-            TOWER_BRACE,
-        ));
-        kit.block(
-            Surface::Iron,
-            DVec3::new(0.02, 0.06, 0.06),
-            DMat4::from_translation(DVec3::new(
-                x + side * face * (POST / 2.0 + 0.125),
-                (BENT_BRACE_LOW + POST_TOP - 0.2) / 2.0,
-                0.0,
-            )),
-        );
-    }
-    let span = 2.0 * TOWER_BASE.post_z - POST;
-    group.children.push(member(
-        DVec3::new(x, 2.8, -span / 2.0),
-        DVec3::new(x, 2.8, span / 2.0),
-        0.2,
-        0.15,
-        DVec3::X,
-        next(),
-        TOWER_BRACE,
-    ));
-    for edge in [-1.0, 1.0] {
-        let z = edge * TOWER_BASE.post_z;
-        let outrigger_z = edge * (DECK_Z - 0.45);
-        group.children.push(member(
-            DVec3::new(x, 3.55, z + edge * (POST / 2.0 - 0.02)),
-            DVec3::new(x, OUTRIGGER_Y - 0.06, outrigger_z - edge * 0.08),
-            0.15,
-            0.15,
-            DVec3::X,
-            next(),
-            TOWER_BRACE,
-        ));
-    }
-}
-
-/// The X-braces and girt between the footings on the back (`edge` -1) or front
-/// face.
-fn face_bracing(group: &mut Node, edge: f64) {
-    let mut next = seeds(760 + js_round(edge * 20.0) as i32);
-    let z = edge * TOWER_BASE.post_z;
-    for (face, rise) in [(1.0, 1.0), (-1.0, -1.0)] {
-        let bz = z + edge * face * (POST / 2.0 + 0.04);
-        let x = TOWER_BASE.offset * rise;
-        group.children.push(member(
-            DVec3::new(-x, FACE_BRACE_LOW, bz),
-            DVec3::new(x, POST_TOP - 0.25, bz),
-            0.2,
-            0.08,
-            DVec3::Z,
-            next(),
-            TOWER_BRACE,
-        ));
-    }
-    let span = 2.0 * TOWER_BASE.offset - POST;
-    group.children.push(member(
-        DVec3::new(-span / 2.0, 2.8, z),
-        DVec3::new(span / 2.0, 2.8, z),
-        0.2,
-        0.15,
-        DVec3::Z,
-        next(),
-        TOWER_BRACE,
-    ));
 }
 
 /// Whether `x` lies on the deck half `side` (the middle belongs to the east).
@@ -483,88 +452,14 @@ fn railing_half(group: &mut Node, side: f64) {
     }
 }
 
-/// One wall of the lookout cabin: clapboard over a trimmed sill, glazed under
-/// propped awning shutters, the front with a door onto the walkway beside the
-/// ladder, lined inside so a fallen wall is solid from behind.
-/// A falling cabin wall's damage: how far its top tears down (m) and how many
-/// teeth the tear has, how deep its torn end is ripped in (m), and the ragged
-/// hole the blast punched through it below the windows (centre height, half
-/// size and corners).
-const TORN_TOP: f64 = 0.3;
-const TORN_TEETH: usize = 7;
-const TORN_END: (f64, f64) = (0.04, 0.3);
-const BREACH_Y: f64 = 5.62;
-const BREACH_HALF: (f64, f64) = (0.34, 0.27);
-const BREACH_CORNERS: usize = 8;
-
-/// `polygon` as seen from the wall's back: mirrored across its upright axis,
-/// its winding kept.
-fn mirrored(polygon: &[DVec2]) -> Vec<DVec2> {
-    polygon
-        .iter()
-        .rev()
-        .map(|p| DVec2::new(-p.x, p.y))
-        .collect()
-}
-
-/// A torn cabin wall: its face and lining cut by its openings and breaches,
-/// painted along the foot where it met the deck and fresh torn wood along
-/// every edge that broke and round every breach.
-fn torn_wall(
-    kit: &mut Kit<Surface>,
-    frame: DMat4,
-    outline: &[DVec2],
-    openings: &[Opening],
-    breaches: &[Vec<DVec2>],
-) {
-    wall_with_breaches(kit, frame, outline, openings, CABIN_WALL, breaches);
-    // The lining faces into the cabin, so its outline and holes mirror.
-    let inside = frame * pose(DVec3::new(0.0, 0.0, -CABIN_WALL), DVec3::new(0.0, PI, 0.0));
-    let holes: Vec<Vec<DVec2>> = openings
-        .iter()
-        .map(Opening::corners)
-        .chain(breaches.iter().cloned())
-        .map(|hole| mirrored(&hole))
-        .collect();
-    kit.face_with_holes(Surface::Siding, &mirrored(outline), &holes, inside);
-    let at = |p: DVec2, z: f64| frame.transform_point3(DVec3::new(p.x, p.y, z));
-    let facing = |d: DVec2| frame.transform_vector3(DVec3::new(d.x, d.y, 0.0));
-    let mut edges = |polygon: &[DVec2], inward: bool, foot: bool| {
-        let middle = polygon.iter().copied().sum::<DVec2>() / polygon.len() as f64;
-        for i in 0..polygon.len() {
-            let (a, b) = (polygon[i], polygon[(i + 1) % polygon.len()]);
-            let out = (a + b) / 2.0 - middle;
-            kit.quad(
-                if foot && i == 0 {
-                    Surface::Trim
-                } else {
-                    Surface::Splinters
-                },
-                [
-                    at(a, 0.0),
-                    at(b, 0.0),
-                    at(b, -CABIN_WALL),
-                    at(a, -CABIN_WALL),
-                ],
-                facing(if inward { -out } else { out }),
-            );
-        }
-    };
-    edges(outline, false, true);
-    for hole in breaches {
-        edges(hole, true, false);
-    }
-}
-
-fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece, broken: bool) {
+/// One wall of the lookout cabin (`wall` in [`WALLS`] order: front, back, west,
+/// east): clapboard over a trimmed sill, glazed under propped awning shutters, the
+/// front with a door onto the walkway beside the ladder, lined inside so a fallen
+/// wall is solid from behind.
+fn cabin_wall(kit: &mut Kit<Surface>, wall_index: usize) {
     let [front_wall, back_wall, east_wall, west_wall] = wall_frames(2.0 * CABIN_X, 2.0 * CABIN_Z);
-    let (frame, half) = match piece {
-        TowerPiece::FrontWall => front_wall,
-        TowerPiece::BackWall => back_wall,
-        TowerPiece::EastWall => east_wall,
-        _ => west_wall,
-    };
-    let front = piece == TowerPiece::FrontWall;
+    let (frame, half) = [front_wall, back_wall, west_wall, east_wall][wall_index];
+    let front = wall_index == 0;
     let glazing = Glazing { double_hung: false };
     let centres: Vec<f64> = if front {
         vec![-1.25, 0.05]
@@ -592,93 +487,39 @@ fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece, broken: bool) {
     if front {
         openings.push(entry);
     }
-    // A wall falling from the collapse tore along its top and one end where it
-    // left the roof and its neighbour, and the blast holed it below a window.
-    let mut rng = Random::new(piece as u32 as f64 * 7.31 + 2.9);
-    let torn_end = if rng.next() < 0.5 { -1.0 } else { 1.0 };
-    let mut outline = vec![DVec2::new(-half, DECK_TOP), DVec2::new(half, DECK_TOP)];
-    let mut breaches = Vec::new();
-    if broken {
-        let end_points = 4;
-        for i in 0..end_points {
-            let y = DECK_TOP + (CABIN_TOP - DECK_TOP) * (i as f64 + 0.5) / end_points as f64;
-            let u = half - rng.range(TORN_END.0, TORN_END.1);
-            if torn_end > 0.0 {
-                outline.push(DVec2::new(u, y));
-            }
-        }
-        // The teeth run from the torn end's top across to the corner that held.
-        let teeth = if torn_end > 0.0 {
-            1..=TORN_TEETH
-        } else {
-            0..=TORN_TEETH - 1
-        };
-        for i in teeth {
-            let u = half - 2.0 * half * i as f64 / TORN_TEETH as f64;
-            let y = CABIN_TOP - rng.range(0.0, TORN_TOP);
-            outline.push(DVec2::new(u, y));
-        }
-        if torn_end < 0.0 {
-            for i in (0..end_points).rev() {
-                let y = DECK_TOP + (CABIN_TOP - DECK_TOP) * (i as f64 + 0.5) / end_points as f64;
-                outline.push(DVec2::new(-half + rng.range(TORN_END.0, TORN_END.1), y));
-            }
-        }
-        // Below the windows, clear of the door.
-        let (low, high) = if front {
-            (-half + 0.55, entry.u - entry.width / 2.0 - 0.45)
-        } else {
-            (-half + 0.6, half - 0.6)
-        };
-        let centre = DVec2::new(rng.range(low, high), BREACH_Y);
-        let hole: Vec<DVec2> = (0..BREACH_CORNERS)
-            .map(|i| {
-                // Clockwise, as the kit cuts breaches.
-                let angle = -(i as f64) * std::f64::consts::TAU / BREACH_CORNERS as f64;
-                let reach = rng.range(0.55, 1.0);
-                centre
-                    + DVec2::new(
-                        angle.cos() * BREACH_HALF.0 * reach,
-                        angle.sin() * BREACH_HALF.1 * reach,
-                    )
-            })
-            .collect();
-        breaches.push(hole);
-    } else {
-        outline.push(DVec2::new(half, CABIN_TOP));
-        outline.push(DVec2::new(-half, CABIN_TOP));
-    }
-    if broken {
-        torn_wall(kit, frame, &outline, &openings, &breaches);
-    } else {
-        wall(kit, frame, &outline, &openings, CABIN_WALL);
-        // The lining faces into the cabin, so its outline and openings mirror.
-        let inside = frame * pose(DVec3::new(0.0, 0.0, -CABIN_WALL), DVec3::new(0.0, PI, 0.0));
-        let holes: Vec<Vec<DVec2>> = openings
-            .iter()
-            .map(|o| Opening { u: -o.u, ..*o }.corners())
-            .collect();
-        kit.face_with_holes(Surface::Siding, &outline, &holes, inside);
-        // End, top and bottom edges between the face and the lining.
-        let at = |u: f64, y: f64, z: f64| frame.transform_point3(DVec3::new(u, y, z));
-        let facing = |x: f64, y: f64| frame.transform_vector3(DVec3::new(x, y, 0.0));
-        for (a, b, normal) in [
-            ((-half, DECK_TOP), (-half, CABIN_TOP), facing(-1.0, 0.0)),
-            ((half, DECK_TOP), (half, CABIN_TOP), facing(1.0, 0.0)),
-            ((-half, CABIN_TOP), (half, CABIN_TOP), facing(0.0, 1.0)),
-            ((-half, DECK_TOP), (half, DECK_TOP), facing(0.0, -1.0)),
-        ] {
-            kit.quad(
-                Surface::Trim,
-                [
-                    at(a.0, a.1, 0.0),
-                    at(b.0, b.1, 0.0),
-                    at(b.0, b.1, -CABIN_WALL),
-                    at(a.0, a.1, -CABIN_WALL),
-                ],
-                normal,
-            );
-        }
+    let outline = vec![
+        DVec2::new(-half, DECK_TOP),
+        DVec2::new(half, DECK_TOP),
+        DVec2::new(half, CABIN_TOP),
+        DVec2::new(-half, CABIN_TOP),
+    ];
+    wall(kit, frame, &outline, &openings, CABIN_WALL);
+    // The lining faces into the cabin, so its outline and openings mirror.
+    let inside = frame * pose(DVec3::new(0.0, 0.0, -CABIN_WALL), DVec3::new(0.0, PI, 0.0));
+    let holes: Vec<Vec<DVec2>> = openings
+        .iter()
+        .map(|o| Opening { u: -o.u, ..*o }.corners())
+        .collect();
+    kit.face_with_holes(Surface::Siding, &outline, &holes, inside);
+    // End, top and bottom edges between the face and the lining.
+    let at = |u: f64, y: f64, z: f64| frame.transform_point3(DVec3::new(u, y, z));
+    let facing = |x: f64, y: f64| frame.transform_vector3(DVec3::new(x, y, 0.0));
+    for (a, b, normal) in [
+        ((-half, DECK_TOP), (-half, CABIN_TOP), facing(-1.0, 0.0)),
+        ((half, DECK_TOP), (half, CABIN_TOP), facing(1.0, 0.0)),
+        ((-half, CABIN_TOP), (half, CABIN_TOP), facing(0.0, 1.0)),
+        ((-half, DECK_TOP), (half, DECK_TOP), facing(0.0, -1.0)),
+    ] {
+        kit.quad(
+            Surface::Trim,
+            [
+                at(a.0, a.1, 0.0),
+                at(b.0, b.1, 0.0),
+                at(b.0, b.1, -CABIN_WALL),
+                at(a.0, a.1, -CABIN_WALL),
+            ],
+            normal,
+        );
     }
     for opening in &windows {
         window(kit, frame, opening, glazing, CABIN_WALL);
@@ -691,9 +532,6 @@ fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece, broken: bool) {
         kit.block(Surface::Trim, size, frame * DMat4::from_translation(at));
     };
     for side in [-1.0, 1.0] {
-        if broken && side == torn_end {
-            continue;
-        }
         block(
             kit,
             DVec3::new(0.15, CABIN_TOP - DECK_TOP, 0.03),
@@ -711,13 +549,11 @@ fn cabin_wall(kit: &mut Kit<Surface>, piece: TowerPiece, broken: bool) {
             DVec3::new((from + to) / 2.0, DECK_TOP + 0.07, 0.0175),
         );
     }
-    if !broken {
-        block(
-            kit,
-            DVec3::new(2.0 * half + 0.06, 0.16, 0.03),
-            DVec3::new(0.0, CABIN_TOP - 0.08, 0.015),
-        );
-    }
+    block(
+        kit,
+        DVec3::new(2.0 * half + 0.06, 0.16, 0.03),
+        DVec3::new(0.0, CABIN_TOP - 0.08, 0.015),
+    );
 }
 
 /// A board-and-batten shutter hinged above a window and swung out on two props.
@@ -885,112 +721,6 @@ fn hip_roof(kit: &mut Kit<Surface>) {
     }
 }
 
-/// The roof as it falls from the collapse: its sheet torn open down two slopes
-/// and one hip gone, so the rafters and ridge beam show through ragged holes,
-/// and its anemometer snapped off. One rigid piece, but never a whole lid.
-fn torn_roof(kit: &mut Kit<Surface>) {
-    let (ex, ez) = (CABIN_X + ROOF_OVERHANG, CABIN_Z + ROOF_OVERHANG);
-    let ridge_x = ex - ez;
-    let top = CABIN_TOP + ROOF_EDGE;
-    let apex = roof_apex();
-    let sheet = 0.05;
-    // A point on a long slope (`side` -1 front, +1 back) at `u` along the eave
-    // and `v` from the eave (0) to the ridge (1), clamped to the slope's hips.
-    let long = |side: f64, u: f64, v: f64| {
-        let half = ex - (ex - ridge_x) * v;
-        DVec3::new(
-            u.clamp(-half, half),
-            top + (apex - top) * v,
-            side * ez * (1.0 - v),
-        )
-    };
-    // A point on an end slope (`side` -1 west, +1 east) at `w` across it.
-    let end = |side: f64, w: f64, v: f64| {
-        let half = ez * (1.0 - v);
-        DVec3::new(
-            side * (ex - (ex - ridge_x) * v),
-            top + (apex - top) * v,
-            w.clamp(-half, half),
-        )
-    };
-    let panel = |kit: &mut Kit<Surface>, outline: Vec<DVec3>| {
-        let under = outline.iter().map(|p| *p - DVec3::Y * sheet).collect();
-        kit.solid(Surface::Roof, &[under, outline]);
-    };
-    // Front slope: whole from the west hip to a tear running up it, the sheet
-    // past the tear gone.
-    let tear = [0.35, 0.1, 0.55, 0.2, 0.45];
-    let mut front = vec![long(-1.0, -ex, 0.0)];
-    for (i, u) in tear.iter().enumerate() {
-        front.push(long(-1.0, *u, i as f64 / (tear.len() - 1) as f64));
-    }
-    front.push(long(-1.0, -ridge_x, 1.0));
-    panel(kit, front);
-    // Back slope: only its east part hangs on, behind another tear.
-    let tear = [-0.2, 0.15, -0.05, 0.3, 0.05];
-    let mut back = vec![long(1.0, ex, 0.0), long(1.0, ex, 1.0)];
-    for (i, u) in tear.iter().enumerate().rev() {
-        back.push(long(1.0, *u, i as f64 / (tear.len() - 1) as f64));
-    }
-    panel(kit, back);
-    // The east hip keeps its sheet; the west one lost most of it, a ragged
-    // flap left at its eave.
-    panel(
-        kit,
-        vec![end(1.0, -ez, 0.0), end(1.0, ez, 0.0), end(1.0, 0.0, 1.0)],
-    );
-    panel(
-        kit,
-        vec![
-            end(-1.0, -0.7, 0.0),
-            end(-1.0, 0.5, 0.0),
-            end(-1.0, 0.2, 0.3),
-            end(-1.0, -0.1, 0.42),
-            end(-1.0, -0.4, 0.25),
-        ],
-    );
-    // The frame under it: hip rafters, the ridge beam and common rafters.
-    let below = DVec3::Y * (sheet + 0.05);
-    let rafter = |kit: &mut Kit<Surface>, from: DVec3, to: DVec3| {
-        kit.rod(Surface::Siding, 0.05, from - below, to - below, 4);
-    };
-    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-        rafter(
-            kit,
-            DVec3::new(sx * ex, top, sz * ez),
-            DVec3::new(sx * ridge_x, apex, 0.0),
-        );
-    }
-    rafter(
-        kit,
-        DVec3::new(-ridge_x, apex, 0.0),
-        DVec3::new(ridge_x, apex, 0.0),
-    );
-    for u in [-0.6, 0.0, 0.6] {
-        for side in [-1.0, 1.0] {
-            rafter(kit, long(side, u, 0.0), long(side, u, 1.0));
-        }
-    }
-    // A rafter snapped in the open hole, its end hanging.
-    rafter(
-        kit,
-        long(-1.0, 1.1, 0.0),
-        long(-1.0, 1.0, 0.45) - DVec3::Y * 0.35,
-    );
-    // The eave boards left along the slopes that kept their sheet.
-    let (board, y) = (ROOF_EDGE + 0.04, CABIN_TOP + ROOF_EDGE / 2.0 - 0.02);
-    kit.block(
-        Surface::Trim,
-        DVec3::new(ex + 0.4, board, 0.03),
-        DMat4::from_translation(DVec3::new(-(ex - 0.4) / 2.0, y, -(ez + 0.015))),
-    );
-    kit.block(
-        Surface::Trim,
-        DVec3::new(0.03, board, 2.0 * ez),
-        DMat4::from_translation(DVec3::new(ex + 0.015, y, 0.0)),
-    );
-}
-
 /// A steel ladder from the ground to grab handles above the deck, tied to the
 /// deck rim.
 fn ladder(kit: &mut Kit<Surface>) {
@@ -1070,66 +800,4 @@ fn searchlight(kit: &mut Kit<Surface>) {
         14,
         housing * DMat4::from_translation(DVec3::Z * 0.4),
     );
-}
-
-/// One surviving footing with its steel shoes, the splintered stumps of the
-/// posts that snapped above them and a scatter of boards, stable per collapse
-/// through `debris_seed`.
-pub(super) fn rubble(group: &mut Node, x: f64, z: f64, color: u32, debris_seed: Option<f64>) {
-    tower_foundation(group, 0.0);
-    let mut kit = Kit::new();
-    shoes(&mut kit, 0.0);
-    add_building(group, kit.finish_scaled(uv_per_metre), &palette(color));
-    let mut rng =
-        Random::new(debris_seed.unwrap_or_else(|| js_round(x * 73_856_093.0 + z * 19_349_663.0)));
-    fn choose<T: Copy>(rng: &mut Random, values: &[T]) -> T {
-        values[(rng.next() * values.len() as f64).floor() as usize]
-    }
-    let base = SHOE_TOP - 0.25;
-    for post_z in [-TOWER_BASE.post_z, TOWER_BASE.post_z] {
-        // Stumps keep the posts' position, section and grain, broken just above
-        // the shoe at the height the falling posts begin.
-        let height = POST_BREAK - base + choose(&mut rng, &[0.0, 0.06, 0.14, 0.22]);
-        let seed = js_round(rng.next() * 1000.0) as i32;
-        put(group, post(height, seed), 0.0, base + height / 2.0, post_z);
-        if rng.next() < 0.7 {
-            let rz = rng.range(-0.4, 0.4);
-            let splinter = rotated(
-                timber_member(DVec3::new(0.09, 0.16, 0.12), seed + 1, 0xc5a073),
-                0.0,
-                0.0,
-                rz,
-            );
-            let sx = rng.range(-0.1, 0.1);
-            put(group, splinter, sx, base + height + 0.03, post_z);
-        }
-    }
-    // Discrete sizes keep the pile varied; each footing gets its own scatter.
-    let count = choose(&mut rng, &[2, 3, 4]);
-    for i in 0..count {
-        let width = choose(&mut rng, &[0.16, 0.3, 0.55]);
-        let length = choose(&mut rng, &[0.7, 1.1, 1.5]);
-        let yaw = rng.range(-0.55, 0.55);
-        let board_color = choose(&mut rng, &[color, TOWER_DECK, TOWER_BRACE]);
-        let board = rotated(
-            timber_member(DVec3::new(length, 0.09, width), 1200 + i, board_color),
-            0.0,
-            yaw + PI / 2.0,
-            0.0,
-        );
-        // Keep the pile inside its foundation, preserving the opened centre route.
-        let room_x = ((TOWER_BASE.width - width * yaw.cos() - length * yaw.sin().abs()) / 2.0
-            - 0.02)
-            .max(0.0);
-        let room_z = (TOWER_BASE.depth - length * yaw.cos() - width * yaw.sin().abs()) / 2.0 - 0.02;
-        let bx = rng.range(-room_x, room_x);
-        let bz = rng.range(-room_z, room_z);
-        put(
-            group,
-            board,
-            bx,
-            TOWER_BASE.height + 0.045 + f64::from(i) * 0.055,
-            bz,
-        );
-    }
 }

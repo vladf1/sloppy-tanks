@@ -102,13 +102,12 @@ pub enum CoverKind {
     Concrete,
     Drum,
     Tower,
-    Rubble,
     #[default]
     Boundary,
 }
 
 impl CoverKind {
-    pub const ALL: [CoverKind; 13] = [
+    pub const ALL: [CoverKind; 12] = [
         CoverKind::Rock,
         CoverKind::Teeth,
         CoverKind::Hedgehog,
@@ -120,7 +119,6 @@ impl CoverKind {
         CoverKind::Concrete,
         CoverKind::Drum,
         CoverKind::Tower,
-        CoverKind::Rubble,
         CoverKind::Boundary,
     ];
 
@@ -138,7 +136,6 @@ impl CoverKind {
             CoverKind::Concrete => "concrete",
             CoverKind::Drum => "drum",
             CoverKind::Tower => "tower",
-            CoverKind::Rubble => "rubble",
             CoverKind::Boundary => "boundary",
         }
     }

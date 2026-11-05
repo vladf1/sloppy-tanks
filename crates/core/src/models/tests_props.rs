@@ -9,6 +9,7 @@ use crate::sim::house_structure::PartSet;
 use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts,
 };
+use crate::sim::tower_structure::tower_structure;
 use crate::sim::tree_proportions::tree_proportions;
 use crate::sim::types::CoverKind;
 
@@ -30,7 +31,6 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
         d,
         h,
         color,
-        debris_seed: Some(7.0),
         timber_hits: Vec::new(),
         timber_join: None,
         broken: PartSet::EMPTY,
@@ -74,6 +74,11 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         shape.broken = PartSet::from_indices(5..14);
         shape
     };
+    // A watchtower toppled off its footings: they and their shoes are left.
+    let toppled = |mut shape: CoverShape| {
+        shape.broken = PartSet::from_indices(2..tower_structure().parts.len());
+        shape
+    };
     let full = TreeDetail::Full;
     // (label, shape, detail, last damage stage, triangle budget)
     #[rustfmt::skip]
@@ -90,7 +95,7 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("timber post", cover(CoverKind::Timber, [0.9, 0.9, 2.8], 0x805336), full, 3, 760),
         ("drum", cover(CoverKind::Drum, [1.2, 1.2, 1.7], 0xff5b24), full, 0, 1_400),
         ("tower", cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a), full, 0, 19_600),
-        ("tower rubble", cover(CoverKind::Rubble, [1.3, 3.0, 1.25], 0xbd8a4a), full, 0, 1_000),
+        ("toppled tower", toppled(cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a)), full, 0, 1_300),
         ("container", cover(CoverKind::Container, [6.0, 14.0, 3.6], 0xd37c38), full, 0, 2_300),
         ("cargo crate", hit(cover(CoverKind::Cargo, [2.4, 2.4, 2.0], 0x8a6a3c)), full, 2, 5_800),
         ("concrete barrier", cover(CoverKind::Concrete, [8.0, 1.1, 1.5], 0xb5b5a5), full, 0, 300),
@@ -204,29 +209,28 @@ fn tree_damage_sheds_boughs_by_stage() {
     assert!(!tree.find(tree_part::CUT_SURFACE).unwrap().visible);
 }
 
-/// Tower rubble keeps the tower's concrete footing and timber, never its clapboard
-/// cabin. A browser can't tell this from texture downloads: village houses load the
-/// same files.
+/// A toppled watchtower's footings keep its concrete and timber stubs, never its
+/// clapboard cabin. A browser can't tell this from texture downloads: village houses
+/// load the same files.
 #[test]
-fn tower_rubble_wears_concrete_and_timber() {
-    let shape = |kind| CoverShape {
-        kind,
+fn a_toppled_towers_footings_wear_concrete_and_timber() {
+    let shape = |broken| CoverShape {
+        kind: CoverKind::Tower,
         x: -10.2,
         z: 28.0,
-        w: 1.3,
-        d: 3.0,
-        h: 1.25,
+        w: 6.0,
+        d: 5.0,
+        h: 7.5,
         color: 0xbd8a4a,
-        debris_seed: Some(7.0),
         timber_hits: Vec::new(),
         timber_join: None,
-        broken: PartSet::EMPTY,
+        broken,
     };
-    let textures = |kind| node_textures(&cover_model(&shape(kind), TreeDetail::Full, 0));
-    let tower = textures(CoverKind::Tower);
+    let textures = |broken| node_textures(&cover_model(&shape(broken), TreeDetail::Full, 0));
+    let tower = textures(PartSet::EMPTY);
     assert!(tower.contains(&TextureSource::File(building_kit::CLAPBOARD_TEXTURE)));
     assert_eq!(
-        textures(CoverKind::Rubble),
+        textures(PartSet::from_indices(2..tower_structure().parts.len())),
         [
             TextureSource::File(CONCRETE_TEXTURE),
             TextureSource::File(timber_model::TIMBER_TEXTURE),
