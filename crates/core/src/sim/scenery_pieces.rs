@@ -604,6 +604,8 @@ const CAVE_RIDGE_DROP: f64 = 1.4;
 const CAVE_BUCKLE: f64 = 1.3;
 /// How much faster a gable's upper shards tip in under a caving roof.
 const CAVE_GABLE_TIP: f64 = 2.2;
+/// How much faster the back gable's top, torn off above its windows, tips.
+const GABLE_TOP_TIP: f64 = 1.8;
 /// Damping that settles the heavy shards into the pile instead of tumbling; a
 /// roof slab's spin is held harder, so a knock from a wall does not flip it.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
@@ -681,8 +683,11 @@ const LYING: f32 = 2.2;
 /// settle in which it is (s), how close to level its face's normal must come to
 /// count as standing, and how fast (rad/s, m/s) it is tipped over the way it
 /// leans, or away from the footprint's middle onto open ground.
-const TOPPLE_WINDOW: (f64, f64) = (1.0, 3.8);
+const TOPPLE_WINDOW: (f64, f64) = (1.0, 5.0);
 const STANDING: f32 = 0.66;
+/// How near level (its top's normal's rise, cos 45°) a propped eave slab must come
+/// to be left as it leans.
+const STEEP_SLAB: f32 = 0.71;
 /// How upright (its axis's rise) a fallen chimney stack may stand before it is
 /// knocked over.
 const CHIMNEY_UPRIGHT: f32 = 0.75;
@@ -703,7 +708,7 @@ const TOPPLE_SHOVE: f32 = 0.7;
 /// How far a standing shard's top must lean (sine of the angle) to fall that way,
 /// and how many times one is tipped before it is left as it rests.
 const LEANING: f32 = 0.08;
-const TOPPLES: u8 = 6;
+const TOPPLES: u8 = 8;
 /// A little lift (m/s) with each tip, to clear what the shard's foot is caught on.
 const TOPPLE_LIFT: f32 = 0.6;
 const LOOSE_LIFE: f64 = 2.5;
@@ -833,6 +838,13 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             // Under a caving roof a gable has nothing left to hold it up: it folds
             // in over the wreck rather than standing on, whole, round it.
             let tip = if caved && gable { tip * CAVE_GABLE_TIP } else { tip };
+            // The back gable torn off above the wall under it tips over its tear
+            // briskly, rather than standing on as a triangle round the wreck.
+            let tip = if part == HousePart::BackWall && !shape.piece.shard.is_multiple_of(2) {
+                tip * GABLE_TOP_TIP
+            } else {
+                tip
+            };
             // It tips about the foot of the face it falls over.
             let bottom = shape.hull.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
             let foot = shape.center - out * shape.center.dot(out)
@@ -947,8 +959,13 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             // rafter lines and settles on the wreck.
             rigid_body.lock_rotations(true, true);
             // The roof hangs a moment while the walls under it buckle, so they
-            // fold in beneath it rather than being shoved out by its edge.
+            // fold in beneath it rather than being shoved out by its edge. Held, it
+            // keeps no speed: the speeds it was dealt crept each slab a few
+            // millimetres a tick under its locks, opening every crack in the roof
+            // before it gave way. It starts down when it gives way.
             rigid_body.lock_translations(true, true);
+            rigid_body.set_linvel(Vector::ZERO, false);
+            rigid_body.set_angvel(Vector::ZERO, false);
         }
     }
     // Bricks spilling off the snapped stack, thrown the way the top falls.
@@ -1254,7 +1271,7 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             && fragment.house_topples < TOPPLES
             && piece.part != HousePart::Chimney
             && !lower_wall(piece)
-            && !(piece.part.is_roof() && piece.shard % 2 == 1)
+            && !(piece.part.is_roof() && piece.shard % 2 == 1 && fragment.house_topples > 0)
         {
             let house = fragment.house_id.and_then(|id| {
                 simulation
@@ -1266,7 +1283,16 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             if let Some((x, z, local)) = house {
                 // The shard's body keeps the build frame's axes turned by its pose.
                 let normal = *body.rotation() * local;
-                if normal.y.abs() < STANDING {
+                // An eave slab (or a whole slope) propped up on its eave steeper
+                // than [`STEEP_SLAB`], roof side up, is laid back once onto the
+                // pile; one leaning less stays as it leans.
+                let eave_slab = piece.part.is_roof() && piece.shard % 2 == 1;
+                let standing = if eave_slab {
+                    normal.y > 0.0 && normal.y < STEEP_SLAB
+                } else {
+                    normal.y.abs() < STANDING
+                };
+                if standing {
                     let p = body.translation();
                     let flat = Vector::new(normal.x, 0.0, normal.z).normalize();
                     let away = Vector::new(p.x - x as f32, 0.0, p.z - z as f32);

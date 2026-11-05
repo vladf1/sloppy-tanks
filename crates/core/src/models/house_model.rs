@@ -6599,7 +6599,7 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
 
 /// How many broken roof slabs and wall panels a heap keeps once the collapse's
 /// shards have sunk.
-const REMAINS_ROOF: usize = 6;
+const REMAINS_ROOF: usize = 5;
 const REMAINS_WALLS: usize = 6;
 
 /// What stays of the roof and chimney on a heap once the collapse's shards have
@@ -6625,8 +6625,9 @@ fn heap_remains(
     // Roof slabs broken small: shingled tops over their decking and a rafter or
     // two, some leaning off the mound, the rest tipped every way over the floor and
     // half sunk in the rubble on it, so no whole sheet lies flat like a floor.
-    for k in 0..REMAINS_ROOF {
-        let on_mound = k < 4;
+    for _ in 0..REMAINS_ROOF {
+        // On the mound only: a roof slab left on the floor read as a floor.
+        let on_mound = true;
         let (u, v) = (
             rng.range(-bw / 2.0 + 1.0, bw / 2.0 - 1.0),
             if on_mound {

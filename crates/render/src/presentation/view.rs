@@ -21,7 +21,7 @@ use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
-use sloppy_core::sim::house_layout::{HousePiece, is_house_heap};
+use sloppy_core::sim::house_layout::{HousePart, HousePiece, is_house_heap};
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -3550,7 +3550,9 @@ impl Presentation {
             for child in &mut node.children {
                 child.visible |= child.name == HOUSE_MOUND;
             }
-            self.settled.track(fragment.id, house, node, self.time);
+            let lasting = !piece.part.is_roof() && piece.part != HousePart::Chimney;
+            self.settled
+                .track(fragment.id, house, node, self.time, lasting);
             look
         } else if let Some(piece) = fragment.tower_piece {
             let piece = self.shared_debris(SharedDebris::Tower(piece, fragment.color));

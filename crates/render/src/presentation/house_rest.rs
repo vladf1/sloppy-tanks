@@ -11,8 +11,8 @@
 //! time the pile changed, cost a slow device a 60 ms frame every 0.4 s while it
 //! settled. Presentation only: the shards' bodies are untouched.
 //!
-//! When the pile's shards begin to sink away, the poses they last rested at stay
-//! behind pressed flat ([`SettledShards::remains`]): splintered panels, slabs and
+//! When the pile's shards begin to sink away, the walls' and the mound's (not the
+//! roof's) poses they last rested at stay behind pressed flat ([`SettledShards::remains`]): splintered panels, slabs and
 //! boards strewn low over the floor for the rest of the round, so the collapse never
 //! leaves a swept foundation. They are drawn without a shadow, lie too low for a hull
 //! to clip them visibly, and are pressed a chunk a frame too.
@@ -62,6 +62,10 @@ struct Shard {
     baked: Option<(u64, Pose)>,
     /// The pose it last rested at, kept for the remains.
     rested: Option<Pose>,
+    /// Whether it stays in the remains: a wall's shard or the mound, not a roof
+    /// slab, which pressed flat lay over the floor like a green floor for the rest
+    /// of the round (the heap keeps broken roofing of its own).
+    lasting: bool,
     still_since: f64,
     fading: bool,
 }
@@ -106,7 +110,7 @@ impl<H> Default for SettledShards<H> {
 
 impl<H> SettledShards<H> {
     /// Follow the shard of fragment `id` from cottage `house`, drawn as `node`.
-    pub fn track(&mut self, id: u32, house: u32, node: Node, now: f64) {
+    pub fn track(&mut self, id: u32, house: u32, node: Node, now: f64, lasting: bool) {
         self.shards.insert(
             id,
             Shard {
@@ -115,6 +119,7 @@ impl<H> SettledShards<H> {
                 pose: None,
                 baked: None,
                 rested: None,
+                lasting,
                 still_since: now,
                 fading: false,
             },
@@ -282,7 +287,7 @@ impl<H> SettledShards<H> {
             let mut rested: Vec<(u32, Node, Pose)> = self
                 .shards
                 .iter()
-                .filter(|(_, shard)| shard.house == house)
+                .filter(|(_, shard)| shard.house == house && shard.lasting)
                 .filter_map(|(&id, shard)| Some((id, shard.node.clone(), shard.rested?)))
                 .collect();
             rested.sort_unstable_by_key(|(id, ..)| *id);
@@ -477,7 +482,7 @@ mod tests {
     fn resting_shards_merge_a_chunk_a_frame_and_a_moving_one_breaks_only_its_own() {
         let mut settled: SettledShards<u32> = SettledShards::default();
         for id in 1..=10 {
-            settled.track(id, 9, shard(), 0.0);
+            settled.track(id, 9, shard(), 0.0, true);
         }
         let (mut now, mut next) = (0.0, 0);
         let rest = |id: u32| id as f32;

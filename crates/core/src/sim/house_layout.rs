@@ -1190,6 +1190,26 @@ impl HouseDesign {
         Some([left, knee, right])
     }
 
+    /// Where the back wall tears across above the stub it leaves: along its
+    /// windows' heads, bent once, so its shards fall as the wall below them and the
+    /// gable over them, not as full-height slabs that lie face up like a plan.
+    fn back_wall_tear(&self) -> [DVec2; 3] {
+        let roof = self.roof();
+        let half = wall_frames(self.w, self.d)[1].3;
+        let mut rng = self.split_random(HousePart::BackWall);
+        let head = PLINTH + WINDOW_SILL + (roof.wall - PLINTH - 1.25).min(1.3) + 0.12;
+        let head = head.min(roof.wall - 0.1);
+        let mut height = || head + rng.range(-0.08, 0.18);
+        let (left, right) = (
+            DVec2::new(-half - 0.5, height()),
+            DVec2::new(half + 0.5, height()),
+        );
+        let s = rng.range(-0.5, 0.5) * half;
+        let straight = left.y + (right.y - left.y) * (s - left.x) / (right.x - left.x);
+        let knee = DVec2::new(s, straight + rng.range(-SPLIT_KNEE, SPLIT_KNEE));
+        [left, knee, right]
+    }
+
     /// The height where the chimney stack snaps, in the build frame.
     pub fn chimney_snap(&self) -> f64 {
         let (low, top) = self.chimney_collider();
@@ -1249,6 +1269,8 @@ impl HouseDesign {
             };
             let (cracks, floors) = self.wall_breaks(index);
             let split = self.wall_split(index);
+            // Only a gable back wall: a hip's would tear off a thin strip under its eave.
+            let tear = (index == 1 && gable).then(|| self.back_wall_tear());
             for strip in 0..=cracks.len() {
                 let (left, right) = (strip.checked_sub(1).map(|k| &cracks[k]), cracks.get(strip));
                 let floor = floors.get(strip).map(|&(a, b)| {
@@ -1266,7 +1288,7 @@ impl HouseDesign {
                 );
                 // Each strip's shards: below and above the split, or (the back
                 // wall) the one above its stub.
-                let shards: Vec<(u8, ShardRegion, Option<Side>)> = match split {
+                let shards: Vec<(u8, ShardRegion, Option<Side>, Option<Side>)> = match split {
                     Some(line) => [false, true]
                         .into_iter()
                         .map(|upper| {
@@ -1280,6 +1302,7 @@ impl HouseDesign {
                                 u8::from(upper),
                                 region.intersect(&split_halves(&line, upper)),
                                 Some(level_side(level, upper)),
+                                None,
                             )
                         })
                         .collect(),
@@ -1287,11 +1310,37 @@ impl HouseDesign {
                         let level = floors
                             .get(strip)
                             .map(|&(a, b)| level_side(a.y.max(b.y) + CRACK_GAP, true));
-                        vec![(1, region, level)]
+                        match &tear {
+                            // The back wall: torn across at its windows' heads into
+                            // the wall above its stub (even) and the gable over it
+                            // (odd).
+                            Some(line) => {
+                                let (low, high) = split_extent(line, span);
+                                vec![
+                                    (
+                                        0,
+                                        region.intersect(&split_halves(line, false)),
+                                        level,
+                                        Some(level_side(low - CRACK_GAP, false)),
+                                    ),
+                                    (
+                                        1,
+                                        region.intersect(&split_halves(line, true)),
+                                        Some(level_side(high + CRACK_GAP, true)),
+                                        None,
+                                    ),
+                                ]
+                            }
+                            None => vec![(1, region, level, None)],
+                        }
                     }
                 };
-                for (level, region, cut) in shards {
-                    let core = ShardRegion::between(left_core.as_ref(), right_core.as_ref(), cut);
+                for (level, region, cut, below) in shards {
+                    let mut core =
+                        ShardRegion::between(left_core.as_ref(), right_core.as_ref(), cut);
+                    if let Some(below) = below {
+                        core = core.intersect(&[vec![below]]);
+                    }
                     let points = core.outline_points(&outline);
                     if points.len() < 3 {
                         continue;
@@ -1967,8 +2016,8 @@ mod tests {
             let breaks = RoofBreaks::default();
             let pieces = design.pieces(&breaks);
             let roof = design.roof();
-            // Every wall in three or four strips, each split in two but the back
-            // wall's above its stub; each side slope whole or in the two strips its
+            // Every wall in three or four strips, each split in two (the back
+            // wall's above its stub, torn at its windows' heads); each side slope whole or in the two strips its
             // framing splits it into, each hip end in two strips split at the peak
             // and eave, the chimney in two and the rubble mound.
             let walls = |length: f64| if length >= LONG_WALL { 4 } else { 3 };
@@ -1976,7 +2025,7 @@ mod tests {
                 .map(|side| design.roof_cracks(side, &breaks).len() + 1)
                 .iter()
                 .sum();
-            let expected = 3 * walls(design.w)
+            let expected = if roof.form == RoofForm::Gable { 4 } else { 3 } * walls(design.w)
                 + 4 * walls(design.d)
                 + slopes
                 + if roof.form == RoofForm::Hip { 8 } else { 0 }

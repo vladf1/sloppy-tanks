@@ -723,7 +723,7 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
     let d = design(&s, house);
     let wall = fall(DVec3::new(0.4, 1.0, d.d / 2.0), 0.35);
     // The fingerprint of the fall as it was before roof-driven collapses caved in.
-    assert_eq!(speeds_print(&wall), -158_161);
+    assert_eq!(speeds_print(&wall), 25_510);
     let roof = fall(DVec3::new(0.5, d.h - 0.35, 0.3), 0.35);
     let mean = |fall: &Fall, pick: &dyn Fn(HousePiece) -> bool, of: &dyn Fn(DVec3) -> f64| {
         let values: Vec<f64> = fall
@@ -853,9 +853,9 @@ fn a_shell_into_a_fallen_cottage_throws_the_pieces_near_it_and_leaves_the_rest()
         }
     }
     // They land again nearby and settle.
-    tick(&mut s, 2.0);
+    tick(&mut s, 3.0);
     for (_, p, speed) in pile(&s) {
-        assert!(speed < 0.5, "settled again ({p})");
+        assert!(speed < 0.5, "settled again ({p}, {speed} m/s)");
         assert!(
             (p.x - c.x).abs() < c.w && (p.z - c.z).abs() < c.d,
             "{p} stays by the heap"
