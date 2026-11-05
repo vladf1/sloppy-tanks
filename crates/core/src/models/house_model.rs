@@ -3799,12 +3799,28 @@ fn house_wall(
                 .map(|breach| widened(breach, LINING_CLEAR, inside)),
         );
         let cut: Vec<Vec<DVec2>> = cut.iter().map(|hole| mirrored(hole)).collect();
-        kit.face_with_holes(
-            Surface::Lining,
-            &mirrored(&outline),
-            &cut,
-            frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0)),
-        );
+        let back = frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0));
+        // The rooms' plastered lining up to the ceiling; over it a gable's back is
+        // the attic's raw boarding, never the lining's flat paint (a gable fallen
+        // face down showed a bare plastered panel).
+        let below = |hole: &Vec<DVec2>| hole.iter().all(|p| p.y <= roof.wall + 1e-9);
+        let (low, high): (Vec<Vec<DVec2>>, Vec<Vec<DVec2>>) =
+            cut.into_iter().partition(|hole| below(hole));
+        let room = [
+            DVec2::new(-half, PLINTH),
+            DVec2::new(half, PLINTH),
+            DVec2::new(half, roof.wall),
+            DVec2::new(-half, roof.wall),
+        ];
+        kit.face_with_holes(Surface::Lining, &mirrored(&room), &low, back);
+        if role.gable {
+            let attic = [
+                DVec2::new(-half, roof.wall),
+                DVec2::new(half, roof.wall),
+                DVec2::new(0.0, roof.ridge),
+            ];
+            kit.face_with_holes(Surface::Wood, &mirrored(&attic), &high, back);
+        }
         let mut clear = openings.clone();
         clear.extend(holes.iter().map(|hole| {
             let [u0, y0, u1, y1] = hole.bounds;

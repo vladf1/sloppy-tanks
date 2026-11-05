@@ -683,8 +683,10 @@ const LYING: f32 = 2.2;
 /// settle in which it is (s), how close to level its face's normal must come to
 /// count as standing, and how fast (rad/s, m/s) it is tipped over the way it
 /// leans, or away from the footprint's middle onto open ground.
-const TOPPLE_WINDOW: (f64, f64) = (1.0, 6.0);
+const TOPPLE_WINDOW: (f64, f64) = (1.0, 7.0);
 const STANDING: f32 = 0.66;
+/// Seconds after a shell throws a shard about in which it may be tipped down again.
+const KICK_TOPPLE_WINDOW: f64 = 4.0;
 /// How near level (its top's normal's rise, cos 45°) a propped eave slab must come
 /// to be left as it leans.
 const STEEP_SLAB: f32 = 0.71;
@@ -708,7 +710,7 @@ const TOPPLE_SHOVE: f32 = 0.7;
 /// How far a standing shard's top must lean (sine of the angle) to fall that way,
 /// and how many times one is tipped before it is left as it rests.
 const LEANING: f32 = 0.08;
-const TOPPLES: u8 = 10;
+const TOPPLES: u8 = 12;
 /// A little lift (m/s) with each tip, to clear what the shard's foot is caught on.
 const TOPPLE_LIFT: f32 = 0.6;
 const LOOSE_LIFE: f64 = 2.5;
@@ -1243,6 +1245,10 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         if age < TOPPLE_WINDOW.0 {
             continue;
         }
+        // A shard a shell threw about lately may be tipped down again once it lands.
+        let thrown = fragment
+            .house_kicked
+            .is_some_and(|at| simulation.elapsed - at < KICK_TOPPLE_WINDOW);
         let body = &mut simulation.world.bodies[fragment.body];
         // A shard asleep on edge, propped on the pile, is still woken to fall.
         let sleeping = body.is_sleeping();
@@ -1267,7 +1273,7 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         // propped on them stays as it leans: tipped, it would turn over the stub
         // onto its rafters.
         if still
-            && age < TOPPLE_WINDOW.1
+            && (age < TOPPLE_WINDOW.1 || thrown)
             && fragment.house_topples < TOPPLES
             && piece.part != HousePart::Chimney
             && !lower_wall(piece)
@@ -1354,8 +1360,9 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
 /// is left as it lies. It draws no random numbers.
 pub fn kick_house_rubble(simulation: &mut Simulation, point: Point3, along: Vec2) {
     let at = vector(point.x, point.y, point.z);
+    let elapsed = simulation.elapsed;
     let world = &mut simulation.world;
-    for fragment in &simulation.fragments {
+    for fragment in &mut simulation.fragments {
         let Some(piece) = fragment.house_piece else {
             continue;
         };
@@ -1407,6 +1414,9 @@ pub fn kick_house_rubble(simulation: &mut Simulation, point: Point3, along: Vec2
         body.set_angular_damping(SHARD_DAMPING.1);
         body.set_linvel(body.linvel() + throw, true);
         body.set_angvel(body.angvel() + turn, true);
+        // Thrown, it may land on edge: it gets its tips again.
+        fragment.house_kicked = Some(elapsed);
+        fragment.house_topples = 0;
     }
 }
 

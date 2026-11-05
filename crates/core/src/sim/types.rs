@@ -464,6 +464,9 @@ pub struct Fragment {
     pub house_id: Option<u32>,
     /// How often a cottage shard left standing on edge has been tipped over.
     pub house_topples: u8,
+    /// When (simulation seconds) a shell last threw this cottage shard about, so it
+    /// may be tipped down again if it comes to rest on edge.
+    pub house_kicked: Option<f64>,
     /// A stub of a collapsed cottage's wall, led down onto the ground and leaned
     /// in against the pile before it is let go.
     pub house_stub: Option<HouseStub>,
