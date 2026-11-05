@@ -294,7 +294,7 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
 
 /// Roof measurements shared by the deck, shingles, gutters, chimney and the
 /// collapse pieces, in the build frame.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Roof {
     pub form: RoofForm,
     /// Wall top (the eave line on the walls) and ridge height under the deck.

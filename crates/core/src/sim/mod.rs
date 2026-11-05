@@ -41,6 +41,7 @@ beyond_geometry! {
     pub mod fragments;
     pub mod game_options;
     pub mod hitboxes;
+    pub mod house_structure;
     pub mod humvee_tactics;
     pub mod laser_defense;
     pub mod level_rules;
