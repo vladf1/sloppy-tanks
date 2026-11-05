@@ -242,7 +242,7 @@ const PARTITION_AT: f64 = -0.12;
 const PARTITION_DOOR: f64 = 0.45;
 /// How close (m) two parts' boxes are to count as touching.
 const CONTACT: f64 = 0.06;
-/// A gable end or the ridge is braced by roof sheets this near (m) to it.
+/// A gable end is braced by roof sheets this near (m) to it.
 const ROOF_BRACE: f64 = 0.15;
 /// An upper storey's wall part is held by a floor strip this near (m) in plan.
 const FLOOR_REACH: f64 = 0.3;
@@ -1414,13 +1414,6 @@ impl HouseStructure {
                 });
                 !braced && !wall_whole
             }
-            // The ridge beam is held in by its rafters: with no roof sheet left on it,
-            // it is a bare beam between the gables, and comes down.
-            PartKind::Ridge => !(0..self.parts.len()).any(|other| {
-                standing(other)
-                    && self.parts[other].kind == PartKind::Sheet
-                    && self.touch(index, other, ROOF_BRACE)
-            }),
             // The inner wall stands braced by the floor over it.
             PartKind::Partition => !(0..self.parts.len()).any(|other| {
                 standing(other)
@@ -1946,32 +1939,30 @@ mod tests {
     }
 
     #[test]
-    fn the_ridge_comes_down_with_the_roof_sheets_on_it() {
+    fn bare_gable_ends_and_their_ridge_come_down_off_broken_walls() {
         for design in village() {
             let structure = HouseStructure::new(&design);
-            let sheets = PartSet::from_indices(
-                (0..structure.parts.len()).filter(|&index| structure.parts[index].kind == PartKind::Sheet),
-            );
-            let falling = structure.unsupported(&sheets);
-            for (index, part) in structure.parts.iter().enumerate() {
-                if matches!(part.kind, PartKind::Ridge | PartKind::Chimney) {
-                    assert!(falling.contains(index), "{:?}: {:?} {index} stands bare", design.style.form, part.kind);
-                }
+            if structure.roof.form != RoofForm::Gable {
+                continue;
             }
-        }
-    }
-
-    #[test]
-    fn an_attic_floor_off_one_eave_wall_does_not_stand_on_the_partition() {
-        for design in village() {
-            let structure = HouseStructure::new(&design);
-            let gone = PartSet::from_indices(
-                (0..structure.parts.len()).filter(|&index| structure.parts[index].wall == Some(2)),
-            );
+            // The roof sheets gone, both long walls with them and a bay out of each gable
+            // wall: the gable ends stand on what is left of their walls, the ridge between.
+            let bays: Vec<usize> = [0, 1]
+                .into_iter()
+                .filter_map(|wall| {
+                    (0..structure.parts.len()).find(|&index| {
+                        structure.parts[index].wall == Some(wall) && structure.parts[index].kind == PartKind::Panel
+                    })
+                })
+                .collect();
+            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                part.kind == PartKind::Sheet || matches!(part.wall, Some(2) | Some(3)) || bays.contains(&index)
+            }));
             let falling = structure.unsupported(&gone);
             for (index, part) in structure.parts.iter().enumerate() {
-                if part.kind == PartKind::Floor && (part.max.y - structure.roof.wall).abs() < CONTACT {
-                    assert!(falling.contains(index), "{:?}: attic strip {index} stands", design.style.form);
+                if matches!(part.kind, PartKind::Ridge | PartKind::Gable) {
+                    assert!(falling.contains(index), "{:?}: {:?} {index} stands", design.style.form, part.kind);
                 }
             }
         }
