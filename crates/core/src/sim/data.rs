@@ -319,4 +319,7 @@ pub mod group {
     /// The mound itself: only the shards rest on it; tanks, shells and other
     /// debris pass through it.
     pub const HOUSE_MOUND: u32 = 0x0200_0100;
+    /// A collapsed cottage's heap: cover to tanks, shells and other cover, but debris
+    /// (its own fallen pieces) settles into it rather than resting on its top.
+    pub const HOUSE_HEAP: u32 = 0x0002_0003;
 }

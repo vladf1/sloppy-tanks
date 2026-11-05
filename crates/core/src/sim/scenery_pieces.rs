@@ -564,7 +564,7 @@ const FAR_FALLS_IN: f64 = 0.85;
 /// The lower shards stand on as ragged stubs of wall round the pile, leaning in
 /// against it this far (rad), over this long (s) from when they lean, and let
 /// go as loose debris once the pile has settled.
-const STUB_LEAN: (f64, f64) = (0.12, 0.32);
+const STUB_LEAN: (f64, f64) = (0.15, 0.48);
 const STUB_LEAN_TIME: f64 = 0.3;
 const STUB_RELEASE: f64 = 3.5;
 /// The chance a gable wall's upper shard folds in under the roof's rake.
@@ -640,6 +640,10 @@ const CHIMNEY_THROW: f64 = 0.5;
 /// enough that a shard rests on its slopes.
 const MOUND_RUBBLE: u32 = 0x8f8170;
 const MOUND_FRICTION: f32 = 1.3;
+/// How far (m) the mound lies sunk below where the layout heaps it: lower than the
+/// stubs of wall round it, so the roof's slabs come to rest sagging in off the
+/// stubs onto the rubble in the middle rather than level across them.
+pub const MOUND_SINK: f64 = 0.45;
 
 /// How far the blast carries every piece along its direction (m/s).
 const BLAST_CARRY: f64 = 0.7;
@@ -757,6 +761,11 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             _ => (design.style.siding, DebrisMaterial::Wood),
         };
         let at = design.to_world(shape.center);
+        let at = if part == HousePart::Mound {
+            at - DVec3::Y * MOUND_SINK
+        } else {
+            at
+        };
         let index = breakup.piece_with(
             simulation,
             FragmentShape::Panel,
@@ -1204,7 +1213,22 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 } else {
                     ROOF_GIVE_DROP
                 };
-                body.set_linvel(Vector::Y * -drop, true);
+                // The slope over the failed wall goes first, down into the breach,
+                // and the rest of the roof follows its lost support, so the slopes
+                // land apart rather than as one roof laid on its walls' stubs.
+                let cover = fragment
+                    .house_id
+                    .and_then(|id| simulation.covers.iter().find(|cover| cover.id == id));
+                let motion = cover.map_or(Vector::Y * -drop, |cover| {
+                    let face = *body.rotation() * shard_normal(cover, piece.part);
+                    let out = Vector::new(face.x, 0.0, face.z).normalize_or(Vector::ZERO);
+                    if leads_fall(cover, piece, out) {
+                        Vector::Y * -drop.max(LEAD_DROP)
+                    } else {
+                        Vector::Y * -drop
+                    }
+                });
+                body.set_linvel(motion, true);
                 // Its eaves now rest on whatever stands under them.
                 for &collider in body.colliders() {
                     simulation.world.colliders[collider].set_enabled(true);
@@ -1217,16 +1241,12 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 body.lock_rotations(false, true);
                 // Free to turn, the slab starts to lie back on the wreck, shingles
                 // up, rather than resting on its eave like a lean-to.
-                let normal = fragment.house_id.and_then(|id| {
-                    simulation
-                        .covers
-                        .iter()
-                        .find(|cover| cover.id == id)
-                        .map(|cover| *body.rotation() * shard_normal(cover, piece.part))
-                });
-                if let Some(normal) = normal {
-                    let axis = normal.cross(Vector::Y);
-                    let twist = if !piece.shard.is_multiple_of(2) {
+                let cover = fragment
+                    .house_id
+                    .and_then(|id| simulation.covers.iter().find(|cover| cover.id == id));
+                if let Some(cover) = cover {
+                    let normal = *body.rotation() * shard_normal(cover, piece.part);
+                    let ridge_twist = if !piece.shard.is_multiple_of(2) {
                         0.0
                     } else if (piece.shard / 2).is_multiple_of(2)
                         == (piece.part == HousePart::RightRoof)
@@ -1235,6 +1255,15 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                     } else {
                         -RIDGE_SNAP_TWIST
                     };
+                    // Brought down through its walls, it lies as it comes to rest on
+                    // the wreck; caved in, back shingles up.
+                    let (lie, twist) = if caved_in(cover) {
+                        (Vector::Y, ridge_twist)
+                    } else {
+                        let (lie, twist) = slab_lie(cover, piece, body.translation());
+                        (lie, ridge_twist + twist)
+                    };
+                    let axis = normal.cross(lie);
                     body.set_angvel(
                         body.angvel() + axis * ROOF_SETTLE_SPIN + normal * twist,
                         true,
@@ -1350,6 +1379,63 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             body.set_angular_damping(angular);
         }
     }
+}
+
+/// How fast (m/s) a wall-driven collapse's roof slope over the struck wall starts
+/// down as the roof gives way ([`leads_fall`]), ahead of the rest.
+const LEAD_DROP: f32 = 2.4;
+
+/// Whether a roof slab of `cover` facing `out` (horizontal, world) lies on the
+/// slope that leads a wall-driven fall: the one over the wall the felling blow
+/// struck, or (felled by no blow) the one its design picks.
+fn leads_fall(cover: &Cover, piece: HousePiece, out: Vector) -> bool {
+    match cover.kick {
+        Some(kick) => f64::from(out.x) * kick.x + f64::from(out.z) * kick.z < 0.0,
+        None => {
+            let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+            let part = HousePart::ALL.iter().position(|&p| p == piece.part).unwrap_or(0);
+            (design.variant as usize + part).is_multiple_of(2)
+        }
+    }
+}
+
+/// How a wall-driven collapse's roof slab lies back on the wreck once it may turn
+/// ([`slab_lie`]): not dead level, which left a cottage's slopes lying flat across
+/// its stubs like a table top, but sagging in toward the pile's middle by a tilt
+/// (rad) of its own, the dip swung up to [`LIE_DIP_SWING`] (rad) from straight in,
+/// and skewed by a twist (rad/s about its face) of its own, each slab its way, so
+/// the slopes come to rest as broken panels at angles over each other.
+const LIE_TILT: (f64, f64) = (0.12, 0.32);
+const LIE_DIP_SWING: f64 = 0.5;
+const LIE_TWIST: (f64, f64) = (0.25, 0.6);
+
+/// The face normal a wall-driven collapse's roof slab of `cover`, freed to turn at
+/// `at`, lies back toward, and its twist (rad/s): from the cottage's design and the
+/// slab alone, so every peer agrees and no random number is drawn.
+fn slab_lie(cover: &Cover, piece: HousePiece, at: Vector) -> (Vector, f32) {
+    let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+    let part = HousePart::ALL.iter().position(|&p| p == piece.part).unwrap_or(0);
+    let mut lie = Random::new(
+        f64::from(design.variant) * 13.0 + part as f64 * 29.0 + f64::from(piece.shard) * 7.0 + 53.0,
+    );
+    let tilt = lie.range(LIE_TILT.0, LIE_TILT.1);
+    let swing = lie.range(-LIE_DIP_SWING, LIE_DIP_SWING);
+    let twist = lie.range(LIE_TWIST.0, LIE_TWIST.1)
+        * if (piece.shard / 2 + part as u8).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+    let inward = DVec3::new(cover.x - f64::from(at.x), 0.0, cover.z - f64::from(at.z));
+    let inward = inward.normalize_or(DVec3::X);
+    let (sin, cos) = swing.sin_cos();
+    let dip = DVec3::new(
+        inward.x * cos - inward.z * sin,
+        0.0,
+        inward.x * sin + inward.z * cos,
+    );
+    let normal = dip * tilt.sin() + DVec3::Y * tilt.cos();
+    (vector(normal.x, normal.y, normal.z), twist as f32)
 }
 
 /// A shell bursting at `point` in a fallen cottage's pile, flying along `along`

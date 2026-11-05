@@ -20,7 +20,7 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
-use super::house_layout::{HouseDesign, HousePart};
+use super::house_layout::{HouseDesign, HousePart, is_house_heap};
 
 use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
@@ -1192,8 +1192,16 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
                     .friction(material.friction as f32)
                     .restitution(material.restitution as f32)
             } else {
+                // A cottage's heap is cover to tanks and shells, but its fallen
+                // pieces settle into it onto the rubble mound rather than lying
+                // level across its top like a table.
+                let groups = if kind == CoverKind::Rubble && is_house_heap(h) {
+                    group::HOUSE_HEAP
+                } else {
+                    group::COVER
+                };
                 shape
-                    .collision_groups(interaction_groups(group::COVER))
+                    .collision_groups(interaction_groups(groups))
                     .friction(0.4)
             }
         })
