@@ -61,10 +61,20 @@ const CRASH_SIZE: f64 = 7.0;
 const CRASH_HEIGHT: f64 = 1.5;
 /// The share of the falling frame's spin each section keeps when it breaks up.
 const LANDING_SPIN: f32 = 0.5;
-/// Seconds a loose section lies before it sinks away (plus the cleanup fade), and its
-/// hard deadline.
-const PART_LIFE: f64 = 30.0;
-const PART_DEADLINE: f64 = 40.0;
+/// Seconds a loose piece lies before it sinks away (plus the cleanup fade), and its
+/// hard deadline: by about 20 s only the footings and their stubs are left.
+const PART_LIFE: f64 = 16.0;
+const PART_DEADLINE: f64 = 24.0;
+/// A landed piece slower than this (m/s and rad/s) for [`REST_HOLD`] seconds has come to
+/// rest: it can no longer turn, so it stays as it lies until it sinks (it can still be
+/// shoved along or drop if what it lies on goes).
+const REST_SPEED: f32 = 0.15;
+const REST_SPIN: f32 = 0.35;
+const REST_HOLD: f64 = 0.3;
+/// A falling frame counts as at rest no sooner than this (s) after it came loose.
+const REST_AFTER: f64 = 1.0;
+/// Nobody: the owner a falling tower's damage to the cover it lands on is credited to.
+const NOBODY: u32 = u32::MAX;
 /// A loose part's damping while it falls, as a cottage's.
 const FALLING_DAMPING: (f32, f32) = (0.1, 0.3);
 /// The damage each unit of impulse a falling body strikes a standing part with does,
@@ -81,6 +91,17 @@ const DECK_PAINT: u32 = 0x887d59;
 const ROOF_PAINT: u32 = 0x2b6a4c;
 const CONCRETE_PAINT: u32 = 0x9a968c;
 const STEEL_PAINT: u32 = 0x5d6266;
+
+/// Where a falling tower body has got to: its velocity last tick (to tell a hard
+/// landing), whether it has landed (a landed body never breaks again), and since when
+/// it has lain still and whether it has come to rest for good.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TowerLanding {
+    pub velocity: Point3,
+    pub landed: bool,
+    pub still_since: Option<f64>,
+    pub rested: bool,
+}
 
 /// A watchtower's structure as it stands: the parts broken or fallen from it, the
 /// damage its standing parts have taken and their colliders.
@@ -111,11 +132,11 @@ impl TowerState {
         !self.gone.contains(part)
     }
 
-    /// The standing parts that have taken damage.
+    /// The parts that have taken damage, standing or not: a client's own-shot
+    /// prediction reads the standing ones, and the model scars a struck leg and leaves a
+    /// tall stub of a shot-out one.
     pub fn cracked(&self) -> PartSet {
-        PartSet::from_indices(
-            (0..self.damage.len()).filter(|&index| self.standing(index) && self.damage[index] > 0.0),
-        )
+        PartSet::from_indices((0..self.damage.len()).filter(|&index| self.damage[index] > 0.0))
     }
 
     /// The share of the tower's breakable parts still standing.
@@ -135,7 +156,7 @@ impl TowerState {
 /// A part's collider relative to its tower's ground centre, shrunk by `inset` metres,
 /// marked with the part's index.
 pub fn tower_part_collider(index: usize, inset: f64) -> ColliderBuilder {
-    let part = &tower_structure().parts[index];
+    let part = tower_structure().member(index);
     let mut shapes: Vec<(Pose, SharedShape)> =
         part.shapes.iter().map(|shape| shape_of(shape, inset)).collect();
     let builder = if shapes.len() == 1 {
@@ -188,7 +209,7 @@ pub fn tower_debris_colliders(parts: &PartSet) -> Vec<ColliderBuilder> {
     parts
         .iter()
         .map(|index| {
-            let part = &layout.parts[index];
+            let part = layout.member(index);
             let surface = debris_material(material(part.kind));
             // Timber this size lands dead: no bounce lifts a section off the ground.
             tower_part_collider(index, SHRINK)
@@ -690,7 +711,10 @@ impl Simulation {
         fragment.tower_parts = Some(parts);
         fragment.created_at = Some(self.elapsed);
         fragment.expires_at = Some(self.elapsed + PART_DEADLINE);
-        fragment.tower_velocity = Some(from_vector(self.world.bodies[body].linvel()));
+        fragment.tower_landing = Some(TowerLanding {
+            velocity: from_vector(self.world.bodies[body].linvel()),
+            ..TowerLanding::default()
+        });
         self.fragments.push(fragment);
     }
 
@@ -732,52 +756,99 @@ impl Simulation {
             piece.body = body;
             piece.created_at = Some(self.elapsed);
             piece.tower_parts = Some(section);
-            piece.tower_velocity = Some(from_vector(self.world.bodies[body].linvel()));
+            piece.tower_landing = Some(TowerLanding {
+                velocity: from_vector(self.world.bodies[body].linvel()),
+                landed: true,
+                ..TowerLanding::default()
+            });
             self.fragments.push(piece);
         }
     }
 }
 
-/// Each tick: a falling tower body that lands hard breaks into its sections, and loose
-/// sections lying a while are damped to rest.
+/// Each tick: a falling tower body that lands hard on the ground breaks where it struck
+/// ([`TowerStructure::landing`], or into its coarser sections when the debris budget is
+/// short), its top crashing down with dust and noise however full the budget is; a
+/// body caught on cover stays whole until it comes down off it or breaks through. A
+/// landed piece that has lain still a moment comes to rest for good: it no longer turns.
 pub fn settle_tower_debris(simulation: &mut Simulation) {
+    let layout = tower_structure();
     let mut index = 0;
     while index < simulation.fragments.len() {
         let fragment = &simulation.fragments[index];
-        let (Some(parts), Some(before)) = (fragment.tower_parts, fragment.tower_velocity) else {
+        let (Some(parts), Some(landing)) = (fragment.tower_parts, fragment.tower_landing) else {
             index += 1;
             continue;
         };
-        let body = &simulation.world.bodies[fragment.body];
+        let handle = fragment.body;
+        let body = &simulation.world.bodies[handle];
         let now = from_vector(body.linvel());
+        let before = landing.velocity;
         let change = (now.x - before.x)
             .hypot(now.y - before.y)
             .hypot(now.z - before.z);
         let age = simulation.elapsed - fragment.created_at.unwrap_or(simulation.elapsed);
-        if change > LANDING_SPEED && fragment.life > DEBRIS_CLEANUP_SECONDS {
-            let sections = tower_sections(&parts);
-            let room = simulation.fragments.len() + sections.len() - 1 <= simulation.max_fragments;
-            if sections.len() > 1 && room {
-                // The tower's top crashing down raises its dust and noise where it lands.
-                if DECKS.iter().any(|&deck| parts.contains(deck)) {
-                    let at = from_vector(body.center_of_mass());
-                    let (tower, color) = (fragment.tower_id, fragment.color);
-                    let mut crash = SimEvent::at(SimEventType::Destroy, at.x, at.z);
-                    crash.cover_kind = Some(CoverKind::Tower);
-                    crash.height = Some(CRASH_HEIGHT);
-                    crash.id = tower;
-                    crash.size = Some(CRASH_SIZE);
-                    crash.color = Some(color);
-                    simulation.events.push(crash);
-                }
-                simulation.break_tower_fragment(index, sections);
+        // A frame caught on cover that has come to rest there breaks up where it lies
+        // as if it had landed: it does not lie whole and jammed.
+        let jammed = !landing.landed
+            && parts.len() > 1
+            && landing
+                .still_since
+                .is_some_and(|since| simulation.elapsed - since >= REST_HOLD);
+        if !landing.landed
+            && fragment.life > DEBRIS_CLEANUP_SECONDS
+            && (jammed || (change > LANDING_SPEED && on_ground(simulation, handle)))
+        {
+            if DECKS.iter().any(|&deck| parts.contains(deck)) {
+                let at = from_vector(body.center_of_mass());
+                let mut crash = SimEvent::at(SimEventType::Destroy, at.x, at.z);
+                crash.cover_kind = Some(CoverKind::Tower);
+                crash.height = Some(CRASH_HEIGHT);
+                crash.id = fragment.tower_id;
+                crash.size = Some(CRASH_SIZE);
+                crash.color = Some(fragment.color);
+                simulation.events.push(crash);
+            }
+            let room = |count: usize| {
+                count > 1 && simulation.fragments.len() + count - 1 <= simulation.max_fragments
+            };
+            let pieces = layout.landing(&parts);
+            let split = if room(pieces.len()) {
+                Some(pieces)
+            } else {
+                Some(tower_sections(&parts)).filter(|sections| room(sections.len()))
+            };
+            if let Some(split) = split {
+                simulation.break_tower_fragment(index, split);
                 continue;
             }
+            simulation.fragments[index]
+                .tower_landing
+                .get_or_insert_default()
+                .landed = true;
         }
-        let handle = fragment.body;
-        simulation.fragments[index].tower_velocity = Some(now);
-        let (linear, angular) = house_debris_damping(age);
+        let elapsed = simulation.elapsed;
         let body = &mut simulation.world.bodies[handle];
+        let landing = simulation.fragments[index]
+            .tower_landing
+            .get_or_insert_default();
+        landing.velocity = now;
+        if !landing.rested && (landing.landed || age > REST_AFTER) {
+            let still = body.linvel().length() < REST_SPEED && body.angvel().length() < REST_SPIN;
+            match (still, landing.still_since) {
+                (false, _) => landing.still_since = None,
+                (true, None) => landing.still_since = Some(elapsed),
+                (true, Some(since))
+                    if elapsed - since >= REST_HOLD && (landing.landed || parts.len() == 1) =>
+                {
+                    landing.rested = true;
+                    body.lock_rotations(true, false);
+                    body.set_angvel(rapier3d::prelude::Vector::ZERO, false);
+                }
+                _ => {}
+            }
+        }
+        let (linear, angular) = house_debris_damping(if landing.rested { f64::INFINITY } else { age });
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
@@ -786,17 +857,64 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
     }
 }
 
+/// Whether any of `body`'s colliders touches the ground.
+fn on_ground(simulation: &Simulation, body: RigidBodyHandle) -> bool {
+    simulation.world.bodies[body].colliders().iter().any(|&collider| {
+        simulation.world.contact_pairs_with(collider).any(|pair| {
+            let other = if pair.collider1 == collider {
+                pair.collider2
+            } else {
+                pair.collider1
+            };
+            pair.has_any_active_contact()
+                && simulation.world.colliders.get(other).is_some_and(|other| {
+                    other.collision_groups().memberships.bits() & GROUND_MEMBERSHIP != 0
+                })
+        })
+    })
+}
+
+/// The ground's collision membership ([`group::GROUND`]).
+const GROUND_MEMBERSHIP: u32 = group::GROUND >> 16;
+
 /// Falling bodies (a tower's or a cottage's) landing hard on a tower's standing parts
 /// break them: a standing part takes [`CRUSH_DAMAGE`] for every unit of impulse they
 /// struck it with this tick, past their weight. Parts are taken in tower, then part
 /// order: no random draw.
 pub fn crush_tower_parts(simulation: &mut Simulation, contacts: &[ContactForce]) {
     let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
+    let mut crushed: Vec<(usize, f64, Point3, Vec2)> = Vec::new();
     for contact in contacts {
         for (falling, standing) in [
             (contact.collider1, contact.collider2),
             (contact.collider2, contact.collider1),
         ] {
+            // A tower's falling body landing on timber or a crate breaks it as it would a
+            // standing part: the tower comes down through it.
+            if let Some(&cover) = simulation.cover_by_collider.get(&standing)
+                && matches!(simulation.covers[cover].kind, CoverKind::Timber | CoverKind::Cargo)
+                && simulation.covers[cover].alive
+                && let Some(body) = simulation
+                    .world
+                    .colliders
+                    .get(falling)
+                    .and_then(|collider| collider.parent())
+                && simulation
+                    .fragments
+                    .iter()
+                    .any(|fragment| fragment.body == body && fragment.tower_parts.is_some())
+            {
+                let impulse = f64::from(contact.total_force_magnitude) * STEP;
+                let rigid_body = &simulation.world.bodies[body];
+                let at = from_vector(rigid_body.center_of_mass());
+                let moving = from_vector(rigid_body.linvel());
+                let along = Vec2::new(moving.x, moving.z);
+                match crushed.iter_mut().find(|(key, ..)| *key == cover) {
+                    Some((_, total, ..)) => *total += impulse,
+                    None => crushed.push((cover, impulse, at, along)),
+                }
+                continue;
+            }
             let Some(part) = simulation.tower_part(standing) else {
                 continue;
             };
@@ -829,6 +947,22 @@ pub fn crush_tower_parts(simulation: &mut Simulation, contacts: &[ContactForce])
         let center = Point3::new(c.x + center.x, center.y, c.z + center.z);
         let along = Vec2::new(center.x - from.x, center.z - from.z);
         simulation.strike_tower(cover, part, impulse * CRUSH_DAMAGE, false, center, along, None);
+    }
+    crushed.sort_by_key(|(cover, ..)| *cover);
+    for (cover, impulse, at, along) in crushed {
+        let length = along.x.hypot(along.z);
+        if length > 1e-6 {
+            simulation.covers[cover].kick = Some(Vec2::new(along.x / length, along.z / length));
+        }
+        let point = Point3::new(at.x, 1.0, at.z);
+        simulation.damage_cover(
+            cover,
+            impulse * CRUSH_DAMAGE,
+            NOBODY,
+            Team::Blue,
+            None,
+            Some(point),
+        );
     }
 }
 

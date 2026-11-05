@@ -948,6 +948,7 @@ impl CoverCast for TankPredictor {
         let cover = self.covers.values().find(|cover| Some(cover.body) == body);
         let part = cover.and_then(|cover| {
             let index = self.world.colliders[collider].user_data as usize;
+            let cottage = cover.house.is_some();
             let strength = match &cover.house {
                 Some(house) => house.parts.get(index)?.strength,
                 // A watchtower's footing takes a shell as other concrete does.
@@ -958,6 +959,7 @@ impl CoverCast for TankPredictor {
                 None => return None,
             };
             Some(PartHit {
+                cottage,
                 key: collider_key(collider),
                 strength,
                 cracked: cover.cracked.contains(index),

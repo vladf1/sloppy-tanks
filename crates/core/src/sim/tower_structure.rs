@@ -103,6 +103,22 @@ const STEEL: f64 = 0.8;
 const DECK_SOLID: f64 = 0.25;
 const WALL_SOLID: f64 = 0.05;
 const ROOF_SOLID: f64 = 0.04;
+/// Where each leg snaps when its tower lands (m up), one height a corner so the legs
+/// break unalike.
+pub const LEG_SNAPS: [f64; 4] = [1.9, 2.6, 3.2, 2.2];
+/// How far (m) over its footing a torn-out leg's stub stands in its shoe; a landed leg
+/// starts there.
+pub const STUB_REACH: f64 = 0.45;
+/// Where a deck half breaks across its planks (m out from the middle).
+pub const DECK_CUT: f64 = 1.5;
+/// The cabin's door: its middle along the front wall, width and height
+/// (`tower_model::cabin_wall`), and the shutters a landing tears off: their middles
+/// across x on the front and back walls and their width.
+pub const DOOR_U: f64 = 1.35;
+pub const DOOR_WIDTH: f64 = 0.8;
+pub const DOOR_HEIGHT: f64 = 1.85;
+pub const SHUTTER_X: [f64; 2] = [-1.25, 1.3];
+pub const SHUTTER_WIDTH: f64 = 1.17;
 /// How far (m) under the beams a knee brace's collider stops.
 const KNEE_CLEAR: f64 = 0.1;
 /// Parts reaching below this height block tanks on the ground.
@@ -245,6 +261,42 @@ impl TowerPart {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TowerStructure {
     pub parts: Vec<TowerPart>,
+    /// What a landing breaks the parts into ([`TowerStructure::landing`]), indexed from
+    /// [`PART_COUNT`] on in the same sets as the parts.
+    pub pieces: Vec<TowerPart>,
+    /// How each piece is drawn, by piece (index less [`PART_COUNT`]).
+    pub looks: Vec<PieceLook>,
+}
+
+/// How a piece a landing broke off is drawn. Members snap part way along, ragged where
+/// they broke; an X-brace panel may stay joined with a diagonal bent; the cabin comes
+/// apart at its corners with its glass out and its door and shutters torn off; the roof
+/// lands crumpled with its rafters showing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PieceLook {
+    /// A leg's run between `from` and `to` (heights), ragged at both ends, with its
+    /// knee brace when it reaches the beams.
+    Leg {
+        corner: usize,
+        from: f64,
+        to: f64,
+    },
+    /// A snapped length of a face's outer diagonal: from its foot to the break or from
+    /// the break to its head.
+    Diagonal { face: usize, upper: bool },
+    /// A face's X-brace still joined at its bolts with the outer diagonal bent at its
+    /// middle, or (`snapped`) with that diagonal snapped there and its head gone.
+    Panel { face: usize, snapped: bool },
+    /// The inner or outer length of a deck half, its planks broken off raggedly.
+    Deck { side: usize, outer: bool },
+    /// A cabin wall torn from its corners, glass out, door and shutters gone.
+    Wall { wall: usize },
+    /// The cabin's door, torn off.
+    Door,
+    /// A window's shutter of the front (0) or back (1) wall, torn off.
+    Shutter { wall: usize },
+    /// The roof, crumpled across one slope, its underside open on its rafters.
+    Roof,
 }
 
 /// A body of a tower's parts coming down together: its parts, and for a frame that
@@ -332,6 +384,27 @@ pub fn knee_member(corner: usize) -> Member {
         width: 0.15,
         depth: 0.15,
         normal: DVec3::X,
+    }
+}
+
+/// A knee brace's collider: the member, stopping under the beams where the deck's
+/// collider begins.
+fn knee_collider(corner: usize) -> Member {
+    let knee = knee_member(corner);
+    let reach = (POST_TOP - KNEE_CLEAR - knee.from.y) / (knee.to.y - knee.from.y);
+    Member {
+        to: knee.from.lerp(knee.to, reach),
+        ..knee
+    }
+}
+
+/// Face `face`'s outer diagonal, inner diagonal and girt ([`FACES`] order).
+pub fn face_members_of(face: usize) -> [Member; 3] {
+    match face {
+        0 => bent_members(-1.0),
+        1 => bent_members(1.0),
+        2 => face_members(-1.0),
+        _ => face_members(1.0),
     }
 }
 
@@ -448,14 +521,9 @@ impl TowerStructure {
             // The knee brace's collider stops under the beams, where the deck's begins:
             // a leg falling apart from the deck starts clear of it.
             let knee = knee_member(corner);
-            let reach = (POST_TOP - KNEE_CLEAR - knee.from.y) / (knee.to.y - knee.from.y);
-            let collider = Member {
-                to: knee.from.lerp(knee.to, reach),
-                ..knee
-            };
             let mut leg = TowerPart::new(
                 UpperLeg,
-                vec![post(corner, GIRT_Y, POST_TOP), collider.shape()],
+                vec![post(corner, GIRT_Y, POST_TOP), knee_collider(corner).shape()],
                 POST * POST * (POST_TOP - GIRT_Y) * TIMBER + knee.mass(),
             );
             leg.corner = Some(corner);
@@ -543,9 +611,214 @@ impl TowerStructure {
             )],
             0.03 * LADDER_TOP * STEEL,
         ));
-        let mut structure = Self { parts };
+        let mut structure = Self {
+            parts,
+            pieces: Vec::new(),
+            looks: Vec::new(),
+        };
         structure.tie_all();
+        structure.add_pieces();
         structure
+    }
+
+    /// The pieces a landing breaks the parts into, in [`PieceLook`] order: each leg in
+    /// two at a height of its own, the outer diagonal of each face snapped (the west
+    /// and back panels stay joined, bent), the deck halves across their planks, the
+    /// cabin walls, door, two shutters and the roof.
+    fn add_pieces(&mut self) {
+        use TowerPartKind::*;
+        let mut add = |kind: TowerPartKind, look: PieceLook, shapes: Vec<PartShape>, mass: f64| {
+            self.pieces.push(TowerPart::new(kind, shapes, mass));
+            self.looks.push(look);
+        };
+        let foot = TOWER_BASE.height + STUB_REACH;
+        for (corner, &(sx, sz)) in CORNERS.iter().enumerate() {
+            let (x, z) = (sx * TOWER_BASE.offset, sz * TOWER_BASE.post_z);
+            let snap = LEG_SNAPS[corner];
+            for (from, to) in [(foot, snap), (snap, POST_TOP)] {
+                let mut shapes = vec![PartShape::aligned(
+                    DVec3::new(x - POST / 2.0, from, z - POST / 2.0),
+                    DVec3::new(x + POST / 2.0, to, z + POST / 2.0),
+                )];
+                if to == POST_TOP {
+                    shapes.push(knee_collider(corner).shape());
+                }
+                let look = PieceLook::Leg { corner, from, to };
+                add(LowerLeg, look, shapes, POST * POST * (to - from) * TIMBER);
+            }
+        }
+        for face in 0..4 {
+            let [outer, inner, girt] = face_members_of(face);
+            let middle = outer.from.lerp(outer.to, 0.5);
+            let lower = Member { to: middle, ..outer };
+            let upper = Member {
+                from: middle,
+                ..outer
+            };
+            let joined = face % 2 == 0;
+            if joined {
+                let shapes = vec![outer.shape(), inner.shape(), girt.shape()];
+                let mass = outer.mass() + inner.mass() + girt.mass();
+                add(Brace, PieceLook::Panel { face, snapped: false }, shapes, mass);
+            } else {
+                let shapes = vec![lower.shape(), inner.shape(), girt.shape()];
+                let mass = lower.mass() + inner.mass() + girt.mass();
+                add(Brace, PieceLook::Panel { face, snapped: true }, shapes, mass);
+                let look = PieceLook::Diagonal { face, upper: true };
+                add(Brace, look, vec![upper.shape()], upper.mass());
+            }
+        }
+        for side in 0..2 {
+            let sign = if side == 0 { -1.0 } else { 1.0 };
+            for outer in [false, true] {
+                let (a, b) = if outer {
+                    (DECK_CUT, DECK_X)
+                } else {
+                    (0.0, DECK_CUT)
+                };
+                let (x0, x1) = if sign < 0.0 { (-b, -a) } else { (a, b) };
+                let min = DVec3::new(x0, POST_TOP, -DECK_Z);
+                let max = DVec3::new(x1, DECK_TOP, DECK_Z);
+                let mass = (max - min).element_product() * DECK_SOLID * TIMBER;
+                add(
+                    Deck,
+                    PieceLook::Deck { side, outer },
+                    vec![PartShape::aligned(min, max)],
+                    mass,
+                );
+            }
+        }
+        let wall_height = CABIN_TOP - DECK_TOP;
+        for (wall, (along_x, side)) in [(true, 1.0), (true, -1.0), (false, -1.0), (false, 1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let [panel, _] = cabin_wall(along_x, side);
+            let length = 2.0 * if along_x { CABIN_X } else { CABIN_Z };
+            add(
+                Wall,
+                PieceLook::Wall { wall },
+                vec![panel],
+                length * wall_height * WALL_SOLID * TIMBER,
+            );
+        }
+        // The door, in the front wall's opening (`tower_model::cabin_wall`).
+        let door = PartShape::aligned(
+            DVec3::new(DOOR_U - DOOR_WIDTH / 2.0, DECK_TOP, CABIN_Z - 0.12),
+            DVec3::new(DOOR_U + DOOR_WIDTH / 2.0, DECK_TOP + DOOR_HEIGHT, CABIN_Z - 0.04),
+        );
+        add(Wall, PieceLook::Door, vec![door], DOOR_WIDTH * DOOR_HEIGHT * 0.04 * TIMBER);
+        // A shutter of the front and the back wall, propped out under the eaves.
+        for (wall, (x, side)) in [(SHUTTER_X[0], 1.0), (SHUTTER_X[1], -1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            let half = SHUTTER_WIDTH / 2.0;
+            let face = side * CABIN_Z;
+            let (z0, z1) = if side < 0.0 {
+                (face - AWNING_REACH, face - 0.02)
+            } else {
+                (face + 0.02, face + AWNING_REACH)
+            };
+            let shape = PartShape::aligned(
+                DVec3::new(x - half, AWNING_BOTTOM, z0),
+                DVec3::new(x + half, AWNING_TOP, z1),
+            );
+            let mass = SHUTTER_WIDTH * 0.9 * 0.04 * TIMBER;
+            add(Wall, PieceLook::Shutter { wall }, vec![shape], mass);
+        }
+        let roof = &self.parts[ROOF];
+        let (shapes, mass, center) = (roof.shapes.clone(), roof.mass, roof.center);
+        add(Roof, PieceLook::Roof, shapes, mass);
+        self.pieces.last_mut().expect("the roof").center = center;
+    }
+
+    /// A part ([`PART_COUNT`] and up: a piece a landing broke off) by index.
+    pub fn member(&self, index: usize) -> &TowerPart {
+        if index < PART_COUNT {
+            &self.parts[index]
+        } else {
+            &self.pieces[index - PART_COUNT]
+        }
+    }
+
+    /// How piece `index` (from [`PART_COUNT`]) is drawn.
+    pub fn look(&self, index: usize) -> Option<PieceLook> {
+        index
+            .checked_sub(PART_COUNT)
+            .and_then(|piece| self.looks.get(piece).copied())
+    }
+
+    /// The pieces `parts`, a falling body that landed hard, breaks into, each a body of
+    /// its own: a leg with both its lifts in two at its snap, a face with all its
+    /// members as its panel (and the snapped diagonal's head), a deck half in two, each
+    /// cabin wall with the door and a shutter torn off it, the roof crumpled. Whatever
+    /// is left of a part whose pieces are not all there (a lone lift, a brace) and the
+    /// railing and ladder land whole. Pieces already broken stay as they are.
+    pub fn landing(&self, parts: &PartSet) -> Vec<PartSet> {
+        let mut pieces: Vec<usize> = Vec::new();
+        let mut piece = 0;
+        let mut next = |count: usize| {
+            let first = PART_COUNT + piece;
+            piece += count;
+            first
+        };
+        for corner in 0..4 {
+            let first = next(2);
+            if parts.contains(LOWER_LEGS[corner]) && parts.contains(UPPER_LEGS[corner]) {
+                pieces.extend([first, first + 1]);
+            } else {
+                pieces.extend(
+                    [LOWER_LEGS[corner], UPPER_LEGS[corner]]
+                        .into_iter()
+                        .filter(|&part| parts.contains(part)),
+                );
+            }
+        }
+        for (face, members) in FACES.iter().enumerate() {
+            let count = if face % 2 == 0 { 1 } else { 2 };
+            let first = next(count);
+            if members.iter().all(|&member| parts.contains(member)) {
+                pieces.extend(first..first + count);
+            } else {
+                pieces.extend(members.iter().copied().filter(|&member| parts.contains(member)));
+            }
+        }
+        for deck in DECKS {
+            let first = next(2);
+            if parts.contains(deck) {
+                pieces.extend([first, first + 1]);
+            }
+        }
+        let walls = next(4);
+        let (door, shutters) = (next(1), next(2));
+        for (wall, &part) in WALLS.iter().enumerate() {
+            if parts.contains(part) {
+                pieces.push(walls + wall);
+                match wall {
+                    0 => pieces.extend([door, shutters]),
+                    1 => pieces.push(shutters + 1),
+                    _ => {}
+                }
+            }
+        }
+        let roof = next(1);
+        if parts.contains(ROOF) {
+            pieces.push(roof);
+        }
+        pieces.extend(
+            RAILINGS
+                .into_iter()
+                .chain([LADDER])
+                .filter(|&part| parts.contains(part)),
+        );
+        // Pieces already broken off land as they are.
+        pieces.extend(parts.iter().filter(|&index| index >= PART_COUNT));
+        pieces.sort_unstable();
+        pieces
+            .into_iter()
+            .map(|index| PartSet::from_indices([index]))
+            .collect()
     }
 
     /// Joins the parts: footings to the legs in their shoes, each leg's lifts, the

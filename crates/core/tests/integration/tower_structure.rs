@@ -14,7 +14,7 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::tower_physics::tower_part_box;
 use sloppy_core::sim::tower_structure::{
-    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, ROOF, TowerPartKind, tower_structure,
+    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PieceLook, ROOF, TowerPartKind, tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -610,4 +610,192 @@ fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
         "the middle opens"
     );
     assert!(mirror.fragments.is_empty(), "nothing falls in a mirror");
+}
+
+/// Once a piece of a landed tower has come to rest it stays as it lies until it sinks:
+/// it neither turns (stands up, rolls over, rights itself) nor rises.
+#[test]
+fn settled_pieces_stay_as_they_lie() {
+    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
+        let (mut s, tower) = lone_tower();
+        let id = s.covers[tower].id;
+        s.break_tower_parts(
+            tower,
+            PartSet::from_indices([leg]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
+        let mut rested: BTreeMap<u32, (glam::Quat, f32)> = BTreeMap::new();
+        for _ in 0..(14.0 / STEP) as usize {
+            idle(&mut s);
+            for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
+                if !fragment.tower_landing.is_some_and(|landing| landing.rested) {
+                    continue;
+                }
+                let body = &s.world.bodies[fragment.body];
+                let (turn, y) = (*body.rotation(), body.center_of_mass().y);
+                let (first, first_y) = *rested.entry(fragment.id).or_insert((turn, y));
+                assert!(
+                    first.angle_between(turn) < 0.03,
+                    "corner {corner}: a resting piece {:?} turned {}",
+                    fragment.tower_parts,
+                    first.angle_between(turn)
+                );
+                assert!(
+                    y <= first_y + 0.05,
+                    "corner {corner}: a resting piece {:?} rose {}",
+                    fragment.tower_parts,
+                    y - first_y
+                );
+            }
+        }
+        assert!(
+            rested.len() > 10,
+            "corner {corner}: the pieces came to rest ({})",
+            rested.len()
+        );
+    }
+}
+
+/// A landing breaks members, not joints: the legs snap part way along and the cabin
+/// comes apart into its walls, door and shutters, within the debris budget.
+#[test]
+fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
+    let (mut s, tower) = lone_tower();
+    let id = s.covers[tower].id;
+    s.break_tower_parts(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[0]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    run(&mut s, 4.0);
+    let layout = tower_structure();
+    let looks: Vec<PieceLook> = bodies(&s, tower)
+        .iter()
+        .flat_map(|(_, parts)| parts.iter().collect::<Vec<_>>())
+        .filter_map(|index| layout.look(index))
+        .collect();
+    let legs = looks
+        .iter()
+        .filter(|look| matches!(look, PieceLook::Leg { .. }))
+        .count();
+    assert!(legs >= 6, "three legs snapped in two: {legs}");
+    assert!(looks.contains(&PieceLook::Door), "the door tore off");
+    assert!(looks.contains(&PieceLook::Roof), "the roof crumpled");
+    assert!(
+        looks
+            .iter()
+            .filter(|look| matches!(look, PieceLook::Wall { .. }))
+            .count()
+            == 4,
+        "the walls came apart at the corners"
+    );
+    assert!(bodies(&s, tower).len() <= 30, "{}", bodies(&s, tower).len());
+    assert!(s.fragments.len() <= s.max_fragments);
+    assert!(
+        s.fragments
+            .iter()
+            .all(|f| f.tower_id != Some(id) || f.tower_parts.is_some())
+    );
+}
+
+/// A tower coming down on crates breaks through them.
+#[test]
+fn a_falling_tower_breaks_the_crates_it_lands_on() {
+    let (mut s, tower) = lone_tower();
+    let c = s.covers[tower].clone();
+    // Crates where the front falls (front-west leg out: toward +z).
+    let crates: Vec<usize> = [-1.5, 1.5]
+        .into_iter()
+        .map(|dx| {
+            s.add_cover(&CoverDef::new(
+                CoverKind::Cargo,
+                c.x + dx,
+                c.z + 6.0,
+                2.8,
+                2.8,
+                2.4,
+                80.0,
+                0xb47a49,
+            ))
+        })
+        .collect();
+    s.nav.rebuild(&s.covers, None);
+    s.break_tower_parts(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[1]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    run(&mut s, 4.0);
+    assert!(
+        crates.iter().any(|&index| !s.covers[index].alive),
+        "it broke through a crate it came down on"
+    );
+}
+
+/// With no room left in the debris budget a tower still crashes with its dust and
+/// noise where its top lands, though it cannot break up.
+#[test]
+fn a_tower_crashes_with_a_full_debris_budget() {
+    let (mut s, tower) = lone_tower();
+    let id = s.covers[tower].id;
+    // Room for the falling frame and its ladder, no more.
+    s.max_fragments = 2;
+    s.break_tower_parts(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[1]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    let mut crashes = 0;
+    for _ in 0..(4.0 / STEP) as usize {
+        s.events.clear();
+        idle(&mut s);
+        crashes += s
+            .events
+            .iter()
+            .filter(|e| e.kind == SimEventType::Destroy && e.id == Some(id))
+            .count();
+    }
+    assert_eq!(crashes, 1, "one crash");
+    assert_eq!(bodies(&s, tower).len(), 2, "the frame stayed whole");
+}
+
+/// A tower that comes down across a wall it cannot break does not lie on it whole: it
+/// breaks up where it comes to rest, and its pieces settle off the wall.
+#[test]
+fn a_tower_caught_on_a_wall_breaks_up_where_it_rests() {
+    let (mut s, tower) = lone_tower();
+    let c = s.covers[tower].clone();
+    s.add_cover(&CoverDef::new(
+        CoverKind::Concrete,
+        c.x,
+        c.z + 5.5,
+        8.0,
+        1.0,
+        2.6,
+        f64::INFINITY,
+        0xb5b5a5,
+    ));
+    s.nav.rebuild(&s.covers, None);
+    s.break_tower_parts(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[1]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    run(&mut s, 8.0);
+    let whole = bodies(&s, tower)
+        .into_iter()
+        .filter(|(_, parts)| parts.contains(ROOF) && parts.contains(DECKS[0]))
+        .count();
+    assert_eq!(whole, 0, "no frame lies whole across the wall");
+    assert!(bodies(&s, tower).len() > 10, "it broke up");
 }

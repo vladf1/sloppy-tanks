@@ -459,8 +459,8 @@ pub struct Fragment {
     pub tower_id: Option<u32>,
     /// The parts of a watchtower this body is (they fell together).
     pub tower_parts: Option<super::house_structure::PartSet>,
-    /// Its velocity last tick, to tell a hard landing.
-    pub tower_velocity: Option<Point3>,
+    /// How a falling watchtower body is landing and settling.
+    pub tower_landing: Option<super::tower_physics::TowerLanding>,
     /// The section of a broken cargo crate this piece is drawn as.
     pub crate_piece: Option<CratePiece>,
     /// The cottage whose parts this body is.

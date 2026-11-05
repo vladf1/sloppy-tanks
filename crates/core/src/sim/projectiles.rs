@@ -780,7 +780,13 @@ fn burst_in_house(simulation: &mut Simulation, shot: &Shot) {
     let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = Some(point.y);
-    if let Some(fuse) = shot.fuse {
+    // A shell fused by a watchtower's member bursts in the open, not in a room.
+    let in_cottage = simulation.covers.iter().any(|cover| {
+        cover.structure.is_some()
+            && (point.x - cover.x).abs() < cover.w / 2.0
+            && (point.z - cover.z).abs() < cover.d / 2.0
+    });
+    if let Some(fuse) = shot.fuse.filter(|_| in_cottage) {
         let along = shell_heading(shot);
         let flown = (FUSE_DISTANCE - fuse.max(0.0)).max(0.0);
         explosion.cover_kind = Some(CoverKind::House);

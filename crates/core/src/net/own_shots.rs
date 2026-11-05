@@ -117,10 +117,13 @@ pub struct CoverHit {
     pub part: Option<PartHit>,
 }
 
-/// A cottage's standing part a shell meets: what the client knows of how it takes the
-/// shell (`strike_house_part`).
+/// A cottage's or a watchtower's standing part a shell meets: what the client knows of
+/// how it takes the shell (`strike_house_part`, `strike_tower_part`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartHit {
+    /// A cottage's: an HE round through it bursts inside, its flash and dust out of the
+    /// hole it came in by; one through a watchtower's member bursts in the open.
+    pub cottage: bool,
     /// Names the part to [`CoverCast::cast_cover_past`].
     pub key: u64,
     /// The damage it takes before it breaks, undamaged.
@@ -434,7 +437,7 @@ pub(super) fn forecast(
                     past.push(part.key);
                     if current.launch.weapon != Weapon::Piercing {
                         fuse = Some(hit.distance + FUSE_DISTANCE);
-                        entry = Some(hit_tick);
+                        entry = part.cottage.then_some(hit_tick);
                     }
                 }
                 PartStrike::Ends if current.launch.weapon == Weapon::Rocket => {
