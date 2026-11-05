@@ -71,8 +71,7 @@ fn stress_test_layout() -> Vec<CoverDef> {
     }
 
     // Cottages break sight lines without sealing the broad central lanes until they are
-    // levelled; each takes the village's fifteen shells, falls into its pieces and leaves a
-    // heap along its back wall with the rest of its footprint open to drive through.
+    // levelled, part by part, as the village's are.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
             for (x, z, w, d, color) in [
