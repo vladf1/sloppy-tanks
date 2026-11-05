@@ -1396,8 +1396,10 @@ impl HouseStructure {
                     && !wall.grounded
                     && self.supports[other].iter().any(|support| support.by as usize == index)
             }),
+            // The door stands on the ground but reaches up to the plates: a doorway's
+            // leaf with no wall left beside it falls like the bays above a stub.
             PartKind::Panel | PartKind::Window | PartKind::Door | PartKind::Plate
-                if part.wall.is_some() && !part.grounded =>
+                if part.wall.is_some() && (!part.grounded || part.kind == PartKind::Door) =>
             {
                 // Its neighbours in the wall, or the corner post it is framed into.
                 let braced = self.beside[index].iter().any(|&other| standing(other as usize))
@@ -1885,6 +1887,21 @@ mod tests {
                 matches!(part.wall, Some(0) | Some(2)) && !part.grounded
             }));
             assert!(structure.unsupported(&bare).contains(0), "{:?}: the bare corner post stands", design.style.form);
+        }
+    }
+
+    #[test]
+    fn a_door_left_alone_in_its_wall_falls() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            let door = (0..structure.parts.len())
+                .find(|&index| structure.parts[index].kind == PartKind::Door)
+                .expect("a door");
+            let wall = structure.parts[door].wall;
+            let gone = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| index != door && structure.parts[index].wall == wall),
+            );
+            assert!(structure.unsupported(&gone).contains(door), "{:?}", design.style.form);
         }
     }
 
