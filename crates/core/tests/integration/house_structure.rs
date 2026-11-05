@@ -519,17 +519,17 @@ fn a_shot_out_corner_brings_down_its_eave_and_the_roof_over_it() {
 }
 
 #[test]
-fn a_roof_coming_down_breaks_what_it_lands_on_and_never_lies_up_on_it() {
+fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not_strike() {
     let (mut s, house) = lone_cottage();
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
     // An eave wall shot out above its lowest course: the slope over it comes down on
     // the gables and the stubs left standing.
     let eave = 2;
-    let stubs: Vec<usize> = (0..layout.parts.len())
-        .filter(|&index| layout.parts[index].wall == Some(eave) && layout.parts[index].grounded)
-        .collect();
     let upper: Vec<usize> = (0..layout.parts.len())
         .filter(|&index| layout.parts[index].wall == Some(eave) && !layout.parts[index].grounded)
+        .collect();
+    let gables: Vec<usize> = (0..layout.parts.len())
+        .filter(|&index| layout.parts[index].kind == PartKind::Gable)
         .collect();
     let rng = s.rng.state;
     s.break_house_parts(house, PartSet::from_indices(upper), None, None);
@@ -539,12 +539,11 @@ fn a_roof_coming_down_breaks_what_it_lands_on_and_never_lies_up_on_it() {
             .any(|fragment| fragment.house_parts.is_some()),
         "the slope fell"
     );
-    run(&mut s, 3.0);
-    let crushed = stubs
+    let gables_before = gables
         .iter()
-        .filter(|&&stub| gone(&s, house).contains(stub))
+        .filter(|&&g| !gone(&s, house).contains(g))
         .count();
-    assert!(crushed > 0, "the falling roof broke none of the stubs");
+    run(&mut s, 4.0);
     // Nothing lies up on what stands, like a lid.
     for fragment in s
         .fragments
@@ -558,7 +557,58 @@ fn a_roof_coming_down_breaks_what_it_lands_on_and_never_lies_up_on_it() {
             body.center_of_mass()
         );
     }
+    // The gables it slid off stand.
+    let gables_after = gables
+        .iter()
+        .filter(|&&g| !gone(&s, house).contains(g))
+        .count();
+    assert!(
+        gables_after > 0 && gables_after + 1 >= gables_before,
+        "{gables_before} -> {gables_after}"
+    );
     assert_eq!(s.rng.state, rng, "no random draw");
+}
+
+#[test]
+fn a_falling_part_striking_a_standing_one_hard_breaks_it() {
+    use sloppy_core::sim::house_physics::crush_house_parts;
+    use sloppy_core::sim::physics::ContactForce;
+    let (mut s, house) = lone_cottage();
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    // A slope comes loose; one of its bodies strikes a wall stub.
+    let eave = 2;
+    let upper: Vec<usize> = (0..layout.parts.len())
+        .filter(|&index| layout.parts[index].wall == Some(eave) && !layout.parts[index].grounded)
+        .collect();
+    s.break_house_parts(house, PartSet::from_indices(upper), None, None);
+    let falling = s
+        .fragments
+        .iter()
+        .find(|fragment| fragment.house_parts.is_some())
+        .map(|fragment| s.world.bodies[fragment.body].colliders()[0])
+        .expect("a falling body");
+    let stub = (0..layout.parts.len())
+        .find(|&index| {
+            layout.parts[index].wall == Some(eave)
+                && layout.parts[index].grounded
+                && !gone(&s, house).contains(index)
+        })
+        .expect("a stub");
+    let struck = s.covers[house].structure.as_ref().unwrap().colliders[stub].expect("standing");
+    let contact = |force: f32| ContactForce {
+        collider1: falling,
+        collider2: struck,
+        total_force_magnitude: force,
+    };
+    // Its weight: nothing.
+    crush_house_parts(&mut s, &[contact(60.0)]);
+    assert!(
+        !gone(&s, house).contains(stub),
+        "resting weight breaks nothing"
+    );
+    // A hard landing: the stub breaks.
+    crush_house_parts(&mut s, &[contact(1200.0)]);
+    assert!(gone(&s, house).contains(stub), "a hard strike breaks it");
 }
 
 /// Every cottage the maps place (the village's gable and hip roofs, its two-storey

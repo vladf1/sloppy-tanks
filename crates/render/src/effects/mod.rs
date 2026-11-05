@@ -221,13 +221,9 @@ impl EffectSystems {
             self.pickups
                 .add(event.x, event.z, event.color.unwrap_or(WHITE));
         }
+        // A cottage levelled throws nothing of its own: its parts broke and fell where
+        // they were struck, each throwing its pieces then.
         self.wood.event(event, &mut self.random);
-        if event.kind == SimEventType::Destroy
-            && event.cover_kind == Some(sloppy_core::sim::CoverKind::House)
-            && let Some(house) = self.particles.explosions.walls.house_at(event.x, event.z)
-        {
-            self.wood.house_burst(house);
-        }
         if let Some(strike) = self.siding_strike(event) {
             self.wood.siding_hit(
                 strike.point,

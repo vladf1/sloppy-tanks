@@ -316,4 +316,7 @@ pub mod group {
     /// A collapsing cottage's shards: solid debris that also rests on its rubble
     /// mound.
     pub const HOUSE_SHARD: u32 = 0x0108_0307;
+    /// A cottage's loose part wedged on its remains, dropping through them: it skips
+    /// standing cover.
+    pub const HOUSE_SHARD_THROUGH: u32 = 0x0108_0305;
 }

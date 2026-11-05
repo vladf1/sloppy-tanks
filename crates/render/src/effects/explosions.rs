@@ -1057,19 +1057,16 @@ impl ExplosionEffects {
             self.dust_skirt(event.x, event.z, TREE_SNAP_DUST, phase);
             return;
         }
-        // A shell bursting inside a cottage: its flash and dust burst out of the hole it
-        // came in by, back toward the gun.
+        // A shell bursting inside a cottage: its dust bursts out of the hole it came in
+        // by, back toward the gun; the fire stays in the room.
         if event.kind == SimEventType::Explosion
             && event.cover_kind == Some(CoverKind::House)
             && let Some(hole) = event.from
         {
-            let mut out = SimEvent::at(SimEventType::Impact, hole.x, hole.z);
-            out.size = Some(0.6);
-            out.from = Some(Point3::new(
-                2.0 * hole.x - event.x,
-                hole.y,
-                2.0 * hole.z - event.z,
-            ));
+            let mut out = SimEvent::at(SimEventType::Shatter, hole.x, hole.z);
+            out.cover_kind = Some(CoverKind::House);
+            out.height = Some(hole.y);
+            out.from = Some(Point3::new(event.x, hole.y, event.z));
             self.event(&out, random);
         }
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);

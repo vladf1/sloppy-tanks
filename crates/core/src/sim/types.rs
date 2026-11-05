@@ -466,6 +466,8 @@ pub struct Fragment {
     pub house_parts: Option<super::house_structure::PartSet>,
     /// Its velocity last tick, to tell a hard landing.
     pub house_velocity: Option<Point3>,
+    /// When it came to rest up on its cottage's remains, while it is shoved off them.
+    pub house_wedged: Option<f64>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

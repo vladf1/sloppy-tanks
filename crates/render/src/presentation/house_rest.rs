@@ -27,7 +27,7 @@ const STILL_SECONDS: f64 = 0.12;
 const REBUILD_GAP: f64 = 0.4;
 /// Bodies merged into one chunk: a cottage's pile takes a handful of chunks, a few
 /// draws each, rather than a few draws per body, and a frame merges at most one.
-const CHUNK_PARTS: usize = 6;
+const CHUNK_PARTS: usize = 10;
 /// Movement (m, and quaternion difference) a still body may show between frames.
 const STILL_DISTANCE: f32 = 0.006;
 const STILL_TURN: f32 = 0.004;

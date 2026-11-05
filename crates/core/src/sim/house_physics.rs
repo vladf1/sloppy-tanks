@@ -24,7 +24,7 @@ use super::debris_physics::{
     DebrisMaterial, blast_debris, debris_material, track_debris_contacts,
 };
 use super::house_layout::HouseDesign;
-use super::house_structure::{HouseStructure, PartKind, PartSet};
+use super::house_structure::{CHIMNEY_PART, HouseStructure, PartKind, PartSet, StructurePart};
 use super::math::{Point3, Vec2};
 use super::navigation::Footprint;
 use super::data::STEP;
@@ -57,6 +57,12 @@ const SHRINK: f64 = 0.03;
 /// Standing parts' colliders reach this far (m) past their faces into their
 /// neighbours', so a shell or a sight line along the seam between two parts meets one.
 const SEAM: f64 = 0.01;
+/// The chimney's brick, and how big (m) a burst of its bricks reads as when it lands.
+const CHIMNEY_BRICK: u32 = 0x9c4a32;
+const CHIMNEY_BRICKS_SIZE: f64 = 2.5;
+/// A fallen chimney's stack bursts on the first knock this hard (m/s change in a
+/// tick): mortared brick does not land standing.
+const CHIMNEY_LANDING: f64 = 1.0;
 /// Mass per cubic metre of a loose part, as other wooden scenery pieces (the chimney's
 /// brick heavier).
 const TIMBER_DENSITY: f64 = 0.35;
@@ -70,6 +76,10 @@ const SLUMP_TIP: f64 = 0.6;
 const WEDGE_SPEED: f64 = 0.2;
 const WEDGE_HEIGHT: f64 = 1.0;
 const WEDGE_AFTER: f64 = 0.4;
+/// How fast (m/s) a wedged part is shoved off what it lies on, and how long (s) it is
+/// shoved before it drops through instead.
+const WEDGE_PUSH: f64 = 1.2;
+const WEDGE_GIVE_UP: f64 = 1.0;
 /// The damage each unit of impulse a falling part strikes a standing one with does.
 const CRUSH_DAMAGE: f64 = 6.0;
 /// Contact force per unit of a loose part's mass that counts as striking what it lands
@@ -77,13 +87,16 @@ const CRUSH_DAMAGE: f64 = 6.0;
 const CRUSH_FORCE_PER_MASS: f64 = 40.0;
 /// How fast (m/s) a blast throws the parts it tears loose away from it.
 const BLAST_THROW: f64 = 2.5;
+/// Two sheets whose spans along the ridge overlap by this share of the first are one
+/// column of rafters.
+const COLUMN_OVERLAP: f64 = 0.5;
 /// A falling body breaks up into its parts when its velocity changes by this much
 /// (m/s) in one tick: a hard landing.
-const SHATTER_SPEED: f64 = 3.5;
+const SHATTER_SPEED: f64 = 2.5;
 /// Seconds a loose part lies before it sinks away (plus the cleanup fade), and its
 /// hard deadline.
-const PART_LIFE: f64 = 12.0;
-const PART_DEADLINE: f64 = 20.0;
+const PART_LIFE: f64 = 30.0;
+const PART_DEADLINE: f64 = 40.0;
 /// A loose part's linear and angular damping while it falls, and after this long (s)
 /// the damping toward rest that settles a pile rather than letting it creep.
 const FALLING_DAMPING: (f32, f32) = (0.1, 0.3);
@@ -259,7 +272,7 @@ fn part_paint(layout: &HouseStructure, index: usize) -> u32 {
     let style = layout.design.style;
     match layout.parts[index].kind {
         PartKind::Sheet | PartKind::Ridge => style.roof,
-        PartKind::Chimney => 0x9c4a32,
+        PartKind::Chimney => CHIMNEY_BRICK,
         PartKind::Floor | PartKind::Partition => 0xc9b48f,
         _ => style.siding,
     }
@@ -343,7 +356,16 @@ impl Simulation {
             if !state.standing(index) {
                 continue;
             }
-            let gap = part.distance(local);
+            // How far the burst is from the part itself: a sloping sheet's box reaches
+            // far below its eave, so a burst by a gable's window met the roof over it.
+            let gap = match state.colliders[index].and_then(|handle| self.world.colliders.get(handle)) {
+                Some(collider) if part.distance(local) < radius => f64::from(
+                    collider
+                        .shape()
+                        .distance_to_point(collider.position(), vector(point.x, point.y, point.z), true),
+                ),
+                _ => part.distance(local),
+            };
             if gap >= radius {
                 continue;
             }
@@ -637,6 +659,20 @@ impl Simulation {
             .sum::<DVec3>()
             / cluster.len() as f64;
         let out = DVec3::new(center.x, 0.0, center.z).normalize_or_zero();
+        // A wall tips out over its foot as it goes; a roof section or floor, tipped
+        // the same way about its middle, would swing its high edge up like a lid, so
+        // it is left to fall.
+        let wall = cluster.iter().any(|index| {
+            matches!(
+                layout.parts[index].kind,
+                PartKind::Panel
+                    | PartKind::Window
+                    | PartKind::Door
+                    | PartKind::Gable
+                    | PartKind::Partition
+                    | PartKind::Post
+            )
+        });
         let mut velocity = DVec3::new(out.x * SLUMP_SPEED, -SLUMP_SPEED, out.z * SLUMP_SPEED);
         if let Some(blast) = blast {
             let away = DVec3::new(x + center.x - blast.x, 0.0, z + center.z - blast.z);
@@ -644,8 +680,10 @@ impl Simulation {
         }
         let rigid_body = &mut self.world.bodies[body];
         rigid_body.set_linvel(vector(velocity.x, velocity.y, velocity.z), true);
-        let tip = DVec3::Y.cross(out) * SLUMP_TIP;
-        rigid_body.set_angvel(vector(tip.x, tip.y, tip.z), true);
+        if wall {
+            let tip = DVec3::Y.cross(out) * SLUMP_TIP;
+            rigid_body.set_angvel(vector(tip.x, tip.y, tip.z), true);
+        }
         self.add_house_fragment(cover, id, layout.design.style.siding, body, colliders, cluster);
     }
 
@@ -702,6 +740,21 @@ impl Simulation {
         self.fragments.push(fragment);
     }
 
+    /// A fallen chimney landing: its stack bursts into bricks where it struck.
+    fn chimney_to_bricks(&mut self, index: usize) {
+        let fragment = self.fragments.remove(index);
+        let body = &self.world.bodies[fragment.body];
+        let at = from_vector(body.center_of_mass());
+        let mut event = SimEvent::at(SimEventType::Shatter, at.x, at.z);
+        event.height = Some(at.y);
+        event.size = Some(CHIMNEY_BRICKS_SIZE);
+        event.color = Some(CHIMNEY_BRICK);
+        event.cover_kind = Some(CoverKind::House);
+        event.id = fragment.house_id;
+        self.events.push(event);
+        self.remove_body(fragment.body);
+    }
+
     /// Break a landed body up into its parts, each a body of its own moving as it was.
     fn shatter_house_fragment(&mut self, index: usize) {
         let fragment = self.fragments.remove(index);
@@ -724,7 +777,7 @@ impl Simulation {
         let (linvel, angvel) = (old.linvel(), old.angvel());
         let center = old.center_of_mass();
         self.remove_body(fragment.body);
-        for part in parts.iter() {
+        for section in landing_sections(&layout, &parts) {
             let body = self.world.insert_body(
                 RigidBodyBuilder::dynamic()
                     .translation(position)
@@ -733,8 +786,7 @@ impl Simulation {
                     .angular_damping(FALLING_DAMPING.1)
                     .can_sleep(true),
             );
-            let single = PartSet::from_indices([part]);
-            let colliders = self.insert_house_debris(&layout, &single, body);
+            let colliders = self.insert_house_debris(&layout, &section, body);
             let rigid_body = &mut self.world.bodies[body];
             let r = rigid_body.center_of_mass() - center;
             rigid_body.set_linvel(linvel + angvel.cross(r), true);
@@ -747,11 +799,37 @@ impl Simulation {
             let mut piece = fragment.clone();
             piece.id = fragment_id;
             piece.body = body;
-            piece.house_parts = Some(single);
+            piece.house_parts = Some(section);
+            piece.house_wedged = None;
             piece.house_velocity = Some(from_vector(self.world.bodies[body].linvel()));
             self.fragments.push(piece);
         }
     }
+}
+
+/// The sections a landing body breaks into: a roof slope's sheets column by column
+/// (its rafters split along their length: the sheet under the ridge with the one
+/// below it), every other part on its own, the chimney among them.
+fn landing_sections(layout: &HouseStructure, parts: &PartSet) -> Vec<PartSet> {
+    let mut sections: Vec<PartSet> = Vec::new();
+    for index in parts.iter() {
+        let part = &layout.parts[index];
+        let column = |other: &StructurePart| {
+            part.kind == PartKind::Sheet
+                && other.kind == PartKind::Sheet
+                && other.slope.map(|(slope, _)| slope) == part.slope.map(|(slope, _)| slope)
+                && part.max.z.min(other.max.z) - part.min.z.max(other.min.z)
+                    > COLUMN_OVERLAP * (part.max.z - part.min.z)
+        };
+        match sections
+            .iter_mut()
+            .find(|section| section.iter().any(|other| column(&layout.parts[other])))
+        {
+            Some(section) => section.insert(index),
+            None => sections.push(PartSet::from_indices([index])),
+        }
+    }
+    sections
 }
 
 /// Each tick: loose cottage parts that land hard break up, and those lying a while
@@ -772,13 +850,26 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             .hypot(now.z - before.z);
         let age = simulation.elapsed - fragment.created_at.unwrap_or(simulation.elapsed);
         let room = simulation.fragments.len() + parts.len() <= simulation.max_fragments;
+        // The chimney alone lands as bricks.
+        if parts == PartSet::from_indices([CHIMNEY_PART])
+            && change > CHIMNEY_LANDING
+            && fragment.life > DEBRIS_CLEANUP_SECONDS
+        {
+            simulation.chimney_to_bricks(index);
+            continue;
+        }
         if parts.len() > 1 && change > SHATTER_SPEED && room && fragment.life > DEBRIS_CLEANUP_SECONDS {
             simulation.shatter_house_fragment(index);
             continue;
         }
         let body_handle = fragment.body;
         simulation.fragments[index].house_velocity = Some(now);
-        let (linear, angular) = house_debris_damping(age);
+        // A body being shoved off what it lies on keeps falling's damping.
+        let (linear, angular) = if simulation.fragments[index].house_wedged.is_some() {
+            FALLING_DAMPING
+        } else {
+            house_debris_damping(age)
+        };
         let body = &mut simulation.world.bodies[body_handle];
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
@@ -837,52 +928,68 @@ pub fn crush_house_parts(simulation: &mut Simulation, contacts: &[ContactForce])
 }
 
 /// A loose part come to rest up on what still stands of its cottage (a roof slab
-/// lying across two gables like a lid, a floor strip on wall stubs) bears down on the
-/// parts it rests on until they give: they break, and it comes down. Parts are taken
-/// in fragment, then part order: no random draw.
+/// lying across two gables like a lid, a floor strip on wall stubs) slides off it: it
+/// is shoved out from the cottage's middle each tick it lies there, and if it is still
+/// there after [`WEDGE_GIVE_UP`] it drops through the remains. What it lay on stands:
+/// nothing breaks that nothing struck. No random draw.
 fn unwedge_house_debris(simulation: &mut Simulation) {
-    let mut wedged: Vec<(usize, usize)> = Vec::new();
-    for fragment in &simulation.fragments {
-        let (Some(_), Some(created)) = (fragment.house_parts, fragment.created_at) else {
+    let elapsed = simulation.elapsed;
+    for index in 0..simulation.fragments.len() {
+        let fragment = &simulation.fragments[index];
+        let (Some(_), Some(created), Some(house)) =
+            (fragment.house_parts, fragment.created_at, fragment.house_id)
+        else {
             continue;
         };
-        if simulation.elapsed - created < WEDGE_AFTER || fragment.life <= DEBRIS_CLEANUP_SECONDS {
+        if elapsed - created < WEDGE_AFTER || fragment.life <= DEBRIS_CLEANUP_SECONDS {
             continue;
         }
         let body = &simulation.world.bodies[fragment.body];
-        if f64::from(body.center_of_mass().y) < WEDGE_HEIGHT
-            || f64::from(body.linvel().length()) > WEDGE_SPEED
-        {
+        let resting_up = f64::from(body.center_of_mass().y) >= WEDGE_HEIGHT
+            && f64::from(body.linvel().length()) <= WEDGE_SPEED;
+        let on_remains = resting_up
+            && body.colliders().iter().any(|&collider| {
+                simulation.world.contact_pairs_with(collider).any(|pair| {
+                    let other = if pair.collider1 == collider {
+                        pair.collider2
+                    } else {
+                        pair.collider1
+                    };
+                    pair.has_any_active_contact() && simulation.house_part(other).is_some()
+                })
+            });
+        if !on_remains {
+            if fragment.house_wedged.is_some() && !resting_up {
+                simulation.fragments[index].house_wedged = None;
+            }
             continue;
         }
-        for &collider in body.colliders() {
-            for pair in simulation.world.contact_pairs_with(collider) {
-                let other = if pair.collider1 == collider {
-                    pair.collider2
-                } else {
-                    pair.collider1
-                };
-                if let Some(part) = simulation.house_part(other)
-                    && pair.has_any_active_contact()
-                    && !wedged.contains(&part)
-                {
-                    wedged.push(part);
-                }
+        let Some(cover) = simulation.covers.iter().find(|cover| cover.id == house) else {
+            continue;
+        };
+        let at = from_vector(body.center_of_mass());
+        let out = Vec2::new(at.x - cover.x, at.z - cover.z);
+        let length = out.x.hypot(out.z).max(1e-6);
+        let since = *simulation.fragments[index].house_wedged.get_or_insert(elapsed);
+        let handle = simulation.fragments[index].body;
+        if elapsed - since > WEDGE_GIVE_UP {
+            // Still up there: it comes down through what holds it.
+            let colliders: Vec<ColliderHandle> =
+                simulation.world.bodies[handle].colliders().to_vec();
+            for collider in colliders {
+                simulation.world.colliders[collider]
+                    .set_collision_groups(interaction_groups(group::HOUSE_SHARD_THROUGH));
             }
         }
-    }
-    wedged.sort_unstable();
-    let mut index = 0;
-    while index < wedged.len() {
-        let cover = wedged[index].0;
-        let parts = PartSet::from_indices(
-            wedged[index..]
-                .iter()
-                .take_while(|(other, _)| *other == cover)
-                .map(|&(_, part)| part),
+        let body = &mut simulation.world.bodies[handle];
+        body.set_linear_damping(FALLING_DAMPING.0);
+        body.set_angular_damping(FALLING_DAMPING.1);
+        let push = vector(
+            out.x / length * WEDGE_PUSH,
+            -WEDGE_PUSH * 0.5,
+            out.z / length * WEDGE_PUSH,
         );
-        index += parts.len();
-        simulation.break_house_parts(cover, parts, None, None);
+        body.set_linvel(push, true);
     }
 }
 

@@ -811,6 +811,15 @@ impl HouseStructure {
                             End::B
                         }
                     }
+                    // A floor strip's joists span from one eave wall's plate to the
+                    // other's: off one, it does not cantilever off the other.
+                    (PartKind::Floor, Relation::Beside) if b.kind == PartKind::Plate => {
+                        if b.center().x < a.center().x {
+                            End::A
+                        } else {
+                            End::B
+                        }
+                    }
                     (PartKind::Window, Relation::Below) => End::B,
                     (PartKind::Window, _) => {
                         // Its frame holds it whole while it stands on its sill.
@@ -1326,6 +1335,10 @@ impl HouseStructure {
         let mut neighbours: Vec<Vec<usize>> = vec![Vec::new(); count];
         for (index, supports) in self.supports.iter().enumerate() {
             for support in supports {
+                // The chimney's masonry is not nailed to the roof: it falls on its own.
+                if index == CHIMNEY_PART || support.by as usize == CHIMNEY_PART {
+                    continue;
+                }
                 neighbours[index].push(support.by as usize);
                 neighbours[support.by as usize].push(index);
             }
