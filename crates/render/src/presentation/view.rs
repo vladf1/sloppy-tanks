@@ -3800,15 +3800,12 @@ fn tree_view(
 
 /// A debris look with a model of its own, built for this round: one that fades as it
 /// is cleared away, unless `fades` is false (a felled crown only sinks).
-/// A collapsing cottage's piece's model, fading as it is cleared away: the mound's,
-/// whose named parts (the room, the ground, the rubble) only show and hide, merged
-/// across them per finish.
+/// A collapsing cottage's piece's model, fading as it is cleared away and drawing
+/// no ambient occlusion depth while it falls (its resting pile's merged chunks do):
+/// the mound's, whose named parts (the room, the ground, the rubble) only show and
+/// hide, merged across them per finish.
 fn piece_model(renderer: &mut Renderer, node: &Node) -> ModelId {
-    if node.children.iter().any(|child| !child.name.is_empty()) {
-        renderer.add_fading_combined_model(node, Lifetime::Round)
-    } else {
-        renderer.add_fading_model(node, Lifetime::Round)
-    }
+    renderer.add_falling_debris_model(node, Lifetime::Round)
 }
 
 fn owned_look(renderer: &mut Renderer, node: &Node, fades: bool) -> (ModelId, FragmentLook) {

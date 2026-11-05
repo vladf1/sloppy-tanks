@@ -624,6 +624,12 @@ const OVERHANG_DENSITY: f32 = 0.3;
 /// Seconds a falling roof slab keeps its pitch before it may turn: long enough to
 /// come down onto the wreck as a roof, not a tumbling sheet.
 const ROOF_HOLD: f64 = 0.9;
+/// How slow (m/s) a wall-driven collapse's falling roof slab must have come to be
+/// freed to turn after [`ROOF_HOLD`], how long (s) more it may be held for that,
+/// and the fastest it may then spin (rad/s) while the wreck settles.
+const ROOF_LANDED: f32 = 2.0;
+const ROOF_HOLD_MORE: f64 = 0.8;
+const ROOF_SPIN: f32 = 4.0;
 /// Seconds the roof hangs before it gives way onto the buckling walls, and how
 /// fast (m/s) it starts down.
 const ROOF_GIVE: f64 = 0.2;
@@ -1196,7 +1202,18 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 .and_then(|id| simulation.covers.iter().find(|cover| cover.id == id));
             if let Some(cover) = cover {
                 let body = &mut simulation.world.bodies[fragment.body];
-                contain(body, cover);
+                let leads = piece.part.is_roof()
+                    && !caved_in(cover)
+                    && leads_fall(cover, piece, slope_out(cover, piece.part));
+                contain(body, cover, if leads { LEAD_CONTAINED } else { CONTAINED });
+                // Come down through its walls, a slab settles on the wreck rather
+                // than tumbling over on it.
+                if piece.part.is_roof() && age < TOPPLE_WINDOW.1 && !caved_in(cover) {
+                    let spin = body.angvel();
+                    if spin.length() > ROOF_SPIN {
+                        body.set_angvel(spin * (ROOF_SPIN / spin.length()), false);
+                    }
+                }
             }
         }
         if let Some(stub) = fragment.house_stub {
@@ -1254,7 +1271,11 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         }
         if piece.part.is_roof() && age >= ROOF_HOLD {
             let body = &mut simulation.world.bodies[fragment.body];
-            if body.is_rotation_locked()[0] {
+            // Still falling fast, it keeps its pitch until it lands (or a moment
+            // more): freed mid-fall, the knock of landing spun it over onto its
+            // rafters.
+            let landed = body.linvel().length() < ROOF_LANDED || age >= ROOF_HOLD + ROOF_HOLD_MORE;
+            if body.is_rotation_locked()[0] && landed {
                 body.lock_rotations(false, true);
                 // Free to turn, the slab starts to lie back on the wreck, shingles
                 // up, rather than resting on its eave like a lean-to.
@@ -1277,6 +1298,10 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                     let (lie, twist) = if caved_in(cover) {
                         (Vector::Y, ridge_twist)
                     } else {
+                        let out = slope_out(cover, piece.part);
+                        if leads_fall(cover, piece, out) {
+                            body.set_linvel(body.linvel() + out * LEAD_SPILL, true);
+                        }
                         let (lie, twist) = slab_lie(cover, piece, body.translation());
                         (lie, ridge_twist + twist)
                     };
@@ -1472,6 +1497,22 @@ const LIE_TILT: (f64, f64) = (0.12, 0.32);
 const LIE_DIP_SWING: f64 = 0.5;
 const LIE_TWIST: (f64, f64) = (0.25, 0.6);
 
+/// How much steeper (rad) the slope over the failed wall lies, spilt over its stubs,
+/// how fast (m/s) it is carried out over them as it is freed to turn, and how far
+/// (m) past the footprint its centre may go.
+const LEAD_TILT: f64 = 0.18;
+const LEAD_SPILL: f32 = 1.2;
+const LEAD_CONTAINED: f64 = 1.6;
+
+/// The horizontal way (world) a roof part of `cover` faced as it stood.
+fn slope_out(cover: &Cover, part: HousePart) -> Vector {
+    let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+    let n = shard_normal(cover, part);
+    let out = design.to_world(DVec3::new(f64::from(n.x), 0.0, f64::from(n.z)));
+    let out = out.normalize_or_zero();
+    vector(out.x, 0.0, out.z)
+}
+
 /// The face normal a wall-driven collapse's roof slab of `cover`, freed to turn at
 /// `at`, lies back toward, and its twist (rad/s): from the cottage's design and the
 /// slab alone, so every peer agrees and no random number is drawn.
@@ -1491,6 +1532,17 @@ fn slab_lie(cover: &Cover, piece: HousePiece, at: Vector) -> (Vector, f32) {
         };
     let inward = DVec3::new(cover.x - f64::from(at.x), 0.0, cover.z - f64::from(at.z));
     let inward = inward.normalize_or(DVec3::X);
+    // The slope over the failed wall spills out over its stubs instead, its eave
+    // down on the ground past the footprint and its ridge edge up on the pile.
+    let out = slope_out(cover, piece.part);
+    let (inward, tilt) = if leads_fall(cover, piece, out) {
+        (
+            -DVec3::new(f64::from(out.x), 0.0, f64::from(out.z)),
+            tilt + LEAD_TILT,
+        )
+    } else {
+        (inward, tilt)
+    };
     let (sin, cos) = swing.sin_cos();
     let dip = DVec3::new(
         inward.x * cos - inward.z * sin,
@@ -1582,15 +1634,15 @@ fn shard_damping(piece: HousePiece, age: f64) -> (f32, f32) {
 }
 
 /// Stop a roof slab or the chimney sliding out past the footprint's edge (its
-/// centre more than [`CONTAINED`] outside the cover box): its outward motion
+/// centre more than `reach` outside the cover box): its outward motion
 /// there is taken away, as the rubble it ploughs into would.
-fn contain(body: &mut rapier3d::prelude::RigidBody, cover: &Cover) {
+fn contain(body: &mut rapier3d::prelude::RigidBody, cover: &Cover, reach: f64) {
     let p = body.translation();
     let mut v = body.linvel();
     let (dx, dz) = (p.x - cover.x as f32, p.z - cover.z as f32);
     let (hx, hz) = (
-        (cover.w / 2.0 + CONTAINED) as f32,
-        (cover.d / 2.0 + CONTAINED) as f32,
+        (cover.w / 2.0 + reach) as f32,
+        (cover.d / 2.0 + reach) as f32,
     );
     let mut stopped = false;
     if dx.abs() > hx && v.x * dx > 0.0 {
