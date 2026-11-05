@@ -1135,8 +1135,12 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
         let body = &s.world.bodies[f.body];
         assert!(
             f64::from(body.center_of_mass().y) < 2.0,
-            "a piece stands up {:?}",
-            body.center_of_mass()
+            "a piece stands up {:?}: {:?}",
+            body.center_of_mass(),
+            parts
+                .iter()
+                .map(|p| layout.parts[p].kind)
+                .collect::<Vec<_>>()
         );
     }
 }

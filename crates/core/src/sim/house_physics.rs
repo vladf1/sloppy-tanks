@@ -1151,8 +1151,8 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             && (change > SHATTER_SPEED || at_rest)
             && fragment.life > DEBRIS_CLEANUP_SECONDS
         {
-            // A hard landing breaks the body up into a few pieces: as many as the
-            // debris budget has room for, at least two (the oldest debris makes way).
+            // A hard landing breaks the body up into a few pieces, the oldest debris
+            // making way for them when the budget is full.
             let layout = simulation
                 .covers
                 .iter()
@@ -1160,15 +1160,7 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
                 .and_then(|cover| cover.structure.as_ref())
                 .map(|state| state.layout.clone());
             if let Some(layout) = layout {
-                let mut sections = loose_sections(&layout, &parts);
-                let room = (simulation.max_fragments + 1)
-                    .saturating_sub(simulation.fragments.len())
-                    .max(2);
-                while sections.len() > room {
-                    let last = sections.pop().expect("more than two");
-                    let merged = sections.last_mut().expect("at least two");
-                    *merged = merged.union(&last);
-                }
+                let sections = loose_sections(&layout, &parts);
                 simulation.split_house_fragment(index, &layout, sections, None);
                 continue;
             }

@@ -197,6 +197,9 @@ const RIDGE_PAIR: f32 = 0.4;
 /// on it: two segments past a gone gable's peak, so the roof's end stands on its eave
 /// walls without it, but not three (0.65³ falls under [`FALL_BELOW`]).
 const RIDGE_TIE: f32 = 0.65;
+/// The length (m) of ridge [`RIDGE_TIE`] is for: it holds the same length past a gone
+/// gable whatever segments the sheets cut it into.
+const RIDGE_TIE_SPAN: f64 = 2.4;
 /// A hip's ridge held up by the hip end slopes.
 const HIP_TIE: f32 = 0.7;
 /// Whatever else touches.
@@ -224,7 +227,7 @@ const WINDOW_HEAD_TRIM: f64 = 0.2;
 const WINDOW_SILL_TRIM: f64 = 0.12;
 /// Roof sheets: about this long along the ridge, and the share of a slope's run the
 /// upper row takes.
-const SHEET_LENGTH: f64 = 2.4;
+const SHEET_LENGTH: f64 = 1.6;
 const UPPER_ROW: f64 = 0.5;
 /// How deep a sheet's collider reaches under the deck: the deck and its rafters.
 const SHEET_DEPTH: f64 = RAFTER_DEPTH;
@@ -1127,7 +1130,11 @@ impl HouseStructure {
                             continue;
                         }
                         match b.kind {
-                            PartKind::Ridge => links.push((i, j, RIDGE_TIE, 0.0)),
+                            // Per length of ridge spanned, as the sheets' columns cut it.
+                            PartKind::Ridge => {
+                                let span = (a.max.z - a.min.z) / RIDGE_TIE_SPAN;
+                                links.push((i, j, RIDGE_TIE.powf(span as f32), 0.0));
+                            }
                             PartKind::Chimney if touching(a, b) => {
                                 links.push((j, i, REST, 0.0));
                             }
