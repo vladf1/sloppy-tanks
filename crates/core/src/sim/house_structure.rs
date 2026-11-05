@@ -190,9 +190,10 @@ const JOIST_SEAT: f32 = 1.0;
 const SHEET_TIE: f32 = 0.3;
 /// Opposite rafters meeting across the ridge.
 const RIDGE_PAIR: f32 = 0.4;
-/// The ridge beam spanning on from its neighbour: one segment past a gone gable, not
-/// two (0.55² falls under [`FALL_BELOW`]).
-const RIDGE_TIE: f32 = 0.55;
+/// The ridge beam spanning on from its neighbour, held in by the rafter pairs meeting
+/// on it: two segments past a gone gable's peak, so the roof's end stands on its eave
+/// walls without it, but not three (0.65³ falls under [`FALL_BELOW`]).
+const RIDGE_TIE: f32 = 0.65;
 /// A hip's ridge held up by the hip end slopes.
 const HIP_TIE: f32 = 0.7;
 /// Whatever else touches.
@@ -1015,11 +1016,12 @@ impl HouseStructure {
                                     links.push((i, j, REST, seat));
                                 }
                             }
-                            // Rafters' tops on the ridge.
+                            // Rafters' tops on the ridge: rafter pairs bear on
+                            // each other there, so the ridge need not seat them firmly.
                             (PartKind::Ridge, Some(_)) if upper => {
                                 let seat = overlap(z(a), z(b));
                                 if seat > CONTACT {
-                                    links.push((i, j, REST, seat));
+                                    links.push((i, j, REST, 0.0));
                                     links.push((j, i, LOOSE_TIE, 0.0));
                                 }
                             }
@@ -1674,6 +1676,42 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 0, "a two-storey cottage in the village");
+    }
+
+    #[test]
+    fn a_gable_end_shot_out_round_its_window_leaves_the_roof_on_its_eave_walls() {
+        let mut checked = 0;
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if structure.roof.form != RoofForm::Gable {
+                continue;
+            }
+            for wall in [0, 1] {
+                // The gable's peak pieces and a window's column with the bays beside it.
+                let Some(window) = (0..structure.parts.len()).find(|&index| {
+                    structure.parts[index].kind == PartKind::Window
+                        && structure.parts[index].wall == Some(wall)
+                        && !structure.parts[index].upper_storey
+                }) else {
+                    continue;
+                };
+                let (from, to) = (structure.parts[window].min.x - 1.0, structure.parts[window].max.x + 1.0);
+                let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                    let part = &structure.parts[index];
+                    part.wall == Some(wall)
+                        && (part.kind == PartKind::Gable
+                            || (part.max.x > from && part.min.x < to && part.kind != PartKind::Plate))
+                }));
+                let falling = structure.unsupported(&gone);
+                let sheets: Vec<usize> = falling
+                    .iter()
+                    .filter(|&index| structure.parts[index].kind == PartKind::Sheet)
+                    .collect();
+                assert!(sheets.is_empty(), "{:?} wall {wall}: sheets {sheets:?} fell", design.style.form);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
     }
 
     #[test]

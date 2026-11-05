@@ -889,3 +889,36 @@ fn a_levelled_cottage_leaves_no_loose_debris_after_twenty_seconds() {
         assert_eq!(s.fragments.len(), baseline, "and nothing else is left");
     }
 }
+
+#[test]
+fn shells_through_a_gable_window_break_the_gables_not_the_roof() {
+    let (mut s, house) = lone_cottage();
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let c = s.covers[house].clone();
+    // The capture's window shots: four shells at the +x gable's window at 1 m, which
+    // go on through the gaps they open to the far gable.
+    for _ in 0..4 {
+        let z = c.z + 1.89;
+        fire(
+            &mut s,
+            Vec2::new(c.x + c.w / 2.0 + 26.0, z),
+            Vec2::new(c.x + c.w / 2.0, z),
+            Weapon::Standard,
+        );
+        run(&mut s, 2.5);
+    }
+    let gone = gone(&s, house);
+    assert!(
+        gone.iter()
+            .any(|part| layout.parts[part].kind == PartKind::Window),
+        "the window went"
+    );
+    let roof: Vec<usize> = gone
+        .iter()
+        .filter(|&part| layout.parts[part].kind.roof())
+        .collect();
+    assert!(
+        roof.is_empty(),
+        "the roof stands on its eave walls: {roof:?}"
+    );
+}
