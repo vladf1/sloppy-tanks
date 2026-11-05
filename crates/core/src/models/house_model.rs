@@ -310,6 +310,10 @@ impl Aside {
 /// The name of a collapse's room behind its breaches ([`Aside`]), a group on its
 /// mound piece that presentation hides once the walls in front of it have moved.
 pub const HOUSE_ROOM: &str = "house-room";
+/// The prefix of a standing cottage's broken eave sections' nodes, `house-eave-<k>`
+/// for the `k`th of [`house_eave_swings`]: each drawn turned down to its angle,
+/// which presentation swings it to.
+pub const HOUSE_EAVE: &str = "house-eave-";
 /// The name of the rubble on a collapse's mound piece, hidden until presentation
 /// swaps it for the room ([`HOUSE_ROOM`]): on the frame the cottage gives way its
 /// breaches still show the room, not the pile.
@@ -1042,6 +1046,9 @@ struct StandingKits {
     roof_kit: Option<Kit<Surface>>,
     roof_courses: Courses,
     nodes: Vec<Node>,
+    /// Each broken eave section's own meshes, taken out of the walls' and the roof's
+    /// ([`Settle::meshes_sections`]), drawn under a node of its own.
+    sections: Vec<KitMeshes<Surface>>,
 }
 
 impl CottageBuild {
@@ -1069,6 +1076,7 @@ impl CottageBuild {
             roof_kit,
             roof_courses,
             nodes,
+            sections,
         }) = &mut self.kits
         else {
             let cut = self
@@ -1093,6 +1101,7 @@ impl CottageBuild {
             let roof_kit = kits.next().expect("roof kit");
             let roof_courses = courses.into_iter().nth(1).expect("roof courses");
             let nodes = nodes.into_iter().flatten().collect();
+            let sections = vec![Vec::new(); settle.breaks.len()];
             self.kits = Some(StandingKits {
                 roof,
                 settle,
@@ -1101,12 +1110,19 @@ impl CottageBuild {
                 roof_kit: Some(roof_kit),
                 roof_courses,
                 nodes,
+                sections,
             });
             return None;
         };
         if let Some(body) = body.take() {
             let mut body_meshes = body.finish_scaled(&uv);
-            settle.meshes(&mut body_meshes);
+            for (k, part) in settle
+                .meshes_sections(&mut body_meshes)
+                .into_iter()
+                .enumerate()
+            {
+                sections[k].extend(part);
+            }
             grime(&mut body_meshes, roof.ridge);
             add_weathered(&mut self.cottage, body_meshes, palette, walls, false);
             if let Some((lot, nodes)) = lot.take() {
@@ -1123,24 +1139,60 @@ impl CottageBuild {
         }
         let cottage = &mut self.cottage;
         let mut roof_meshes = roof_kit.take().expect("roof kit").finish_scaled(&uv);
-        settle.meshes(&mut roof_meshes);
-        roof_courses.settle(settle);
+        for (k, part) in settle
+            .meshes_sections(&mut roof_meshes)
+            .into_iter()
+            .enumerate()
+        {
+            sections[k].extend(part);
+        }
+        let section_courses = roof_courses.settle_sections(settle);
         grime(&mut roof_meshes, roof.ridge);
         add_weathered(cottage, roof_meshes, palette, walls, false);
-        if !roof_courses.positions.is_empty() {
-            let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
+        let shingles = || {
+            WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
                 vertex_colors: true,
                 ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
-            });
+            })
+        };
+        if !roof_courses.positions.is_empty() {
             cottage.children.push(shadowed(
                 Arc::new(roof_courses.weathered_mesh(roof)),
-                material,
+                shingles(),
             ));
         }
+        // Each broken eave section under a node of its own, already turned down as
+        // far as its breach has let it: presentation swings it there from where it
+        // was ([`HOUSE_EAVE`]).
+        let mut section_nodes: Vec<Node> = (0..sections.len())
+            .map(|k| Node::group(format!("{HOUSE_EAVE}{k}")))
+            .collect();
         for mut node in std::mem::take(nodes) {
+            let on = settle.section_index(node.position);
             node.position = settle.point(node.position);
-            cottage.children.push(node);
+            match on {
+                Some(k) => section_nodes[k].children.push(node),
+                None => cottage.children.push(node),
+            }
         }
+        for (k, (mut meshes, courses)) in std::mem::take(sections)
+            .into_iter()
+            .zip(section_courses)
+            .enumerate()
+        {
+            let node = &mut section_nodes[k];
+            grime(&mut meshes, roof.ridge);
+            add_weathered(node, meshes, palette, walls, false);
+            if !courses.positions.is_empty() {
+                node.children
+                    .push(shadowed(Arc::new(courses.weathered_mesh(roof)), shingles()));
+            }
+        }
+        cottage.children.extend(
+            section_nodes
+                .into_iter()
+                .filter(|node| !node.children.is_empty()),
+        );
         cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
         Some(std::mem::take(cottage))
     }
@@ -1617,6 +1669,85 @@ impl Settle {
         self.breaks.iter().find(|b| b.holds(p))
     }
 
+    /// Which of [`Self::breaks`] a point (a polygon's centre) lies on, if any.
+    fn section_index(&self, p: DVec3) -> Option<usize> {
+        self.breaks.iter().position(|b| b.holds(p))
+    }
+
+    /// [`mesh`](Self::mesh), handing the triangles that turn with each broken eave
+    /// section to a mesh of that section's ([`HOUSE_EAVE`]) instead, moved alike:
+    /// presentation swings the section's node down to where they lie.
+    fn mesh_sections(&self, mesh: &mut Mesh) -> Vec<Mesh> {
+        let mut sections: Vec<Mesh> = (0..self.breaks.len()).map(|_| Mesh::default()).collect();
+        let count = mesh.positions.len();
+        let reaches = mesh.indices.is_none()
+            && (0..count / 3).any(|t| {
+                let p = [3 * t, 3 * t + 1, 3 * t + 2].map(|i| widen(mesh.positions[i]));
+                let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+                self.breaks.iter().any(|b| b.touches(lo, hi))
+            });
+        if !reaches {
+            self.mesh(mesh);
+            return sections;
+        }
+        let coloured = mesh.colors.len() == count;
+        let source = std::mem::take(mesh);
+        let corner = |i: usize| Corner {
+            p: widen(source.positions[i]),
+            n: widen(source.normals[i]),
+            uv: DVec2::new(f64::from(source.uvs[i][0]), f64::from(source.uvs[i][1])),
+            color: if coloured {
+                widen(source.colors[i])
+            } else {
+                DVec3::ZERO
+            },
+            cap: false,
+        };
+        let mut out = Mesh {
+            positions: Vec::with_capacity(count),
+            normals: Vec::with_capacity(count),
+            uvs: Vec::with_capacity(count),
+            colors: Vec::new(),
+            ..Mesh::default()
+        };
+        let triangles =
+            (0..count / 3).map(|t| [corner(3 * t), corner(3 * t + 1), corner(3 * t + 2)]);
+        self.reshape_split(triangles, |_, corner, on| {
+            let target = match on {
+                Some(k) => &mut sections[k],
+                None => &mut out,
+            };
+            target.positions.push(narrow(corner.p));
+            target.normals.push(narrow(corner.n));
+            target.uvs.push([corner.uv.x as f32, corner.uv.y as f32]);
+            if coloured {
+                target.colors.push(narrow(corner.color));
+            }
+        });
+        for section in &mut sections {
+            section.attributes = source.attributes.clone();
+        }
+        out.attributes = source.attributes;
+        *mesh = out;
+        sections
+    }
+
+    /// [`mesh_sections`](Self::mesh_sections) of each of a kit's meshes: the
+    /// meshes left in place, and each section's meshes by surface.
+    fn meshes_sections(&self, meshes: &mut KitMeshes<Surface>) -> Vec<KitMeshes<Surface>> {
+        let mut sections: Vec<KitMeshes<Surface>> = vec![Vec::new(); self.breaks.len()];
+        for (surface, mesh) in meshes.iter_mut() {
+            let parts = self.mesh_sections(Arc::make_mut(mesh));
+            for (k, part) in parts.into_iter().enumerate() {
+                if !part.positions.is_empty() {
+                    sections[k].push((*surface, Arc::new(part)));
+                }
+            }
+        }
+        meshes.retain(|(_, mesh)| !mesh.positions.is_empty());
+        sections
+    }
+
     /// Where a point of the square cottage (build frame) has moved to.
     fn point(&self, p: DVec3) -> DVec3 {
         self.moved(p, self.section(p))
@@ -1817,6 +1948,16 @@ impl Settle {
         triangles: impl IntoIterator<Item = [Corner; 3]>,
         mut emit: impl FnMut(Corner, Corner),
     ) {
+        self.reshape_split(triangles, |built, moved, _| emit(built, moved));
+    }
+
+    /// [`reshape_pair`](Self::reshape_pair), also handing `emit` the broken eave
+    /// section (its index in [`Self::breaks`]) each corner's piece turned with.
+    fn reshape_split(
+        &self,
+        triangles: impl IntoIterator<Item = [Corner; 3]>,
+        mut emit: impl FnMut(Corner, Corner, Option<usize>),
+    ) {
         let mut pieces: Vec<Vec<Corner>> = Vec::new();
         for t in triangles {
             let lo = t[0].p.min(t[1].p).min(t[2].p);
@@ -1857,7 +1998,8 @@ impl Settle {
             for polygon in &pieces {
                 let center =
                     polygon.iter().map(|corner| corner.p).sum::<DVec3>() / polygon.len() as f64;
-                let on = self.section(center);
+                let index = self.section_index(center);
+                let on = index.map(|k| &self.breaks[k]);
                 for i in 1..polygon.len() - 1 {
                     for corner in [polygon[0], polygon[i], polygon[i + 1]] {
                         emit(
@@ -1867,6 +2009,7 @@ impl Settle {
                                 n: self.turned(corner.p, corner.n, on),
                                 ..corner
                             },
+                            index,
                         );
                     }
                 }
@@ -4302,6 +4445,58 @@ fn onto_stubs(design: &HouseDesign, hits: &[TimberHit], holes: &[Vec<Hole>; 4]) 
         .collect()
 }
 
+/// A standing cottage's broken eave section as its model draws it ([`HOUSE_EAVE`]):
+/// the slope it lies on (`side`, ±1 of the ridge along build-frame x), the height of
+/// the ridge line it turns about (build frame) and how far it has turned (rad, its
+/// eave end down).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EaveSwing {
+    pub side: f64,
+    pub from: f64,
+    pub to: f64,
+    pub ridge: f64,
+    pub angle: f64,
+}
+
+/// The broken eave sections of the cottage cover at `x, z` (`w` by `d`, `h` tall)
+/// with marks `hits`, in the order of their nodes.
+pub fn house_eave_swings(
+    x: f64,
+    z: f64,
+    w: f64,
+    d: f64,
+    h: f64,
+    hits: &[TimberHit],
+) -> Vec<EaveSwing> {
+    let design = HouseDesign::of(x, z, w, d, h);
+    let roof = design.roof();
+    let mut holes: [Vec<Hole>; 4] = Default::default();
+    for index in [2, 3] {
+        let half = wall_frames(design.w, design.d)[index].1;
+        let openings = wall_openings(&design, &roof, index);
+        holes[index] = wall_holes(
+            &design,
+            hits,
+            index,
+            half,
+            roof.wall,
+            &openings.windows,
+            &openings.keepouts[openings.windows.len()..],
+        )
+        .0;
+    }
+    eave_breaks(&design, &roof, &holes)
+        .iter()
+        .map(|section| EaveSwing {
+            side: section.side,
+            from: section.from,
+            to: section.to,
+            ridge: section.ridge,
+            angle: section.angle,
+        })
+        .collect()
+}
+
 /// What a cottage's marks tore through one wall, in its wall frame (`[u0, y0, u1,
 /// y1]`, along it seen from outside and up): its windows' openings, the breaches'
 /// boxes and the windows a breach tore out or a shell blew in.
@@ -5853,10 +6048,18 @@ impl Courses {
         mesh
     }
 
-    /// Move the courses as the frame has given ([`Settle`]).
-    fn settle(&mut self, settle: &Settle) {
+    fn mesh(&self) -> Mesh {
+        Mesh::from_f64(&self.positions, &self.normals, &self.uvs, None)
+    }
+
+    /// [`settle`](Self::settle), taking the courses that turn with each broken eave
+    /// section out into that section's own courses.
+    fn settle_sections(&mut self, settle: &Settle) -> Vec<Courses> {
+        let mut sections: Vec<Courses> = (0..settle.breaks.len())
+            .map(|_| Courses::default())
+            .collect();
         if settle.still() {
-            return;
+            return sections;
         }
         let corner = |i: usize| Corner {
             p: DVec3::from_slice(&self.positions[3 * i..]),
@@ -5867,23 +6070,20 @@ impl Courses {
         };
         let triangles =
             (0..self.caps.len() / 3).map(|t| [corner(3 * t), corner(3 * t + 1), corner(3 * t + 2)]);
-        let (mut positions, mut normals, mut uvs, mut caps) = (
-            Vec::with_capacity(self.positions.len()),
-            Vec::with_capacity(self.normals.len()),
-            Vec::with_capacity(self.uvs.len()),
-            Vec::with_capacity(self.caps.len()),
-        );
-        settle.reshape(triangles, |corner| {
-            positions.extend(corner.p.to_array());
-            normals.extend(corner.n.to_array());
-            uvs.extend(corner.uv.to_array());
-            caps.push(corner.cap);
+        let mut kept = Courses::default();
+        settle.reshape_split(triangles, |_, corner, on| {
+            let target = match on {
+                Some(k) => &mut sections[k],
+                None => &mut kept,
+            };
+            target.positions.extend(corner.p.to_array());
+            target.normals.extend(corner.n.to_array());
+            target.uvs.extend(corner.uv.to_array());
+            target.caps.push(corner.cap);
         });
-        (self.positions, self.normals, self.uvs, self.caps) = (positions, normals, uvs, caps);
-    }
-
-    fn mesh(&self) -> Mesh {
-        Mesh::from_f64(&self.positions, &self.normals, &self.uvs, None)
+        (self.positions, self.normals, self.uvs, self.caps) =
+            (kept.positions, kept.normals, kept.uvs, kept.caps);
+        sections
     }
 
     /// The courses weathered as a standing roof's once settled, as built and as

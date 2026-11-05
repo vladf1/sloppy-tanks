@@ -80,6 +80,7 @@ impl Presentation {
         self.house_prep = HousePreparation::default();
         // Round models go with the round.
         self.settled.clear();
+        self.house_motion.clear();
         self.pickups.clear();
         self.supply_pieces.clear();
         self.mines.clear();

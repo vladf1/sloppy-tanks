@@ -136,8 +136,9 @@ beyond_geometry! {
     pub use flags::{FLAG_CLOTH_NODE, flags_model};
 }
 pub use house_model::{
-    HOUSE_MOUND, HOUSE_ROOM, HouseCoverBuild, HousePieces, PieceStep, WallDamage,
-    heap_prop_footprints, heap_prop_name, house_pieces, house_roof_breaks, house_wall_damage,
+    EaveSwing, HOUSE_EAVE, HOUSE_MOUND, HOUSE_ROOM, HouseCoverBuild, HousePieces, PieceStep,
+    WallDamage, heap_prop_footprints, heap_prop_name, house_eave_swings, house_pieces,
+    house_roof_breaks, house_wall_damage,
 };
 beyond_geometry! {
     pub use pickup_visuals::{

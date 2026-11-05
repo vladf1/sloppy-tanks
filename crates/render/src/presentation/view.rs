@@ -41,6 +41,7 @@ use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
+use super::house_motion::HouseMotion;
 use super::house_prep::{
     HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared, release_spent_houses,
 };
@@ -1092,6 +1093,8 @@ pub struct Presentation {
     house_prep: HousePreparation<(ModelId, Aabb)>,
     /// Collapsed cottages' resting shards, merged into one model each.
     settled: SettledShards<(ModelId, InstanceId)>,
+    /// Standing cottages' broken eave sections swinging down after a shell.
+    house_motion: HouseMotion,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
     chimneys: Vec<(u32, bool)>,
@@ -1188,6 +1191,7 @@ impl Presentation {
             house_pieces: HashMap::new(),
             house_prep: HousePreparation::default(),
             settled: SettledShards::default(),
+            house_motion: HouseMotion::default(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
             supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
@@ -1770,6 +1774,8 @@ impl Presentation {
                 props: self.heap_props(cover, model),
             },
         );
+        self.house_motion
+            .install(&self.renderer, cover, model, instance);
     }
 
     /// The lot parts of a cottage heap with its own model, as they stood.
@@ -2223,6 +2229,7 @@ impl Presentation {
         self.place_bars(&state.covers, &camera, self.rig.rotation, dt);
         self.update_branches(dt);
         self.update_covers(state);
+        self.house_motion.update(&mut self.renderer, dt);
         self.update_pickups(state);
         self.update_supply_pieces();
         self.update_fragments(state);
