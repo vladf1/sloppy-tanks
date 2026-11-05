@@ -48,7 +48,7 @@ pub const BLAST_HEIGHT: f64 = 1.0;
 const SHIELDED: f64 = 0.35;
 /// A blast shatters the parts within this far (m) of it; parts farther off that it
 /// breaks come loose whole and fall, so splinters fly only where it went off.
-const BLAST_CORE: f64 = 0.8;
+const BLAST_CORE: f64 = 0.5;
 /// A cottage counts as levelled (destroyed, for the score and the levels that rebuild
 /// it) once its roof is down or less than this share of its parts stands.
 const LEVELLED: f64 = 0.45;
@@ -416,9 +416,7 @@ impl Simulation {
             if gap >= radius {
                 continue;
             }
-            // A burst's force holds near it and falls away toward the edge of its
-            // reach: what stands within a metre of it feels most of it.
-            let mut share = 1.0 - (gap / radius).powi(2);
+            let mut share = 1.0 - gap / radius;
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
@@ -719,7 +717,9 @@ impl Simulation {
         // A wall tips out over its foot as it goes; a roof section or floor, tipped
         // the same way about its middle, would swing its high edge up like a lid, so
         // it is left to fall.
-        let wall = cluster.iter().any(|index| {
+        // Only a wall alone tips: tipping a wall with roof or floor on it out about its
+        // middle swung the roof's inner edge up past the ridge.
+        let wall = cluster.iter().all(|index| {
             matches!(
                 layout.parts[index].kind,
                 PartKind::Panel
@@ -728,6 +728,7 @@ impl Simulation {
                     | PartKind::Gable
                     | PartKind::Partition
                     | PartKind::Post
+                    | PartKind::Plate
             )
         });
         let mut velocity = DVec3::new(out.x * SLUMP_SPEED, -SLUMP_SPEED, out.z * SLUMP_SPEED);
@@ -1199,6 +1200,7 @@ const MAX_ACROSS: f32 = 6.0;
 const MAX_TURN: f32 = 6.0;
 
 fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
+    let (rise, turn) = (MAX_RISE, MAX_TURN);
     let v = body.linvel();
     let across = Vector::new(v.x, 0.0, v.z);
     let across = if across.length() > MAX_ACROSS {
@@ -1206,13 +1208,13 @@ fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
     } else {
         across
     };
-    let capped = Vector::new(across.x, v.y.min(MAX_RISE), across.z);
+    let capped = Vector::new(across.x, v.y.min(rise), across.z);
     if capped != v {
         body.set_linvel(capped, true);
     }
     let w = body.angvel();
-    if w.length() > MAX_TURN {
-        body.set_angvel(w * (MAX_TURN / w.length()), true);
+    if w.length() > turn {
+        body.set_angvel(w * (turn / w.length()), true);
     }
 }
 
@@ -1313,11 +1315,12 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
             let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
             (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
         }
-        // A roof piece come down on its back (its rafters up) is turned back over
-        // shingles up, as a fallen roof lies; else laid down like a wall's.
+        // A roof piece on its edge is laid down the way it leans, whichever face up:
+        // turning one over off its back pivoted it into the ground and never finished.
         Lie::Roof(normal) => {
             let now = rotation * vector(normal.x, normal.y, normal.z);
-            (now, Vector::Y, now.y >= LAID, now.y < LEANING)
+            let target = if now.y >= 0.0 { Vector::Y } else { -Vector::Y };
+            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
         }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);

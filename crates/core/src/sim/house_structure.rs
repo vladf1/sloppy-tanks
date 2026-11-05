@@ -177,11 +177,18 @@ const FLOOR_SEAT_NEEDED: f32 = 0.8;
 const REST: f32 = 1.0;
 /// A panel, a window or the door held by the course over it.
 const HANG: f32 = 0.55;
+/// A bay nailed to a corner post: held by it about as well as by what it stands on,
+/// so it seats the plate over it like a bay standing on the plinth.
+const POST_PANEL_TIE: f32 = 0.95;
 /// Neighbouring panels nailed to the same studs.
 const PANEL_TIE: f32 = 0.45;
-/// A plate spanning on from its neighbour: a header bridges one bay over a gap, not
-/// two (0.55² falls under [`FALL_BELOW`]).
-const PLATE_TIE: f32 = 0.55;
+/// A plate spanning on from its neighbour: the doubled top plate bridges two bays over
+/// a gap and still seats the rafters on it (0.73² is over [`FIRM`]), three only
+/// loosely, seating nothing (0.73³), four not at all (0.73⁴ falls under
+/// [`FALL_BELOW`]): a wall shot out under its whole length lets its roof down.
+const PLATE_TIE: f32 = 0.73;
+/// The most bays a plate spans over a gap ([`HouseStructure::link_plate_spans`]).
+const PLATE_SPAN: usize = 3;
 /// A plate framed into a corner post.
 const POST_TIE: f32 = 0.9;
 /// Gable pieces, attic floor strips: boarded to their neighbours.
@@ -495,6 +502,7 @@ impl HouseStructure {
         structure.supports = vec![Vec::new(); walls];
         structure.beside = vec![Vec::new(); walls];
         structure.link_by_contact();
+        structure.link_plate_spans();
         structure.build_roof();
         structure.supports.resize(structure.parts.len(), Vec::new());
         structure.beside.resize(structure.parts.len(), Vec::new());
@@ -938,6 +946,64 @@ impl HouseStructure {
         }
     }
 
+    /// A wall's plates (and the corner posts at its ends) carry each other on across a
+    /// gap of more than one bay: the top plate runs on past a broken bay to the next
+    /// one standing, weaker for each bay it spans ([`PLATE_TIE`] a bay, up to
+    /// [`PLATE_SPAN`] bays), so two plates over a two-bay hole hold each other's ends.
+    fn link_plate_spans(&mut self) {
+        let frames = wall_frames(self.design.w, self.design.d);
+        for (wall, &(_, _, along, _)) in frames.iter().enumerate() {
+            // The wall's plate courses, each in order along the wall.
+            let mut courses: Vec<(i64, Vec<(f64, usize)>)> = Vec::new();
+            for (index, part) in self.parts.iter().enumerate() {
+                if part.kind != PartKind::Plate || part.wall != Some(wall) {
+                    continue;
+                }
+                let key = (part.min.y * 100.0).round() as i64;
+                let at = part.center().dot(along);
+                match courses.iter_mut().find(|(course, _)| *course == key) {
+                    Some((_, plates)) => plates.push((at, index)),
+                    None => courses.push((key, vec![(at, index)])),
+                }
+            }
+            for (_, plates) in &mut courses {
+                plates.sort_by(|a, b| a.0.total_cmp(&b.0));
+                // The posts the course's end plates are framed into.
+                let post_of = |plate: usize| {
+                    self.supports[plate].iter().find_map(|support| {
+                        (self.parts[support.by as usize].kind == PartKind::Post).then_some(support.by)
+                    })
+                };
+                let first_post = plates.first().and_then(|&(_, plate)| post_of(plate));
+                let last_post = plates.last().and_then(|&(_, plate)| post_of(plate));
+                let count = plates.len();
+                let mut links: Vec<(usize, Support)> = Vec::new();
+                for (i, &(_, plate)) in plates.iter().enumerate() {
+                    for k in 2..=PLATE_SPAN {
+                        let share = PLATE_TIE.powi(k as i32);
+                        if i >= k {
+                            links.push((plate, Support { by: plates[i - k].1 as u16, share, seat: 0.0, end: End::A }));
+                        } else if i + 1 == k
+                            && let Some(post) = first_post
+                        {
+                            links.push((plate, Support { by: post, share, seat: 0.0, end: End::A }));
+                        }
+                        if i + k < count {
+                            links.push((plate, Support { by: plates[i + k].1 as u16, share, seat: 0.0, end: End::B }));
+                        } else if i + k == count
+                            && let Some(post) = last_post
+                        {
+                            links.push((plate, Support { by: post, share, seat: 0.0, end: End::B }));
+                        }
+                    }
+                }
+                for (plate, support) in links {
+                    self.supports[plate].push(support);
+                }
+            }
+        }
+    }
+
     /// The roof: each slope in sheets (columns along the ridge, an upper and a lower
     /// row), hip ends in two sheets each, the ridge in segments and the chimney.
     fn build_roof(&mut self) {
@@ -1317,12 +1383,17 @@ impl HouseStructure {
             .iter()
             .map(|supports| supports.iter().any(|support| support.end != End::Any))
             .collect();
-        let held_by = |best: &[f32; 3], spans: bool| {
-            if spans {
-                best[0].max(best[1].min(best[2]))
+        // A plate over a gap is a beam: what it carries falls off with the whole span,
+        // so it holds by its two ends together (a plate two bays from both its supports
+        // spans three), not by the weaker alone.
+        let beams: Vec<bool> = self.parts.iter().map(|part| part.kind == PartKind::Plate).collect();
+        let held_by = |best: &[f32; 3], spans: bool, beam: bool| {
+            let ends = if beam {
+                best[1].min(best[2]).min(best[1] * best[2] / PLATE_TIE)
             } else {
-                best[0]
-            }
+                best[1].min(best[2])
+            };
+            if spans { best[0].max(ends) } else { best[0] }
         };
         let mut support = vec![0.0f32; count];
         let mut settled = vec![false; count];
@@ -1393,7 +1464,7 @@ impl HouseStructure {
                     let offered = value * share;
                     if offered > best[held][end] {
                         best[held][end] = offered;
-                        support[held] = support[held].max(held_by(&best[held], spans[held]));
+                        support[held] = support[held].max(held_by(&best[held], spans[held], beams[held]));
                     }
                 }
             }
@@ -1441,11 +1512,18 @@ impl HouseStructure {
             PartKind::Panel | PartKind::Window | PartKind::Door | PartKind::Plate
                 if part.wall.is_some() && (!part.grounded || part.kind == PartKind::Door) =>
             {
-                // Its neighbours in the wall, or the corner post it is framed into.
+                // Its neighbours in the wall, the corner post it is framed into, or (a
+                // pier between two openings) the plate over it, while that is braced.
                 let braced = self.beside[index].iter().any(|&other| standing(other as usize))
                     || self.supports[index].iter().any(|support| {
                         let by = support.by as usize;
-                        self.parts[by].kind == PartKind::Post && standing(by)
+                        let over = &self.parts[by];
+                        standing(by)
+                            && (over.kind == PartKind::Post
+                                || (part.kind != PartKind::Plate
+                                    && over.kind == PartKind::Plate
+                                    && over.min.y >= part.max.y - CONTACT
+                                    && self.beside[by].iter().any(|&o| standing(o as usize))))
                     });
                 !braced || (part.upper_storey && !self.upper_storey_held(index, down))
             }
@@ -1580,6 +1658,8 @@ fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
             // cantilever off the middle one.
             (Gable, Gable) => LOOSE_TIE,
             (Floor, Floor) => BOARD_TIE,
+            // A bay framed into a corner post is held by it, as by its plate.
+            (Panel | Window | Door, Post) => POST_PANEL_TIE,
             (Panel | Window | Door | Partition, Panel | Window | Door | Plate | Post) => {
                 PANEL_TIE
             }

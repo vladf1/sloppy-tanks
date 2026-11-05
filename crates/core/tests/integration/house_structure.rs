@@ -1226,55 +1226,151 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
                     let aabb = s.world.colliders[k].compute_aabb();
                     (low.min(aabb.mins.y), high.max(aabb.maxs.y))
                 });
+        let layout = &s.covers[house].structure.as_ref().unwrap().layout;
         assert!(
             high - low < 1.2,
-            "piece {} stands {:.2} m tall",
+            "piece {} stands {:.2} m tall: {:?} at {:?}, laying {}, wedged {:?}",
             f.id,
-            high - low
+            high - low,
+            f.house_parts
+                .unwrap()
+                .iter()
+                .map(|p| layout.parts[p].kind)
+                .collect::<Vec<_>>(),
+            body.center_of_mass(),
+            f.house_laying,
+            f.house_wedged
         );
     }
 }
 
+/// Every cottage design the village places, by where it stands.
+const VILLAGE_DESIGNS: [(f64, f64, f64, f64, f64); 14] = [
+    (-45.0, -39.0, 5.0, 6.0, 6.8),
+    (-45.0, -13.0, 5.0, 6.0, 4.6),
+    (-45.0, 13.0, 5.0, 6.0, 4.3),
+    (-45.0, 39.0, 5.0, 6.0, 5.0),
+    (-17.0, -46.0, 7.0, 5.0, 6.8),
+    (-17.0, 46.0, 7.0, 5.0, 5.2),
+    (-24.0, 0.0, 5.0, 7.0, 4.9),
+    (45.0, -39.0, 5.0, 6.0, 6.8),
+    (45.0, -13.0, 5.0, 6.0, 4.6),
+    (45.0, 13.0, 5.0, 6.0, 4.3),
+    (45.0, 39.0, 5.0, 6.0, 5.0),
+    (17.0, -46.0, 7.0, 5.0, 6.8),
+    (17.0, 46.0, 7.0, 5.0, 5.2),
+    (24.0, 0.0, 5.0, 7.0, 4.9),
+];
+
+/// A simulation with just the cottage `(x, z, w, d, h)` and a protected human far off.
+fn cottage_alone((x, z, w, d, h): (f64, f64, f64, f64, f64)) -> (Simulation, usize) {
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().expect("a human tank");
+    clear_arena(&mut s, &[human]);
+    place_tank(&mut s, 0, 0.0, 70.0, None);
+    s.tanks[0].protection = 999.0;
+    let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
+    s.nav.rebuild(&s.covers, None);
+    (s, house)
+}
+
 #[test]
-fn a_roof_piece_landed_on_its_back_turns_shingles_up() {
-    use rapier3d::prelude::{Pose, Rotation, Vector};
-    let (mut s, house) = lone_cottage();
-    fallen_roof(&mut s, house);
-    let c = s.covers[house].clone();
-    let layout = c.structure.as_ref().unwrap().layout.clone();
-    let (id, body, part) = s
-        .fragments
-        .iter()
-        .find_map(|f| {
-            let parts = f.house_parts?;
-            let first = parts.iter().next()?;
-            (f.house_id == Some(c.id)
-                && parts
-                    .iter()
-                    .all(|p| layout.parts[p].kind == PartKind::Sheet))
-            .then_some((f.id, f.body, first))
-        })
-        .expect("a fallen piece of roof");
-    // Its shingles' side as it stood, in the body's frame.
-    let pitch = layout.roof.pitch;
-    let up = match layout.parts[part].slope.unwrap().0 {
-        HousePart::RightRoof => glam::DVec3::new(pitch, 1.0, 0.0),
-        _ => glam::DVec3::new(-pitch, 1.0, 0.0),
+fn sixteen_shells_at_one_spot_of_any_wall_leave_the_roof_on() {
+    for design in VILLAGE_DESIGNS {
+        for (nx, nz) in [(0.0, 1.0), (0.0, -1.0), (1.0, 0.0), (-1.0, 0.0)] {
+            let (mut s, house) = cottage_alone(design);
+            let c = s.covers[house].clone();
+            let layout = c.structure.as_ref().unwrap().layout.clone();
+            // 0.6 m right of the wall's middle, at hull height, from 21 m off it.
+            let face = Vec2::new(c.x + nx * c.w / 2.0, c.z + nz * c.d / 2.0);
+            let spot = Vec2::new(face.x - nz * 0.6, face.z + nx * 0.6);
+            let from = Vec2::new(spot.x + nx * 21.0, spot.z + nz * 21.0);
+            for _ in 0..16 {
+                fire(&mut s, from, spot, Weapon::Standard);
+                for _ in 0..200 {
+                    idle(&mut s);
+                    if s.shots.is_empty() {
+                        break;
+                    }
+                }
+                run(&mut s, 0.3);
+            }
+            let gone = gone(&s, house);
+            let sheets: Vec<usize> = gone
+                .iter()
+                .filter(|&part| layout.parts[part].kind == PartKind::Sheet)
+                .collect();
+            // A roof sheet may come down only once a corner is gone, or an eave wall's
+            // plates have lost what they stand on over three bays together (a top
+            // plate bridges two).
+            let corner = (0..4).any(|post| gone.contains(post));
+            let breach = [2, 3].into_iter().any(|wall| {
+                let mut plates: Vec<(f64, usize)> = (0..layout.parts.len())
+                    .filter(|&index| {
+                        let part = &layout.parts[index];
+                        part.wall == Some(wall)
+                            && part.kind == PartKind::Plate
+                            && !part.upper_storey
+                    })
+                    .map(|index| (layout.parts[index].center().z, index))
+                    .collect();
+                plates.sort_by(|a, b| a.0.total_cmp(&b.0));
+                let bare = |plate: usize| {
+                    let over = &layout.parts[plate];
+                    (0..layout.parts.len()).all(|below| {
+                        let part = &layout.parts[below];
+                        part.wall != over.wall
+                            || (part.max.y - over.min.y).abs() > 0.05
+                            || part.max.z <= over.min.z + 0.05
+                            || part.min.z >= over.max.z - 0.05
+                            || gone.contains(below)
+                    })
+                };
+                plates
+                    .windows(3)
+                    .any(|run| run.iter().all(|&(_, plate)| bare(plate)))
+            });
+            assert!(
+                sheets.is_empty() || corner || breach,
+                "{design:?} face ({nx}, {nz}): sheets {sheets:?} came down off a hole in the wall"
+            );
+        }
     }
-    .normalize();
-    let up = layout.design.to_world(up);
-    let up = Vector::new(up.x as f32, up.y as f32, up.z as f32);
-    // Laid flat on its back in the open, beside the cottage.
-    let flat = Rotation::from_rotation_arc(up, -Vector::Y);
-    let rigid = &mut s.world.bodies[body];
-    rigid.set_position(Pose::from_parts(Vector::ZERO, flat), true);
-    let middle = rigid.center_of_mass();
-    let target = Vector::new(c.x as f32, 0.4, (c.z + 12.0) as f32);
-    rigid.set_position(Pose::from_parts(target - middle, flat), true);
-    rigid.set_linvel(Vector::ZERO, true);
-    rigid.set_angvel(Vector::ZERO, true);
-    run(&mut s, 4.0);
-    let fragment = s.fragments.iter().find(|f| f.id == id).expect("it lies on");
-    let now = *s.world.bodies[fragment.body].rotation() * up;
-    assert!(now.y > 0.8, "shingles up: {now:?}");
+}
+
+#[test]
+fn a_falling_section_of_wall_and_roof_tips_out_without_lifting_its_roof() {
+    for design in VILLAGE_DESIGNS {
+        let (mut s, house) = cottage_alone(design);
+        let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+        // An eave wall's bottom course gone: the wall over it and the roof on it fall
+        // together.
+        let course: Vec<usize> = (0..layout.parts.len())
+            .filter(|&index| layout.parts[index].wall == Some(2) && layout.parts[index].grounded)
+            .chain(0..4)
+            .collect();
+        s.break_house_parts(house, PartSet::from_indices(course), None, None);
+        let mut top: std::collections::HashMap<u32, f32> = Default::default();
+        for _ in 0..90 {
+            idle(&mut s);
+            for f in s
+                .fragments
+                .iter()
+                .filter(|f| f.house_parts.is_some() && !f.house_broken)
+            {
+                let high = s.world.bodies[f.body]
+                    .colliders()
+                    .iter()
+                    .map(|&k| s.world.colliders[k].compute_aabb().maxs.y)
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let first = *top.entry(f.id).or_insert(high);
+                assert!(
+                    high < first + 0.2,
+                    "{design:?}: a falling section's top rose {:.2} m",
+                    high - first
+                );
+            }
+        }
+    }
 }
