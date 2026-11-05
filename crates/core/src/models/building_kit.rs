@@ -85,6 +85,8 @@ pub(super) enum Surface {
     Lamp,
     /// Curtains behind cottage windows.
     Curtain,
+    /// The plastered inside of a cottage's wall, which only a fallen piece shows.
+    Lining,
     /// Freshly broken timber: the torn edges and splinters of a collapse.
     Splinters,
     /// Soot a shell's blast left on a wall round its hole: a warm char black,
@@ -110,6 +112,7 @@ impl Finishes for Surface {
         Surface::Wood,
         Surface::Lamp,
         Surface::Curtain,
+        Surface::Lining,
         Surface::Splinters,
         Surface::Soot,
     ];
@@ -197,7 +200,7 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
         Surface::Concrete => finish(CONCRETE, MATTE),
         Surface::Terracotta => finish(TERRACOTTA, MATTE),
         Surface::Wood => finish(STAINED_WOOD, MATTE),
-        Surface::Curtain => finish(CURTAIN, MATTE),
+        Surface::Curtain | Surface::Lining => finish(CURTAIN, MATTE),
         Surface::Splinters => finish(SPLIT_TIMBER, MATTE),
         Surface::Soot => finish(SOOT, MATTE),
     }

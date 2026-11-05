@@ -558,3 +558,115 @@ fn a_cottages_marks_reach_room_clients_and_late_joiners() {
     assert_eq!(cover.timber_hits.len(), 2);
     assert!(same(&cover.timber_hits, &s.covers[house].timber_hits));
 }
+
+/// A lone cottage shelled down at its build-frame point `local`, its pieces' poses
+/// (in its build frame) and starting speeds as it falls, and their poses `seconds`
+/// later.
+struct Fall {
+    start: Vec<(HousePiece, DVec3, DVec3, DVec3)>,
+    later: Vec<(HousePiece, DVec3)>,
+}
+
+fn fall(local: DVec3, seconds: f64) -> Fall {
+    let (mut s, house) = lone_cottage();
+    let design = design(&s, house);
+    while s.covers[house].alive {
+        shell_at(&mut s, house, local);
+    }
+    let (x, z) = (s.covers[house].x, s.covers[house].z);
+    let poses = |s: &Simulation| -> Vec<(HousePiece, DVec3, DVec3, DVec3)> {
+        s.fragments
+            .iter()
+            .filter_map(|f| {
+                let piece = f.house_piece?;
+                let body = &s.world.bodies[f.body];
+                let p = body.translation();
+                let (v, w) = (body.linvel(), body.angvel());
+                let local = design.to_local(DVec3::new(
+                    f64::from(p.x) - x,
+                    f64::from(p.y),
+                    f64::from(p.z) - z,
+                ));
+                let speed =
+                    design.to_local(DVec3::new(f64::from(v.x), f64::from(v.y), f64::from(v.z)));
+                let spin =
+                    design.to_local(DVec3::new(f64::from(w.x), f64::from(w.y), f64::from(w.z)));
+                Some((piece, local, speed, spin))
+            })
+            .collect()
+    };
+    let start = poses(&s);
+    tick(&mut s, seconds);
+    let later = poses(&s)
+        .into_iter()
+        .map(|(piece, p, _, _)| (piece, p))
+        .collect();
+    Fall { start, later }
+}
+
+/// The starting speeds of a cottage shelled down through one wall, summed to a
+/// fingerprint (to a millimetre a second): a roof-driven fall must leave them as
+/// they were.
+fn speeds_print(fall: &Fall) -> i64 {
+    fall.start
+        .iter()
+        .enumerate()
+        .map(|(i, (_, _, v, w))| {
+            let round = |x: f64| (x * 1000.0).round() as i64;
+            (i as i64 + 1)
+                * (round(v.x)
+                    + 3 * round(v.y)
+                    + 5 * round(v.z)
+                    + 7 * round(w.x)
+                    + 11 * round(w.y)
+                    + 13 * round(w.z))
+        })
+        .sum()
+}
+
+#[test]
+fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before() {
+    let (s, house) = lone_cottage();
+    let d = design(&s, house);
+    let wall = fall(DVec3::new(0.4, 1.0, d.d / 2.0), 0.35);
+    // The fingerprint of the fall as it was before roof-driven collapses caved in.
+    assert_eq!(speeds_print(&wall), -126_108);
+    let roof = fall(DVec3::new(0.5, d.h - 0.35, 0.3), 0.35);
+    let mean = |fall: &Fall, pick: &dyn Fn(HousePiece) -> bool, of: &dyn Fn(DVec3) -> f64| {
+        let values: Vec<f64> = fall
+            .later
+            .iter()
+            .filter(|(piece, _)| pick(*piece))
+            .map(|(_, p)| of(*p))
+            .collect();
+        values.iter().sum::<f64>() / values.len().max(1) as f64
+    };
+    let roofs = |piece: HousePiece| piece.part.is_roof();
+    let upper_walls = |piece: HousePiece| {
+        piece.part.wall_index().is_some()
+            && (piece.part == HousePart::BackWall || piece.shard % 2 == 1)
+    };
+    let height = |p: DVec3| p.y;
+    let out = |p: DVec3| p.x.abs().max(p.z.abs());
+    // The roof caves down into the house where the walls' fall leaves it standing
+    // a moment longer, and the walls under it go out, not in.
+    assert!(
+        mean(&roof, &roofs, &height) < mean(&wall, &roofs, &height) - 0.2,
+        "roof slabs {} against {}",
+        mean(&roof, &roofs, &height),
+        mean(&wall, &roofs, &height)
+    );
+    assert!(
+        mean(&roof, &upper_walls, &out) > mean(&wall, &upper_walls, &out),
+        "upper walls {} against {}",
+        mean(&roof, &upper_walls, &out),
+        mean(&wall, &upper_walls, &out)
+    );
+    // Its slabs started down at once.
+    assert!(
+        roof.start
+            .iter()
+            .filter(|(piece, ..)| piece.part.is_roof())
+            .all(|(_, _, v, _)| v.y < -1.0)
+    );
+}

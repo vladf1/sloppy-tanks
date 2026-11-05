@@ -38,7 +38,7 @@ use super::building_kit::{
     uv_per_metre, wall_with_breaches, window,
 };
 use super::house_collapse::{
-    ShardClip, chimney_breaks, clip_mesh, clip_meshes, mottle, roof_breaks, wall_breaks,
+    ShardClip, chimney_breaks, clip_meshes, clip_settled, mottle, roof_breaks, wall_breaks,
 };
 use super::house_surfaces::{HouseSurface, house_material};
 use super::model_primitives::{Cache, material, put, shadowed};
@@ -100,7 +100,6 @@ const HOLE_LEAST: f64 = 0.3;
 /// it and the siding round it is stripped back to the sheathing.
 const BIG_BREACH: f64 = 0.9;
 const ROOM_DEPTH: f64 = 1.3;
-const PIECE_ROOM_DEPTH: f64 = 0.35;
 /// Breaches this big (square metres) or more show the room behind them; smaller
 /// ones its dark.
 const ROOM_BREACH: f64 = 0.15;
@@ -145,26 +144,23 @@ const ROOF_SAG: f64 = 0.7;
 const SAG_SPAN: (f64, f64) = (0.12, 0.45);
 /// How far round a roof hole the deck dips (times its size) and how deep at most.
 const HOLE_DIP: (f64, f64) = (1.6, 0.14);
-/// How a shelled cottage's frame gives: each wall bows in round its breaches (m
-/// per share of its area torn out, at most [`BOW_MOST`], carried this deep inside
-/// the face), and the whole frame racks toward its most breached side once its
-/// walls have lost [`RACK_FROM`] of their area, up to [`RACK`] metres of lean per
-/// metre up the walls.
-const BOW: f64 = 0.3;
-const BOW_MOST: f64 = 0.12;
-const BULGE_BAND: f64 = 0.75;
-const RACK_FROM: f64 = 0.06;
-const RACK: f64 = 0.14;
-/// The summed size of a cottage's wall marks at which its frame starts to rack,
-/// and at which it racks fully.
-const RACK_SHELLS: (f64, f64) = (2.5, 6.0);
+/// How far (m) either side of a breach the eave drop tapers back to the studs still
+/// standing, and how deep (m) the end bay of a gable is, which alone comes down
+/// when the corner post under it is gone.
+const SAG_TAPER: f64 = 0.6;
+const GABLE_BAY: f64 = 1.2;
 /// A breach reaching this close (m) to its wall's end has eaten the corner post;
-/// the roof at that corner then drops along this much more of the wall (m) than the
-/// breach spans, by up to this share of [`ROOF_SAG`].
+/// the roof at that corner then drops along the breach and [`SAG_TAPER`] past it, by
+/// up to this share of [`ROOF_SAG`].
 const CORNER_REACH: f64 = 0.3;
-const CORNER_SAG: (f64, f64) = (1.0, 0.7);
-/// A breach whose top comes this close (m) to its wall's top lets the roof down.
-const SAG_REACH: f64 = 1.1;
+const CORNER_SAG: f64 = 0.7;
+/// A breach whose top comes this close (m) to its wall's top lets the roof down
+/// fully, and one whose top is further down than the second only the less, down to
+/// none: the studs over it have lost their footing either way.
+const SAG_REACH: (f64, f64) = (1.1, 2.4);
+/// A breach this wide (m) starts to let the roof over it down, and this wide does
+/// fully, however long its wall: the rafters over it lose their wall alike.
+const SAG_WIDTH: (f64, f64) = (0.5, 2.0);
 /// Patches of shingles a shelled roof has shed round each roof hole, and over a
 /// breach that reaches the eave; their radius (m), and the loose shingles each
 /// sheds onto the roof and the ground.
@@ -264,7 +260,48 @@ struct Parts {
     openings: [Vec<[f64; 4]>; 4],
     /// Each wall's breaches, which the roof over them and the frame answer to.
     holes: [Vec<Hole>; 4],
+    /// A collapse's: what stays with the cottage's ground rather than falling with
+    /// a piece.
+    aside: Option<Aside>,
+    /// The standing cottage's yard and garden, which stand square however its
+    /// frame has given (a collapse's heap draws them).
+    lot: Kit<Surface>,
+    lot_nodes: Vec<Node>,
 }
+
+/// What a collapsing cottage leaves where it stood rather than on a falling piece,
+/// built exactly as the standing cottage has it so the collapse starts from the
+/// cottage the player saw: the room behind each breach, drawn while the wreck still
+/// screens it ([`HOUSE_ROOM`]), and what lies on the ground round the cottage (the
+/// spill under a breach, a fallen window, gutter or shingles, the boards torn off a
+/// window, the bed by the door and the splash blocks), which stays with the heap.
+struct Aside {
+    room: Kit<Surface>,
+    ground: Kit<Surface>,
+    ground_nodes: Vec<Node>,
+}
+
+impl Aside {
+    fn new() -> Self {
+        Self {
+            room: Kit::new(),
+            ground: Kit::new(),
+            ground_nodes: Vec::new(),
+        }
+    }
+}
+
+/// The name of a collapse's room behind its breaches ([`Aside`]), a group on its
+/// mound piece that presentation hides once the walls in front of it have moved.
+pub const HOUSE_ROOM: &str = "house-room";
+/// The name of the rubble on a collapse's mound piece, hidden until presentation
+/// swaps it for the room ([`HOUSE_ROOM`]): on the frame the cottage gives way its
+/// breaches still show the room, not the pile.
+pub const HOUSE_MOUND: &str = "house-mound";
+/// The name of what lies on the ground round a collapse, on its mound piece.
+const HOUSE_GROUND: &str = "house-ground";
+/// The name of a heap's wreck and plinth, beside its lot's props.
+const HOUSE_WRECK: &str = "house-wreck";
 
 impl Parts {
     fn new(build: Build) -> Self {
@@ -280,6 +317,33 @@ impl Parts {
             nodes: (0..count).map(|_| Vec::new()).collect(),
             openings: Default::default(),
             holes: Default::default(),
+            aside: (build == Build::Pieces).then(Aside::new),
+            lot: Kit::new(),
+            lot_nodes: Vec::new(),
+        }
+    }
+
+    /// `piece`'s kit, and what the collapse leaves aside (none for the standing
+    /// cottage, which keeps all of it in its kits).
+    fn kit_and_aside(&mut self, piece: HousePart) -> (&mut Kit<Surface>, Option<&mut Aside>) {
+        let slot = self.slot(piece);
+        (&mut self.kits[slot], self.aside.as_mut())
+    }
+
+    /// Where what lies on the ground round the cottage goes: the standing cottage's
+    /// walls, or a collapse's ground.
+    fn ground(&mut self) -> &mut Kit<Surface> {
+        match &mut self.aside {
+            Some(aside) => &mut aside.ground,
+            None => &mut self.kits[0],
+        }
+    }
+
+    /// Where the loose nodes lying on the ground go.
+    fn ground_nodes(&mut self) -> &mut Vec<Node> {
+        match &mut self.aside {
+            Some(aside) => &mut aside.ground_nodes,
+            None => &mut self.nodes[0],
         }
     }
 
@@ -433,13 +497,16 @@ fn grime(meshes: &mut KitMeshes<Surface>, ridge: f64) {
     }
 }
 
-/// Add a standing cottage's meshes, its siding weathered ([`grime`]).
+/// Add a standing cottage's meshes, its siding weathered ([`grime`]). A collapse
+/// piece (`piece`) glazes its windows in satin and paints its brick and stone, so
+/// each piece draws its siding and one satin part rather than more for its glass
+/// and masonry.
 fn add_weathered(
     group: &mut Node,
     meshes: KitMeshes<Surface>,
     palette: &Palette,
     walls: WallFinish,
-    lined: bool,
+    piece: bool,
 ) {
     for (surface, mesh) in meshes {
         let material = match surface {
@@ -450,12 +517,25 @@ fn add_weathered(
                 })
             }
             // The inside of a wall shows only on a fallen piece: old wallpaper.
-            Surface::Curtain if lined => cottage_material(surface, palette, walls, true),
+            Surface::Lining => cottage_material(Surface::Curtain, palette, walls, true),
+            // Glossy glass reflects a quarter of its light as metal would: matte, it
+            // takes the rest's share of its paint.
+            Surface::Glass | Surface::Lamp if piece => {
+                let source = cottage_material(surface, palette, walls, false);
+                satin(scale_hex_color(source.color.0, 1.0 - GLOSSY_METAL))
+            }
+            // Brick and stone in their texture's average, as the heap's always were.
+            Surface::Brick | Surface::Stone if piece => {
+                cottage_material(surface, palette, walls, true)
+            }
             _ => cottage_material(surface, palette, walls, false),
         };
         group.children.push(shadowed(mesh, material));
     }
 }
+
+/// The metalness of the glossy finish of glass ([`surface_material`]).
+const GLOSSY_METAL: f64 = 0.25;
 
 /// Matte-looking satin for planting, so it joins the cottage's satin draw.
 fn satin(color: u32) -> Arc<Material> {
@@ -537,17 +617,23 @@ struct CottageKits {
     roof: Roof,
     openings: [Vec<[f64; 4]>; 4],
     settle: Settle,
+    /// What the mound piece carries for the cottage's ground ([`Aside`]).
+    aside: Option<Aside>,
     parts: std::collections::VecDeque<(HousePart, Kit<Surface>, Courses, Vec<Node>)>,
 }
 
-/// A part's finished meshes and shingles, which each of its shapes is cut from.
+/// A part's finished meshes and shingles, which each of its shapes is cut from: as
+/// built, where the shards' cells are, and as the frame gave, as they are drawn.
 struct PartCut {
     part: HousePart,
-    meshes: KitMeshes<Surface>,
+    meshes: [KitMeshes<Surface>; 2],
     /// Its shingle courses, weathered as the standing roof's are.
-    shingled: Option<Mesh>,
+    shingled: Option<(Mesh, Mesh)>,
     /// What it carries as nodes of their own (window boxes' plants).
     nodes: Vec<Node>,
+    /// The mound's: the room behind the breaches and what lies on the ground, as
+    /// the standing cottage has them.
+    aside: Option<Node>,
 }
 
 /// What one [`HousePieces::step`] did.
@@ -589,6 +675,7 @@ impl HousePieces {
                 courses,
                 nodes,
                 openings,
+                aside,
                 ..
             } = parts;
             let parts = HousePart::ALL
@@ -602,6 +689,7 @@ impl HousePieces {
                 roof,
                 openings,
                 settle,
+                aside,
                 parts,
             });
             return PieceStep::Cut;
@@ -635,7 +723,7 @@ impl HousePieces {
                 None => {
                     let shard = std::mem::take(shard);
                     let piece = shape.piece;
-                    let node = finish_piece(cut.part, shape, shard);
+                    let node = finish_piece(shape, shard);
                     self.piece = None;
                     PieceStep::Piece(piece, node)
                 }
@@ -665,10 +753,19 @@ impl HousePieces {
             };
             let cut = PartCut {
                 part,
-                meshes: kit.finish_scaled(cottage_uv(self.design.style.walls)),
+                meshes: kits
+                    .settle
+                    .meshes_pair(&kit.finish_scaled(cottage_uv(self.design.style.walls))),
                 shingled: (!courses.positions.is_empty())
-                    .then(|| courses.weathered_mesh(&kits.roof)),
+                    .then(|| courses.settled_pair(&kits.settle, &kits.roof)),
                 nodes,
+                aside: if part == HousePart::Mound {
+                    kits.aside.take().map(|aside| {
+                        aside_node(aside, &self.design, &self.palette, &kits.roof, &kits.settle)
+                    })
+                } else {
+                    None
+                },
             };
             let queue: Vec<usize> = (0..shapes.len())
                 .filter(|&index| shapes[index].piece.part == part)
@@ -713,6 +810,7 @@ fn cut_half(
         meshes,
         shingled,
         nodes,
+        aside,
     } = cut;
     let part = *part;
     let walls = design.style.walls;
@@ -720,11 +818,11 @@ fn cut_half(
     let whole = shape.region.is_whole();
     let mut bits = Node::group("");
     let clip = (!whole).then(|| ShardClip::new(&half.plane, &half.region));
+    let [built, moved] = meshes;
     let mut cut = match &clip {
-        Some(clip) => clip_meshes(meshes, clip),
-        None => meshes.clone(),
+        Some(clip) => clip_meshes(built, moved, clip),
+        None => moved.clone(),
     };
-    settle.meshes(&mut cut);
     grime(&mut cut, roof.ridge);
     add_weathered(&mut bits, cut, palette, walls, true);
     let mut breaks = Kit::new();
@@ -739,13 +837,12 @@ fn cut_half(
     settle.meshes(&mut breaks);
     grime(&mut breaks, roof.ridge);
     add_weathered(&mut bits, breaks, palette, walls, true);
-    if let Some(mesh) = shingled {
+    if let Some((built, moved)) = shingled {
         let mesh = match &clip {
-            Some(clip) => clip_mesh(mesh, clip),
-            None => Some(mesh.clone()),
+            Some(clip) => clip_settled(built, moved, clip),
+            None => Some(moved.clone()),
         };
-        if let Some(mut mesh) = mesh {
-            settle.mesh(&mut mesh);
+        if let Some(mesh) = mesh {
             let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
                 vertex_colors: true,
                 ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
@@ -760,27 +857,64 @@ fn cut_half(
             bits.children.push(node);
         }
     }
+    if let Some(aside) = aside {
+        // The mound's piece is drawn as fixed joints that only show and hide,
+        // which merge per finish: the room, the ground, then the rubble.
+        let mut mound = Node::group(HOUSE_MOUND);
+        mound.children = std::mem::take(&mut bits.children);
+        mound.visible = false;
+        batch(&mut mound);
+        bits.children.extend(aside.children.iter().cloned());
+        bits.children.push(mound);
+    }
     bits
 }
 
-/// A collapse piece from its cut `shard`: centred on its collider, batched and
-/// grimed, casting a shadow only where that shows.
-fn finish_piece(part: HousePart, shape: &PieceShape, mut shard: Node) -> Node {
+/// What a collapse leaves with the cottage's ground ([`Aside`]), built and settled
+/// as the standing cottage has it: the room behind its breaches, a group of its own
+/// named [`HOUSE_ROOM`], and what lies round it on the ground.
+fn aside_node(
+    aside: Aside,
+    design: &HouseDesign,
+    palette: &Palette,
+    roof: &Roof,
+    settle: &Settle,
+) -> Node {
+    let walls = design.style.walls;
+    let uv = cottage_uv(walls);
+    let mut node = Node::group("");
+    let mut ground = Node::group(HOUSE_GROUND);
+    let mut room = Node::group(HOUSE_ROOM);
+    let mut meshes = aside.room.finish_scaled(&uv);
+    settle.meshes(&mut meshes);
+    grime(&mut meshes, roof.ridge);
+    add_weathered(&mut room, meshes, palette, walls, true);
+    batch(&mut room);
+    if !room.children.is_empty() {
+        node.children.push(room);
+    }
+    let mut meshes = aside.ground.finish_scaled(&uv);
+    settle.meshes(&mut meshes);
+    grime(&mut meshes, roof.ridge);
+    add_weathered(&mut ground, meshes, palette, walls, true);
+    for mut node in aside.ground_nodes {
+        node.position = settle.point(node.position);
+        ground.children.push(node);
+    }
+    batch(&mut ground);
+    node.children.push(ground);
+    node
+}
+
+/// A collapse piece from its cut `shard`: centred on its collider and batched. Every
+/// piece of the walls, roof and chimney casts its shadow, as the cottage did: the
+/// frame the collapse starts on is lit as the one before it.
+fn finish_piece(shape: &PieceShape, mut shard: Node) -> Node {
     shard.position = -shape.center;
     let mut root = Node::default();
     root.children.push(shard);
     flatten(&mut root);
     batch(&mut root);
-    // Every piece of the walls, roof and chimney casts its shadow, as the cottage
-    // did: the frame the collapse starts on is lit as the one before it. The
-    // mound inside never shows from outside.
-    if part == HousePart::Mound {
-        for child in &mut root.children {
-            if let Some(drawable) = &mut child.drawable {
-                drawable.cast_shadow = false;
-            }
-        }
-    }
     root
 }
 
@@ -885,6 +1019,7 @@ struct StandingKits {
     roof: Roof,
     settle: Settle,
     body: Option<Kit<Surface>>,
+    lot: Option<(Kit<Surface>, Vec<Node>)>,
     roof_kit: Option<Kit<Surface>>,
     roof_courses: Courses,
     nodes: Vec<Node>,
@@ -911,6 +1046,7 @@ impl CottageBuild {
             roof,
             settle,
             body,
+            lot,
             roof_kit,
             roof_courses,
             nodes,
@@ -929,6 +1065,8 @@ impl CottageBuild {
                 kits,
                 courses,
                 nodes,
+                lot,
+                lot_nodes,
                 ..
             } = parts;
             let mut kits = kits.into_iter();
@@ -940,6 +1078,7 @@ impl CottageBuild {
                 roof,
                 settle,
                 body: Some(body),
+                lot: Some((lot, lot_nodes)),
                 roof_kit: Some(roof_kit),
                 roof_courses,
                 nodes,
@@ -951,6 +1090,16 @@ impl CottageBuild {
             settle.meshes(&mut body_meshes);
             grime(&mut body_meshes, roof.ridge);
             add_weathered(&mut self.cottage, body_meshes, palette, walls, false);
+            if let Some((lot, nodes)) = lot.take() {
+                add_weathered(
+                    &mut self.cottage,
+                    lot.finish_scaled(&uv),
+                    palette,
+                    walls,
+                    false,
+                );
+                self.cottage.children.extend(nodes);
+            }
             return None;
         }
         let cottage = &mut self.cottage;
@@ -1025,21 +1174,14 @@ fn flatten(root: &mut Node) {
 }
 
 /// How a shelled cottage's frame has given (build frame), worked out from its
-/// breaches and roof holes alone, so an unbroken wall stands square: each breached
-/// wall bowed in round its breaches, the frame racked toward its most breached side
-/// once enough wall is gone, the eave (or gable end) over a breach that has taken out
-/// much of its wall sagging from there, and the deck dipping round each roof hole.
-/// The standing cottage and its collapse pieces are moved alike.
+/// breaches and roof holes alone. A timber frame stands rigid until a member breaks,
+/// so its walls stay plumb and its courses straight: only over a breach that has
+/// taken out the wall under the eave (or under a gable end) does the eave come down,
+/// in a short span over the breach, the rafters there turning about the ridge, and
+/// round each roof hole the deck dips. Drops never add up: where two meet, the
+/// deeper holds. The standing cottage and its collapse pieces are moved alike.
 struct Settle {
-    /// Lean per metre up the walls, in the build frame's x and z.
-    rack: DVec2,
-    /// How far each wall (front, back, right, left) bows in at its middle.
-    bows: [f64; 4],
     sags: Vec<Sag>,
-    /// The half box and the walls' height over the plinth, for the bows.
-    hw: f64,
-    hd: f64,
-    wall: f64,
 }
 
 /// A triangle corner a [`Settle`] splits and moves: its point, normal, texture
@@ -1073,15 +1215,17 @@ const MAX_SLICES: i64 = 40;
 /// A sag of the roof: over a breach under an eave or a gable end, or round a hole in
 /// the deck.
 enum Sag {
-    /// Over breach of the wall `out` from the middle (unit x or z), centred at
-    /// `center` along it with `half` its reach, dropping by `drop` at the wall's
-    /// line (less toward the ridge or the far gable) above `from` (the breach's top).
+    /// Over a breach of the wall `out` from the middle (unit x or z), centred at
+    /// `center` along it with `half` its reach, dropping by `drop` at the wall's line
+    /// above `from` (the breach's top): nothing from `inner` in from the wall (the
+    /// ridge under an eave, the last rafter bay inside a gable) to all at `span`.
     Wall {
         out: DVec3,
         center: f64,
         half: f64,
         drop: f64,
         from: f64,
+        inner: f64,
         span: f64,
     },
     /// Round a roof hole at `center` (x, z), `radius` wide and `drop` deep.
@@ -1101,19 +1245,9 @@ impl Settle {
         roof_holes: &[RoofHole],
     ) -> Self {
         let frames = wall_frames(design.w, design.d);
-        let height = roof.wall - PLINTH;
-        let mut bows = [0.0; 4];
         let mut sags = Vec::new();
-        let mut lost = DVec2::ZERO;
-        let (mut torn, mut total) = (0.0, 0.0);
         for (index, (frame, half)) in frames.iter().enumerate() {
-            let area = 2.0 * half * height;
-            let breached: f64 = holes[index].iter().map(Hole::area).sum();
-            total += area;
-            torn += breached;
-            bows[index] = (BOW * breached / area).min(BOW_MOST);
             let out = frame.transform_vector3(DVec3::Z);
-            lost += DVec2::new(out.x, out.z) * breached;
             for hole in &holes[index] {
                 let [u0, y0, u1, y1] = hole.bounds;
                 let along = frame.transform_vector3(DVec3::X);
@@ -1123,21 +1257,35 @@ impl Settle {
                         .dot(along.abs())
                 };
                 // The eave walls (±x) carry the deck's edge, which hangs below their
-                // top: it drops with the strip of wall over the breach.
+                // top: it drops with the strip of wall over the breach, the rafters
+                // over it turning about the ridge. Under a gable only its end bay
+                // comes down, hinged at the rafter inside it.
                 let eave = out.x.abs() > 0.5;
                 let from = if eave { y1.min(roof.eave_y) - 0.05 } else { y1 };
                 let span = if eave { roof.eave_x } else { roof.rake_z };
-                // A breach that has taken the wall up to its top plate and across
-                // much of it lets the roof over it down.
+                let inner = if eave { 0.0 } else { span - GABLE_BAY };
+                // A breach that has taken the wall up to near its top plate, and wide
+                // enough to leave the rafters over it without their studs, lets the
+                // roof over it down.
                 let share = (u1 - u0) / (2.0 * half);
-                let full = ((share - SAG_SPAN.0) / (SAG_SPAN.1 - SAG_SPAN.0)).clamp(0.0, 1.0);
-                if full > 0.0 && y1 >= roof.wall - SAG_REACH {
+                let full = ((share - SAG_SPAN.0) / (SAG_SPAN.1 - SAG_SPAN.0))
+                    .max((u1 - u0 - SAG_WIDTH.0) / (SAG_WIDTH.1 - SAG_WIDTH.0))
+                    .clamp(0.0, 1.0);
+                let reach = ((y1 - (roof.wall - SAG_REACH.1)) / (SAG_REACH.1 - SAG_REACH.0))
+                    .clamp(0.0, 1.0);
+                // The drop tapers to the studs still standing either side, within
+                // the wall: its corners keep their posts.
+                let taper = SAG_TAPER.min(u0 + half).min(half - u1).max(0.05);
+                // A gable wall bears no rafters: a breach in it leaves its rake
+                // standing on the wall either side, and the ridge on its post.
+                if eave && full * reach > 0.0 {
                     sags.push(Sag::Wall {
                         out,
                         center: at((u0 + u1) / 2.0),
-                        half: (u1 - u0) / 2.0 + 0.8,
-                        drop: ROOF_SAG * full,
+                        half: (u1 - u0) / 2.0 + taper,
+                        drop: ROOF_SAG * full * reach,
                         from,
+                        inner,
                         span,
                     });
                 }
@@ -1155,9 +1303,10 @@ impl Settle {
                     sags.push(Sag::Wall {
                         out,
                         center: at(end),
-                        half: (u1 - u0) + CORNER_SAG.0,
-                        drop: ROOF_SAG * CORNER_SAG.1 * post,
+                        half: (u1 - u0) + SAG_TAPER,
+                        drop: ROOF_SAG * CORNER_SAG * post,
                         from: from.min(y1),
+                        inner,
                         span,
                     });
                 }
@@ -1180,59 +1329,16 @@ impl Settle {
                 above: roof.eave_y - 0.05,
             });
         }
-        // The frame racks with the wall it has lost, and with the shells it has
-        // taken all told: a cottage shelled to the brink leans toward its worst
-        // side however its breaches are spread.
-        let share = torn / total;
-        let shells: f64 = holes.iter().flatten().map(|hole| hole.size).sum();
-        let lean = ((share - RACK_FROM) / (3.0 * RACK_FROM))
-            .max((shells - RACK_SHELLS.0) / (RACK_SHELLS.1 - RACK_SHELLS.0))
-            .clamp(0.0, 1.0);
-        let rack = if lean > 0.0 && lost.length() > 1e-9 {
-            lost.normalize() * RACK * lean
-        } else {
-            DVec2::ZERO
-        };
-        Self {
-            rack,
-            bows,
-            sags,
-            hw: design.w / 2.0,
-            hd: design.d / 2.0,
-            wall: roof.wall,
-        }
+        Self { sags }
     }
 
     fn still(&self) -> bool {
-        self.rack == DVec2::ZERO && self.bows.iter().all(|&bow| bow == 0.0) && self.sags.is_empty()
+        self.sags.is_empty()
     }
 
     /// Where a point of the square cottage (build frame) has moved to.
     fn point(&self, p: DVec3) -> DVec3 {
-        let mut q = p + DVec3::new(self.rack.x, 0.0, self.rack.y) * (p.y - PLINTH).max(0.0);
-        let t = (p.y - PLINTH) / (self.wall - PLINTH);
-        if (0.0..=1.0).contains(&t) {
-            let (hw, hd) = (self.hw, self.hd);
-            let bow = (t * PI).sin();
-            // Front, back, right, left: each bowed in between its corners.
-            let across = |v: f64, half: f64| (PI / 2.0 * (v / half).clamp(-1.0, 1.0)).cos();
-            if p.z > hd - BULGE_BAND {
-                q.z -= bow * self.bows[0] * across(p.x, hw);
-            }
-            if p.z < -hd + BULGE_BAND {
-                q.z += bow * self.bows[1] * across(p.x, hw);
-            }
-            if p.x > hw - BULGE_BAND {
-                q.x -= bow * self.bows[2] * across(p.z, hd);
-            }
-            if p.x < -hw + BULGE_BAND {
-                q.x += bow * self.bows[3] * across(p.z, hd);
-            }
-        }
-        for sag in &self.sags {
-            q.y -= sag.drop_at(p);
-        }
-        q
+        p - DVec3::Y * self.drop(p)
     }
 
     fn mesh(&self, mesh: &mut Mesh) {
@@ -1296,6 +1402,60 @@ impl Settle {
         }
     }
 
+    /// `mesh` sliced as [`mesh`](Self::mesh) slices it, twice: as built and as
+    /// moved, triangle for triangle. A collapse cuts its shards from the first and
+    /// draws the second, so each shard is the very surface the standing cottage
+    /// showed, bends and all; settling a shard after cutting it bent its smaller
+    /// triangles more truly and the roof's fold over a breach went flat.
+    fn mesh_pair(&self, mesh: &Mesh) -> (Mesh, Mesh) {
+        let mut moved = mesh.clone();
+        self.mesh(&mut moved);
+        if moved.positions.len() == mesh.positions.len() {
+            // Moved where it lay: the triangles are the built ones.
+            return (mesh.clone(), moved);
+        }
+        let count = mesh.positions.len();
+        let coloured = mesh.colors.len() == count;
+        let corner = |i: usize| Corner {
+            p: widen(mesh.positions[i]),
+            n: widen(mesh.normals[i]),
+            uv: DVec2::new(f64::from(mesh.uvs[i][0]), f64::from(mesh.uvs[i][1])),
+            color: if coloured {
+                widen(mesh.colors[i])
+            } else {
+                DVec3::ZERO
+            },
+            cap: false,
+        };
+        let mut built = Mesh {
+            attributes: mesh.attributes.clone(),
+            ..Mesh::default()
+        };
+        let triangles =
+            (0..count / 3).map(|t| [corner(3 * t), corner(3 * t + 1), corner(3 * t + 2)]);
+        self.reshape_pair(triangles, |corner, _| {
+            built.positions.push(narrow(corner.p));
+            built.normals.push(narrow(corner.n));
+            built.uvs.push([corner.uv.x as f32, corner.uv.y as f32]);
+            if coloured {
+                built.colors.push(narrow(corner.color));
+            }
+        });
+        (built, moved)
+    }
+
+    /// [`mesh_pair`](Self::mesh_pair) of each of a kit's meshes: as built, and as
+    /// moved.
+    fn meshes_pair(&self, meshes: &KitMeshes<Surface>) -> [KitMeshes<Surface>; 2] {
+        let (mut built, mut moved) = (Vec::new(), Vec::new());
+        for (surface, mesh) in meshes {
+            let (a, b) = self.mesh_pair(mesh);
+            built.push((*surface, Arc::new(a)));
+            moved.push((*surface, Arc::new(b)));
+        }
+        [built, moved]
+    }
+
     /// Whether a triangle spanning `lo`..`hi` is sliced before it is moved.
     fn slices(&self, lo: DVec3, hi: DVec3) -> bool {
         (hi - lo).max_element() > SAG_STEP && self.sliced_axes(lo, hi) != [None; 2]
@@ -1325,9 +1485,13 @@ impl Settle {
         axes
     }
 
-    /// How far the sags lower a point.
+    /// How far the sags lower a point: the deepest of them, as a member that has
+    /// already come down is not brought lower by another break beside it.
     fn drop(&self, p: DVec3) -> f64 {
-        self.sags.iter().map(|sag| sag.drop_at(p)).sum()
+        self.sags
+            .iter()
+            .map(|sag| sag.drop_at(p))
+            .fold(0.0, f64::max)
     }
 
     /// A normal `n` at `p` turned with the sags' slope there, so a sagging roof is
@@ -1353,12 +1517,25 @@ impl Settle {
         triangles: impl IntoIterator<Item = [Corner; 3]>,
         mut emit: impl FnMut(Corner),
     ) {
+        self.reshape_pair(triangles, |_, moved| emit(moved));
+    }
+
+    /// [`reshape`](Self::reshape), handing `emit` each corner both where it was built
+    /// (sliced but not moved) and where it has moved to.
+    fn reshape_pair(
+        &self,
+        triangles: impl IntoIterator<Item = [Corner; 3]>,
+        mut emit: impl FnMut(Corner, Corner),
+    ) {
         let mut emit_moved = |corner: Corner| {
-            emit(Corner {
-                p: self.point(corner.p),
-                n: self.normal(corner.p, corner.n),
-                ..corner
-            });
+            emit(
+                corner,
+                Corner {
+                    p: self.point(corner.p),
+                    n: self.normal(corner.p, corner.n),
+                    ..corner
+                },
+            );
         };
         let mut pieces: Vec<Vec<Corner>> = Vec::new();
         for t in triangles {
@@ -1471,13 +1648,15 @@ impl Sag {
                 half,
                 drop,
                 from,
+                inner,
                 span,
             } => {
                 // How far out toward the breached wall (1 at its line and past it, to
                 // the eave), along it from the breach, and up from the breach's top.
                 // A tent along the wall, kinked where the top plate and the rafters
-                // over the breach broke, and straight out from the ridge to the eave.
-                let outward = (p.dot(out) / span).clamp(0.0, 1.0);
+                // over the breach broke, and straight out from where the rafters
+                // turn (the ridge, or a gable's last bay) to the eave.
+                let outward = ((p.dot(out) - inner) / (span - inner)).clamp(0.0, 1.0);
                 let along = p.dot(DVec3::new(out.z.abs(), 0.0, out.x.abs())) - center;
                 let near = (1.0 - (along / half).abs()).max(0.0);
                 let up = ((p.y - from) / 0.35).clamp(0.0, 1.0);
@@ -1627,7 +1806,8 @@ fn shed_shingles(parts: &mut Parts, design: &HouseDesign, roof: &Roof, roof_hole
         }
     }
     // Shingles fallen off the eave below each patch into the yard.
-    if let Some(base) = parts.base() {
+    {
+        let base = parts.ground();
         for (side, from) in placed.into_iter().flat_map(|spot| [spot; 3]) {
             let x = side * (design.w / 2.0 + rng.range(0.25, 1.1));
             let z = (from + rng.range(-0.8, 0.8)).clamp(-design.d / 2.0, design.d / 2.0);
@@ -1686,7 +1866,7 @@ fn torn_eave(parts: &Parts, w: f64, d: f64, roof: &Roof, side: f64) -> Option<(f
             let [u0, _, u1, y1] = hole.bounds;
             let (_, half) = wall_frames(w, d)[index];
             let corner = u1 >= half - CORNER_REACH || u0 <= -half + CORNER_REACH;
-            hole.big() && (y1 >= roof.wall - 0.5 || corner)
+            hole.big() && (y1 >= roof.wall - SAG_REACH.0 || corner)
         })
         .map(|hole| {
             let [u0, _, u1, _] = hole.bounds;
@@ -1820,15 +2000,11 @@ fn framing(
             frame * shift(DVec3::new(u, (top + PLINTH) / 2.0, z)),
         );
     }
-    kit.block(
-        Surface::Wood,
-        DVec3::new(2.0 * half - 0.1, STUD.0, STUD.1),
-        frame * shift(DVec3::new(0.0, top - STUD.0, z)),
-    );
-    // Rails across the studs under the sills and, in a two-storey wall, where the
-    // upper floor's joists bore, broken by the openings they meet: a fallen
-    // wall's back reads as a frame of timber rather than a board.
-    let mut rails = vec![PLINTH + 0.72];
+    // The top plate, and rails across the studs under the sills and, in a
+    // two-storey wall, where the upper floor's joists bore, broken by the openings
+    // they meet: a fallen wall's back reads as a frame of timber rather than a
+    // board.
+    let mut rails = vec![top - STUD.0, PLINTH + 0.72];
     if top - PLINTH > 3.6 {
         rails.push(PLINTH + (top - PLINTH) * 0.5);
     }
@@ -1899,6 +2075,23 @@ fn plaster_falls(
             );
         }
     }
+}
+
+/// How far round a breach a fallen wall's lining and framing are torn away (m): at
+/// the angles the cottage is seen from, its siding hides their edges.
+const LINING_CLEAR: f64 = 0.3;
+
+/// `polygon` grown `by` out from its middle, kept within the box `inside` unless it
+/// already reached past it.
+fn widened(polygon: &[DVec2], by: f64, inside: [DVec2; 2]) -> Vec<DVec2> {
+    let center = polygon.iter().copied().sum::<DVec2>() / polygon.len() as f64;
+    polygon
+        .iter()
+        .map(|&p| {
+            let q = p + (p - center).normalize_or_zero() * by;
+            q.clamp(inside[0].min(p), inside[1].max(p))
+        })
+        .collect()
 }
 
 /// A polygon seen from behind its plane: mirrored across u, its winding kept.
@@ -2357,14 +2550,15 @@ fn hole_outline(hole: &Hole) -> Vec<DVec2> {
 /// Line a shell hole: the torn wall's thickness round its edge, splintered board
 /// ends sticking into it course by course, the studs of the frame behind (one
 /// snapped), the dark room beyond, soot fanned up the siding above it and
-/// splintered boards bent out of the face. A standing wall also drops the boards
-/// and plaster the shell knocked out on the ground under it.
+/// splintered boards bent out of the face, and the boards and plaster the shell
+/// knocked out on the ground under it. A collapse puts the room and the spill
+/// `aside`, with the cottage's ground: they do not fall with the wall.
 fn line_hole(
     kit: &mut Kit<Surface>,
     frame: DMat4,
     hole: &Hole,
     outline: &[DVec2],
-    standing: bool,
+    mut aside: Option<&mut Aside>,
     room: &WallRoom,
 ) {
     let at = |p: DVec2, z: f64| frame.transform_point3(DVec3::new(p.x, p.y, z));
@@ -2455,38 +2649,28 @@ fn line_hole(
             frame.transform_vector3(DVec3::Z),
         );
     }
-    // The dark room behind; a collapse piece keeps it as the char inside the
-    // wall, seen only from its face, so the cottage standing in its shards still
-    // shows its breaches and a fallen panel lying lining up shows the ground. A
-    // breach in a standing wall opens on the room itself: its floor, walls and
-    // ceiling, dim under the roof.
-    if hole.area() >= ROOM_BREACH {
-        // A collapse piece keeps the room's near part only, so it does not fall
-        // with a box of the house's inside on its back.
-        let depth = if standing {
-            ROOM_DEPTH
-        } else {
-            PIECE_ROOM_DEPTH
+    // The room behind: its floor, walls and ceiling, dim under the roof; a small
+    // breach's char.
+    {
+        let kit = match aside.as_deref_mut() {
+            Some(aside) => &mut aside.room,
+            None => &mut *kit,
         };
-        room_behind(kit, frame, hole, room.reach, depth, standing);
-    } else {
-        // A falling wall's char lies just behind its siding, over the framing and
-        // lining inside it, so its breach stays as dark as it stood.
-        let (r, back) = if standing {
-            (half * 1.3, -HOLE_BACK)
+        if hole.area() >= ROOM_BREACH {
+            room_behind(kit, frame, hole, room.reach, ROOM_DEPTH);
         } else {
-            (half * 1.05, -SPLIT_FACE - 0.006)
-        };
-        kit.quad(
-            Surface::Dark,
-            [
-                at(center + DVec2::new(-r.x, -r.y), back),
-                at(center + DVec2::new(r.x, -r.y), back),
-                at(center + DVec2::new(r.x, r.y), back),
-                at(center + DVec2::new(-r.x, r.y), back),
-            ],
-            frame.transform_vector3(DVec3::Z),
-        );
+            let r = half * 1.3;
+            kit.quad(
+                Surface::Dark,
+                [
+                    at(center + DVec2::new(-r.x, -r.y), -HOLE_BACK),
+                    at(center + DVec2::new(r.x, -r.y), -HOLE_BACK),
+                    at(center + DVec2::new(r.x, r.y), -HOLE_BACK),
+                    at(center + DVec2::new(-r.x, r.y), -HOLE_BACK),
+                ],
+                frame.transform_vector3(DVec3::Z),
+            );
+        }
     }
     // Board ends: a torn course leaves its clapboard snapped off at the outline,
     // still nailed at its root on the wall and curling out of the face toward the
@@ -2587,7 +2771,11 @@ fn line_hole(
                 ),
         );
     }
-    if standing {
+    {
+        let kit = match aside {
+            Some(aside) => &mut aside.ground,
+            None => kit,
+        };
         // What the shell knocked out lies under the hole: two lengths of siding
         // fallen against the wall, their tops on the plinth and their feet out on
         // the ground, and broken boards, plaster and a split stud heaped at their
@@ -2766,14 +2954,7 @@ fn stripped_round(
 /// The room behind a big breach: a dim box as deep as [`ROOM_DEPTH`], its floor
 /// boards catching what light comes through, so the breach reads as a way into a
 /// house rather than a black stencil, and nothing beyond it shows through.
-fn room_behind(
-    kit: &mut Kit<Surface>,
-    frame: DMat4,
-    hole: &Hole,
-    reach: f64,
-    depth: f64,
-    furnished: bool,
-) {
+fn room_behind(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, reach: f64, depth: f64) {
     let [u0, _, u1, y1] = hole.bounds;
     // Its side walls stay inside the walls either side of it, so a breach by a
     // corner shows no dark panel outside the cottage.
@@ -2844,7 +3025,7 @@ fn room_behind(
     }
     // The household's things in a big breach's room: a table or a chest of
     // drawers against the far wall.
-    if furnished && hole.big() && r - l > 1.2 {
+    if hole.big() && r - l > 1.2 {
         furniture(
             kit,
             [1, 5][(hole.seed as i64).rem_euclid(2) as usize],
@@ -3040,8 +3221,14 @@ fn boarded_window(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed:
 
 /// A boarded window a breach reached: one board still hangs from a nail by its
 /// casing, swung down across the dark opening, and the others lie split on the
-/// ground below.
-fn torn_boards(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f64, yard: bool) {
+/// ground below (a collapse's `aside`, else the wall's kit).
+fn torn_boards(
+    kit: &mut Kit<Surface>,
+    aside: Option<&mut Aside>,
+    frame: DMat4,
+    opening: &Opening,
+    seed: f64,
+) {
     let mut rng = Random::new(seed + 29.0);
     let (u, w) = (opening.u, opening.width);
     let length = w + 2.0 * CASING + rng.range(0.05, 0.2);
@@ -3063,7 +3250,11 @@ fn torn_boards(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f6
             * shift(DVec3::new(-side * length / 2.0, 0.0, 0.0)),
     );
     // The others lie in the yard, which a collapse leaves where it is.
-    for _ in 0..if yard { 2 } else { 0 } {
+    let kit = match aside {
+        Some(aside) => &mut aside.ground,
+        None => kit,
+    };
+    for _ in 0..2 {
         kit.block(
             Surface::Wood,
             DVec3::new(length * rng.range(0.5, 0.9), PLANK, 0.15),
@@ -3311,7 +3502,7 @@ fn house_wall(
         .chain(holes.iter().map(|h| h.bounds))
         .collect();
     parts.holes[index] = holes.clone();
-    let kit = parts.kit(piece);
+    let (kit, mut aside) = parts.kit_and_aside(piece);
     wall_with_breaches(kit, frame, &outline, &openings, REVEAL, &breaches);
     for (k, (hole, outline)) in holes.iter().zip(&breaches).enumerate() {
         // Its stripped siding stops short of the openings and the other breaches.
@@ -3328,25 +3519,45 @@ fn house_wall(
             top: roof.wall,
             keepouts: others,
         };
-        line_hole(kit, frame, hole, outline, standing, &room);
+        line_hole(kit, frame, hole, outline, aside.as_deref_mut(), &room);
     }
     // The share of the wall torn out: past [`RACKED_WALL`] its frame racks and
     // every window in it breaks.
     let wall_area = 2.0 * half * (roof.wall - PLINTH);
     let racked = holes.iter().map(Hole::area).sum::<f64>() / wall_area >= RACKED_WALL;
     if !standing {
-        // A falling wall shows its back: the painted lining and the cut edges.
-        let mut holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
-        holes.extend(breaches.iter().cloned());
-        let holes: Vec<Vec<DVec2>> = holes.iter().map(|hole| mirrored(hole)).collect();
+        // A falling wall shows its back: the painted lining and the cut edges. Its
+        // lining and framing keep clear of each breach, so through it the cottage
+        // still shows the room it showed standing.
+        let inside = [
+            DVec2::new(-half + 0.02, PLINTH + 0.02),
+            DVec2::new(half - 0.02, roof.wall - 0.02),
+        ];
+        let mut cut: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+        cut.extend(
+            breaches
+                .iter()
+                .map(|breach| widened(breach, LINING_CLEAR, inside)),
+        );
+        let cut: Vec<Vec<DVec2>> = cut.iter().map(|hole| mirrored(hole)).collect();
         kit.face_with_holes(
-            Surface::Curtain,
+            Surface::Lining,
             &mirrored(&outline),
-            &holes,
+            &cut,
             frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0)),
         );
-        framing(kit, frame, &outline, &openings, roof.wall);
-        plaster_falls(kit, frame, half, roof.wall, &openings, rng);
+        let mut clear = openings.clone();
+        clear.extend(holes.iter().map(|hole| {
+            let [u0, y0, u1, y1] = hole.bounds;
+            Opening {
+                u: (u0 + u1) / 2.0,
+                y: y0,
+                width: u1 - u0 + 2.0 * LINING_CLEAR,
+                height: y1 - y0,
+            }
+        }));
+        framing(kit, frame, &outline, &clear, roof.wall);
+        plaster_falls(kit, frame, half, roof.wall, &clear, rng);
         let at = |p: DVec2, depth: f64| frame.transform_point3(DVec3::new(p.x, p.y, -depth));
         let center = outline.iter().copied().sum::<DVec2>() / outline.len() as f64;
         // The wall's edges, set in a little from its outline: at a corner the
@@ -3367,9 +3578,11 @@ fn house_wall(
         let seed = f64::from(design.variant) * 3.0 + (index * 5 + i) as f64;
         if torn_out.contains(&i) {
             // Its frame lies smashed on the ground under the breach.
-            if standing {
-                fallen_window(kit, frame, opening, seed);
-            }
+            let ground = match aside.as_deref_mut() {
+                Some(aside) => &mut aside.ground,
+                None => &mut *kit,
+            };
+            fallen_window(ground, frame, opening, seed);
             continue;
         }
         let blown = blasted.contains(&i);
@@ -3397,7 +3610,7 @@ fn house_wall(
         if broken && boarded {
             // Its boards torn loose: one hangs from a nail, the rest lie below.
             broken_window(kit, frame, opening, seed);
-            torn_boards(kit, frame, opening, seed, standing);
+            torn_boards(kit, aside.as_deref_mut(), frame, opening, seed);
         } else if broken {
             // A big breach beside it knocks its frame askew, dropping the side
             // nearer the breach.
@@ -3506,7 +3719,7 @@ fn house_wall(
             &gone,
         );
     }
-    if standing && role.door {
+    if role.door {
         foundation_bed(parts, frame, half, design.variant);
     }
 }
@@ -3552,11 +3765,9 @@ fn house_roof(
     gutters(parts, w, d, roof);
     shed_shingles(parts, design, roof, roof_holes);
 
-    if let Some(base) = parts.base() {
-        yard(base, design, false);
-        let mut plants = Vec::new();
-        garden(base, &mut plants, design, false);
-        parts.nodes[0].extend(plants);
+    if !parts.split {
+        yard(&mut parts.lot, design, false);
+        garden(&mut parts.lot, &mut parts.lot_nodes, design, false);
     }
     let toppled = design.chimney_struck(hits);
     chimney(parts.kit(HousePart::Chimney), design, roof, toppled);
@@ -4011,7 +4222,8 @@ fn foundation_bed(parts: &mut Parts, frame: DMat4, half: f64, v: u32) {
     }
     let mut group = Node::group("");
     for side in [-1.0, 1.0] {
-        if let Some(base) = parts.base() {
+        {
+            let base = parts.ground();
             base.block(
                 Surface::Wood,
                 DVec3::new(to - from, 0.05, 0.62),
@@ -4041,7 +4253,7 @@ fn foundation_bed(parts: &mut Parts, frame: DMat4, half: f64, v: u32) {
             }
         }
     }
-    parts.nodes[0].extend(group.children);
+    parts.ground_nodes().extend(group.children);
 }
 
 /// `a` taken `t` of the way to `b`, per channel.
@@ -4225,7 +4437,9 @@ fn rafters(parts: &mut Parts, design: &HouseDesign, roof: &Roof) {
     const SPACING: f64 = 0.6;
     const WIDTH: f64 = 0.06;
     let run = design.w / 2.0 - 0.25;
-    let reach = roof.ridge_half.min(roof.rake_z) - 0.2;
+    // Inside the gable walls: past them, under the rake, they showed while the
+    // cottage stood.
+    let reach = (roof.ridge_half.min(roof.rake_z) - 0.2).min(design.d / 2.0 - LINING - 0.05);
     let count = (2.0 * reach / SPACING).floor().max(1.0) as i32;
     for side in [-1.0, 1.0] {
         let part = if side > 0.0 {
@@ -4716,6 +4930,37 @@ impl Courses {
     fn mesh(&self) -> Mesh {
         Mesh::from_f64(&self.positions, &self.normals, &self.uvs, None)
     }
+
+    /// The courses weathered as a standing roof's once settled, as built and as
+    /// moved (see [`Settle::mesh_pair`]), both painted as the moved ones are.
+    fn settled_pair(&self, settle: &Settle, roof: &Roof) -> (Mesh, Mesh) {
+        if settle.still() {
+            let mesh = self.weathered_mesh(roof);
+            return (mesh.clone(), mesh);
+        }
+        let corner = |i: usize| Corner {
+            p: DVec3::from_slice(&self.positions[3 * i..]),
+            n: DVec3::from_slice(&self.normals[3 * i..]),
+            uv: DVec2::from_slice(&self.uvs[2 * i..]),
+            color: DVec3::ZERO,
+            cap: self.caps[i],
+        };
+        let triangles =
+            (0..self.caps.len() / 3).map(|t| [corner(3 * t), corner(3 * t + 1), corner(3 * t + 2)]);
+        let (mut built, mut moved) = (Courses::default(), Courses::default());
+        settle.reshape_pair(triangles, |a, b| {
+            for (courses, corner) in [(&mut built, a), (&mut moved, b)] {
+                courses.positions.extend(corner.p.to_array());
+                courses.normals.extend(corner.n.to_array());
+                courses.uvs.extend(corner.uv.to_array());
+                courses.caps.push(corner.cap);
+            }
+        });
+        let moved = moved.weathered_mesh(roof);
+        let mut built = built.mesh();
+        built.colors = moved.colors.clone();
+        (built, moved)
+    }
 }
 
 /// One slope's shingle courses from eave to ridge. Each course's texture row
@@ -5030,10 +5275,9 @@ fn ridge_shingles(parts: &mut Parts, roof: &Roof, broken: &[(f64, f64)]) {
 /// blocks, with their walls.
 fn gutters(parts: &mut Parts, w: f64, d: f64, roof: &Roof) {
     let (xe, ye, zr) = (roof.eave_x, roof.eave_y, roof.rake_z);
-    let standing = !parts.split;
     for side in [-1.0, 1.0] {
         let torn = torn_eave(parts, w, d, roof, side);
-        let kit = parts.kit(if side > 0.0 {
+        let (kit, aside) = parts.kit_and_aside(if side > 0.0 {
             HousePart::RightRoof
         } else {
             HousePart::LeftRoof
@@ -5076,7 +5320,11 @@ fn gutters(parts: &mut Parts, w: f64, d: f64, roof: &Roof) {
             kit.solid(Surface::Metal, &[swung(z0 + 0.04), swung(z0 + hanging)]);
             let fallen = length - hanging - 0.1;
             // The rest lies in the yard, which a collapse leaves where it is.
-            if fallen > 0.3 && standing {
+            if fallen > 0.3 {
+                let kit = match aside {
+                    Some(aside) => &mut aside.ground,
+                    None => &mut *kit,
+                };
                 let lying = DMat4::from_translation(DVec3::new(side * GUTTER_FALL, 0.06 - ye, 0.0));
                 let on_ground = |z: f64| -> Vec<DVec3> {
                     profile(z)
@@ -5127,7 +5375,8 @@ fn gutters(parts: &mut Parts, w: f64, d: f64, roof: &Roof) {
                 DMat4::from_translation(DVec3::new(bend.x - side * 0.01, y, bend.z)),
             );
         }
-        if let Some(base) = parts.base() {
+        {
+            let base = parts.ground();
             base.chamfer_block(
                 Surface::Concrete,
                 DVec3::new(0.48, 0.05, 0.26),
@@ -5607,6 +5856,37 @@ fn chimney(kit: &mut Kit<Surface>, design: &HouseDesign, roof: &Roof, toppled: b
 const KERB: f64 = 0.37;
 const KERB_LOW: f64 = 0.14;
 
+/// The trim the back wall's stub keeps from the wall it was ([`wall_trim`]): the
+/// water table along its foot and, on a clapboard wall, the corner boards up to
+/// where it broke at each end (`stub`, in `frame`).
+fn stub_trim(kit: &mut Kit<Surface>, frame: DMat4, half: f64, stub: &[DVec2], corners: bool) {
+    const TABLE: f64 = 0.14;
+    let reach = half + TRIM_PROUD;
+    kit.chamfer_block(
+        Surface::Trim,
+        DVec3::new(2.0 * reach + 0.02, TABLE, 0.04),
+        0.012,
+        frame * DMat4::from_translation(DVec3::new(0.0, PLINTH + TABLE / 2.0, 0.02)),
+    );
+    if !corners {
+        return;
+    }
+    let board = CORNER_BOARD + TRIM_PROUD;
+    let bottom = PLINTH + TABLE;
+    for end in [stub.first(), stub.last()].into_iter().flatten() {
+        let top = end.y;
+        if top - bottom < 0.05 {
+            continue;
+        }
+        let u = end.x.signum() * (reach - board / 2.0);
+        kit.block(
+            Surface::Trim,
+            DVec3::new(board, top - bottom, TRIM_PROUD),
+            frame * DMat4::from_translation(DVec3::new(u, (top + bottom) / 2.0, TRIM_PROUD / 2.0)),
+        );
+    }
+}
+
 /// The name of a heap's prop `k` as it stood, or crushed (`down`).
 pub fn heap_prop_name(k: usize, down: bool) -> String {
     if down {
@@ -5763,7 +6043,7 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
     }
     door_steps(&mut plinth, &design);
     let heap_depth = HOUSE_HEAP.depth + HOUSE_HEAP.inset;
-    kit.chamfer_block(
+    plinth.chamfer_block(
         Surface::Stone,
         DVec3::new(bw + 0.1, PLINTH, heap_depth),
         0.03,
@@ -5813,8 +6093,17 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
     let mut outline = vec![DVec2::new(half, PLINTH), DVec2::new(-half, PLINTH)];
     outline.extend(&stub);
     outline.reverse();
-    let wall_frame = pose(DVec3::new(0.0, 0.0, back + 0.02), DVec3::new(0.0, PI, 0.0));
-    kit.face_with_holes(Surface::Siding, &outline, &[], wall_frame);
+    // Its face is the wall's as it stood, weathered and trimmed alike: the pieces
+    // above it fall away from the cottage the player saw.
+    let wall_frame = pose(DVec3::new(0.0, 0.0, back), DVec3::new(0.0, PI, 0.0));
+    plinth.face_with_holes(Surface::Siding, &outline, &[], wall_frame);
+    stub_trim(
+        &mut plinth,
+        wall_frame,
+        half,
+        &stub,
+        walls == WallFinish::Clapboard,
+    );
     let inner = pose(DVec3::new(0.0, 0.0, back + 0.2), DVec3::ZERO);
     let mirrored: Vec<DVec2> = outline
         .iter()
@@ -5976,34 +6265,33 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
             DVec3::new(0.0, things.range(0.0, PI), 0.0),
         ),
     );
+    // The wreck in the cottage's own finishes, mottled, and the plinth and stub as
+    // they stood, then merged: a heap draws once a finish.
+    let ridge = design.roof().ridge;
     let mut node = Node::group("");
-    add_cottage(
-        &mut node,
-        kit.finish_scaled(cottage_uv(walls)),
-        &palette,
-        walls,
-        true,
-    );
+    let mut wreck = kit.finish_scaled(cottage_uv(walls));
+    grime(&mut wreck, ridge);
+    add_weathered(&mut node, wreck, &palette, walls, true);
     batch(&mut node);
     for child in &mut node.children {
         if let Some(drawable) = &mut child.drawable {
             mottle(Arc::make_mut(&mut drawable.mesh), seed);
         }
     }
-    let mut standing = Node::group("");
-    add_cottage(
-        &mut standing,
-        plinth.finish_scaled(cottage_uv(walls)),
-        &palette,
-        walls,
-        false,
-    );
-    batch(&mut standing);
-    node.children.extend(standing.children);
+    let mut plinth = plinth.finish_scaled(cottage_uv(walls));
+    grime(&mut plinth, ridge);
+    add_weathered(&mut node, plinth, &palette, walls, false);
+    batch(&mut node);
+    // Presentation draws a heap as fixed joints that only show and hide, which
+    // merge per finish: the wreck, the lot as it stood, then the lot crushed.
+    let mut wreck = Node::group(HOUSE_WRECK);
+    wreck.children = std::mem::take(&mut node.children);
+    node.children.push(wreck);
     // The lot outlives the cottage, as it stood (its path, woodpile, garden and
     // rain barrel), and each part of it the wreck can land on comes in two looks:
     // as it stood, and crushed, knocked flat or broken, which presentation shows
     // once a piece of the collapse comes down on it ([`heap_props`]).
+    let mut crushed = Vec::new();
     for (k, [up, down]) in heap_prop_nodes(&design, &palette).into_iter().enumerate() {
         let mut up = up;
         up.name = heap_prop_name(k, false);
@@ -6011,8 +6299,9 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
         down.name = heap_prop_name(k, true);
         down.visible = false;
         node.children.push(up);
-        node.children.push(down);
+        crushed.push(down);
     }
+    node.children.extend(crushed);
     // The cottage's frame about the heap cover's centre.
     let offset = DVec3::new(center.x - x, 0.0, center.y - z);
     node.set_rotation_euler(0.0, design.yaw(), 0.0);

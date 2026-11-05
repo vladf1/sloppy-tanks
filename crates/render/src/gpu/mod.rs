@@ -1711,6 +1711,13 @@ impl Renderer {
         self.register(prepared, lifetime, false, false)
     }
 
+    /// [`Self::add_combined_model`] for debris whose instances fade as they are
+    /// cleared away.
+    pub fn add_fading_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(root, &mut self.interner);
+        self.register(prepared, lifetime, false, true)
+    }
+
     /// Joint index for a named node of a model.
     pub fn model_node(&self, model: ModelId, name: &str) -> Option<usize> {
         self.models

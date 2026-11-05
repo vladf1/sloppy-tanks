@@ -12,7 +12,8 @@ use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
 use super::house_layout::{
-    HOUSE_HEAP, HouseDesign, HousePart, HousePiece, PLINTH, RoofForm, WALL_DEPTH, wall_frames,
+    HOUSE_HEAP, HouseDesign, HousePart, HousePiece, PLINTH, RoofForm, WALL_DEPTH, is_roof_mark,
+    wall_frames,
 };
 use super::math::{Point3, Quat4, Random, Vec2};
 use super::physics::{
@@ -591,6 +592,15 @@ const WALL_TWIST: f64 = 0.45;
 /// still lying as it stood, its ridge sagging in, rather than hinging out.
 const ROOF_FOLD: (f64, f64) = (0.1, 0.25);
 const ROOF_DROP: (f64, f64) = (0.0, 0.4);
+/// A cottage brought down through its roof caves in at the holed ridge: its slabs
+/// let go at once, the ridge first, folding down into the house about their eaves
+/// (rad/s, on top of the roof's own fold), and drop (m/s, the ridge slabs this much
+/// more), while the walls the roof bore down on are pushed out evenly (m/s), none
+/// falling in under it.
+const CAVE_FOLD: f64 = 0.9;
+const CAVE_DROP: f64 = 1.2;
+const CAVE_RIDGE_DROP: f64 = 1.4;
+const CAVE_SPREAD: f64 = 0.6;
 /// Damping that settles the heavy shards into the pile instead of tumbling; a
 /// roof slab's spin is held harder, so a knock from a wall does not flip it.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
@@ -703,6 +713,10 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
     });
     // Motion is worked out in the build frame and carried into the world.
     let fall = design.to_local(DVec3::new(fall.x, 0.0, fall.z));
+    // Brought down mostly through its roof, it caves in rather than toppling the
+    // way a shell drove it. The same draws are made either way.
+    let caved = caved_in(cover);
+    let fall = if caved { DVec3::ZERO } else { fall };
     let turn = Quat4::yaw(design.yaw());
     let frames = wall_frames(design.w, design.d);
     for shape in design.pieces() {
@@ -793,7 +807,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             let inward = if lower {
                 !over_heap
             } else {
-                rng.next() < chance
+                rng.next() < chance && !caved
             };
             let toward = if inward { -out } else { out };
             // Falling out, an upper shard tips slower and slides down the stub
@@ -828,6 +842,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
                     + DVec3::Y * rng.range(-WALL_TWIST, WALL_TWIST)
                     + toward * rng.range(-0.3, 0.3);
                 let clear = if inward { UPPER_CLEAR.0 } else { UPPER_CLEAR.1 };
+                let clear = if caved { CAVE_SPREAD } else { clear };
                 (
                     angular.cross(shape.center - pivot)
                         + along * rng.range(-WALL_DRIFT, WALL_DRIFT)
@@ -846,7 +861,18 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             );
             let drop = -DVec3::Y * rng.range(ROOF_DROP.0, ROOF_DROP.1) + fall * BLAST_CARRY * 0.3;
             let fold = rng.range(ROOF_FOLD.0, ROOF_FOLD.1);
-            (drop, DVec3::Y.cross(-outward) * fold + wobble)
+            if caved {
+                // Its ridge goes first, down into the house, the slab hinging on
+                // its eave.
+                let ridge = shape.piece.shard.is_multiple_of(2);
+                let sink = CAVE_DROP + if ridge { CAVE_RIDGE_DROP } else { 0.0 };
+                (
+                    drop - DVec3::Y * sink,
+                    DVec3::Y.cross(-outward) * (fold + CAVE_FOLD) + wobble,
+                )
+            } else {
+                (drop, DVec3::Y.cross(-outward) * fold + wobble)
+            }
         } else if shape.piece.shard == 0 {
             // The stump drops with the roof it pierced, leaning off it.
             let away = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or_zero();
@@ -858,7 +884,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             // The top topples into the wreck (or the way a blast drives it), to
             // lie broken on the pile rather than bowl out across the yard.
             let away = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or(DVec3::X);
-            let toward = if kick.is_some() { fall } else { -away };
+            let toward = if kick.is_some() && !caved { fall } else { -away };
             let tip = rng.range(CHIMNEY_TIP.0, CHIMNEY_TIP.1);
             (
                 toward * CHIMNEY_THROW - DVec3::Y * 0.4,
@@ -895,13 +921,11 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         };
         simulation.world.colliders[collider].set_density(density);
         let rigid_body = &mut simulation.world.bodies[body];
-        if part.is_roof() {
+        if part.is_roof() && !caved {
             // The roof comes straight down as it stood, crushing the walls under
             // it and landing on their stubs, and only then breaks along its
             // rafter lines and settles on the wreck.
             rigid_body.lock_rotations(true, true);
-        }
-        if part.is_roof() {
             // The roof hangs a moment while the walls under it buckle, so they
             // fold in beneath it rather than being shoved out by its edge.
             rigid_body.lock_translations(true, true);
@@ -910,7 +934,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
     // Bricks spilling off the snapped stack, thrown the way the top falls.
     let flue = design.flue();
     let snap = design.chimney_snap();
-    let toward = if kick.is_some() {
+    let toward = if kick.is_some() && !caved {
         fall
     } else {
         -DVec3::new(flue.x, 0.0, flue.z).normalize_or(DVec3::X)
@@ -1044,6 +1068,22 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         fragment.life = life;
         fragment.expires_at = Some(simulation.elapsed + life);
     }
+}
+
+/// Whether a cottage came down mostly through its roof: its roof's marks outweigh
+/// its walls'. Its marks alone decide, so every peer agrees without a draw.
+fn caved_in(cover: &Cover) -> bool {
+    let (roof, walls) = cover
+        .timber_hits
+        .iter()
+        .fold((0.0, 0.0), |(roof, walls), mark| {
+            if is_roof_mark(mark.y, cover.h) {
+                (roof + mark.size, walls)
+            } else {
+                (roof, walls + mark.size)
+            }
+        });
+    roof > walls
 }
 
 /// Whether a wall shard is a lower one, standing under its wall's split.

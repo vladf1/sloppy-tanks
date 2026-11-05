@@ -25,6 +25,8 @@ const COVER_TOP: f64 = 0.004;
 const DECK_EDGE: f64 = 0.06;
 /// Splinters along a torn edge: one about every this many metres.
 const SPLINTER_SPACING: f64 = 0.38;
+/// How far under a roof's top a splinter's tip lies.
+const SPLINTER_SINK: f64 = 0.07;
 /// Metres past a cell's side where a triangle is skipped unclipped: far beyond
 /// `clip_vertices`' tolerance, so clipping it would have left nothing either.
 const CLEARLY_OUTSIDE: f64 = 1e-6;
@@ -37,6 +39,9 @@ const PLANE_REACH: f64 = 1000.0;
 struct Vertex {
     p: DVec3,
     n: DVec3,
+    /// Where it is drawn and its normal there: its twin's in the settled mesh.
+    shown: DVec3,
+    shown_n: DVec3,
     uv: DVec2,
     /// Its vertex colour, when the mesh has them.
     color: DVec3,
@@ -48,6 +53,8 @@ fn mix(plane: &PartPlane, a: &Vertex, b: &Vertex, k: f64) -> Vertex {
     Vertex {
         p,
         n: a.n.lerp(b.n, k).normalize_or_zero(),
+        shown: a.shown.lerp(b.shown, k),
+        shown_n: a.shown_n.lerp(b.shown_n, k).normalize_or_zero(),
         uv: a.uv.lerp(b.uv, k),
         color: a.color.lerp(b.color, k),
         q: plane.project(p),
@@ -87,10 +94,13 @@ impl<'a> ShardClip<'a> {
     }
 }
 
-/// `mesh`'s share in a shard (`clip`): triangles inside it and clear of its cracks
-/// are kept whole, the rest are clipped cell by cell. None when nothing of it is
-/// left.
-pub(super) fn clip_mesh(mesh: &Mesh, clip: &ShardClip) -> Option<Mesh> {
+/// `mesh`'s share in a shard (`clip`), drawn as `shown`: triangles inside it and clear
+/// of its cracks are kept whole, the rest are clipped cell by cell. None when nothing
+/// of it is left. `mesh` is a part as it was built, where the shard's cells are, and
+/// `shown` the same triangles moved as the frame gave: a clipped corner lies where it
+/// lay on the settled triangle, so the shards together are exactly the cottage that
+/// stood.
+pub(super) fn clip_settled(mesh: &Mesh, shown: &Mesh, clip: &ShardClip) -> Option<Mesh> {
     let ShardClip {
         plane,
         region,
@@ -103,6 +113,8 @@ pub(super) fn clip_mesh(mesh: &Mesh, clip: &ShardClip) -> Option<Mesh> {
     let vertex = |i: usize, q: DVec2| Vertex {
         p: widen(mesh.positions[i]),
         n: widen(mesh.normals[i]),
+        shown: widen(shown.positions[i]),
+        shown_n: widen(shown.normals[i]),
         uv: DVec2::new(f64::from(mesh.uvs[i][0]), f64::from(mesh.uvs[i][1])),
         color: if coloured {
             widen(mesh.colors[i])
@@ -122,8 +134,8 @@ pub(super) fn clip_mesh(mesh: &Mesh, clip: &ShardClip) -> Option<Mesh> {
     let mut emit = |polygon: &[Vertex]| {
         for i in 1..polygon.len().saturating_sub(1) {
             for v in [polygon[0], polygon[i], polygon[i + 1]] {
-                out.positions.push(narrow(v.p));
-                out.normals.push(narrow(v.n));
+                out.positions.push(narrow(v.shown));
+                out.normals.push(narrow(v.shown_n));
                 out.uvs.push([v.uv.x as f32, v.uv.y as f32]);
                 if coloured {
                     out.colors.push(narrow(v.color));
@@ -391,8 +403,9 @@ pub(super) fn roof_breaks(
             let q = a + (b - a) * ((f64::from(i) + rng.range(0.25, 0.75)) / f64::from(count));
             let reach = rng.range(0.08, 0.32);
             // Inside the deck, under the shingles, so the standing roof hides them
-            // until its slabs part.
-            let tip = at(q + n * reach, -0.035);
+            // until its slabs part, deep enough that a sagging fold over a breach,
+            // which bends the deck but not a straight splinter, still covers them.
+            let tip = at(q + n * reach, -SPLINTER_SINK);
             let root = at(q, rng.range(-roof.thick * 0.8, -0.03));
             let droop = DVec3::Y * rng.range(-0.06, 0.0);
             // Mostly broken shingles; the odd split board under them.
@@ -546,11 +559,15 @@ fn aim(from: DVec3, to: DVec3) -> DMat4 {
 /// Meshes cut to a shard, each with its finish.
 pub(super) fn clip_meshes<C: Copy>(
     meshes: &[(C, Arc<Mesh>)],
+    shown: &[(C, Arc<Mesh>)],
     clip: &ShardClip,
 ) -> Vec<(C, Arc<Mesh>)> {
     meshes
         .iter()
-        .filter_map(|(coat, mesh)| clip_mesh(mesh, clip).map(|mesh| (*coat, Arc::new(mesh))))
+        .zip(shown)
+        .filter_map(|((coat, mesh), (_, shown))| {
+            clip_settled(mesh, shown, clip).map(|mesh| (*coat, Arc::new(mesh)))
+        })
         .collect()
 }
 
@@ -588,6 +605,8 @@ mod tests {
         let vertex = |i: u32| Vertex {
             p: widen(mesh.positions[i as usize]),
             n: widen(mesh.normals[i as usize]),
+            shown: widen(mesh.positions[i as usize]),
+            shown_n: widen(mesh.normals[i as usize]),
             uv: DVec2::new(
                 f64::from(mesh.uvs[i as usize][0]),
                 f64::from(mesh.uvs[i as usize][1]),
@@ -649,7 +668,7 @@ mod tests {
         ];
         let mut triangles = 0;
         for region in &regions {
-            let cut = clip_mesh(&mesh, &ShardClip::new(&plane, region))
+            let cut = clip_settled(&mesh, &mesh, &ShardClip::new(&plane, region))
                 .expect("every shard keeps some wall");
             let plain = plain_clip(&mesh, &plane, region);
             assert_eq!(cut.positions, plain.positions);
