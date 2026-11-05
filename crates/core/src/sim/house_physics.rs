@@ -77,6 +77,9 @@ const SLUMP_TIP: f64 = 0.6;
 /// wedged there.
 const WEDGE_SPEED: f64 = 1.5;
 const WEDGE_HEIGHT: f64 = 1.0;
+/// A loose part whose lowest point is this low (m) stands on the ground, not up on the
+/// remains.
+const WEDGE_FOOT: f64 = 0.3;
 const WEDGE_AFTER: f64 = 0.4;
 /// How fast (m/s) a wedged part is shoved off what it lies on, and how long (s) it is
 /// shoved before it drops through instead.
@@ -144,6 +147,10 @@ const ON_END: f32 = 0.7;
 const LAY_RATE: f32 = 2.5;
 const LAID: f32 = 0.93;
 const LAID_STICK: f32 = 0.35;
+/// A piece propped on what still stands of its cottage is laid down only from this
+/// steep (its face's normal's rise, about 53 degrees): one leaning there like a door
+/// against the wall, not a slope lying against a stub.
+const PROPPED_UPRIGHT: f32 = 0.6;
 
 /// The linear and angular damping of a loose part `age` seconds after it came loose.
 pub fn house_debris_damping(age: f64) -> (f32, f32) {
@@ -1284,11 +1291,32 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
         return;
     };
     let rotation = *body.rotation();
+    let propped = on_remains(simulation, handle);
+    let middle = body.center_of_mass();
     let (now, target, done, start) = match lie {
         Lie::Face(normal) => {
             let now = rotation * vector(normal.x, normal.y, normal.z);
-            let target = if now.y >= 0.0 { Vector::Y } else { -Vector::Y };
-            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+            // Leaning on what stands it is turned down away from it; otherwise over
+            // the way it leans.
+            let away = propped.then(|| {
+                let cottage = simulation
+                    .covers
+                    .iter()
+                    .find(|cover| cover.id == house)
+                    .map_or(middle, |cover| Vector::new(cover.x as f32, middle.y, cover.z as f32));
+                let out = (middle - cottage).with_y(0.0);
+                // Turning the face toward +y tips the top over toward -face: pick the
+                // way that tips it away from the cottage.
+                if now.with_y(0.0).dot(out) >= 0.0 { -Vector::Y } else { Vector::Y }
+            });
+            let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
+            // Propped, only a piece standing near upright is turned down.
+            let start = if propped {
+                now.y.abs() < PROPPED_UPRIGHT
+            } else {
+                now.y.abs() < LEANING
+            };
+            (now, target, now.y.abs() >= LAID, start)
         }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);
@@ -1298,7 +1326,8 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
             (now, target, rise <= LAID_STICK, rise > ON_END)
         }
     };
-    if done || !(laying || start) || on_remains(simulation, handle) {
+    let held = propped && matches!(lie, Lie::Length(_));
+    if done || !(laying || start) || held {
         simulation.fragments[index].house_laying = false;
         return;
     }
@@ -1308,7 +1337,6 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
         .iter()
         .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
         .fold(f32::INFINITY, f32::min);
-    let middle = body.center_of_mass();
     let axis = now.cross(target);
     let off = axis.length();
     if off < 1e-4 {
@@ -1418,7 +1446,15 @@ fn unwedge_house_debris(simulation: &mut Simulation) {
             continue;
         }
         let body = &simulation.world.bodies[fragment.body];
+        // A piece standing on the ground leaning on the remains is not wedged up on
+        // them: it is laid down ([`lay_down_on_edge`]).
+        let foot = body
+            .colliders()
+            .iter()
+            .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
+            .fold(f32::INFINITY, f32::min);
         let resting_up = f64::from(body.center_of_mass().y) >= WEDGE_HEIGHT
+            && f64::from(foot) > WEDGE_FOOT
             && f64::from(body.linvel().length()) <= WEDGE_SPEED;
         let on_remains = resting_up && on_remains(simulation, fragment.body);
         if !on_remains {
