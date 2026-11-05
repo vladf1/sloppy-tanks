@@ -1234,3 +1234,47 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
         );
     }
 }
+
+#[test]
+fn a_roof_piece_landed_on_its_back_turns_shingles_up() {
+    use rapier3d::prelude::{Pose, Rotation, Vector};
+    let (mut s, house) = lone_cottage();
+    fallen_roof(&mut s, house);
+    let c = s.covers[house].clone();
+    let layout = c.structure.as_ref().unwrap().layout.clone();
+    let (id, body, part) = s
+        .fragments
+        .iter()
+        .find_map(|f| {
+            let parts = f.house_parts?;
+            let first = parts.iter().next()?;
+            (f.house_id == Some(c.id)
+                && parts
+                    .iter()
+                    .all(|p| layout.parts[p].kind == PartKind::Sheet))
+            .then_some((f.id, f.body, first))
+        })
+        .expect("a fallen piece of roof");
+    // Its shingles' side as it stood, in the body's frame.
+    let pitch = layout.roof.pitch;
+    let up = match layout.parts[part].slope.unwrap().0 {
+        HousePart::RightRoof => glam::DVec3::new(pitch, 1.0, 0.0),
+        _ => glam::DVec3::new(-pitch, 1.0, 0.0),
+    }
+    .normalize();
+    let up = layout.design.to_world(up);
+    let up = Vector::new(up.x as f32, up.y as f32, up.z as f32);
+    // Laid flat on its back in the open, beside the cottage.
+    let flat = Rotation::from_rotation_arc(up, -Vector::Y);
+    let rigid = &mut s.world.bodies[body];
+    rigid.set_position(Pose::from_parts(Vector::ZERO, flat), true);
+    let middle = rigid.center_of_mass();
+    let target = Vector::new(c.x as f32, 0.4, (c.z + 12.0) as f32);
+    rigid.set_position(Pose::from_parts(target - middle, flat), true);
+    rigid.set_linvel(Vector::ZERO, true);
+    rigid.set_angvel(Vector::ZERO, true);
+    run(&mut s, 4.0);
+    let fragment = s.fragments.iter().find(|f| f.id == id).expect("it lies on");
+    let now = *s.world.bodies[fragment.body].rotation() * up;
+    assert!(now.y > 0.8, "shingles up: {now:?}");
+}

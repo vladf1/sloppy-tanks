@@ -1221,6 +1221,8 @@ fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
 #[derive(Clone, Copy)]
 enum Lie {
     Face(DVec3),
+    /// A roof's face: it lies shingles up.
+    Roof(DVec3),
     Length(DVec3),
 }
 
@@ -1237,7 +1239,7 @@ fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
         (PartKind::Ridge, ..) => Lie::Length(DVec3::Z),
         (PartKind::Floor, ..) => Lie::Face(DVec3::Y),
         (PartKind::Partition, ..) => Lie::Face(DVec3::Z),
-        (PartKind::Sheet, Some((slope, _)), _) => Lie::Face(
+        (PartKind::Sheet, Some((slope, _)), _) => Lie::Roof(
             match slope {
                 super::house_layout::HousePart::RightRoof => DVec3::new(pitch, 1.0, 0.0),
                 super::house_layout::HousePart::LeftRoof => DVec3::new(-pitch, 1.0, 0.0),
@@ -1255,6 +1257,7 @@ fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
     let design = &layout.design;
     Some(match build {
         Lie::Face(v) => Lie::Face(design.to_world(v)),
+        Lie::Roof(v) => Lie::Roof(design.to_world(v)),
         Lie::Length(v) => Lie::Length(design.to_world(v)),
     })
 }
@@ -1310,6 +1313,12 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
             let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
             (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
         }
+        // A roof piece come down on its back (its rafters up) is turned back over
+        // shingles up, as a fallen roof lies; else laid down like a wall's.
+        Lie::Roof(normal) => {
+            let now = rotation * vector(normal.x, normal.y, normal.z);
+            (now, Vector::Y, now.y >= LAID, now.y < LEANING)
+        }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);
             let flat = Vector::new(now.x, 0.0, now.z);
@@ -1329,7 +1338,11 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
         .iter()
         .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
         .fold(f32::INFINITY, f32::min);
-    let axis = now.cross(target);
+    let mut axis = now.cross(target);
+    if axis.length() < 1e-4 {
+        // Square on its back: over about its own length.
+        axis = (rotation * Vector::X).with_y(0.0);
+    }
     let off = axis.length();
     if off < 1e-4 {
         return;
