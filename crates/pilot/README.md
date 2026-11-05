@@ -58,8 +58,9 @@ server ──binary snapshots──▶ NetworkClient ──RenderState (displaye
   host's own room setup (`create_multiplayer_simulation` with an empty humans-only
   roster), so cover, ids, pickups and level rules match the host. It is never stepped:
   every frame it places tanks and movable cover where the scene draws them, takes fallen
-  cover out (a tree keeps its tank-only stump), restores rebuilt cover, adds cover the
-  layout lacked (rubble), patches navigation, and refreshes Rapier's queries with
+  cover out (a tree keeps its tank-only stump), stands cottages and watchtowers with the
+  parts the scene still shows, restores rebuilt cover, adds cover the layout lacked,
+  patches navigation, and refreshes Rapier's queries with
   `detect_collisions`. The model's physics world is rebuilt once without the host reset's
   step, because bodies added to a stepped world and only ever refreshed by the collision
   pipeline trip Rapier's island bookkeeping.

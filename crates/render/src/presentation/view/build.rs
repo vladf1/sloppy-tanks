@@ -5,11 +5,12 @@
 //! [`Presentation::begin_prepare`] take the same steps at once, in the same order, so
 //! an arena comes out the same either way.
 
-use sloppy_core::models::house_debris;
 use sloppy_core::models::round_texture_files;
+use sloppy_core::models::{house_debris, tower_debris};
 use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
+use sloppy_core::sim::tower_structure::tower_structure;
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
 
 use super::{
@@ -290,6 +291,12 @@ impl Presentation {
                 self.sample_models
                     .push(self.renderer.add_model(&model.root, Lifetime::Round));
                 let debris = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, &broken);
+                self.sample_models
+                    .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
+            }
+            // A watchtower's fallen parts register their fading look.
+            if cover.kind == CoverKind::Tower && seen.insert("tower-parts".into()) {
+                let debris = tower_debris(cover.color, &tower_structure().all());
                 self.sample_models
                     .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
             }

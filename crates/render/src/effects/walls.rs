@@ -365,7 +365,7 @@ impl Walls {
         for cover in state.covers.iter().filter(|cover| cover.alive) {
             let material = match cover.kind {
                 CoverKind::Container | CoverKind::Hedgehog => Some(WallMaterial::Steel),
-                CoverKind::Rock | CoverKind::Concrete | CoverKind::Teeth | CoverKind::Rubble => {
+                CoverKind::Rock | CoverKind::Concrete | CoverKind::Teeth => {
                     Some(WallMaterial::Stone)
                 }
                 CoverKind::House => Some(WallMaterial::Siding),

@@ -56,6 +56,16 @@ const BURNOUT_FIRE_SCALE: f64 = 0.72;
 const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
 const COLLAPSE_LIFETIME: f64 = 3.2;
+/// A watchtower's crash dust: earth and timber tan, and how much farther its second
+/// skirt rolls.
+const TOWER_DUST: u32 = 0xb59c76;
+const TOWER_CRASH_SPREAD: f64 = 1.5;
+/// The scuffed patch a fallen tower leaves: each churned stain's size (m) and how far
+/// apart (m) they lie along it; the splinter dust strewn round it.
+const TOWER_SCUFF: (f64, f64) = (3.8, 1.9);
+const TOWER_SPLINTERS: u32 = 0xa88a62;
+const TOWER_SPLINTER_PATCHES: usize = 6;
+const TOWER_SPLINTER_SIZE: f64 = 1.2;
 const COLLAPSE_DUST: f64 = 1.35;
 /// A cottage's collapse dust: how long it hangs, when its walls start to strike
 /// the ground (s after the break) and over how long they go on landing, how many
@@ -389,6 +399,9 @@ enum Kind {
     Hit(Struck),
     /// Heavy debris slamming down: a skirt of the ground's dust.
     Landing,
+    /// A watchtower's top crashing down: earth and timber dust rolling out low where
+    /// it struck and settling within a few seconds, no column.
+    TowerCrash,
 }
 
 /// How a fireball erupts: lobes bursting out round its source ("seams") and the
@@ -750,6 +763,7 @@ impl Blast {
             Kind::Hit(Struck::Siding) => SIDING_HIT_LIFETIME,
             Kind::Hit(Struck::Rubble) => RUBBLE_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
+            Kind::TowerCrash => COLLAPSE_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
     }
@@ -1144,6 +1158,8 @@ impl ExplosionEffects {
             Kind::Blast
         } else if event.cover_kind == Some(CoverKind::House) {
             Kind::HouseFall
+        } else if event.cover_kind == Some(CoverKind::Tower) {
+            Kind::TowerCrash
         } else {
             Kind::Collapse
         };
@@ -1288,6 +1304,8 @@ impl ExplosionEffects {
         }
         let footprint =
             (kind == Kind::HouseFall).then_some((blast.x, blast.z, blast.phase, blast.dust));
+        let scuff =
+            (kind == Kind::TowerCrash).then_some((blast.x, blast.z, blast.phase, blast.dust));
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
             // The floor boards cover the ground a blast in a room would char.
@@ -1305,6 +1323,9 @@ impl ExplosionEffects {
         }
         if let Some((x, z, phase, ground)) = footprint {
             self.house_footprint(x, z, phase, ground);
+        }
+        if let Some((x, z, phase, ground)) = scuff {
+            self.tower_scuff(x, z, phase, ground);
         }
         if let Some((strike, phase, powder)) = wall_mark {
             // Crushed concrete spills pale powder on the ground at the wall's foot.
@@ -1354,6 +1375,37 @@ impl ExplosionEffects {
                 diameter,
                 phase + kf * 0.37,
                 scaled(plaster, 1.08 - 0.12 * hash(phase * 0.7 + kf)),
+                POWDER,
+            );
+        }
+    }
+
+    /// Where a watchtower's top crashed down: the ground scuffed and churned dark in a
+    /// patch the length of the wreck, strewn with pale splinter dust that stays once
+    /// the ruin has cleared.
+    fn tower_scuff(&mut self, x: f64, z: f64, phase: f64, ground: [f64; 3]) {
+        let (size, apart) = TOWER_SCUFF;
+        for side in [-1.0, 0.0, 1.0] {
+            self.stain(
+                x + phase.cos() * apart * side,
+                z + phase.sin() * apart * side,
+                size * (0.85 + 0.3 * hash(phase + side)),
+                phase + side,
+                scaled(ground, 0.38),
+                POWDER,
+            );
+        }
+        let timber = linear(TOWER_SPLINTERS);
+        for k in 0..TOWER_SPLINTER_PATCHES {
+            let kf = k as f64;
+            let angle = phase * 1.7 + kf * TAU / TOWER_SPLINTER_PATCHES as f64;
+            let reach = apart * (0.6 + 0.9 * hash(phase * 1.3 + kf));
+            self.stain(
+                x + angle.cos() * reach,
+                z + angle.sin() * reach,
+                TOWER_SPLINTER_SIZE * (0.7 + 0.6 * hash(phase * 2.1 + kf)),
+                phase + kf * 0.41,
+                scaled(timber, 0.9 + 0.2 * hash(phase + kf * 1.9)),
                 POWDER,
             );
         }
@@ -1588,6 +1640,17 @@ impl ExplosionEffects {
                 self.ring(b, t, inner.scale);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
+            Kind::TowerCrash => {
+                // The ground's earth with the timber's tan in it, lit the same from
+                // every side: no dark column standing over the wreck.
+                let dust = mixed(b.dust, linear(TOWER_DUST), 0.5);
+                self.skirt(b, t, dust);
+                let mut wider = *b;
+                wider.scale *= TOWER_CRASH_SPREAD;
+                wider.phase += 1.3;
+                self.skirt(&wider, t - 0.15, scaled(dust, 1.08));
+                self.haze(b, t, lifetime, scaled(dust, 1.12));
+            }
             Kind::Collapse => {
                 let dust = linear(DUST);
                 self.haze(b, t, lifetime, dust);

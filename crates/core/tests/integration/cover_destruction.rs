@@ -12,6 +12,8 @@ use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::projectiles::step_projectiles;
+use sloppy_core::sim::tower_layout::TOWER_BASE;
+use sloppy_core::sim::tower_structure::{FOOTINGS, tower_structure};
 use sloppy_core::sim::{
     Cover, CoverKind, FragmentShape, Shot, SimEventType, Simulation, Team, Weapon,
 };
@@ -85,15 +87,14 @@ fn cover_queries_ignore_tanks_and_debris_and_release_destroyed_collider_identiti
     assert!(!s.cover_by_collider.contains_key(&handle));
     assert!(s.visible(a, b));
     s.reset(None);
-    // One collider a cover, a cottage one for each of its parts.
+    // One collider a cover, a cottage or a watchtower one for each of its parts.
     let colliders: usize = s
         .covers
         .iter()
-        .map(|cover| {
-            cover
-                .structure
-                .as_ref()
-                .map_or(1, |state| state.layout.parts.len())
+        .map(|cover| match (&cover.structure, &cover.tower) {
+            (Some(state), _) => state.layout.parts.len(),
+            (None, Some(_)) => tower_structure().parts.len(),
+            (None, None) => 1,
         })
         .sum();
     assert_eq!(s.cover_by_collider.len(), colliders);
@@ -128,7 +129,7 @@ fn destroyed_cover_does_not_reflect_shells_and_breaks_exactly_once() {
 }
 
 #[test]
-fn tower_collapse_opens_center_route_and_retains_side_rubble() {
+fn tower_collapse_opens_center_route_and_keeps_its_footings() {
     let mut s = Simulation::with_seed(123.0);
     let tower = s
         .covers
@@ -139,16 +140,22 @@ fn tower_collapse_opens_center_route_and_retains_side_rubble() {
     let before = s.nav.is_blocked(place);
     let version = s.nav.version;
     let (id, team) = (s.human().id, s.human_team);
+    let covers = s.covers.len();
     s.damage_cover(tower, 999.0, id, team, None, None);
     assert!(before);
+    assert!(!s.covers[tower].alive, "its deck is down");
     assert!(!s.nav.is_blocked(place));
     assert!(s.nav.version > version);
-    assert_eq!(
-        s.covers
+    assert_eq!(s.covers.len(), covers, "no cover is added");
+    for side in [-1.0, 1.0] {
+        let footing = Vec2::new(place.x + side * TOWER_BASE.offset, place.z);
+        assert!(s.nav.is_blocked(footing), "its footings stay as low cover");
+    }
+    let state = s.covers[tower].tower.as_ref().unwrap();
+    assert!(
+        FOOTINGS
             .iter()
-            .filter(|c| c.kind == CoverKind::Rubble)
-            .count(),
-        2
+            .all(|&footing| state.colliders[footing].is_some())
     );
     let path = s.nav.find(
         Vec2::new(place.x, place.z - 6.0),

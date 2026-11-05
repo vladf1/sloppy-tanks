@@ -55,4 +55,5 @@ mod superstress_level;
 mod tank_contact;
 mod tank_destruction;
 mod timber_walls;
+mod tower_structure;
 mod veterancy;

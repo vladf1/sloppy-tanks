@@ -14,7 +14,6 @@ use super::math::{Point3, Quat4, Vec2};
 use super::simulation::Simulation;
 use super::simulation_rules::SIMULATION_RULES;
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
-use super::tower_layout::TowerPiece;
 use super::types::{
     AmmoInventory, CoverKind, CoverMotion, Fragment, FragmentShape, Match, Mine, Pickup, Shot,
     Tank, Team, VehicleKind, Weapon, WreckPart,
@@ -124,14 +123,13 @@ pub struct RenderCover {
     pub alive: bool,
     pub destructible: bool,
     pub color: u32,
-    pub debris_seed: Option<f64>,
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// A cottage's parts broken or fallen from it.
+    /// A cottage's or a watchtower's parts broken or fallen from it.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub broken: PartSet,
-    /// A cottage's standing parts that have taken damage, which a client's own-shot
-    /// prediction cannot tell the strength left of.
+    /// A cottage's or a watchtower's standing parts that have taken damage, which a
+    /// client's own-shot prediction cannot tell the strength left of.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub cracked: PartSet,
     pub motion: Option<RenderCoverMotion>,
@@ -206,7 +204,9 @@ pub struct RenderFragment {
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
     pub timber_part: Option<TimberPart>,
-    pub tower_piece: Option<TowerPiece>,
+    pub tower_id: Option<u32>,
+    /// The parts of watchtower `tower_id` this body is.
+    pub tower_parts: Option<PartSet>,
     pub crate_piece: Option<CratePiece>,
     pub house_id: Option<u32>,
     /// The parts of cottage `house_id` this body is.
@@ -353,17 +353,13 @@ impl Simulation {
             view.alive = cover.alive;
             view.destructible = cover.destructible;
             view.color = cover.color;
-            view.debris_seed = cover.debris_seed;
             view.timber_hits.clone_from(&cover.timber_hits);
             view.timber_join = cover.timber_join;
-            view.broken = cover
-                .structure
-                .as_ref()
-                .map_or(PartSet::EMPTY, |state| state.gone);
-            view.cracked = cover
-                .structure
-                .as_ref()
-                .map_or(PartSet::EMPTY, |state| state.cracked());
+            (view.broken, view.cracked) = match (&cover.structure, &cover.tower) {
+                (Some(state), _) => (state.gone, state.cracked()),
+                (None, Some(state)) => (state.gone, state.cracked()),
+                (None, None) => (PartSet::EMPTY, PartSet::EMPTY),
+            };
             view.motion = cover.motion.map(RenderCoverMotion::from);
             (view.position, view.rotation) = if self.world.bodies.contains(cover.body) {
                 (
@@ -454,7 +450,8 @@ impl Simulation {
         view.material = fragment.material;
         view.source_kind = fragment.source_kind;
         view.timber_part.clone_from(&fragment.timber_part);
-        view.tower_piece = fragment.tower_piece;
+        view.tower_id = fragment.tower_id;
+        view.tower_parts = fragment.tower_parts;
         view.crate_piece = fragment.crate_piece;
         view.house_id = fragment.house_id;
         view.house_parts = fragment.house_parts;

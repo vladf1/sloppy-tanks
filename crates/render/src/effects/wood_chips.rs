@@ -695,7 +695,8 @@ impl WoodChips {
     }
 
     /// Splinter a crate's struck face, burst a destroyed crate, or shatter a loose
-    /// crate or watchtower board a shell flew through; other events throw nothing.
+    /// crate board a shell flew through or a watchtower part that broke; other events
+    /// throw nothing.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),

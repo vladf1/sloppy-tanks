@@ -38,7 +38,7 @@ use crate::sim::simulation_rules::FRAGMENT_CAPACITY;
 use crate::sim::timber_layout::{
     TimberFace, TimberHit, TimberJoin, TimberMark, TimberPart, TimberPartKind,
 };
-use crate::sim::tower_layout::TowerPiece;
+
 use crate::sim::types::{
     AmmoInventory, Cover, CoverKind, DamageCause, DamageSource, DeathStyle, Fragment,
     FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank, Team,
@@ -72,7 +72,7 @@ pub const WEAPONS: [(&str, Weapon); 6] = [
     ("piercing", Weapon::Piercing),
     ("tow", Weapon::Tow),
 ];
-pub const COVER_KINDS: [(&str, CoverKind); 13] = [
+pub const COVER_KINDS: [(&str, CoverKind); 12] = [
     ("rock", CoverKind::Rock),
     ("teeth", CoverKind::Teeth),
     ("hedgehog", CoverKind::Hedgehog),
@@ -84,7 +84,6 @@ pub const COVER_KINDS: [(&str, CoverKind); 13] = [
     ("concrete", CoverKind::Concrete),
     ("drum", CoverKind::Drum),
     ("tower", CoverKind::Tower),
-    ("rubble", CoverKind::Rubble),
     ("boundary", CoverKind::Boundary),
 ];
 pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
@@ -92,20 +91,7 @@ pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
     ("metal", DebrisMaterial::Metal),
     ("concrete", DebrisMaterial::Concrete),
 ];
-pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
-    ("west-bent", TowerPiece::WestBent),
-    ("east-bent", TowerPiece::EastBent),
-    ("back-bracing", TowerPiece::BackBracing),
-    ("front-bracing", TowerPiece::FrontBracing),
-    ("west-deck", TowerPiece::WestDeck),
-    ("east-deck", TowerPiece::EastDeck),
-    ("front-wall", TowerPiece::FrontWall),
-    ("back-wall", TowerPiece::BackWall),
-    ("west-wall", TowerPiece::WestWall),
-    ("east-wall", TowerPiece::EastWall),
-    ("roof", TowerPiece::Roof),
-    ("ladder", TowerPiece::Ladder),
-];
+
 pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
     ("wall", CratePiece::Wall),
     ("wall-left", CratePiece::WallLeft),
@@ -242,9 +228,9 @@ const SCORES_BYTES: usize = 20;
 
 const VEHICLE_NAMES: [&str; 4] = names(&VEHICLE_KINDS);
 const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
-const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
+const COVER_NAMES: [&str; 12] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
-const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
+
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
 
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
@@ -327,7 +313,6 @@ wire_fields!(
         KIND = Field::new("kind", FieldKind::Choice(&COVER_NAMES)),
         DESTRUCTIBLE = Field::new("destructible", FLAG),
         COLOR = Field::new("color", COUNT),
-        DEBRIS_SEED = Field::new("debrisSeed", COUNT),
         TIMBER_JOIN = Field::new("timberJoin", FieldKind::Blob(1, timber_join_json)),
         MOTION_ORIGIN_X = Field::new("motion.originX", POSITION),
         MOTION_ORIGIN_Z = Field::new("motion.originZ", POSITION),
@@ -360,7 +345,7 @@ wire_fields!(
             "timberPart",
             FieldKind::Blob(TIMBER_PART_BYTES, timber_part_json)
         ),
-        TOWER_PIECE = Field::new("towerPiece", FieldKind::Choice(&TOWER_NAMES)),
+        TOWER_PARTS = Field::new("towerParts", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
         TREE_COVER_ID = Field::new("treeCoverId", COUNT),
         TREE_CENTER_Y = Field::new("treeCenterY", POSITION),
         CREATED_AT = Field::new("createdAt", VALUE),
@@ -371,6 +356,7 @@ wire_fields!(
         CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
         HOUSE_ID = Field::new("houseId", COUNT),
         HOUSE_PARTS = Field::new("houseParts", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
+        TOWER_ID = Field::new("towerId", COUNT),
     }
 );
 
@@ -805,13 +791,23 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
         VALUE_SCALE,
     );
     record.set_flag(ALIVE, cover.alive);
-    match &cover.structure {
-        Some(state) if !state.gone.is_empty() => {
-            record.set_blob(BROKEN, |out| write_part_set(out, &state.gone));
+    let gone = match (&cover.structure, &cover.tower) {
+        (Some(state), _) => Some(state.gone),
+        (None, Some(state)) => Some(state.gone),
+        (None, None) => None,
+    };
+    match gone {
+        Some(gone) if !gone.is_empty() => {
+            record.set_blob(BROKEN, |out| write_part_set(out, &gone));
         }
         _ => record.clear(BROKEN),
     }
-    match cover.structure.as_ref().map(|state| state.cracked()) {
+    let cracked = match (&cover.structure, &cover.tower) {
+        (Some(state), _) => Some(state.cracked()),
+        (None, Some(state)) => Some(state.cracked()),
+        (None, None) => None,
+    };
+    match cracked {
         Some(cracked) if !cracked.is_empty() => {
             record.set_blob(CRACKED, |out| write_part_set(out, &cracked));
         }
@@ -836,10 +832,6 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
     set_choice(record, KIND, &COVER_KINDS, Some(cover.kind));
     record.set_flag(DESTRUCTIBLE, cover.destructible);
     record.set_count(COLOR, u64::from(cover.color));
-    // Debris seeds are whole numbers.
-    if let Some(seed) = cover.debris_seed {
-        record.set_count(DEBRIS_SEED, seed as u64);
-    }
     match cover.timber_join {
         Some(join) => record.set_blob(TIMBER_JOIN, |out| {
             out.push(
@@ -884,7 +876,13 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         Some(part) => record.set_blob(TIMBER_PART, |out| write_timber_part(out, part)),
         None => record.clear(TIMBER_PART),
     }
-    set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
+    match &fragment.tower_parts {
+        Some(parts) => record.set_blob(TOWER_PARTS, |out| write_part_set(out, parts)),
+        None => record.clear(TOWER_PARTS),
+    }
+    if let Some(tower) = fragment.tower_id {
+        record.set_count(TOWER_ID, u64::from(tower));
+    }
     set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
     match &fragment.house_parts {
         Some(parts) => record.set_blob(HOUSE_PARTS, |out| write_part_set(out, parts)),
@@ -1357,7 +1355,6 @@ pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
         alive: fields.flag(ALIVE)?,
         destructible: fields.flag(DESTRUCTIBLE)?,
         color: fields.count32(COLOR)?,
-        debris_seed: fields.number(DEBRIS_SEED).map(|seed| seed as f64),
         position: fields.point(POSITION_X)?,
         rotation: fields.rotation(ROTATION_X)?,
         broken: fields
@@ -1405,7 +1402,12 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map(read_timber_part)
             .transpose()
             .map_err(|e| format!("timberPart: {e}"))?,
-        tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
+        tower_id: fields.opt_count32(TOWER_ID)?,
+        tower_parts: fields
+            .blob(TOWER_PARTS)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("towerParts: {e}"))?,
         crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
         house_id: fields.opt_count32(HOUSE_ID)?,
         house_parts: fields

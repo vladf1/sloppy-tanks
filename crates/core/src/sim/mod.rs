@@ -66,6 +66,8 @@ beyond_geometry! {
     pub mod tank_driving;
     pub mod tank_lifecycle;
     pub mod tower_layout;
+    pub mod tower_physics;
+    pub mod tower_structure;
     pub mod types;
     pub mod veterancy;
     pub mod weapons;

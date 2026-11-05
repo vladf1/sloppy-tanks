@@ -6,6 +6,7 @@ use std::collections::BinaryHeap;
 
 use super::data::ARENA;
 use super::house_physics::ground_footprints;
+use super::tower_physics::tower_ground_footprints;
 use super::math::Vec2;
 use super::tree_proportions::tree_proportions;
 use super::types::{Cover, CoverKind};
@@ -93,6 +94,9 @@ impl Navigation {
                 // A cottage blocks where its standing walls reach the ground, so tanks
                 // drive through its gaps where they fit.
                 ground_footprints(cover, &mut self.obstacles);
+            } else if cover.tower.is_some() {
+                // A watchtower blocks its box while its deck stands, then its footings.
+                tower_ground_footprints(cover, &mut self.obstacles);
             } else if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {

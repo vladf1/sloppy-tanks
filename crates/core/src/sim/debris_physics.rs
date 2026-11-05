@@ -228,13 +228,13 @@ pub fn hit_movable_cover(simulation: &mut Simulation, cover_index: usize, shot: 
     );
 }
 
-/// Whether a shell bursts this piece and flies on: loose crate sections and
-/// watchtower pieces are thin boards. Timber wall beams and wreckage stop it.
+/// Whether a shell bursts this piece and flies on: loose crate sections are thin
+/// boards. Timber wall beams and wreckage stop it.
 pub fn shatters(fragment: &Fragment) -> bool {
-    fragment.crate_piece.is_some() || fragment.tower_piece.is_some()
+    fragment.crate_piece.is_some()
 }
 
-/// A shell bursts a loose crate section or watchtower piece: the piece and its body
+/// A shell bursts a loose crate section: the piece and its body
 /// go at once, so it never shields what lies behind it, and a `Shatter` event
 /// throws its splinters on along the shell.
 pub fn shatter_debris(simulation: &mut Simulation, fragment_index: usize, shot: &Shot) {
@@ -290,6 +290,7 @@ pub fn drain_debris_contacts(simulation: &mut Simulation) {
     let mut count = 0;
     let contacts = simulation.contact_forces.drain();
     super::house_physics::crush_house_parts(simulation, &contacts);
+    super::tower_physics::crush_tower_parts(simulation, &contacts);
     for event in &contacts {
         if count >= IMPACTS_PER_TICK {
             continue;

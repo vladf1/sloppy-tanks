@@ -119,6 +119,12 @@ impl WorldModel {
                 self.simulation.covers[index].alive = cover.alive;
                 continue;
             }
+            if self.simulation.covers[index].tower.is_some() {
+                // So does a watchtower, down to its footings.
+                self.simulation.covers[index].alive = cover.alive;
+                self.simulation.set_tower_gone(index, cover.broken);
+                continue;
+            }
             let standing = self.simulation.covers[index].alive;
             if standing && !cover.alive {
                 self.fell(index);
@@ -131,7 +137,7 @@ impl WorldModel {
         }
     }
 
-    /// Cover the layout did not hold, such as the rubble a collapse left.
+    /// Cover the layout did not hold.
     fn add_cover(&mut self, cover: &RenderCover) -> usize {
         let simulation = &mut self.simulation;
         let index = simulation.add_cover(&CoverDef {
@@ -149,7 +155,6 @@ impl WorldModel {
             color: cover.color,
             timber_join: cover.timber_join,
             timber_bays: None,
-            debris_seed: cover.debris_seed,
         });
         simulation.covers[index].id = cover.id;
         let region = Footprint::from(&simulation.covers[index]);
@@ -280,7 +285,6 @@ fn unstepped(simulation: &mut Simulation) {
                 color: cover.color,
                 timber_join: cover.timber_join,
                 timber_bays: None,
-                debris_seed: cover.debris_seed,
             };
             (cover.id, def)
         })

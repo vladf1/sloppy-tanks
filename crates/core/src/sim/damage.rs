@@ -4,7 +4,6 @@
 use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
-use super::arena::CoverDef;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{COMBAT, MINE};
@@ -21,7 +20,6 @@ use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
 use super::tank_destruction::tank_burnout;
 use super::timber_layout::TimberHit;
-use super::tower_layout::TOWER_BASE;
 use super::tree_proportions::tree_proportions;
 use super::types::{
     CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
@@ -204,6 +202,18 @@ impl Simulation {
             let _ = owner_life;
             return;
         }
+        if let Some(cover) = self.covers.get(cover_index)
+            && cover.tower.is_some()
+        {
+            // A watchtower too: a burst on the parts where the damage lands, or every
+            // part with no point.
+            let by = Some((owner, team));
+            match impact {
+                Some(point) => self.tower_blast_on(cover_index, point, HE_BLAST_RADIUS, amount, by),
+                None => self.damage_every_tower_part(cover_index, amount, by),
+            }
+            return;
+        }
         let cover = &mut self.covers[cover_index];
         if !cover.alive || !cover.destructible {
             return;
@@ -283,11 +293,7 @@ impl Simulation {
         destroy.cover_kind = Some(kind);
         destroy.height = Some(h);
         destroy.id = Some(id);
-        destroy.size = Some(if kind == CoverKind::Tower {
-            7.0
-        } else {
-            2.0
-        });
+        destroy.size = Some(2.0);
         destroy.color = Some(color);
         if kind == CoverKind::Cargo {
             destroy.from = self.covers[cover_index]
@@ -302,35 +308,6 @@ impl Simulation {
                 let size = self.rng.range(0.3, 0.7);
                 self.fragment(fx, fz, color, size, FragmentShape::Shard, 1.0);
             }
-        }
-        if kind == CoverKind::Tower {
-            // One authored support object; its destruction leaves two flank foundations and an
-            // open middle.
-            for side in [-1.0, 1.0] {
-                let rubble_x = x + side * TOWER_BASE.offset;
-                let seed = Some((self.rng.next() * 4_294_967_296.0).floor());
-                // A tower that rebuilt in place reuses the rubble its last collapse left, so
-                // repeated collapses never grow the cover list.
-                if let Some(index) = self.rubble_at(rubble_x, z, false) {
-                    self.covers[index].debris_seed = seed;
-                    self.restore_cover(index);
-                    continue;
-                }
-                let mut rubble = CoverDef::new(
-                    CoverKind::Rubble,
-                    rubble_x,
-                    z,
-                    TOWER_BASE.width,
-                    TOWER_BASE.depth,
-                    TOWER_BASE.rubble_height,
-                    f64::INFINITY,
-                    color,
-                );
-                rubble.debris_seed = seed;
-                self.add_cover(&rubble);
-            }
-            let region = moved_cover_region(&self.covers[cover_index]);
-            self.nav.rebuild(&self.covers, Some(region));
         }
         if kind == CoverKind::Drum {
             self.explode(
@@ -405,14 +382,15 @@ impl Simulation {
             }
         }
         // alive is cleared before recursion, so drums and chains are exactly-once and keep the
-        // original owner. Rubble added during the loop is not part of this blast.
+        // original owner.
         let count = self.covers.len();
         for i in 0..count {
-            if self.covers[i].structure.is_some() {
-                // A cottage's parts in reach of the blast's lower share.
+            if self.covers[i].structure.is_some() || self.covers[i].tower.is_some() {
+                // A cottage's or watchtower's parts in reach of the blast's lower share.
                 let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
                 let reach = radius * STRUCTURE_BLAST_REACH;
                 self.house_blast_on(i, point, reach, damage, Some((owner, team)));
+                self.tower_blast_on(i, point, reach, damage, Some((owner, team)));
                 continue;
             }
             let cover = &mut self.covers[i];
@@ -421,10 +399,7 @@ impl Simulation {
                 && distance(position, Vec2::new(cover.x, cover.z))
                     < radius + cover.w.max(cover.d) * COMBAT.cover_blast_allowance
             {
-                if matches!(
-                    cover.kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
-                ) {
+                if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) {
                     let dx = cover.x - position.x;
                     let dz = cover.z - position.z;
                     let length = dx.hypot(dz);
