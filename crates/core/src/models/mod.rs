@@ -137,11 +137,6 @@ beyond_geometry! {
     pub use effects_props::{aged_wreck_material, wreck_brightness};
     pub use flags::{FLAG_CLOTH_NODE, flags_model};
 }
-pub use house_model::{
-    EaveSlip, EaveSwing, HOUSE_EAVE, HOUSE_MOUND, HOUSE_ROOM, HOUSE_SLIP, HouseCoverBuild,
-    HousePieces, PieceStep, WallDamage, heap_prop_footprints, heap_prop_name, house_eave_slips,
-    house_eave_swings, house_pieces, house_roof_breaks, house_slip_slide, house_wall_damage,
-};
 beyond_geometry! {
     pub use pickup_visuals::{
         LOAD_SCALE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,

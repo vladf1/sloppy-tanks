@@ -1,20 +1,18 @@
-//! A collapsing cottage's shards, cut from the parts it was built of along the
-//! cracks [`HouseDesign::pieces`](crate::sim::house_layout::HouseDesign::pieces)
-//! fractures it with: each wall and roof slope's meshes are clipped to a shard's
-//! region, and every broken edge is closed with torn timber (the wall's thickness
-//! from siding to lining, or the roof's from shingles to deck) bristling with
-//! splintered boards, a snapped stud or a rafter end, so a fallen panel reads as
-//! a heavy broken slab rather than a sheet of card.
+//! A structural cottage's parts cut from its model: each wall and roof slope's meshes
+//! are clipped to a region of its plane, and every broken edge is closed with torn
+//! timber (the wall's thickness from siding to lining, or the roof's from shingles to
+//! deck) bristling with splintered boards, a snapped stud or a rafter end, so a
+//! broken panel reads as a heavy broken slab rather than a sheet of card.
 
 use std::sync::Arc;
 
 use glam::{DMat4, DVec2, DVec3};
 
 use super::building_kit::Surface;
-use super::tank_kit::{Kit, pose, shift};
+use super::tank_kit::{Kit, pose};
 use crate::geometry::{Mesh, narrow, widen};
 use crate::sim::house_fracture::{PartPlane, ShardRegion, Side, clip_vertices_into};
-use crate::sim::house_layout::{CHIMNEY, PieceShape, RAFTER_DEPTH, Roof};
+use crate::sim::house_layout::{RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
 
 /// How deep a wall's torn edge runs, from the siding back to the lining.
@@ -41,9 +39,6 @@ const PLANE_REACH: f64 = 1000.0;
 struct Vertex {
     p: DVec3,
     n: DVec3,
-    /// Where it is drawn and its normal there: its twin's in the settled mesh.
-    shown: DVec3,
-    shown_n: DVec3,
     uv: DVec2,
     /// Its vertex colour, when the mesh has them.
     color: DVec3,
@@ -55,18 +50,15 @@ fn mix(plane: &PartPlane, a: &Vertex, b: &Vertex, k: f64) -> Vertex {
     Vertex {
         p,
         n: a.n.lerp(b.n, k).normalize_or_zero(),
-        shown: a.shown.lerp(b.shown, k),
-        shown_n: a.shown_n.lerp(b.shown_n, k).normalize_or_zero(),
         uv: a.uv.lerp(b.uv, k),
         color: a.color.lerp(b.color, k),
         q: plane.project(p),
     }
 }
 
-/// A shard's region of its part's plane, ready to cut the part's meshes to: each
-/// cell with its bounding box in the plane, and the bounds of them all. The boxes
-/// depend only on the region, so the part's meshes, and its shingles, share one set:
-/// working them out again for each mesh cost most of a cottage's collapse.
+/// A region of a part's plane, ready to cut the part's meshes to: each cell with its
+/// bounding box in the plane, and the bounds of them all. The boxes depend only on
+/// the region, so the part's meshes, and its shingles, share one set.
 pub(super) struct ShardClip<'a> {
     plane: &'a PartPlane,
     region: &'a ShardRegion,
@@ -96,13 +88,9 @@ impl<'a> ShardClip<'a> {
     }
 }
 
-/// `mesh`'s share in a shard (`clip`), drawn as `shown`: triangles inside it and clear
-/// of its cracks are kept whole, the rest are clipped cell by cell. None when nothing
-/// of it is left. `mesh` is a part as it was built, where the shard's cells are, and
-/// `shown` the same triangles moved as the frame gave: a clipped corner lies where it
-/// lay on the settled triangle, so the shards together are exactly the cottage that
-/// stood.
-pub(super) fn clip_settled(mesh: &Mesh, shown: &Mesh, clip: &ShardClip) -> Option<Mesh> {
+/// `mesh`'s share in a region (`clip`): triangles inside it and clear of its cracks are
+/// kept whole, the rest are clipped cell by cell. None when nothing of it is left.
+pub(super) fn clip_mesh(mesh: &Mesh, clip: &ShardClip) -> Option<Mesh> {
     let ShardClip {
         plane,
         region,
@@ -115,8 +103,6 @@ pub(super) fn clip_settled(mesh: &Mesh, shown: &Mesh, clip: &ShardClip) -> Optio
     let vertex = |i: usize, q: DVec2| Vertex {
         p: widen(mesh.positions[i]),
         n: widen(mesh.normals[i]),
-        shown: widen(shown.positions[i]),
-        shown_n: widen(shown.normals[i]),
         uv: DVec2::new(f64::from(mesh.uvs[i][0]), f64::from(mesh.uvs[i][1])),
         color: if coloured {
             widen(mesh.colors[i])
@@ -136,8 +122,8 @@ pub(super) fn clip_settled(mesh: &Mesh, shown: &Mesh, clip: &ShardClip) -> Optio
     let mut emit = |polygon: &[Vertex]| {
         for i in 1..polygon.len().saturating_sub(1) {
             for v in [polygon[0], polygon[i], polygon[i + 1]] {
-                out.positions.push(narrow(v.shown));
-                out.normals.push(narrow(v.shown_n));
+                out.positions.push(narrow(v.p));
+                out.normals.push(narrow(v.n));
                 out.uvs.push([v.uv.x as f32, v.uv.y as f32]);
                 if coloured {
                     out.colors.push(narrow(v.color));
@@ -152,9 +138,8 @@ pub(super) fn clip_settled(mesh: &Mesh, shown: &Mesh, clip: &ShardClip) -> Optio
         let low = points[0].min(points[1]).min(points[2]) - CLEARLY_OUTSIDE;
         let high = points[0].max(points[1]).max(points[2]) + CLEARLY_OUTSIDE;
         // A triangle clear of a cell's bounds, or wholly beyond one of its sides, leaves
-        // nothing in it. Most of a part's triangles lie outside most shards, and
-        // clipping each through every side made a cottage's collapse cost a frozen half
-        // second.
+        // nothing in it. Most of a part's triangles lie outside most regions, and
+        // clipping each through every side cost a slow device a frozen half second.
         if low.cmpgt(region_max).any() || high.cmplt(region_min).any() {
             continue;
         }
@@ -287,20 +272,21 @@ fn outward(region: &ShardRegion, a: DVec2, b: DVec2) -> DVec2 {
     }
 }
 
-/// Torn timber along a wall shard's broken edges: the cut through siding, sheathing
-/// and lining between its openings, splintered clapboards sticking out of it and a
-/// snapped stud. `openings` are the wall's openings and shell holes.
+/// Torn timber along the broken edges of a wall's `region` (of its `outline` in its
+/// `plane`): the cut through siding, sheathing and lining between its openings,
+/// splintered clapboards sticking out of it and a snapped stud.
 pub(super) fn wall_breaks(
     kit: &mut Kit<Surface>,
-    shape: &PieceShape,
+    plane: &PartPlane,
+    outline: &[DVec2],
+    region: &ShardRegion,
     openings: &[[f64; 4]],
     rng: &mut Random,
 ) {
-    let plane = &shape.plane;
     let out = plane.s.cross(plane.t);
     let at = |q: DVec2, depth: f64| plane.origin + plane.s * q.x + plane.t * q.y - out * depth;
-    for (a, b) in shape.region.broken_edges(&shape.outline) {
-        let n = outward(&shape.region, a, b);
+    for (a, b) in region.broken_edges(outline) {
+        let n = outward(region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         for (a, b) in outside_openings(a, b, openings) {
             // The cut through the wall: charred and shadowed timber, a dark hairline
@@ -370,21 +356,23 @@ pub(super) fn wall_breaks(
     }
 }
 
-/// Torn decking along a roof slab's broken edges: the cut through shingles and
-/// deck, broken shingles and boards hanging out of it and a rafter end.
+/// Torn decking along the broken edges of a roof slope's `region` (of its `outline`
+/// in its `plane`): the cut through shingles and deck, broken shingles and boards
+/// hanging out of it and a rafter end.
 pub(super) fn roof_breaks(
     kit: &mut Kit<Surface>,
-    shape: &PieceShape,
+    plane: &PartPlane,
+    outline: &[DVec2],
+    region: &ShardRegion,
     roof: &Roof,
     rng: &mut Random,
 ) {
-    let plane = &shape.plane;
     let at = |q: DVec2, lift: f64| {
         let p = plane.origin + plane.s * q.x + plane.t * q.y;
         DVec3::new(p.x, roof.top(p.x, p.z) + lift, p.z)
     };
-    for (a, b) in shape.region.broken_edges(&shape.outline) {
-        let n = outward(&shape.region, a, b);
+    for (a, b) in region.broken_edges(outline) {
+        let n = outward(region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         let depth = roof.thick + DECK_EDGE;
         // The torn covering is its own colour, flush with it and on down into the
@@ -450,138 +438,20 @@ pub(super) fn roof_breaks(
     }
 }
 
-/// Broken brickwork where the chimney snapped (`snap` high over the flue at
-/// `flue`): the cut course across the stack, on the stump's top or under the
-/// top's foot, with bricks knocked half out of it and a ragged course standing
-/// proud on two sides, so the break reads as masonry rather than a sawn post.
-pub(super) fn chimney_breaks(
-    kit: &mut Kit<Surface>,
-    shape: &PieceShape,
-    flue: DVec3,
-    snap: f64,
-    rng: &mut Random,
-) {
-    const BRICK: DVec3 = DVec3::new(0.22, 0.075, 0.11);
-    let half = CHIMNEY / 2.0;
-    // The stump's break faces up, the top's down.
-    let face = if shape.piece.shard == 0 { 1.0 } else { -1.0 };
-    let at = |x: f64, z: f64, lift: f64| DVec3::new(flue.x + x, snap + face * lift, flue.z + z);
-    kit.quad(
-        Surface::Brick,
-        [
-            at(-half, -half, 0.0),
-            at(half, -half, 0.0),
-            at(half, half, 0.0),
-            at(-half, half, 0.0),
-        ],
-        DVec3::Y * face,
-    );
-    // A course still standing along two sides, broken off at odd heights.
-    for side in [-1.0, 1.0] {
-        let x = side * (half - BRICK.z / 2.0);
-        for k in 0..3 {
-            if rng.next() < 0.3 {
-                continue;
-            }
-            let z = -half + BRICK.x / 2.0 + f64::from(k) * (CHIMNEY - BRICK.x) / 2.0;
-            let rise = rng.range(0.5, 1.0) * BRICK.y;
-            kit.block(
-                Surface::Brick,
-                DVec3::new(BRICK.z, rise, BRICK.x),
-                shift(at(x, z, rise / 2.0)),
-            );
-        }
-    }
-    // Bricks knocked half out of the cut.
-    for _ in 0..3 {
-        let (x, z) = (rng.range(-0.15, 0.15), rng.range(-0.15, 0.15));
-        kit.block(
-            Surface::Brick,
-            BRICK,
-            pose(
-                at(x, z, BRICK.y * 0.4),
-                DVec3::new(
-                    rng.range(-0.5, 0.5),
-                    rng.range(0.0, std::f64::consts::PI),
-                    rng.range(-0.5, 0.5),
-                ),
-            ),
-        );
-    }
-}
-
-/// How much a collapse piece's paint varies across it (darkest, range): patches
-/// of dust, soot and damp over every finish, so a broken panel reads as a worn,
-/// filthy board rather than a clean painted card.
-const MOTTLE: (f32, f32) = (0.9, 0.12);
-/// Size (m) of the patches.
-const MOTTLE_SCALE: f64 = 0.8;
-
-/// Mottle a batched collapse piece's vertex colours (positions in its own frame;
-/// `seed` keeps neighbouring pieces' patches apart).
-pub(super) fn mottle(mesh: &mut Mesh, seed: f64) {
-    if mesh.colors.len() != mesh.positions.len() {
-        return;
-    }
-    let offset = DVec3::new(seed * 7.31, seed * 3.17, seed * 5.53);
-    for (color, p) in mesh.colors.iter_mut().zip(&mesh.positions) {
-        let q = widen(*p) / MOTTLE_SCALE + offset;
-        let patch = value_noise(q) * 0.7 + value_noise(q * 2.3 + 17.0) * 0.3;
-        let shade = MOTTLE.0 + MOTTLE.1 * patch as f32;
-        for channel in color.iter_mut() {
-            *channel *= shade;
-        }
-    }
-}
-
-/// Smooth 3D value noise in [0, 1] on a unit lattice.
-fn value_noise(p: DVec3) -> f64 {
-    let cell = p.floor();
-    let f = p - cell;
-    let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
-    // A corner's hash mixes one product per axis, so the eight corners share six.
-    let axis = |at: f64, scale: i64| {
-        [
-            ((at + 0.0) as i64).wrapping_mul(scale),
-            ((at + 1.0) as i64).wrapping_mul(scale),
-        ]
-    };
-    let (hx, hy, hz) = (
-        axis(cell.x, 73_856_093),
-        axis(cell.y, 19_349_663),
-        axis(cell.z, 83_492_791),
-    );
-    let corner = |dx: usize, dy: usize, dz: usize| {
-        let mut h = hx[dx] ^ hy[dy] ^ hz[dz];
-        h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
-        (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
-    };
-    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-    let x00 = lerp(corner(0, 0, 0), corner(1, 0, 0), s.x);
-    let x10 = lerp(corner(0, 1, 0), corner(1, 1, 0), s.x);
-    let x01 = lerp(corner(0, 0, 1), corner(1, 0, 1), s.x);
-    let x11 = lerp(corner(0, 1, 1), corner(1, 1, 1), s.x);
-    lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
-}
-
 /// A placement whose local +z runs from `from` to `to`, centred between them.
 fn aim(from: DVec3, to: DVec3) -> DMat4 {
     super::tank_kit::aim(from, to)
         * DMat4::from_translation(DVec3::Z * ((to - from).length() / 2.0))
 }
 
-/// Meshes cut to a shard, each with its finish.
+/// Meshes cut to a region, each with its finish.
 pub(super) fn clip_meshes<C: Copy>(
     meshes: &[(C, Arc<Mesh>)],
-    shown: &[(C, Arc<Mesh>)],
     clip: &ShardClip,
 ) -> Vec<(C, Arc<Mesh>)> {
     meshes
         .iter()
-        .zip(shown)
-        .filter_map(|((coat, mesh), (_, shown))| {
-            clip_settled(mesh, shown, clip).map(|mesh| (*coat, Arc::new(mesh)))
-        })
+        .filter_map(|(coat, mesh)| clip_mesh(mesh, clip).map(|mesh| (*coat, Arc::new(mesh))))
         .collect()
 }
 
@@ -619,8 +489,6 @@ mod tests {
         let vertex = |i: u32| Vertex {
             p: widen(mesh.positions[i as usize]),
             n: widen(mesh.normals[i as usize]),
-            shown: widen(mesh.positions[i as usize]),
-            shown_n: widen(mesh.normals[i as usize]),
             uv: DVec2::new(
                 f64::from(mesh.uvs[i as usize][0]),
                 f64::from(mesh.uvs[i as usize][1]),
@@ -682,7 +550,7 @@ mod tests {
         ];
         let mut triangles = 0;
         for region in &regions {
-            let cut = clip_settled(&mesh, &mesh, &ShardClip::new(&plane, region))
+            let cut = clip_mesh(&mesh, &ShardClip::new(&plane, region))
                 .expect("every shard keeps some wall");
             let plain = plain_clip(&mesh, &plane, region);
             assert_eq!(cut.positions, plain.positions);

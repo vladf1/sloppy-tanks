@@ -15,7 +15,6 @@ use super::concrete_surfaces::{concrete_barrier, concrete_wall};
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
-use super::house_model::house_heap;
 use super::house_parts_model::structural_house;
 use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
@@ -27,7 +26,6 @@ use super::timber_model::add_timber_parts;
 use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
-use crate::sim::house_layout::is_house_heap;
 use crate::sim::house_structure::PartSet;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
@@ -171,9 +169,6 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             }
         }
         CoverKind::Tower => tower(group, c.color),
-        CoverKind::Rubble if is_house_heap(c.h) => {
-            house_heap(group, c.x, c.z, c.w, c.d, c.debris_seed.unwrap_or(0.0));
-        }
         CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
         CoverKind::Tree => unreachable!("trees return early"),
         CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {

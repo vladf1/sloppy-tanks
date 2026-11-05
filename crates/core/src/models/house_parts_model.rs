@@ -13,12 +13,12 @@ use glam::{DMat4, DVec2, DVec3};
 
 use super::batching::batch;
 use super::building_kit::Surface;
-use super::house_collapse::{ShardClip, clip_meshes, clip_settled, roof_breaks, wall_breaks};
+use super::house_collapse::{ShardClip, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
 use super::house_model::{CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
-use crate::sim::house_layout::{HouseDesign, HousePiece, PieceShape};
+use crate::sim::house_layout::HouseDesign;
 use crate::sim::house_structure::{
     HouseStructure, PartCell, PartKind, PartSet, part_outline, part_plane,
 };
@@ -101,12 +101,12 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -
             let clip = ShardClip::new(&plane, &region);
             paint_cottage(
                 &mut group,
-                clip_meshes(&piece.meshes, &piece.meshes, &clip),
+                clip_meshes(&piece.meshes, &clip),
                 design,
                 &pieces.palette,
             );
             if let Some(shingles) = &piece.shingles
-                && let Some(mesh) = clip_settled(shingles, shingles, &clip)
+                && let Some(mesh) = clip_mesh(shingles, &clip)
             {
                 group.children.push(cottage_shingles(mesh, &pieces.palette));
             }
@@ -118,22 +118,12 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -
                     .cloned(),
             );
             // Torn timber along the edges where its neighbours are gone.
-            let shape = PieceShape {
-                piece: HousePiece::new(piece.part, 0),
-                plane,
-                outline: outline.clone(),
-                region,
-                hull: Vec::new(),
-                center: DVec3::ZERO,
-                size: DVec3::ZERO,
-                overhang: Vec::new(),
-            };
             let mut rng = Random::new(f64::from(design.variant) * 7.0 + index as f64 * 13.0 + 3.0);
             let mut torn = Kit::new();
             if let Some(wall) = piece.part.wall_index() {
-                wall_breaks(&mut torn, &shape, &pieces.openings[wall], &mut rng);
+                wall_breaks(&mut torn, &plane, &outline, &region, &pieces.openings[wall], &mut rng);
             } else if piece.part.is_roof() {
-                roof_breaks(&mut torn, &shape, &pieces.roof, &mut rng);
+                roof_breaks(&mut torn, &plane, &outline, &region, &pieces.roof, &mut rng);
             }
             paint_cottage(&mut group, torn.finish_scaled(cottage_scale(design)), design, &pieces.palette);
         }

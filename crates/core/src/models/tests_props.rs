@@ -91,7 +91,6 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("drum", cover(CoverKind::Drum, [1.2, 1.2, 1.7], 0xff5b24), full, 0, 1_400),
         ("tower", cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a), full, 0, 19_600),
         ("tower rubble", cover(CoverKind::Rubble, [1.3, 3.0, 1.25], 0xbd8a4a), full, 0, 1_000),
-        ("cottage heap", cover(CoverKind::Rubble, [5.0, 6.0, 1.15], 0xb87b4c), full, 0, 3_700),
         ("container", cover(CoverKind::Container, [6.0, 14.0, 3.6], 0xd37c38), full, 0, 2_300),
         ("cargo crate", hit(cover(CoverKind::Cargo, [2.4, 2.4, 2.0], 0x8a6a3c)), full, 2, 5_800),
         ("concrete barrier", cover(CoverKind::Concrete, [8.0, 1.1, 1.5], 0xb5b5a5), full, 0, 300),
