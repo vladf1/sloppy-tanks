@@ -122,6 +122,7 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
             cover.alive
                 && cover.destructible
                 && cover.kind != CoverKind::Tree
+                && cover.kind != CoverKind::House
                 && !cover.kind.movable()
                 && cover.w.min(cover.d) > 1.0
         })
@@ -152,5 +153,47 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
         !model.simulation.visible(a, b),
         "rebuilt cover blocks it again"
     );
+    assert!(model.simulation.nav.is_blocked(middle));
+}
+
+#[test]
+fn a_cottage_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
+    let host = host_room(MapId::Village);
+    let mut scene = host.render_state(None);
+    let mut model = WorldModel::new(
+        MapId::Village,
+        Difficulty::Normal,
+        BotPersonality::Guard,
+        1.0,
+    );
+    let index = scene
+        .covers
+        .iter()
+        .position(|cover| cover.kind == CoverKind::House)
+        .expect("the village has cottages");
+    let cover = scene.covers[index].clone();
+    let reach = cover.w.max(cover.d) / 2.0 + 2.0;
+    let (a, b) = (
+        Vec2::new(cover.x - reach, cover.z),
+        Vec2::new(cover.x + reach, cover.z),
+    );
+    model.sync(&scene, Perspective::default());
+    assert!(!model.simulation.visible(a, b), "its walls block the view");
+    let middle = Vec2::new(cover.x, cover.z);
+    assert!(model.simulation.nav.is_blocked(middle));
+    // Every part gone in the scene: nothing of it is left in the model.
+    let all = host.covers[index].structure.as_ref().unwrap().layout.all();
+    scene.covers[index].broken = all;
+    scene.covers[index].alive = false;
+    model.sync(&scene, Perspective::default());
+    assert!(
+        model.simulation.visible(a, b),
+        "a levelled cottage hides nothing"
+    );
+    assert!(!model.simulation.nav.is_blocked(middle));
+    scene.covers[index].broken = Default::default();
+    scene.covers[index].alive = true;
+    model.sync(&scene, Perspective::default());
+    assert!(!model.simulation.visible(a, b), "rebuilt, it blocks again");
     assert!(model.simulation.nav.is_blocked(middle));
 }

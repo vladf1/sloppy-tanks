@@ -944,11 +944,11 @@ impl HouseStructure {
                                 }
                             }
                             (PartKind::Sheet, _) if j > i && touching(a, b) => {
-                                let across = match (slope, b.slope) {
+                                let across = matches!(
+                                    (slope, b.slope),
                                     (HousePart::RightRoof, Some((HousePart::LeftRoof, _)))
-                                    | (HousePart::LeftRoof, Some((HousePart::RightRoof, _))) => true,
-                                    _ => false,
-                                };
+                                        | (HousePart::LeftRoof, Some((HousePart::RightRoof, _)))
+                                );
                                 let both_upper = upper && b.slope.is_some_and(|(_, up)| up);
                                 let down_slope = b.slope == Some((slope, false))
                                     && upper

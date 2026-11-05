@@ -1289,6 +1289,10 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
 /// enemy and circles it from 18 m for a minute: how close the shells that hit her were
 /// drawn to her hull as her present reached each hit, and how many hit before they were
 /// drawn at all.
+/// Steps of 100 ms the battle lasts: long enough for several hits whatever cover the
+/// shells meet on the way (cottage walls now stop some and let others through).
+const BATTLE_STEPS: usize = 900;
+
 fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
     let mut net = Network::new();
     net.dodger_first = dodger_first;
@@ -1301,7 +1305,7 @@ fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(300.0);
     let tank_id = net.peers[alice].client.control().unwrap().tank_id;
-    for step in 0..600 {
+    for step in 0..BATTLE_STEPS {
         let sim = net.host.simulation.as_ref().unwrap();
         let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
         let target = me.alive.then(|| {
@@ -1380,7 +1384,7 @@ fn shots_that_hit(shooter_first: bool) -> Samples {
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(300.0);
     let tank_id = net.peers[alice].client.control().unwrap().tank_id;
-    for step in 0..600 {
+    for step in 0..BATTLE_STEPS {
         let sim = net.host.simulation.as_ref().unwrap();
         let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
         let target = me.alive.then(|| {

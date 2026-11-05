@@ -113,6 +113,12 @@ impl WorldModel {
                 Some(&index) => index,
                 None => self.add_cover(cover),
             };
+            if self.simulation.covers[index].structure.is_some() {
+                // A cottage stands as far as its parts do, levelled or not.
+                self.simulation.set_house_gone(index, cover.broken);
+                self.simulation.covers[index].alive = cover.alive;
+                continue;
+            }
             let standing = self.simulation.covers[index].alive;
             if standing && !cover.alive {
                 self.fell(index);

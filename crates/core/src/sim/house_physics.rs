@@ -48,6 +48,9 @@ const LEVELLED: f64 = 0.45;
 /// A falling body's colliders sit this far (m) inside its parts' faces, clear of the
 /// standing parts they were built against.
 const SHRINK: f64 = 0.03;
+/// Standing parts' colliders reach this far (m) past their faces into their
+/// neighbours', so a shell or a sight line along the seam between two parts meets one.
+const SEAM: f64 = 0.01;
 /// Mass per cubic metre of a loose part, as other wooden scenery pieces (the chimney's
 /// brick heavier).
 const TIMBER_DENSITY: f64 = 0.35;
@@ -150,7 +153,7 @@ pub fn standing_colliders(layout: &HouseStructure, gone: &PartSet) -> Vec<Collid
     (0..layout.parts.len())
         .filter(|&index| !gone.contains(index))
         .map(|index| {
-            part_collider(layout, index, 0.0)
+            part_collider(layout, index, -SEAM)
                 .collision_groups(interaction_groups(group::COVER))
                 .friction(0.4)
         })
@@ -206,9 +209,7 @@ impl Simulation {
     /// The part of a cottage behind `collider` (from its user data), if it is one.
     pub fn house_part(&self, collider: ColliderHandle) -> Option<(usize, usize)> {
         let &cover = self.cover_by_collider.get(&collider)?;
-        if self.covers[cover].structure.is_none() {
-            return None;
-        }
+        self.covers[cover].structure.as_ref()?;
         let part = self.world.colliders.get(collider)?.user_data as usize;
         Some((cover, part))
     }
@@ -304,6 +305,49 @@ impl Simulation {
         if !broken.is_empty() {
             self.break_house_parts(cover, broken, Some(point), by);
         }
+    }
+
+    /// Stand cottage `cover` as a scene shows it, with exactly the parts not in `gone`
+    /// (a model of a room refilled from what a client sees): their colliders come and
+    /// go, no part falls and nothing is scored.
+    pub fn set_house_gone(&mut self, cover: usize, gone: PartSet) {
+        let body = self.covers[cover].body;
+        let Some(state) = &mut self.covers[cover].structure else {
+            return;
+        };
+        if state.gone == gone || !self.world.bodies.contains(body) {
+            return;
+        }
+        let layout = state.layout.clone();
+        let mut removed = Vec::new();
+        let mut added = Vec::new();
+        for index in 0..layout.parts.len() {
+            match (gone.contains(index), state.colliders[index]) {
+                (true, Some(handle)) => {
+                    removed.push(handle);
+                    state.colliders[index] = None;
+                }
+                (false, None) => added.push(index),
+                _ => {}
+            }
+        }
+        state.gone = gone;
+        for handle in removed {
+            self.cover_by_collider.remove(&handle);
+            self.world.remove_collider(handle);
+        }
+        for index in added {
+            let collider = part_collider(&layout, index, -SEAM)
+                .collision_groups(interaction_groups(group::COVER))
+                .friction(0.4);
+            let handle = self.world.insert_collider(collider, Some(body));
+            self.cover_by_collider.insert(handle, cover);
+            if let Some(state) = &mut self.covers[cover].structure {
+                state.colliders[index] = Some(handle);
+            }
+        }
+        let region = Footprint::from(&self.covers[cover]);
+        self.nav.rebuild(&self.covers, Some(region));
     }
 
     /// Every standing part of cottage `cover` takes `amount`.

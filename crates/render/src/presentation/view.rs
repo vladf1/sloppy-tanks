@@ -3512,7 +3512,6 @@ fn house_debris_look(renderer: &mut Renderer, node: &Node) -> (ModelId, Fragment
 
 /// A debris look with a model of its own, built for this round: one that fades as it
 /// is cleared away, unless `fades` is false (a felled crown only sinks).
-
 fn owned_look(renderer: &mut Renderer, node: &Node, fades: bool) -> (ModelId, FragmentLook) {
     let bounds = node_bounds(node, DMat4::IDENTITY);
     let model = if fades {
