@@ -167,6 +167,9 @@ const FIRM: f32 = 0.5;
 /// The share of its seat a part needs still standing under it to rest fully: a roof
 /// sheet whose eave wall is shot out from under it except at a corner post comes down.
 const SEAT_NEEDED: f32 = 0.5;
+/// A floor strip's joists need this share of their length still seated on the plate:
+/// boards cantilevered half a strip out past the last plate read as a flat card.
+const FLOOR_SEAT_NEEDED: f32 = 0.8;
 
 /// The share of its support a part passes to one resting on it, hanging from it or
 /// tied beside it ([`support_share`]). Resting passes all of it; the rest are named
@@ -233,6 +236,8 @@ const PARTITION_AT: f64 = -0.12;
 const PARTITION_DOOR: f64 = 0.45;
 /// How close (m) two parts' boxes are to count as touching.
 const CONTACT: f64 = 0.06;
+/// An upper storey's wall part is held by a floor strip this near (m) in plan.
+const FLOOR_REACH: f64 = 0.3;
 /// A part reaching this near the plinth's top stands on the ground.
 const GROUND_REACH: f64 = 0.05;
 /// Cells of the model reach this far past a part's outer edges, so trims and
@@ -1256,7 +1261,12 @@ impl HouseStructure {
                 // Short of the seat it needs a part loses its hold fast: a sheet seated
                 // on a corner post alone is not a sheet held at a sixth of its eave.
                 let seating = if seat > 0.0 {
-                    (seated / seat / SEAT_NEEDED).min(1.0).powi(2)
+                    let needed = if self.parts[index].kind == PartKind::Floor {
+                        FLOOR_SEAT_NEEDED
+                    } else {
+                        SEAT_NEEDED
+                    };
+                    (seated / seat / needed).min(1.0).powi(2)
                 } else {
                     1.0
                 };
@@ -1320,14 +1330,58 @@ impl HouseStructure {
         }
     }
 
-    /// Whether `index` is a wall part of an upper storey left without a neighbour beside
-    /// it in its wall: a sliver one bay wide and two storeys high, with nothing to brace
-    /// it, breaks off at the floor.
+    /// Whether standing part `index` is a sliver nothing braces, which topples however
+    /// well it is seated: a wall part above the bottom course with no neighbour left
+    /// beside it in its wall (a one-bay strip of wall standing alone breaks off over its
+    /// stub), a corner post with no wall part above the bottom course left on it (a bare
+    /// post), and an upper storey's wall part whose corner post or the floor behind it
+    /// is gone (the remains of a two-storey house stand one storey high).
     fn sliver(&self, index: usize, down: &PartSet) -> bool {
-        self.parts[index].upper_storey
-            && !self.beside[index]
-                .iter()
-                .any(|&other| !down.contains(other as usize))
+        let part = &self.parts[index];
+        let standing = |other: usize| !down.contains(other);
+        match part.kind {
+            PartKind::Post => !(0..self.parts.len()).any(|other| {
+                let wall = &self.parts[other];
+                standing(other)
+                    && wall.wall.is_some()
+                    && !wall.grounded
+                    && self.supports[other].iter().any(|support| support.by as usize == index)
+            }),
+            PartKind::Panel | PartKind::Window | PartKind::Door | PartKind::Plate
+                if part.wall.is_some() && !part.grounded =>
+            {
+                // Its neighbours in the wall, or the corner post it is framed into.
+                let braced = self.beside[index].iter().any(|&other| standing(other as usize))
+                    || self.supports[index].iter().any(|support| {
+                        let by = support.by as usize;
+                        self.parts[by].kind == PartKind::Post && standing(by)
+                    });
+                !braced || (part.upper_storey && !self.upper_storey_held(index, down))
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether upper-storey wall part `index` still has its nearer corner post and the
+    /// upper floor behind it.
+    fn upper_storey_held(&self, index: usize, down: &PartSet) -> bool {
+        let part = &self.parts[index];
+        let middle = part.center().with_y(0.0);
+        let corner = (0..4).min_by(|&a, &b| {
+            let gap = |post: usize| (self.parts[post].center().with_y(0.0) - middle).length();
+            gap(a).total_cmp(&gap(b))
+        });
+        let Some(floor) = self.upper_floor() else {
+            return true;
+        };
+        let floor_behind = (0..self.parts.len()).any(|other| {
+            let strip = &self.parts[other];
+            strip.kind == PartKind::Floor
+                && (strip.max.y - floor).abs() < CONTACT
+                && !down.contains(other)
+                && (strip.min - part.max).max(part.min - strip.max).with_y(0.0).max_element() < FLOOR_REACH
+        });
+        corner.is_some_and(|post| !down.contains(post)) && floor_behind
     }
 
     /// `falling` in the groups that come down together: parts linked to each other
@@ -1710,6 +1764,71 @@ mod tests {
                 assert!(sheets.is_empty(), "{:?} wall {wall}: sheets {sheets:?} fell", design.style.form);
                 checked += 1;
             }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn a_lone_strip_of_wall_and_a_bare_post_topple_over_their_stubs() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            // Wall 2 shot out but for one middle column, and its posts with it.
+            let middle = (0..structure.parts.len())
+                .filter(|&index| {
+                    let part = &structure.parts[index];
+                    part.wall == Some(2) && part.kind == PartKind::Panel && part.grounded
+                })
+                .min_by(|&a, &b| {
+                    let z = |index: usize| structure.parts[index].center().z.abs();
+                    z(a).total_cmp(&z(b))
+                })
+                .expect("a middle bay");
+            let span = (structure.parts[middle].min.z, structure.parts[middle].max.z);
+            let kept = |part: &StructurePart| {
+                part.wall == Some(2) && (part.min.z - span.0).abs() < 1e-6 && (part.max.z - span.1).abs() < 1e-6
+            };
+            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                (index == 0 || index == 2) || (part.wall == Some(2) && !kept(part))
+            }));
+            let down = gone.union(&structure.unsupported(&gone));
+            for (index, part) in structure.parts.iter().enumerate() {
+                if kept(part) {
+                    assert_eq!(down.contains(index), !part.grounded, "{:?} {index} {:?}", design.style.form, part.kind);
+                }
+            }
+            // A post with only stubs of wall left on it goes too.
+            let bare = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                matches!(part.wall, Some(0) | Some(2)) && !part.grounded
+            }));
+            assert!(structure.unsupported(&bare).contains(0), "{:?}: the bare corner post stands", design.style.form);
+        }
+    }
+
+    #[test]
+    fn an_upper_storey_stands_only_on_its_corner_and_floor() {
+        let mut checked = 0;
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if design.storeys() < 2 {
+                continue;
+            }
+            // A corner post shot out: the upper storey's wall nearest it comes down; the
+            // ground floor's parts there stand on.
+            let gone = PartSet::from_indices([0]);
+            let falling = structure.unsupported(&gone);
+            let corner = structure.parts[0].center().with_y(0.0);
+            let near = |part: &StructurePart| (part.center().with_y(0.0) - corner).length() < 1.0;
+            for (index, part) in structure.parts.iter().enumerate() {
+                if part.wall.is_some() && part.upper_storey && near(part) {
+                    assert!(falling.contains(index), "upper part {index} by the gone corner stands");
+                }
+                if part.wall.is_some() && part.grounded && near(part) {
+                    assert!(!falling.contains(index), "ground floor part {index} fell");
+                }
+            }
+            checked += 1;
         }
         assert!(checked > 0);
     }
