@@ -14,6 +14,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::{Mat4, Vec3};
 use sloppy_core::geometry::math::smoothstep;
+use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::render_state::RenderFragment;
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
@@ -214,6 +215,11 @@ pub const WIND: [f64; 2] = [0.9, -0.35];
 /// The light a blast throws on everything around it: peak intensity (times its
 /// scale squared), reach (m) and height over the blast (m, times its scale).
 const BLAST_LIGHT: f64 = 34.0;
+/// The share of a blast's light that gets out of the cottage it went off in: the rest
+/// is held in by the walls, which the lights do not shadow.
+const ENCLOSED_LIGHT: f64 = 0.12;
+/// A blast's scale inside a cottage, its fireball no bigger than the room.
+const ENCLOSED_SCALE: f64 = 0.3;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
 /// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
 /// wall: the pile's loose dust goes up with it.
@@ -571,6 +577,8 @@ struct Blast {
     /// killing shot), zero when unknown.
     y: f64,
     direction: [f64; 2],
+    /// Gone off inside a cottage: its walls hold in most of its light.
+    enclosed: bool,
     /// What its fireball, column and skirt puffs draw from its phase.
     draws: BlastDraws,
 }
@@ -1049,6 +1057,21 @@ impl ExplosionEffects {
             self.dust_skirt(event.x, event.z, TREE_SNAP_DUST, phase);
             return;
         }
+        // A shell bursting inside a cottage: its flash and dust burst out of the hole it
+        // came in by, back toward the gun.
+        if event.kind == SimEventType::Explosion
+            && event.cover_kind == Some(CoverKind::House)
+            && let Some(hole) = event.from
+        {
+            let mut out = SimEvent::at(SimEventType::Impact, hole.x, hole.z);
+            out.size = Some(0.6);
+            out.from = Some(Point3::new(
+                2.0 * hole.x - event.x,
+                hole.y,
+                2.0 * hole.z - event.z,
+            ));
+            self.event(&out, random);
+        }
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
         let wood = match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo))
@@ -1121,6 +1144,8 @@ impl ExplosionEffects {
             x: event.x,
             z: event.z,
             dust: self.ground.dust(event.x, event.z),
+            enclosed: event.kind == SimEventType::Explosion
+                && event.cover_kind == Some(CoverKind::House),
             ..Blast::default()
         };
         blast.variant = if tank {
@@ -1147,6 +1172,10 @@ impl ExplosionEffects {
         };
         if barrel {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
+        }
+        // A shell's burst in a room stays in the room.
+        if blast.enclosed {
+            blast.scale = ENCLOSED_SCALE;
         }
         // Timber and a tower going down raise more dust than a shell's pop.
         if kind == Kind::Collapse {
@@ -1238,6 +1267,8 @@ impl ExplosionEffects {
             (kind == Kind::HouseFall).then_some((blast.x, blast.z, blast.phase, blast.dust));
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
+            // The floor boards cover the ground a blast in a room would char.
+            Kind::Blast if blast.enclosed => None,
             Kind::Blast => Some(5.2),
             Kind::Barrel => Some(6.2),
             Kind::Tank => Some(7.4),
@@ -1350,7 +1381,10 @@ impl ExplosionEffects {
             let s = blast.scale;
             let (intensity, height) = match blast.kind {
                 Kind::Blast | Kind::Tank | Kind::Barrel => (
-                    BLAST_LIGHT * s * blast.fire_light(t, &blast.look()),
+                    BLAST_LIGHT
+                        * s
+                        * blast.fire_light(t, &blast.look())
+                        * if blast.enclosed { ENCLOSED_LIGHT } else { 1.0 },
                     LIGHT_HEIGHT * s + LIGHT_LIFT,
                 ),
                 Kind::Burnout => (
@@ -1553,9 +1587,14 @@ impl ExplosionEffects {
                 let smoke = linear(look.smoke);
                 // No sitting haze: the column carries the smoke up and away,
                 // and a broad faint disc over the ground read as a flat decal.
-                self.ground_glow(b, t, &look, streaks);
-                self.skirt(b, t, b.dust);
-                self.column(b, t, lifetime, &look, smoke, true);
+                // Inside a cottage the walls and roof hold the ground's dust and the
+                // column in; only the flash in the room and what bursts out of the
+                // hole show.
+                if !b.enclosed {
+                    self.ground_glow(b, t, &look, streaks);
+                    self.skirt(b, t, b.dust);
+                    self.column(b, t, lifetime, &look, smoke, true);
+                }
                 if b.kind == Kind::Tank {
                     self.turret_jet(b, t, smoke, streaks);
                 }

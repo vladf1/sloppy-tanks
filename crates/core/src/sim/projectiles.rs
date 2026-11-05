@@ -762,12 +762,23 @@ fn resolve_contact(
 }
 
 /// An HE shell bursting where its fuse ran out (or where it struck again): the parts
-/// round it take the blast; tanks are hit only by what strikes them.
+/// round it take the blast; tanks are hit only by what strikes them. A burst inside a
+/// cottage names the hole the shell came in by, which its flash and dust escape through.
 fn burst_in_house(simulation: &mut Simulation, shot: &Shot) {
     let point = Point3::new(shot.x, shot.combat_y(), shot.z);
     let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = Some(point.y);
+    if let Some(fuse) = shot.fuse {
+        let along = shell_heading(shot);
+        let flown = (FUSE_DISTANCE - fuse.max(0.0)).max(0.0);
+        explosion.cover_kind = Some(CoverKind::House);
+        explosion.from = Some(Point3::new(
+            point.x - along.x * flown,
+            point.y,
+            point.z - along.z * flown,
+        ));
+    }
     simulation.events.push(explosion);
     simulation.house_blast(
         point,
@@ -780,7 +791,8 @@ fn burst_in_house(simulation: &mut Simulation, shot: &Shot) {
 /// A shell striking a standing part of a cottage. A rocket breaks it and bursts; an
 /// armour-piercing round breaks it and flies on; an HE round breaks a part it can and
 /// flies on [`FUSE_DISTANCE`] (bursting at once against one it cannot, or on a second
-/// strike). Returns whether the shell is spent.
+/// strike). A shell that ends there flashes on the part; one that flies on through
+/// shows only the part breaking. Returns whether the shell is spent.
 fn strike_house_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
     let shot = simulation.shots[si].clone();
     let point = Point3::new(shot.x, shot.combat_y(), shot.z);
@@ -788,9 +800,9 @@ fn strike_house_part(simulation: &mut Simulation, si: usize, cover: usize, part:
     let by = Some((shot.owner, shot.team));
     let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
     impact.id = Some(simulation.covers[cover].id);
-    simulation.events.push(impact);
     match shot.weapon {
         Weapon::Rocket => {
+            simulation.events.push(impact);
             simulation.strike_house(cover, part, shot.damage, true, point, along, by);
             rocket_blast(simulation, &shot);
             true
@@ -805,6 +817,7 @@ fn strike_house_part(simulation: &mut Simulation, si: usize, cover: usize, part:
                 simulation.shots[si].fuse = Some(FUSE_DISTANCE);
                 false
             } else {
+                simulation.events.push(impact);
                 burst_in_house(simulation, &shot);
                 true
             }

@@ -321,13 +321,18 @@ fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> 
     }
 }
 
-/// An HE shell's burst inside a cottage where its fuse ran out or it struck a second part
-/// (`burst_in_house`).
-fn burst(path: &ShotPath, tick: f64) -> TimedEvent {
+/// An HE shell's burst against a cottage's part, or inside it where its fuse ran out or
+/// it struck a second part, having come in at `entry` (`burst_in_house`).
+fn burst(path: &ShotPath, tick: f64, entry: Option<f64>) -> TimedEvent {
     let at = path.at(tick);
     let mut explosion = SimEvent::at(SimEventType::Explosion, at.x, at.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = path.launch.y;
+    if let Some(entry) = entry {
+        let hole = path.at(entry);
+        explosion.cover_kind = Some(CoverKind::House);
+        explosion.from = Some(Point3::new(hole.x, path.launch.y.unwrap_or(1.0), hole.z));
+    }
     TimedEvent {
         event_id: 0,
         tick,
@@ -400,6 +405,8 @@ pub(super) fn forecast(
     let mut bounces_left = bounces;
     // Metres along the current leg where a fused HE shell bursts.
     let mut fuse: Option<f64> = None;
+    // The tick it came into a cottage by, on the current leg.
+    let mut entry: Option<f64> = None;
     'legs: while result.legs.len() < MAX_FORECAST_LEGS {
         let speed = current.vx.hypot(current.vz);
         if speed <= 0.0 {
@@ -424,10 +431,10 @@ pub(super) fn forecast(
             let impact = impact_at(&current, hit_tick);
             match part_strike(&current.launch, &part, damage, fuse.is_some()) {
                 PartStrike::Through if !past.contains(&part.key) && past.len() < MAX_PARTS_PAST => {
-                    result.strikes.push(impact);
                     past.push(part.key);
                     if current.launch.weapon != Weapon::Piercing {
                         fuse = Some(hit.distance + FUSE_DISTANCE);
+                        entry = Some(hit_tick);
                     }
                 }
                 PartStrike::Ends if current.launch.weapon == Weapon::Rocket => {
@@ -439,7 +446,7 @@ pub(super) fn forecast(
                 PartStrike::Ends => {
                     end_leg(&mut result, hit_tick);
                     result.strikes.push(impact);
-                    result.strikes.push(burst(&current, hit_tick));
+                    result.strikes.push(burst(&current, hit_tick, entry));
                     break 'legs;
                 }
                 // The shell is drawn no further than the part; the host's effect shows.
@@ -453,7 +460,7 @@ pub(super) fn forecast(
             if let Some(at) = fuse.filter(|&at| at < range) {
                 let burst_tick = current.tick + flight_ticks(&current, at);
                 end_leg(&mut result, burst_tick);
-                result.strikes.push(burst(&current, burst_tick));
+                result.strikes.push(burst(&current, burst_tick, entry));
             }
             break;
         };
@@ -468,6 +475,7 @@ pub(super) fn forecast(
         }
         bounces_left -= 1;
         fuse = fuse.map(|fuse| fuse - hit.distance);
+        entry = None;
         let hit = current.at(hit_tick);
         let along = hit.vx * normal.x + hit.vz * normal.z;
         current = ShotPath {
