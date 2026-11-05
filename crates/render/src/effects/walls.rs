@@ -121,6 +121,9 @@ pub struct Walls {
     /// cottage falls.
     standing: Vec<u32>,
     fallen: Vec<(WallBox, f64)>,
+    /// The footprints of the cottages lying fallen, as `[x, z, half width, half
+    /// depth]`, where landing debris raises the wreck's dust, not the ground's.
+    ruins: Vec<[f64; 4]>,
 }
 
 /// How long (s) a fallen cottage's box keeps holding the smoke round it, and how many
@@ -345,6 +348,14 @@ impl Walls {
                 self.fallen.push((box_, now + FALLEN_HOLD));
             }
         }
+        self.ruins.clear();
+        self.ruins.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| cover.kind == CoverKind::House && !cover.alive)
+                .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
+        );
         self.standing.clear();
         self.standing.extend(
             state
@@ -393,12 +404,21 @@ impl Walls {
         self.boxes.clear();
         self.standing.clear();
         self.fallen.clear();
+        self.ruins.clear();
         self.soft = [[0.0; 4]; 4];
     }
 
     /// The walls the puff shader softens smoke against this frame.
     pub fn soft_boxes(&self) -> [[f32; 4]; 4] {
         self.soft
+    }
+
+    /// Whether `(x, z)` lies on a fallen cottage's footprint or within `reach` (m) of
+    /// it, as of the last sync.
+    pub fn in_ruin(&self, x: f64, z: f64, reach: f64) -> bool {
+        self.ruins.iter().any(|&[cx, cz, half_w, half_d]| {
+            (x - cx).abs() <= half_w + reach && (z - cz).abs() <= half_d + reach
+        })
     }
 
     /// The standing cottage whose footprint holds `(x, z)`, as of the last sync.

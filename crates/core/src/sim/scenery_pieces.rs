@@ -8,7 +8,7 @@ use glam::DVec3;
 use rapier3d::prelude::{ColliderBuilder, Pose, RigidBodyBuilder, RigidBodyType, Rotation, Vector};
 
 use super::crate_layout::{CrateBreak, CratePiece, CrateSection, crate_sections};
-use super::data::group;
+use super::data::{STEP, group};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
 use super::house_layout::{
@@ -660,6 +660,10 @@ const BOARD_THROW: (f64, f64) = (2.0, 4.5);
 const BOARD_CLEARANCE: f64 = 0.4;
 /// The chimney's brick, for its tint and dust.
 const CHIMNEY_BRICK: u32 = 0x9c4a32;
+/// Seconds into a collapse after which the chimney's stack, come to rest on the
+/// wreck, crumbles: it sinks away into the pile, leaving its loose bricks, which
+/// lie on as long as the pile does.
+const CHIMNEY_CRUMBLE: f64 = 1.2;
 /// Seconds a cottage's pieces lie on its heap before the first of them sinks into
 /// it: long enough that the collapse settles into a pile that stays a while; the
 /// heap carries the cottage's remains on for the rest of the round. They sink one
@@ -1108,9 +1112,15 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         .iter_mut()
         .filter(|fragment| breakup.pieces.contains(&fragment.id))
     {
-        let life = fragment.house_piece.map_or(LOOSE_LIFE, |piece| {
-            HOUSE_PIECE_LIFE + sink_delay(piece)
-        }) + DEBRIS_CLEANUP_SECONDS;
+        // The chimney's bricks lie on with the pile it crumbles into.
+        let brick = fragment.color == CHIMNEY_BRICK && fragment.shape == Some(FragmentShape::Beam);
+        let life = match fragment.house_piece {
+            Some(piece) => HOUSE_PIECE_LIFE + sink_delay(piece),
+            None if brick => {
+                HOUSE_PIECE_LIFE + sink_delay(HousePiece::new(HousePart::Chimney, 0))
+            }
+            None => LOOSE_LIFE,
+        } + DEBRIS_CLEANUP_SECONDS;
         fragment.life = life;
         fragment.expires_at = Some(simulation.elapsed + life);
     }
@@ -1143,7 +1153,7 @@ fn sink_delay(piece: HousePiece) -> f64 {
     let shard = f64::from(piece.shard);
     match piece.part.wall_index() {
         Some(wall) if lower_wall(piece) => 2.2 + wall as f64 * 0.25 + shard * 0.17,
-        Some(wall) => 3.8 + wall as f64 * 0.3 + shard * 0.21,
+        Some(wall) => 3.8 + wall as f64 * 0.35 + shard * 0.3,
         None => match piece.part {
             HousePart::Chimney => 1.0 + shard * 0.5,
             HousePart::LeftRoof => 0.15 + shard * 0.29,
@@ -1283,6 +1293,18 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         let sleeping = body.is_sleeping();
         let still = sleeping
             || body.linvel().length() < SETTLED_SPEED.0 && body.angvel().length() < SETTLED_SPEED.1;
+        if piece.part == HousePart::Chimney
+            && age >= CHIMNEY_CRUMBLE
+            && fragment.life > DEBRIS_CLEANUP_SECONDS
+            && body.linvel().length() < SETTLED_SPEED.0
+        {
+            // Down on the wreck, what stood of the stack crumbles into the bricks
+            // strewn round it: it sinks into the pile rather than riding the
+            // fallen roof upright, pots and aerial and all.
+            fragment.life = DEBRIS_CLEANUP_SECONDS;
+            fragment.expires_at = Some(simulation.elapsed + DEBRIS_CLEANUP_SECONDS);
+            continue;
+        }
         if still
             && age < TOPPLE_WINDOW.1
             && fragment.house_topples < TOPPLES
@@ -1298,6 +1320,39 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 continue;
             }
         }
+        // A wall shard or roof slab its first tips left on edge, or that came to rest
+        // leaning up steeply on the pile, is laid down: turned steadily over the way
+        // it leans until it lies low, whatever it rests against.
+        if (piece.part.is_roof() || piece.part.wall_index().is_some())
+            && !lower_wall(piece)
+            && !sliver(fragment)
+            && age >= TOPPLE_WINDOW.0
+            && (age < TOPPLE_WINDOW.1 || thrown)
+            && body.linvel().length() < LAY_SLOWER
+        {
+            let local = fragment.house_id.and_then(|id| {
+                simulation
+                    .covers
+                    .iter()
+                    .find(|cover| cover.id == id)
+                    .map(|cover| shard_normal(cover, piece.part))
+            });
+            if let Some(local) = local {
+                let normal = *body.rotation() * local;
+                let tipped = fragment.house_topples >= LAY_AFTER;
+                let leaning = still && age >= LAY_LEANING_AFTER && normal.y.abs() < LEANING_UP;
+                if normal.y.abs() < LAID && (tipped || leaning) {
+                    fragment.house_topples = fragment.house_topples.saturating_add(1).max(LAY_AFTER);
+                    let low = body
+                        .colliders()
+                        .iter()
+                        .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
+                        .fold(f32::INFINITY, f32::min);
+                    lay_down(body, normal, low);
+                    continue;
+                }
+            }
+        }
         // The lower wall shards stand on as the ruin's stubs, and an eave slab
         // propped on them stays as it leans: tipped, it would turn over the stub
         // onto its rafters.
@@ -1306,6 +1361,7 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             && fragment.house_topples < TOPPLES
             && piece.part != HousePart::Chimney
             && !lower_wall(piece)
+            && !sliver(fragment)
             && !(piece.part.is_roof() && piece.shard % 2 == 1 && fragment.house_topples > 0)
         {
             let house = fragment.house_id.and_then(|id| {
@@ -1541,6 +1597,55 @@ fn contain(body: &mut rapier3d::prelude::RigidBody, cover: &Cover) {
     if stopped {
         body.set_linvel(v, true);
     }
+}
+
+/// How near level (its face's normal's rise) a wall shard left on edge is laid
+/// down to ([`lay_down`]), and how fast it is turned (rad/s).
+const LAID: f32 = 0.9;
+const LAY_RATE: f32 = 2.5;
+/// Tips a wall shard is given before it is laid down instead, and how slow (m/s)
+/// it must be moving: not one still in flight.
+const LAY_AFTER: u8 = INWARD_TOPPLES;
+const LAY_SLOWER: f32 = 1.5;
+/// A shard come to rest leaning up steeper than this (its face's normal's rise,
+/// about 40 degrees) this long (s) into the collapse is laid down too.
+const LEANING_UP: f32 = 0.76;
+const LAY_LEANING_AFTER: f64 = 1.6;
+
+/// Whether a shard is a sliver, as narrow across its face as it is thick (a stud's
+/// width of wall torn between two cracks): it lies on whichever side it lands on,
+/// so it is neither tipped nor laid down.
+pub fn sliver(fragment: &Fragment) -> bool {
+    fragment.dimensions.is_some_and(|size| {
+        let mut sides = [size.x, size.y, size.z];
+        sides.sort_by(f64::total_cmp);
+        sides[1] < SLIVER
+    })
+}
+
+/// The width (m) across its face under which a shard is a [`sliver`].
+pub const SLIVER: f64 = 0.45;
+
+/// Turn a wall shard or roof slab whose face points along `normal` a step toward lying on the
+/// side its face leans to, over its foot (at `low`, its lowest height): its pose is
+/// turned, not its speed, so what it is wedged against cannot hold it up on edge
+/// (a tip's shove, or a steady spin, was stopped by a stub of wall or the mound it
+/// leant on, and it rocked back); the pile pushes it out of whatever it turns into.
+fn lay_down(body: &mut rapier3d::prelude::RigidBody, normal: Vector, low: f32) {
+    let target = if normal.y >= 0.0 { Vector::Y } else { -Vector::Y };
+    let axis = normal.cross(target);
+    let off = axis.length();
+    if off < 1e-4 {
+        return;
+    }
+    let step = Rotation::from_axis_angle(axis / off, (LAY_RATE * STEP as f32).min(off.asin()));
+    let center = body.translation();
+    let foot = Vector::new(center.x, low, center.z);
+    let at = foot + step * (center - foot);
+    body.set_position(Pose::from_parts(at, step * *body.rotation()), true);
+    body.set_angvel(Vector::ZERO, true);
+    body.set_linear_damping(SHARD_DAMPING.0);
+    body.set_angular_damping(SHARD_DAMPING.1);
 }
 
 /// Tip a shard over about `axis`, shoving it `toward` with a little lift, with
