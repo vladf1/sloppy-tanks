@@ -7,8 +7,9 @@ use crate::{net_support, support};
 
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, weapon};
+use sloppy_core::sim::house_layout::{HousePart, RoofForm};
 use sloppy_core::sim::house_physics::{FUSE_DISTANCE, part_box};
-use sloppy_core::sim::house_structure::{PartKind, PartSet};
+use sloppy_core::sim::house_structure::{CHIMNEY_PART, HouseStructure, PartKind, PartSet};
 use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -558,4 +559,83 @@ fn a_roof_coming_down_breaks_what_it_lands_on_and_never_lies_up_on_it() {
         );
     }
     assert_eq!(s.rng.state, rng, "no random draw");
+}
+
+/// Every cottage the maps place (the village's gable and hip roofs, its two-storey
+/// houses, the Stress Grid's and the Scrap Yard's), as their simulations build them.
+fn every_placed_cottage() -> Vec<std::sync::Arc<HouseStructure>> {
+    use sloppy_core::sim::SimulationSetup;
+    use sloppy_core::sim::level_rules::single_player_rules;
+    use sloppy_core::sim::stress_test_level::stress_test_level;
+    use sloppy_core::sim::superstress_level::superstress_level;
+    let sims = [
+        Simulation::with_seed(731.0),
+        Simulation::new(
+            731.0,
+            single_player_rules(stress_test_level()).merged(SimulationSetup::default()),
+        ),
+        Simulation::new(
+            731.0,
+            single_player_rules(superstress_level()).merged(SimulationSetup::default()),
+        ),
+    ];
+    sims.iter()
+        .flat_map(|sim| sim.covers.iter())
+        .filter_map(|cover| cover.structure.as_ref().map(|state| state.layout.clone()))
+        .collect()
+}
+
+#[test]
+fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
+    let cottages = every_placed_cottage();
+    assert!(
+        cottages.iter().any(|c| c.roof.form == RoofForm::Hip),
+        "a hip roof"
+    );
+    assert!(
+        cottages.iter().any(|c| c.roof.form == RoofForm::Gable),
+        "a gable roof"
+    );
+    assert!(
+        cottages.iter().any(|c| c.design.storeys() == 2),
+        "a two-storey house"
+    );
+    for layout in &cottages {
+        let what = format!(
+            "{:?} at {:?}",
+            layout.roof.form,
+            (layout.design.w, layout.design.d, layout.design.h)
+        );
+        assert!(
+            layout.unsupported(&PartSet::EMPTY).is_empty(),
+            "{what} stands whole"
+        );
+        for (side, slope) in [(2, HousePart::RightRoof), (3, HousePart::LeftRoof)] {
+            let gone = PartSet::from_indices(
+                (0..layout.parts.len()).filter(|&index| layout.parts[index].wall == Some(side)),
+            );
+            let falling = layout.unsupported(&gone);
+            for (index, part) in layout.parts.iter().enumerate() {
+                if part.slope.is_some_and(|(over, _)| over == slope) {
+                    assert!(
+                        falling.contains(index),
+                        "{what}: sheet {index} over wall {side} stays up"
+                    );
+                }
+            }
+            assert!(
+                (0..4).all(|post| !falling.contains(post)),
+                "{what}: posts stand"
+            );
+        }
+        // With the roof down nothing above the walls is left floating.
+        let roof = PartSet::from_indices(
+            (0..layout.parts.len()).filter(|&index| layout.parts[index].kind.roof()),
+        );
+        let down = roof.union(&layout.unsupported(&roof));
+        assert!(
+            down.contains(CHIMNEY_PART),
+            "{what}: the chimney comes down with the roof"
+        );
+    }
 }

@@ -1242,8 +1242,10 @@ impl HouseStructure {
                         };
                         (seated + left, seat + support.seat)
                     });
+                // Short of the seat it needs a part loses its hold fast: a sheet seated
+                // on a corner post alone is not a sheet held at a sixth of its eave.
                 let seating = if seat > 0.0 {
-                    (seated / seat / SEAT_NEEDED).min(1.0)
+                    (seated / seat / SEAT_NEEDED).min(1.0).powi(2)
                 } else {
                     1.0
                 };
