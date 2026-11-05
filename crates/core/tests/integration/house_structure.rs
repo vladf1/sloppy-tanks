@@ -109,13 +109,20 @@ fn a_shell_breaks_the_panel_it_strikes_and_the_gap_lets_the_next_through() {
     };
     let rng = s.rng.state;
     let (near, far) = (Vec2::new(x, 20.0), Vec2::new(x, -20.0));
-    // Only the struck panel, though the burst inside may blow out the glass over it.
+    // The struck panel and, from the burst a metre in, the wall over it in its column
+    // (bays are split up the wall) and the inner wall by it; nothing beside it.
     let only = |s: &Simulation, struck: &[usize]| {
         let gone = gone(s, house);
+        let column = |part: usize| {
+            let (min, max) = part_box(&s.covers[house], part).unwrap();
+            struck.iter().any(|&hit| {
+                let (a, b) = part_box(&s.covers[house], hit).unwrap();
+                min.x.max(a.x) < max.x.min(b.x) - 0.05 && min.z.max(a.z) < max.z.min(b.z) - 0.05
+            })
+        };
+        let inside = |part: usize| kind(s, house, part) == PartKind::Partition;
         struck.iter().all(|&part| gone.contains(part))
-            && gone
-                .iter()
-                .all(|part| struck.contains(&part) || kind(s, house, part) == PartKind::Window)
+            && gone.iter().all(|part| column(part) || inside(part))
     };
     fire(&mut s, near, far, Weapon::Standard);
     run(&mut s, 1.5);
@@ -1226,4 +1233,48 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
             high - low
         );
     }
+}
+
+#[test]
+fn a_roof_piece_landed_on_its_back_turns_shingles_up() {
+    use rapier3d::prelude::{Pose, Rotation, Vector};
+    let (mut s, house) = lone_cottage();
+    fallen_roof(&mut s, house);
+    let c = s.covers[house].clone();
+    let layout = c.structure.as_ref().unwrap().layout.clone();
+    let (id, body, part) = s
+        .fragments
+        .iter()
+        .find_map(|f| {
+            let parts = f.house_parts?;
+            let first = parts.iter().next()?;
+            (f.house_id == Some(c.id)
+                && parts
+                    .iter()
+                    .all(|p| layout.parts[p].kind == PartKind::Sheet))
+            .then_some((f.id, f.body, first))
+        })
+        .expect("a fallen piece of roof");
+    // Its shingles' side as it stood, in the body's frame.
+    let pitch = layout.roof.pitch;
+    let up = match layout.parts[part].slope.unwrap().0 {
+        HousePart::RightRoof => glam::DVec3::new(pitch, 1.0, 0.0),
+        _ => glam::DVec3::new(-pitch, 1.0, 0.0),
+    }
+    .normalize();
+    let up = layout.design.to_world(up);
+    let up = Vector::new(up.x as f32, up.y as f32, up.z as f32);
+    // Laid flat on its back in the open, beside the cottage.
+    let flat = Rotation::from_rotation_arc(up, -Vector::Y);
+    let rigid = &mut s.world.bodies[body];
+    rigid.set_position(Pose::from_parts(Vector::ZERO, flat), true);
+    let middle = rigid.center_of_mass();
+    let target = Vector::new(c.x as f32, 0.4, (c.z + 12.0) as f32);
+    rigid.set_position(Pose::from_parts(target - middle, flat), true);
+    rigid.set_linvel(Vector::ZERO, true);
+    rigid.set_angvel(Vector::ZERO, true);
+    run(&mut s, 4.0);
+    let fragment = s.fragments.iter().find(|f| f.id == id).expect("it lies on");
+    let now = *s.world.bodies[fragment.body].rotation() * up;
+    assert!(now.y > 0.8, "shingles up: {now:?}");
 }

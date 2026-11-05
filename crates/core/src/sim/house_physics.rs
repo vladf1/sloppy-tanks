@@ -48,7 +48,7 @@ pub const BLAST_HEIGHT: f64 = 1.0;
 const SHIELDED: f64 = 0.35;
 /// A blast shatters the parts within this far (m) of it; parts farther off that it
 /// breaks come loose whole and fall, so splinters fly only where it went off.
-const BLAST_CORE: f64 = 0.5;
+const BLAST_CORE: f64 = 0.8;
 /// A cottage counts as levelled (destroyed, for the score and the levels that rebuild
 /// it) once its roof is down or less than this share of its parts stands.
 const LEVELLED: f64 = 0.45;
@@ -147,10 +147,6 @@ const ON_END: f32 = 0.7;
 const LAY_RATE: f32 = 2.5;
 const LAID: f32 = 0.93;
 const LAID_STICK: f32 = 0.35;
-/// A piece propped on what still stands of its cottage is laid down only from this
-/// steep (its face's normal's rise, about 53 degrees): one leaning there like a door
-/// against the wall, not a slope lying against a stub.
-const PROPPED_UPRIGHT: f32 = 0.6;
 
 /// The linear and angular damping of a loose part `age` seconds after it came loose.
 pub fn house_debris_damping(age: f64) -> (f32, f32) {
@@ -420,7 +416,9 @@ impl Simulation {
             if gap >= radius {
                 continue;
             }
-            let mut share = 1.0 - gap / radius;
+            // A burst's force holds near it and falls away toward the edge of its
+            // reach: what stands within a metre of it feels most of it.
+            let mut share = 1.0 - (gap / radius).powi(2);
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
@@ -1223,6 +1221,8 @@ fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
 #[derive(Clone, Copy)]
 enum Lie {
     Face(DVec3),
+    /// A roof's face: it lies shingles up.
+    Roof(DVec3),
     Length(DVec3),
 }
 
@@ -1239,7 +1239,7 @@ fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
         (PartKind::Ridge, ..) => Lie::Length(DVec3::Z),
         (PartKind::Floor, ..) => Lie::Face(DVec3::Y),
         (PartKind::Partition, ..) => Lie::Face(DVec3::Z),
-        (PartKind::Sheet, Some((slope, _)), _) => Lie::Face(
+        (PartKind::Sheet, Some((slope, _)), _) => Lie::Roof(
             match slope {
                 super::house_layout::HousePart::RightRoof => DVec3::new(pitch, 1.0, 0.0),
                 super::house_layout::HousePart::LeftRoof => DVec3::new(-pitch, 1.0, 0.0),
@@ -1257,6 +1257,7 @@ fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
     let design = &layout.design;
     Some(match build {
         Lie::Face(v) => Lie::Face(design.to_world(v)),
+        Lie::Roof(v) => Lie::Roof(design.to_world(v)),
         Lie::Length(v) => Lie::Length(design.to_world(v)),
     })
 }
@@ -1310,13 +1311,13 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
                 if now.with_y(0.0).dot(out) >= 0.0 { -Vector::Y } else { Vector::Y }
             });
             let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
-            // Propped, only a piece standing near upright is turned down.
-            let start = if propped {
-                now.y.abs() < PROPPED_UPRIGHT
-            } else {
-                now.y.abs() < LEANING
-            };
-            (now, target, now.y.abs() >= LAID, start)
+            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+        }
+        // A roof piece come down on its back (its rafters up) is turned back over
+        // shingles up, as a fallen roof lies; else laid down like a wall's.
+        Lie::Roof(normal) => {
+            let now = rotation * vector(normal.x, normal.y, normal.z);
+            (now, Vector::Y, now.y >= LAID, now.y < LEANING)
         }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);
@@ -1337,7 +1338,11 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
         .iter()
         .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
         .fold(f32::INFINITY, f32::min);
-    let axis = now.cross(target);
+    let mut axis = now.cross(target);
+    if axis.length() < 1e-4 {
+        // Square on its back: over about its own length.
+        axis = (rotation * Vector::X).with_y(0.0);
+    }
     let off = axis.length();
     if off < 1e-4 {
         return;

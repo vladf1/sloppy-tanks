@@ -1695,7 +1695,9 @@ impl ExplosionEffects {
                 // it, and the hull stands dark against them.
                 let center =
                     Vec3::new(b.x as f32, (0.9 * s + b.enclosed_lift()) as f32, b.z as f32);
-                if t < BLOOM_SECONDS {
+                // A burst in a room draws no flash sprite: a camera-facing glow wider
+                // than the room's depth showed past the cottage's corner, outside.
+                if t < BLOOM_SECONDS && !b.enclosed {
                     let k = t / BLOOM_SECONDS;
                     let [r, g, bl] = BLOOM_COLOR;
                     glow(
@@ -1705,7 +1707,7 @@ impl ExplosionEffects {
                         [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.3) as f32],
                     );
                 }
-                if t < FLASH_SECONDS {
+                if t < FLASH_SECONDS && !b.enclosed {
                     let k = t / FLASH_SECONDS;
                     let [r, g, bl] = FLASH_COLOR;
                     glow(
