@@ -91,6 +91,7 @@ impl RenderLab {
                 intensity: light.intensity,
                 distance: light.distance,
                 decay: light.decay,
+                wraps: true,
             }),
         );
         let mut camera = PerspectiveCamera::new(spec.camera.fov, spec.camera.near, spec.camera.far);

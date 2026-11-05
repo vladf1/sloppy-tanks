@@ -163,6 +163,7 @@ impl MuzzleFlashes {
                 position: origin + direction * 0.6 + Vec3::Y * 0.4,
                 intensity: MUZZLE_LIGHT * shot.size as f32,
                 color: super::MUZZLE_FLASH_COLOR,
+                point: false,
             };
         }
         self.pending.clear();

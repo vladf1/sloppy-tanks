@@ -603,6 +603,12 @@ const ROOF_SPLIT: (f64, f64) = (0.42, 0.56);
 /// slope breaks into at most four strips.
 const SECTION_EDGE: f64 = 0.04;
 const ROOF_WHOLE: f64 = 0.5;
+/// Where a framed crack runs: this far in from a rake, as a share of the slope's
+/// length plus up to this much more; how far (m, one or two sheets) it jogs over,
+/// and below what share of the run down the slope.
+const FRAMED_FROM_END: (f64, f64) = (0.26, 0.14);
+const SEAM_JOG: f64 = 0.42;
+const JOG_AT: f64 = 0.5;
 const ROOF_CRACK_END: f64 = 0.8;
 /// A section's edge may tear nearer its gable, leaving the rake that stood on the
 /// gable wall as its own strip.
@@ -624,6 +630,8 @@ const WINDOW_EDGE: f64 = 0.57;
 const DOOR_EDGE: f64 = 0.62;
 const WALL_CRACK_APART: f64 = 0.8;
 const CASING_WANDER: f64 = 0.03;
+/// The share of cracks up a window's casing that step across its head.
+const HEAD_STEP: f64 = 0.5;
 /// Window measurements the cracks follow (the model's openings): sill height over
 /// the plinth, and the door's height.
 const WINDOW_SILL: f64 = 0.9;
@@ -914,21 +922,27 @@ impl HouseDesign {
     }
 
     /// The edges of the wall's openings a crack may run beside: where along the
-    /// wall, and the heights the opening spans there.
-    fn opening_edges(&self, index: usize) -> Vec<(f64, (f64, f64))> {
+    /// wall, the heights the opening spans there and, for a window, its other
+    /// casing's edge, which a crack up one casing may step over to across its head.
+    fn opening_edges(&self, index: usize) -> Vec<(f64, (f64, f64), Option<f64>)> {
         let roof = self.roof();
         let sill = PLINTH + WINDOW_SILL;
         let head = sill + (roof.wall - PLINTH - 1.25).min(1.3);
         let half = wall_frames(self.w, self.d)[index].3;
         let gable = self.style.form == RoofForm::Gable && index < 2;
-        let mut edges: Vec<(f64, (f64, f64))> =
+        let mut edges: Vec<(f64, (f64, f64), Option<f64>)> =
             window_columns(index == self.door_wall, gable, half)
                 .into_iter()
-                .flat_map(|u| [u - WINDOW_EDGE, u + WINDOW_EDGE])
-                .map(|u| (u, (sill, head)))
+                .flat_map(|u| {
+                    [
+                        (u - WINDOW_EDGE, Some(u + WINDOW_EDGE)),
+                        (u + WINDOW_EDGE, Some(u - WINDOW_EDGE)),
+                    ]
+                })
+                .map(|(u, across)| (u, (sill, head), across))
                 .collect();
         if index == self.door_wall {
-            edges.extend([-DOOR_EDGE, DOOR_EDGE].map(|u| (u, (PLINTH, PLINTH + DOOR_RISE))));
+            edges.extend([-DOOR_EDGE, DOOR_EDGE].map(|u| (u, (PLINTH, PLINTH + DOOR_RISE), None)));
         }
         edges
     }
@@ -966,22 +980,31 @@ impl HouseDesign {
             };
             let beside = edges
                 .iter()
-                .filter(|(s, _)| (s - target).abs() < OPENING_SNAP && clear(*s, &chosen))
+                .filter(|(s, ..)| (s - target).abs() < OPENING_SNAP && clear(*s, &chosen))
                 .min_by(|a, b| (a.0 - target).abs().total_cmp(&(b.0 - target).abs()))
                 .copied();
-            let (s, span) = match beside {
-                Some((s, span)) => (s, Some(span)),
-                None => (target, None),
+            // Half the time a crack up one casing steps across the window's head
+            // to tear on up from the other, where that keeps clear of the rest.
+            let step = rng.next() < HEAD_STEP;
+            let (s, span, across) = match beside {
+                Some((s, span, across)) => {
+                    (s, Some(span), across.filter(|&a| step && clear(a, &chosen)))
+                }
+                None => (target, None, None),
             };
             chosen.push(s);
+            chosen.extend(across);
             let crack = Crack::new(s, &knots, || rng.range(-WALL_WANDER, WALL_WANDER));
             // Along a casing the crack keeps to it; above and below it tears.
             let points = crack
                 .points
                 .iter()
-                .map(|p| match span {
-                    Some((low, high)) if p.y > low - 0.1 && p.y < high + 0.1 => {
+                .map(|p| match (span, across) {
+                    (Some((low, high)), _) if p.y > low - 0.1 && p.y < high + 0.1 => {
                         DVec2::new(s + (p.x - s) * CASING_WANDER / WALL_WANDER, p.y)
+                    }
+                    (Some((_, high)), Some(across)) if p.y >= high + 0.1 => {
+                        DVec2::new(p.x - s + across, p.y)
                     }
                     _ => *p,
                 })
@@ -1049,10 +1072,25 @@ impl HouseDesign {
                     .map(|hole| (hole.y, end)),
             )
             .collect();
-        // The design's own choice, drawn whether or not damage decides instead.
-        let (framed, at) = (rng.next() >= ROOF_WHOLE, rng.range(-0.45, 0.45));
-        if lines.is_empty() && framed {
-            lines.push((at * end, end));
+        // The design's own choice, drawn whether or not damage decides instead: on
+        // one slope of the cottage only (so its two slopes never break alike into a
+        // grid), a third or so in from one rake, jogging a sheet or two over where
+        // it tore across a batten partway down.
+        let (framed, at, jog) = (rng.next() >= ROOF_WHOLE, rng.range(-1.0, 1.0), rng.next());
+        let framed_side = if self.variant.is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
+        let mut jogs = None;
+        if lines.is_empty() && framed && side == framed_side {
+            let length = 2.0 * roof.rake_z;
+            let z = at.signum()
+                * (roof.rake_z - length * (FRAMED_FROM_END.0 + FRAMED_FROM_END.1 * at.abs()));
+            lines.push((z.clamp(-end, end), end));
+            jogs = Some(
+                (if jog < 0.5 { -1.0 } else { 1.0 }) * SEAM_JOG * (1.0 + (jog * 4.0).floor() % 2.0),
+            );
         }
         let mut kept: Vec<f64> = Vec::new();
         for (mut z, end) in lines {
@@ -1083,7 +1121,11 @@ impl HouseDesign {
                     .iter()
                     .map(|p| {
                         let f = (p.y / roof.eave_x).clamp(0.0, 1.0);
-                        DVec2::new(z + (p.x - z) * f.sqrt() + z * spread * f, p.y)
+                        let step = match jogs {
+                            Some(jog) if f > JOG_AT => jog,
+                            _ => 0.0,
+                        };
+                        DVec2::new(z + (p.x - z) * f.sqrt() + z * spread * f + step, p.y)
                     })
                     .collect();
                 Crack { points }

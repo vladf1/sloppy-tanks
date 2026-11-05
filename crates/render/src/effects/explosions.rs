@@ -186,6 +186,14 @@ pub const WIND: [f64; 2] = [0.9, -0.35];
 /// scale squared), reach (m) and height over the blast (m, times its scale).
 const BLAST_LIGHT: f64 = 34.0;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
+/// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
+/// wall: the pile's loose dust goes up with it.
+const RUBBLE_HIT_SCALE: f64 = 1.4;
+/// How far (m) a shell hit's flash reaches: the struck face and the ground at its
+/// foot. Point lights cast no shadow, so a longer reach lit a cottage's far gable
+/// through its walls (from below, its soffits and vent louvres) at every hit.
+pub const HIT_LIGHT_DISTANCE: f32 = 3.0;
+
 /// The light hangs high over the fire, so a hull beside or under it is lit
 /// warm, not blown out.
 const LIGHT_HEIGHT: f64 = 4.2;
@@ -1127,6 +1135,8 @@ impl ExplosionEffects {
                 wall_mark = Some((strike, blast.phase, blast.dust));
             }
             if rubble {
+                // A bigger, taller burst off a pile than off a wall face.
+                blast.scale = RUBBLE_HIT_SCALE;
                 // Plaster, lath and paint dust off the pile, not the ground's.
                 let paint = event.color.unwrap_or(PLASTER_DUST);
                 blast.dust = scaled(
@@ -1303,6 +1313,7 @@ impl ExplosionEffects {
                     } else {
                         FIRE_LIGHT_COLOR
                     },
+                    point: matches!(blast.kind, Kind::Hit(_)),
                 },
             );
         }

@@ -663,9 +663,9 @@ const HOUSE_PIECE_LIFE: f64 = 12.5;
 /// the less the longer (down to [`RUBBLE_KICK_LEAST`] of it), so boards and scraps
 /// fly where a roof slab only lurches. The rest of the pile stays as it lies.
 const RUBBLE_KICK_REACH: f64 = 1.8;
-const RUBBLE_KICK: (f64, f64, f64) = (3.6, 3.8, 4.0);
+const RUBBLE_KICK: (f64, f64, f64) = (3.6, 4.6, 4.5);
 const RUBBLE_KICK_SIZE: f64 = 1.0;
-const RUBBLE_KICK_LEAST: f64 = 0.3;
+const RUBBLE_KICK_LEAST: f64 = 0.35;
 /// Seconds after a collapse when its slowed, lying shards are held by heavier
 /// damping (linear, angular), so the pile comes to rest instead of creeping, the
 /// speeds (m/s, rad/s) below which a shard counts as slowed and the height (m) of

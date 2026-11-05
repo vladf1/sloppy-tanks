@@ -231,6 +231,9 @@ pub struct PointLight {
     /// Cutoff distance; 0 is unlimited.
     pub distance: f32,
     pub decay: f32,
+    /// Whether its light wraps past the terminator (a fire's wide glow); a point
+    /// flash's does not.
+    pub wraps: bool,
 }
 
 pub const MAX_POINT_LIGHTS: usize = 4;
@@ -1278,6 +1281,11 @@ impl Renderer {
             self.rebuild_pool_groups();
             self.static_shadow_dirty = true;
         }
+    }
+
+    /// The point lights set for the next frame, for diagnostics.
+    pub fn point_lights(&self) -> &[Option<PointLight>] {
+        &self.point_lights
     }
 
     pub fn set_point_light(&mut self, index: usize, light: Option<PointLight>) {
@@ -2377,7 +2385,13 @@ impl Renderer {
                     r,
                     g,
                     b,
-                    light.decay,
+                    // The decay's sign carries whether it wraps (the shader takes
+                    // its magnitude).
+                    if light.wraps {
+                        light.decay
+                    } else {
+                        -light.decay
+                    },
                 ];
             }
         }

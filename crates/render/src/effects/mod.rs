@@ -84,6 +84,10 @@ pub struct Flash {
     pub position: Vec3,
     pub intensity: f32,
     pub color: u32,
+    /// A shell's hit: a point flash at the face it struck, whose light does not
+    /// wrap round onto the faces turned from it as a fire's rolling glow does
+    /// (wrapped, a hit on a cottage's wall lit the gable round the corner).
+    pub point: bool,
 }
 
 /// What this frame's views can show, so an effect can leave out smoke no view draws:
@@ -369,7 +373,7 @@ mod browser {
     use super::muzzle::MUZZLE_LIGHT_DISTANCE;
     use glam::Vec3;
 
-    use super::explosions::BLAST_LIGHT_DISTANCE;
+    use super::explosions::{BLAST_LIGHT_DISTANCE, HIT_LIGHT_DISTANCE};
     use super::{EffectSystems, EffectView, FLASH_DECAY, LIGHT_CUTOFF, MUZZLE_FLASH_COLOR};
     use crate::gpu::{PointLight, PoolId, Renderer};
 
@@ -496,8 +500,13 @@ mod browser {
                         position: light.position,
                         color: light.color,
                         intensity: light.intensity,
-                        distance: BLAST_LIGHT_DISTANCE,
+                        distance: if light.point {
+                            HIT_LIGHT_DISTANCE
+                        } else {
+                            BLAST_LIGHT_DISTANCE
+                        },
                         decay: FLASH_DECAY,
+                        wraps: !light.point,
                     }),
                 );
             }
@@ -510,6 +519,7 @@ mod browser {
                     intensity: muzzle.intensity,
                     distance: MUZZLE_LIGHT_DISTANCE,
                     decay: FLASH_DECAY,
+                    wraps: true,
                 }),
             );
         }

@@ -9,7 +9,8 @@ const RECIPROCAL_PI: f32 = 0.3183098861837907;
 struct PointLight {
     // xyz position, w cutoff distance (Three `distance`; 0 = infinite)
     position: vec4f,
-    // rgb color × intensity, w decay exponent
+    // rgb color × intensity, w decay exponent (negative: a point flash whose light
+    // does not wrap past the terminator)
     color: vec4f,
 }
 

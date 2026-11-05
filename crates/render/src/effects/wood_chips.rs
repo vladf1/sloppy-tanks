@@ -150,10 +150,10 @@ const HOUSE_BURST_DUST: (u32, f32) = (0x7d7366, 0.5);
 /// A shell in a fallen cottage's pile throws this many pieces and up to this many
 /// more, the first few lengths of board, out (m/s) and up (m/s) as
 /// [`between`] spans.
-const RUBBLE_PIECES: [usize; 2] = [10, 5];
-const RUBBLE_BOARDS: usize = 3;
-const RUBBLE_SPEED: [f64; 2] = [0.6, 2.4];
-const RUBBLE_LIFT: [f64; 2] = [2.0, 3.5];
+const RUBBLE_PIECES: [usize; 2] = [14, 6];
+const RUBBLE_BOARDS: usize = 5;
+const RUBBLE_SPEED: [f64; 2] = [0.8, 2.6];
+const RUBBLE_LIFT: [f64; 2] = [3.0, 3.5];
 /// Plaster and lath out of a collapsing cottage's walls, dulled by the fall.
 const HOUSE_PLASTER: [u32; 2] = [0xa99d89, 0x857a69];
 const SHINGLE: Cut = Cut {
@@ -563,10 +563,12 @@ impl WoodChips {
             let shaded = shade(color, 0.66 + random.next_f64() * 0.22);
             let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * HOUSE_BURST_DUST.1);
             let out = heading(random);
-            let reach = random.next_f64() * 0.35;
+            // Burst up out of the pile round the hit, so they are already in the
+            // air in the frames after it.
+            let reach = random.next_f64() * 0.6;
             let position = DVec3::new(
                 event.x + out[0] * reach,
-                (height + (random.next_f64() - 0.5) * 0.4).max(0.15),
+                (height + random.next_f64() * 0.7).max(0.15),
                 event.z + out[1] * reach,
             );
             // Up more than out, so most land within a couple of metres.

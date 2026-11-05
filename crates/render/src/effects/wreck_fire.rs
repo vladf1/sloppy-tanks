@@ -285,6 +285,7 @@ impl WreckFires {
                     position: burner.position + Vec3::Y * FIRE_LIGHT_HEIGHT,
                     intensity: (FIRE_LIGHT * burner.fire) as f32,
                     color: FIRE_LIGHT_COLOR,
+                    point: false,
                 },
             );
         }

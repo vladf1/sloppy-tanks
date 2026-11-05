@@ -1313,11 +1313,11 @@ fn eave_breaks(design: &HouseDesign, roof: &Roof, holes: &[Vec<Hole>; 4]) -> Vec
 
 /// A breach in an eave wall up under its eave that has not broken the eave (one
 /// of [`EAVE_CUE_SIZE`] shells or more, its top within [`EAVE_CUE_REACH`] of the
-/// wall's): the smoke out of it has blackened the siding above it up to the
-/// eave, and the blast up the wall knocked the roof's sheets over it loose, one or
-/// two slipped askew down off the eave, their ends lifted. From the gameplay
-/// camera, which sees little of the wall under the eave, the slipped sheets break
-/// the eave's line over the breached side.
+/// wall's): the blast up the wall knocked the roof's sheets over it loose, one or
+/// two slipped askew down off the eave, their ends lifted, each leaving a dark
+/// slot with the battens showing where it lay. From the gameplay camera, which
+/// sees little of the wall under the eave, they break the eave's line over the
+/// breached side. (A soot stain up the siding to the eave read as a black hole.)
 fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks: &[EaveBreak]) {
     let frames = wall_frames(design.w, design.d);
     for index in [2, 3] {
@@ -1336,7 +1336,7 @@ fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks
             })
             .map(|hole| (hole.bounds, hole.size, hole.seed))
             .collect();
-        for ([u0, _, u1, y1], size, seed) in cues {
+        for ([u0, _, u1, _], size, seed) in cues {
             let (a, b) = (along(u0), along(u1));
             let (z0, z1) = (a.min(b), a.max(b));
             if breaks
@@ -1346,52 +1346,69 @@ fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks
                 continue;
             }
             let mut rng = Random::new(seed + 29.0);
-            let (mid, width) = ((u0 + u1) / 2.0, u1 - u0);
-            let top = roof.wall - 0.02;
-            if top > y1 + 0.1 {
-                let at = |u: f64, y: f64| frame.transform_point3(DVec3::new(u, y, 0.008));
-                let spread = rng.range(0.55, 0.7);
-                parts.kit(HousePart::wall(index)).quad(
-                    Surface::Soot,
-                    [
-                        at(mid - width * 0.4, y1),
-                        at(mid + width * 0.4, y1),
-                        at(mid + width * spread, top),
-                        at(mid - width * spread, top),
-                    ],
-                    frame.transform_vector3(DVec3::Z),
-                );
-            }
             let count = if size >= 1.5 * EAVE_CUE_SIZE { 2 } else { 1 };
             let kit = parts.kit(piece);
             for k in 0..count {
                 let z = (z0 + (z1 - z0) * (0.35 + 0.3 * f64::from(k)) + rng.range(-0.12, 0.12))
                     .clamp(-roof.rake_z + 0.4, roof.rake_z - 0.4);
                 let length = rng.range(0.7, 1.0);
-                let x = roof.eave_x - length / 2.0 + rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
+                let slip = rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
+                let x = roof.eave_x - length / 2.0 + slip;
                 let y = roof.top(side * x.min(roof.eave_x - 0.05), z) + 0.03;
                 let tilt = roof.pitch.atan() - rng.range(0.05, 0.12);
                 kit.block(
                     Surface::Roof,
                     DVec3::new(length, 0.022, SHEET_WIDTH),
-                    DMat4::from_translation(DVec3::new(side * x, y, z))
+                    DMat4::from_translation(DVec3::new(side * x, y + 0.02, z))
                         * DMat4::from_rotation_y(
                             rng.range(0.15, 0.32) * if k == 0 { 1.0 } else { -1.0 },
                         )
                         * DMat4::from_rotation_z(-side * tilt),
                 );
+                // Where it lay: the dark slot it left in the covering, and the
+                // battens across it.
+                let half = SHEET_WIDTH / 2.0;
+                let at = |run: f64, along: f64| {
+                    DVec3::new(side * run, roof.top(side * run, along) + SLOT_LIFT, along)
+                };
+                // Only the strip it slid down off shows; the sheet still covers
+                // the rest, askew.
+                let (low, high) = (roof.eave_x - length - 0.02, roof.eave_x - length + slip);
+                kit.quad(
+                    Surface::Dark,
+                    [
+                        at(low, z - half),
+                        at(high, z - half),
+                        at(high, z + half),
+                        at(low, z + half),
+                    ],
+                    DVec3::new(side * roof.pitch, 1.0, 0.0).normalize(),
+                );
+                let mut run = low + 0.08;
+                while run < high - 0.03 {
+                    kit.block(
+                        Surface::Wood,
+                        DVec3::new(0.05, 0.025, SHEET_WIDTH * 0.96),
+                        DMat4::from_translation(at(run, z) + DVec3::Y * 0.012)
+                            * DMat4::from_rotation_z(-side * roof.pitch.atan()),
+                    );
+                    run += BATTEN_SPACING;
+                }
             }
         }
     }
 }
 
 /// How many shells a breach under the eave must have taken, and how near the wall's
-/// top it must reach (m), to blacken the siding over it and knock sheets loose; how
+/// top it must reach (m), to knock sheets loose; how
 /// far (m) such a sheet has slipped down past the eave, and its width.
 const EAVE_CUE_SIZE: f64 = 2.0;
 const EAVE_CUE_REACH: f64 = 1.4;
 const SHEET_SLIP: (f64, f64) = (0.22, 0.38);
 const SHEET_WIDTH: f64 = 0.44;
+/// How far (m) over the deck the slot a slipped sheet left is drawn: over the
+/// covering's seams, so they do not run on through it.
+const SLOT_LIFT: f64 = 0.035;
 
 /// The torn edges of a broken eave section ([`EaveBreak`]), hidden inside the deck
 /// while it lies flush: along each of its lines from ridge to eave the cut through

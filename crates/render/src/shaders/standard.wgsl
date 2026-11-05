@@ -289,8 +289,8 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // With the atmosphere on, fire lights a wide, soft pool rather than a hot spot
         // under itself: a gentler falloff than Three's inverse square (the cutoff
         // window still ends it).
-        let decay = vec4f(lights[0].color.w, lights[1].color.w, lights[2].color.w, lights[3].color.w)
-            * select(1.0, FIRE_POOL_DECAY, atmosphere_on());
+        let signed_decay = vec4f(lights[0].color.w, lights[1].color.w, lights[2].color.w, lights[3].color.w);
+        let decay = abs(signed_decay) * select(1.0, FIRE_POOL_DECAY, atmosphere_on());
         let span = dx * dx + dy * dy + dz * dz;
         // Past the cutoff the attenuation window is exactly zero: the rest runs only
         // where some light reaches.
@@ -327,7 +327,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                 // terminator, so the ground and the sides of hulls and walls around a
                 // blast glow rather than only the faces square to it.
                 let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), vec4f(0.0), vec4f(1.0)) - clamp(facing, vec4f(0.0), vec4f(1.0));
-                wrap_scale = max(wrapped, vec4f(0.0)) * scale;
+                wrap_scale = max(wrapped, vec4f(0.0)) * scale * select(vec4f(1.0), vec4f(0.0), signed_decay < vec4f(0.0));
                 // Amber light on green grass multiplies to an acid yellow-green blotch:
                 // the surface lends firelight only part of its own hue, so the pool reads
                 // as an orange glow on any ground.
