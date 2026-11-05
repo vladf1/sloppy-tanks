@@ -18,7 +18,6 @@ use sloppy_core::sim::{CoverKind, SimEvent, SimEventType};
 
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
-use super::walls::HouseBox;
 use crate::color::hex_to_linear;
 
 pub const MAX_WOOD_CHIPS: usize = 512;
@@ -168,28 +167,16 @@ const SIDING_STUDS: usize = 2;
 const PLASTER_DROP: f64 = 0.45;
 const SIDING_CONE: f64 = 1.4;
 const SIDING_SPEED: [f64; 2] = [1.2, 4.5];
-/// Seconds after a cottage gives way when its walls burst: once they have begun
-/// to buckle, not while it still stands whole. Cottages collapsing at once that
-/// wait for theirs at most.
-const HOUSE_BURST_DELAY: f64 = 0.3;
-const MAX_COLLAPSING: usize = 4;
-/// A collapsing cottage blows this many pieces out of its walls, this fast (m/s).
-const HOUSE_BURST_PIECES: usize = 40;
-/// The first of them are shingles shed off the eaves as the roof breaks up, the
-/// next heavy chunks of wall: siding still nailed to a scrap of sheathing.
-const HOUSE_BURST_SHINGLES: usize = 10;
-const HOUSE_BURST_CHUNKS: usize = 6;
+/// A heavy chunk of wall: siding still nailed to a scrap of sheathing.
 const WALL_CHUNK: Cut = Cut {
     length: [0.6, 0.5],
     width: [0.3, 0.2],
     thickness: [0.06, 0.03],
     shape: Shape::Board,
 };
-/// How far a collapse's flying pieces are dulled toward its dust, so they read
-/// as dusty wood and plaster in the cloud rather than bright paint chips.
-const HOUSE_BURST_DUST: (u32, f32) = (0x7d7366, 0.4);
-/// How far a pile hit's pieces are dulled toward that dust: they come off the
-/// pile already dusty, but still in their own paint.
+/// A fallen cottage's dust, and how far a pile hit's pieces are dulled toward it:
+/// they come off the pile already dusty, but still in their own paint.
+const RUBBLE_DUST: u32 = 0x7d7366;
 const RUBBLE_DUST_BLEND: f32 = 0.25;
 /// A shell in a fallen cottage's pile throws this many pieces and up to this many
 /// more, the first few lengths of board, out (m/s) and up (m/s) as
@@ -198,14 +185,8 @@ const RUBBLE_PIECES: [usize; 2] = [22, 8];
 const RUBBLE_BOARDS: usize = 8;
 const RUBBLE_SPEED: [f64; 2] = [1.2, 2.2];
 const RUBBLE_LIFT: [f64; 2] = [3.2, 3.0];
-/// Plaster and lath out of a collapsing cottage's walls, dulled by the fall.
+/// Plaster and lath out of a fallen cottage's walls, dulled by the fall.
 const HOUSE_PLASTER: [u32; 2] = [0xa99d89, 0x857a69];
-const SHINGLE: Cut = Cut {
-    length: [0.22, 0.2],
-    width: [0.14, 0.12],
-    thickness: [0.018, 0.01],
-    shape: Shape::Scrap,
-};
 /// A torn-off scrap of roofing sheet, bent where it tore.
 const SHEET_SCRAP: Cut = Cut {
     length: [0.35, 0.45],
@@ -213,7 +194,6 @@ const SHEET_SCRAP: Cut = Cut {
     thickness: [0.01, 0.0],
     shape: Shape::Scrap,
 };
-const HOUSE_BURST_SPEED: [f64; 2] = [1.0, 4.0];
 /// Plaster and lath from inside the wall: lumps thicker than wood chips, grey with
 /// the lath's dirt in them, so the spill under a wall is not paper-white.
 const PLASTER_LUMP: Cut = Cut {
@@ -615,9 +595,6 @@ pub struct WoodChips {
     pub straw_records: PoolBuffer,
     /// Pieces were added or removed since the records were written.
     changed: bool,
-    /// Collapsing cottages whose walls have yet to burst, and the seconds until
-    /// they do.
-    collapsing: Vec<(HouseBox, f64)>,
 }
 
 impl Default for WoodChips {
@@ -634,7 +611,6 @@ impl Default for WoodChips {
             scrap_records: PoolBuffer::new(MAX_SCRAPS),
             straw_records: PoolBuffer::new(MAX_STRAW),
             changed: false,
-            collapsing: Vec::with_capacity(MAX_COLLAPSING),
         }
     }
 }
@@ -660,7 +636,6 @@ impl WoodChips {
             records.clear();
         }
         self.changed = false;
-        self.collapsing.clear();
     }
 
     /// Live wood pieces (of every shape) and straw fibres.
@@ -810,7 +785,7 @@ impl WoodChips {
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let dust = hex_to_linear(HOUSE_BURST_DUST.0);
+            let dust = hex_to_linear(RUBBLE_DUST);
             let shaded = shade(color, 0.66 + random.next_f64() * 0.22);
             let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * RUBBLE_DUST_BLEND);
             let out = heading(random);
@@ -825,92 +800,6 @@ impl WoodChips {
             // Up more than out, so most land within a couple of metres.
             let speed = between(random, RUBBLE_SPEED);
             let velocity = DVec3::new(out[0] * speed, between(random, RUBBLE_LIFT), out[1] * speed);
-            let piece = wood_piece(random, cut, position, velocity, color);
-            self.add(piece);
-        }
-        self.changed = true;
-    }
-
-    /// A cottage giving way: once its walls have started to buckle
-    /// ([`HOUSE_BURST_DELAY`]), they burst outward.
-    pub fn house_burst(&mut self, house: HouseBox) {
-        if self.collapsing.len() < MAX_COLLAPSING {
-            self.collapsing.push((house, HOUSE_BURST_DELAY));
-        }
-    }
-
-    /// A buckling cottage's walls bursting: lengths of painted siding and trim,
-    /// chunks of wall, splinters of framing, lumps of plaster and a scatter of
-    /// roofing off the eaves thrown out round its footprint.
-    fn burst_house(&mut self, house: HouseBox, random: &mut CosmeticRandom) {
-        let [paint, trim, roof] = house.paints;
-        let center = house.center.as_dvec3();
-        let (half_w, half_d) = (f64::from(house.half_w), f64::from(house.half_d));
-        let wall_top = f64::from(house.height) * 0.6;
-        for i in 0..HOUSE_BURST_PIECES {
-            // Round the four walls in turn, each piece from its own place along one.
-            let side = i % 4;
-            let (out, half, reach) = match side {
-                0 => ([1.0, 0.0], half_d, half_w),
-                1 => ([-1.0, 0.0], half_d, half_w),
-                2 => ([0.0, 1.0], half_w, half_d),
-                _ => ([0.0, -1.0], half_w, half_d),
-            };
-            let along = turned(out, FRAC_PI_2);
-            let offset = (random.next_f64() * 2.0 - 1.0) * half * 0.9;
-            let roll = random.next_f64();
-            let eave = i < HOUSE_BURST_SHINGLES;
-            let chunk = !eave && i < HOUSE_BURST_SHINGLES + HOUSE_BURST_CHUNKS;
-            let (cut, color) = if eave {
-                (SHINGLE, hex_to_linear(roof))
-            } else if chunk {
-                (WALL_CHUNK, hex_to_linear(paint))
-            } else if roll < 0.35 {
-                (SIDING_BOARD, hex_to_linear(paint))
-            } else if roll < 0.45 {
-                (BOARD, hex_to_linear(trim))
-            } else if roll < 0.75 {
-                (
-                    pick_cut(random, BURST_MIX),
-                    wood_color(random, BURST_MIX, paint),
-                )
-            } else {
-                let [pale, dark] = HOUSE_PLASTER.map(hex_to_linear);
-                let k = random.next_f64() as f32;
-                (
-                    PLASTER_LUMP,
-                    [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
-                )
-            };
-            let dust = hex_to_linear(HOUSE_BURST_DUST.0);
-            // Roofing keeps more of its paint, so a flying scrap reads as roof,
-            // not as a dark chip.
-            let (light, dusty) = if eave {
-                (0.8, HOUSE_BURST_DUST.1 * 0.5)
-            } else {
-                (0.66, HOUSE_BURST_DUST.1)
-            };
-            let shaded = shade(color, light + random.next_f64() * 0.2);
-            let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * dusty);
-            // Shingles slide off the eaves, over the walls; the rest burst out
-            // of the walls themselves.
-            let (height, beyond) = if eave {
-                (wall_top + 0.1 + random.next_f64() * 0.3, 0.45)
-            } else {
-                (0.5 + random.next_f64() * (wall_top - 0.5), 0.15)
-            };
-            let position = DVec3::new(
-                center.x + out[0] * (reach + beyond) + along[0] * offset,
-                height,
-                center.z + out[1] * (reach + beyond) + along[1] * offset,
-            );
-            let direction = turned(out, (random.next_f64() - 0.5) * 1.2);
-            let speed = between(random, HOUSE_BURST_SPEED);
-            let velocity = DVec3::new(
-                direction[0] * speed,
-                0.5 + random.next_f64() * 2.5,
-                direction[1] * speed,
-            );
             let piece = wood_piece(random, cut, position, velocity, color);
             self.add(piece);
         }
@@ -1149,16 +1038,6 @@ impl WoodChips {
 
     /// Advance every piece and rewrite the records when anything moved.
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
-        let mut k = 0;
-        while k < self.collapsing.len() {
-            self.collapsing[k].1 -= dt;
-            if self.collapsing[k].1 <= 0.0 {
-                let (house, _) = self.collapsing.swap_remove(k);
-                self.burst_house(house, random);
-            } else {
-                k += 1;
-            }
-        }
         let step = dt.min(MAX_STEP);
         let mut moved = self.changed;
         for pieces in [
@@ -1526,18 +1405,6 @@ mod tests {
                 / pieces.len() as f64
         };
         assert!(mean_reach(&many.lumps) < mean_reach(&many.boards));
-        let house = HouseBox {
-            center: Vec3::ZERO,
-            half_w: 2.5,
-            half_d: 3.0,
-            height: 4.6,
-            paints: [0xe8dcc0, 0xe6e0d4, 0x82996a],
-        };
-        let before = chips.len();
-        chips.house_burst(house);
-        assert_eq!(chips.len(), before);
-        chips.update(HOUSE_BURST_DELAY + 0.01, &mut random);
-        assert_eq!(chips.len(), before + HOUSE_BURST_PIECES);
     }
 
     #[test]

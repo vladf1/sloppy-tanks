@@ -63,19 +63,6 @@ struct WallBox {
     color: u32,
     /// A cottage's trim paint; the wall's color on other cover.
     trim: u32,
-    /// A cottage's roof paint; the wall's color on other cover.
-    roof: u32,
-}
-
-/// A standing cottage's box and paints, for the boards its collapse blows out.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct HouseBox {
-    pub center: Vec3,
-    pub half_w: f32,
-    pub half_d: f32,
-    pub height: f32,
-    /// Siding, trim and roof paint, sRGB hex.
-    pub paints: [u32; 3],
 }
 
 /// Where a shell struck a wall: the point on its face, the face's outward normal
@@ -343,7 +330,6 @@ impl Walls {
                     marked: false,
                     color: cover.color,
                     trim: cover.color,
-                    roof: cover.color,
                 };
                 self.fallen.push((box_, now + FALLEN_HOLD));
             }
@@ -375,15 +361,15 @@ impl Walls {
                 CoverKind::Cargo | CoverKind::Timber => None,
                 _ => continue,
             };
-            let (color, trim, roof) = if cover.kind == CoverKind::House {
+            let (color, trim) = if cover.kind == CoverKind::House {
                 let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
                 let walls = match design.style.walls {
                     WallFinish::Clapboard => design.style.siding,
                     WallFinish::Brick => BRICK,
                 };
-                (walls, design.style.trim, design.style.roof)
+                (walls, design.style.trim)
             } else {
-                (cover.color, cover.color, cover.color)
+                (cover.color, cover.color)
             };
             self.boxes.push(WallBox {
                 x: cover.x,
@@ -395,7 +381,6 @@ impl Walls {
                 marked: cover.kind == CoverKind::Container,
                 color,
                 trim,
-                roof,
             });
         }
     }
@@ -419,24 +404,6 @@ impl Walls {
         self.ruins.iter().any(|&[cx, cz, half_w, half_d]| {
             (x - cx).abs() <= half_w + reach && (z - cz).abs() <= half_d + reach
         })
-    }
-
-    /// The standing cottage whose footprint holds `(x, z)`, as of the last sync.
-    pub fn house_at(&self, x: f64, z: f64) -> Option<HouseBox> {
-        self.boxes
-            .iter()
-            .find(|wall| {
-                wall.material == Some(WallMaterial::Siding)
-                    && (x - wall.x).abs() <= wall.half_w
-                    && (z - wall.z).abs() <= wall.half_d
-            })
-            .map(|wall| HouseBox {
-                center: Vec3::new(wall.x as f32, 0.0, wall.z as f32),
-                half_w: wall.half_w as f32,
-                half_d: wall.half_d as f32,
-                height: wall.height as f32,
-                paints: [wall.color, wall.trim, wall.roof],
-            })
     }
 
     /// The hard wall a shell struck at `(x, y, z)`: steel or stone, the nearest face
@@ -634,7 +601,6 @@ mod tests {
                 marked: true,
                 color: 0x2f8a6a,
                 trim: 0x2f8a6a,
-                roof: 0x2f8a6a,
             }],
             ..Walls::default()
         }
@@ -757,7 +723,6 @@ mod tests {
             marked: true,
             color: 0x808080,
             trim: 0x808080,
-            roof: 0x808080,
         };
         let mut walls = Walls {
             boxes: vec![wall(0.0, 1.0), wall(1200.0, 0.0)],
@@ -793,7 +758,6 @@ mod tests {
                 marked: true,
                 color: 0x808080,
                 trim: 0x808080,
-                roof: 0x808080,
             });
         }
         // Puffs of every size, many beside or inside the boxes.
