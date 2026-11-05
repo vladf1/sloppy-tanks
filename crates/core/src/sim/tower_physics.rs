@@ -65,17 +65,39 @@ const LANDING_SPIN: f32 = 0.5;
 /// hard deadline: by about 20 s only the footings and their stubs are left.
 const PART_LIFE: f64 = 16.0;
 const PART_DEADLINE: f64 = 24.0;
-/// A landed piece slower than this (m/s and rad/s) for [`REST_HOLD`] seconds has come to
-/// rest: it can no longer turn, so it stays as it lies until it sinks (it can still be
-/// shoved along or drop if what it lies on goes).
+/// A falling frame slower than this (m/s and rad/s) for [`REST_HOLD`] seconds is jammed
+/// where it lies.
 const REST_SPEED: f32 = 0.3;
 const REST_SPIN: f32 = 0.6;
 const REST_HOLD: f64 = 0.2;
+/// A landed piece that over [`REST_WINDOW`] seconds has moved less than [`REST_DRIFT`]
+/// (m) and turned less than [`REST_TURN`] (rad) has come to rest: it can no longer turn,
+/// so it stays as it lies until it sinks. Judged by where it got to rather than by its
+/// speed at each tick, which on some machines never stays low for long on a piece
+/// propped on the pile or sliding slowly down it.
+const REST_WINDOW: f64 = 0.3;
+const REST_DRIFT: f32 = 0.06;
+const REST_TURN: f32 = 0.06;
+/// A landed piece still sliding or rocking this long (s) after its landing (shoved
+/// along by the pile, levered up by a piece landing on it) drags as if wedged in the
+/// pile, with this linear and angular damping, and rests once it is slower than this
+/// (m/s and rad/s): slowed rather than stopped dead, and a piece still falling or
+/// tipping over is faster, so it is never frozen part way down.
+const CREEP_AFTER: f64 = 1.6;
+const CREEP_DAMPING: (f32, f32) = (6.0, 6.0);
+const CREEP_SPEED: f32 = 0.5;
+const CREEP_SPIN: f32 = 0.8;
 /// A landed piece is damped toward rest this long (s) after the landing, so its rocking
 /// is over within about a second.
 const LANDED_SETTLE: f64 = 0.8;
 /// A resting piece's linear and angular damping: struck, it is barely knocked over.
 const RESTED_DAMPING: (f32, f32) = (2.0, 12.0);
+/// How long (s) before a resting piece starts to fade it takes what it holds up along
+/// ([`clear_together`]): time for that to reach up a pile several pieces deep.
+const CLEAR_AHEAD: f64 = 0.25;
+/// A contact whose normal out of a clearing piece points further down than this (its
+/// vertical share) is with a piece it lies on, which it does not take along.
+const BENEATH: f32 = 0.5;
 /// A resting piece's grip on what it lies on.
 const RESTED_FRICTION: f32 = 2.5;
 /// Seconds earlier a resting piece clears for every metre its middle lies up the pile.
@@ -111,6 +133,8 @@ pub struct TowerLanding {
     /// The match time (s) it landed at.
     pub landed_at: f64,
     pub still_since: Option<f64>,
+    /// When its rest window opened, and where its middle was and how it was turned then.
+    pub window: Option<(f64, glam::Vec3, glam::Quat)>,
     pub rested: bool,
 }
 
@@ -855,6 +879,7 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
         // A lone part (a ladder, a brace) rests once it has had time to fall, not while it
         // is still starting to tip.
         let can_rest = landing.landed || (parts.len() == 1 && age > REST_AFTER);
+        let mut just_rested = false;
         if !landing.rested && (can_rest || age > REST_AFTER) {
             let still = body.linvel().length() < REST_SPEED && body.angvel().length() < REST_SPIN;
             match (still, landing.still_since) {
@@ -862,13 +887,22 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                 (true, None) => landing.still_since = Some(elapsed),
                 _ => {}
             }
-            let held = landing
-                .still_since
-                .is_some_and(|since| elapsed - since >= REST_HOLD);
-            // A piece rests only once it has lain still a moment: rested by a deadline
-            // instead, a piece still falling froze where it was (a roof stood propped
-            // on its edge).
-            if can_rest && held {
+            // A window opens where it is, and opens again wherever it has got to once it
+            // has moved or turned too far since.
+            let (at, turn) = (body.center_of_mass(), *body.rotation());
+            let (opened, from, from_turn) = *landing.window.get_or_insert((elapsed, at, turn));
+            let moved = from.distance(at) > REST_DRIFT || from_turn.angle_between(turn) > REST_TURN;
+            if moved {
+                landing.window = Some((elapsed, at, turn));
+            }
+            let lain_still = !moved && elapsed - opened >= REST_WINDOW;
+            let creeping = since_landing > CREEP_AFTER
+                && body.linvel().length() < CREEP_SPEED
+                && body.angvel().length() < CREEP_SPIN;
+            // A piece rests only once it has lain still a moment, or barely moves well
+            // after its landing: rested by a deadline whatever its speed, a piece still
+            // falling froze where it was (a roof stood propped on its edge).
+            if can_rest && (lain_still || creeping) {
                 // It stops, no longer turns, and grips what it lies on: the pile lies
                 // still. It clears from the top, so nothing it lies on goes from
                 // under it first.
@@ -881,11 +915,7 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                 for collider in colliders {
                     simulation.world.colliders[collider].set_friction(RESTED_FRICTION);
                 }
-                // The pile clears from the top down, so nothing fades through what
-                // lies over it.
-                let height = f64::from(body.center_of_mass().y).max(0.0);
-                fragment.life = (fragment.life - height * CLEAR_TOP_FIRST)
-                    .max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
+                just_rested = true;
             }
         }
         // A resting piece loses any upward speed each tick rather than having its height
@@ -900,6 +930,8 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
         let settled = landing.rested || since_landing > LANDED_SETTLE;
         let (linear, angular) = if landing.rested {
             RESTED_DAMPING
+        } else if since_landing > CREEP_AFTER {
+            CREEP_DAMPING
         } else {
             house_debris_damping(if settled { f64::INFINITY } else { age })
         };
@@ -907,7 +939,92 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
         }
+        if just_rested {
+            clear_in_turn(simulation, index);
+        }
         index += 1;
+    }
+    clear_together(simulation);
+}
+
+/// How high (m) a body's middle lies.
+fn middle_height(simulation: &Simulation, body: RigidBodyHandle) -> f64 {
+    f64::from(simulation.world.bodies[body].center_of_mass().y).max(0.0)
+}
+
+/// Time a piece of a tower's ruin that has just come to rest to clear in turn: the
+/// pile clears from the top down, so nothing fades through what lies over it. The
+/// whole ruin keeps one clock (the earliest of its resting pieces'), whenever each
+/// piece came loose.
+fn clear_in_turn(simulation: &mut Simulation, index: usize) {
+    let fragment = &simulation.fragments[index];
+    let tower = fragment.tower_id;
+    // When a piece lying on the ground would clear.
+    let ground = simulation
+        .fragments
+        .iter()
+        .enumerate()
+        .filter(|&(other, piece)| {
+            other != index
+                && piece.tower_id == tower
+                && piece.life > DEBRIS_CLEANUP_SECONDS
+                && piece.tower_landing.is_some_and(|landing| landing.rested)
+        })
+        .map(|(_, piece)| piece.life + middle_height(simulation, piece.body) * CLEAR_TOP_FIRST)
+        .fold(fragment.life, f64::min);
+    let height = middle_height(simulation, fragment.body);
+    simulation.fragments[index].life =
+        (ground - height * CLEAR_TOP_FIRST).max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
+}
+
+/// A resting piece of a tower's ruin about to clear takes what it holds up along: each
+/// resting piece of the same ruin touching it, other than one it lies on, clears from
+/// then on as it does, and so on up the pile, so nothing drops as what held it goes (a
+/// piece leaning on a taller one, which the order by height clears first). Done
+/// [`CLEAR_AHEAD`] before it starts to fade, while it still touches them: a fading piece
+/// passes through everything.
+fn clear_together(simulation: &mut Simulation) {
+    let rested = |piece: &Fragment| piece.tower_landing.is_some_and(|landing| landing.rested);
+    let mut along: Vec<(usize, f64)> = Vec::new();
+    for fragment in &simulation.fragments {
+        if fragment.tower_id.is_none()
+            || !rested(fragment)
+            || fragment.life > DEBRIS_CLEANUP_SECONDS + CLEAR_AHEAD
+        {
+            continue;
+        }
+        for &collider in simulation.world.bodies[fragment.body].colliders() {
+            for pair in simulation.world.contact_pairs_with(collider) {
+                // The contact normals out of this piece: one pointing well down is a
+                // piece it lies on.
+                let (other, out) = if pair.collider1 == collider {
+                    (pair.collider2, 1.0)
+                } else {
+                    (pair.collider1, -1.0)
+                };
+                let holds = pair.has_any_active_contact()
+                    && pair.manifolds().iter().any(|manifold| {
+                    !manifold.points.is_empty() && out * manifold.data.normal.y > -BENEATH
+                });
+                if !holds {
+                    continue;
+                }
+                let Some(body) = simulation.world.colliders.get(other).and_then(|other| other.parent()) else {
+                    continue;
+                };
+                let Some(index) = simulation.fragments.iter().position(|piece| piece.body == body) else {
+                    continue;
+                };
+                let piece = &simulation.fragments[index];
+                if piece.tower_id == fragment.tower_id && rested(piece) && piece.life > fragment.life {
+                    along.push((index, fragment.life));
+                }
+            }
+        }
+    }
+    for (index, life) in along {
+        let piece = &mut simulation.fragments[index];
+        piece.life = piece.life.min(life);
     }
 }
 

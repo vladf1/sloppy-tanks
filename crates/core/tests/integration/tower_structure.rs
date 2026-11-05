@@ -15,7 +15,8 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::tower_physics::tower_part_box;
 use sloppy_core::sim::tower_structure::{
-    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PieceLook, ROOF, TowerPartKind, tower_structure,
+    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, ROOF, TowerPartKind,
+    tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -23,13 +24,19 @@ use support::{clear_arena, idle, place_tank};
 /// A watchtower alone at (24.75, 0.75), a navigation cell's middle, the human parked
 /// far off.
 fn lone_tower() -> (Simulation, usize) {
+    lone_tower_at(0.0)
+}
+
+/// [`lone_tower`] moved `shift` (m) along a diagonal: a fraction of a millimetre
+/// changes every rounding in its fall as another machine's maths does.
+fn lone_tower_at(shift: f64) -> (Simulation, usize) {
     let mut s = Simulation::with_seed(731.0);
     s.start();
     let human = s.human_index().expect("a human tank");
     clear_arena(&mut s, &[human]);
     place_tank(&mut s, 0, -40.0, -40.0, None);
     s.tanks[0].protection = 999.0;
-    let tower = s.add_cover(&CoverDef::tower(24.75, 0.75));
+    let tower = s.add_cover(&CoverDef::tower(24.75 + shift, 0.75 - 0.6 * shift));
     s.nav.rebuild(&s.covers, None);
     s.world.step();
     (s, tower)
@@ -616,13 +623,31 @@ fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
     assert!(mirror.fragments.is_empty(), "nothing falls in a mirror");
 }
 
+/// How far (m) a resting piece may still shift as the pieces it is wedged among press
+/// apart or the load on it clears: centimetres, against the metres a sliding or flung
+/// piece goes.
+const SETTLED_DRIFT: f32 = 0.1;
+
+/// Shifts (m) of the tower: a fraction of a millimetre changes every rounding in its
+/// fall, as another machine's maths does (Linux x86 left a piece moving that macOS let
+/// rest). The first four once left a piece moving here too: a railing levered up by
+/// the pile, a piece rocking in place, a piece left standing as what held it cleared.
+const SETTLING_SHIFTS: [f64; 8] = [
+    0.0, 0.002_96, 0.003_33, 0.006_29, 0.0019, 0.0047, 0.0083, 0.0113,
+];
+
 /// A landed piece comes to rest within a moment of the landing, and then stays as it
 /// lies until it clears: it neither turns (stands up, rolls over, rights itself) nor
 /// slides nor rises.
 #[test]
 fn settled_pieces_stay_as_they_lie() {
-    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
-        let (mut s, tower) = lone_tower();
+    for (corner, &leg, shift) in SETTLING_SHIFTS.iter().flat_map(|&shift| {
+        LOWER_LEGS
+            .iter()
+            .enumerate()
+            .map(move |(c, l)| (c, l, shift))
+    }) {
+        let (mut s, tower) = lone_tower_at(shift);
         let id = s.covers[tower].id;
         s.break_tower_parts(
             tower,
@@ -650,7 +675,7 @@ fn settled_pieces_stay_as_they_lie() {
                 let since = s.elapsed - landing.landed_at;
                 assert!(
                     !landing.landed || landing.rested || since < LANDED_STILL,
-                    "corner {corner}: a piece still moving {since} s after it landed"
+                    "corner {corner} shift {shift}: a piece still moving {since} s after it landed"
                 );
                 // Once it starts to clear it fades through the pile.
                 if !all_resting || fragment.life <= DEBRIS_CLEANUP_SECONDS {
@@ -662,20 +687,20 @@ fn settled_pieces_stay_as_they_lie() {
                 let at = body.center_of_mass();
                 let first_at = *lay.entry(fragment.id).or_insert(at);
                 assert!(
-                    first_at.distance(at) < 0.05,
-                    "corner {corner}: a resting piece {:?} moved {}",
+                    first_at.distance(at) < SETTLED_DRIFT,
+                    "corner {corner} shift {shift}: a resting piece {:?} moved {}",
                     fragment.tower_parts,
                     first_at.distance(at)
                 );
                 assert!(
                     first.angle_between(turn) < 0.03,
-                    "corner {corner}: a resting piece {:?} turned {}",
+                    "corner {corner} shift {shift}: a resting piece {:?} turned {}",
                     fragment.tower_parts,
                     first.angle_between(turn)
                 );
                 assert!(
-                    y <= first_y + 0.05,
-                    "corner {corner}: a resting piece {:?} rose {}",
+                    y <= first_y + SETTLED_DRIFT,
+                    "corner {corner} shift {shift}: a resting piece {:?} rose {}",
                     fragment.tower_parts,
                     y - first_y
                 );
@@ -683,11 +708,11 @@ fn settled_pieces_stay_as_they_lie() {
         }
         assert!(
             came_to_rest.is_some_and(|at| at < 5.0),
-            "corner {corner}: the whole pile lay still by 5 s ({came_to_rest:?})"
+            "corner {corner} shift {shift}: the whole pile lay still by 5 s ({came_to_rest:?})"
         );
         assert!(
             rested.len() > 10,
-            "corner {corner}: the pieces came to rest ({})",
+            "corner {corner} shift {shift}: the pieces came to rest ({})",
             rested.len()
         );
     }
@@ -695,6 +720,62 @@ fn settled_pieces_stay_as_they_lie() {
 
 /// A landing breaks members, not joints: the legs snap part way along and the cabin
 /// comes apart into its walls, door and shutters, within the debris budget.
+/// Once a falling roof lands crumpled it stays the crumpled piece through the rest of
+/// the fall, its rest and its clearing: no body ever carries the whole, uncrumpled
+/// roof again, and the piece does not come back once it has cleared.
+#[test]
+fn a_crumpled_roof_never_turns_whole_again() {
+    let structure = tower_structure();
+    let crumpled = (PART_COUNT..PART_COUNT + 64)
+        .find(|&index| structure.look(index) == Some(PieceLook::Roof))
+        .expect("the roof has a landed piece");
+    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
+        let (mut s, tower) = lone_tower();
+        let id = s.covers[tower].id;
+        s.break_tower_parts(
+            tower,
+            PartSet::from_indices([leg]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
+        let (mut landed_at, mut cleared_at) = (None, None);
+        for _ in 0..(40.0 / STEP) as usize {
+            idle(&mut s);
+            let carried = |index: usize| {
+                s.fragments
+                    .iter()
+                    .filter(|f| f.tower_id == Some(id))
+                    .any(|f| f.tower_parts.is_some_and(|parts| parts.contains(index)))
+            };
+            let (whole, piece) = (carried(ROOF), carried(crumpled));
+            if piece {
+                assert!(
+                    cleared_at.is_none(),
+                    "corner {corner}: the crumpled roof came back at {} s",
+                    s.elapsed
+                );
+                landed_at.get_or_insert(s.elapsed);
+            } else if landed_at.is_some() {
+                cleared_at.get_or_insert(s.elapsed);
+            }
+            assert!(
+                !(whole && landed_at.is_some()),
+                "corner {corner}: the whole roof stood again at {} s",
+                s.elapsed
+            );
+        }
+        assert!(
+            landed_at.is_some(),
+            "corner {corner}: the roof landed crumpled"
+        );
+        assert!(
+            cleared_at.is_some(),
+            "corner {corner}: the crumpled roof cleared"
+        );
+    }
+}
+
 #[test]
 fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
     let (mut s, tower) = lone_tower();

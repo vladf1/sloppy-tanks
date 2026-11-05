@@ -240,6 +240,108 @@ fn a_toppled_towers_footings_wear_concrete_and_timber() {
     );
 }
 
+/// The triangles of `node` in its own coordinates: corners and normals.
+fn world_triangles(
+    node: &Node,
+    parent: glam::DMat4,
+    out: &mut Vec<([glam::DVec3; 3], glam::DVec3)>,
+) {
+    let world = parent * node.local_matrix();
+    if let Some(drawable) = &node.drawable {
+        let mesh = &drawable.mesh;
+        let point = |i: usize| {
+            world.transform_point3(glam::DVec3::from_array(mesh.positions[i].map(f64::from)))
+        };
+        let triangles: Vec<[usize; 3]> = match &mesh.indices {
+            Some(indices) => indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|t| t.map(|i| i as usize))
+                .collect(),
+            None => (0..mesh.positions.len() / 3)
+                .map(|t| [3 * t, 3 * t + 1, 3 * t + 2])
+                .collect(),
+        };
+        for [a, b, c] in triangles {
+            let corners = [point(a), point(b), point(c)];
+            let face = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+            let normal =
+                world.transform_vector3(glam::DVec3::from_array(mesh.normals[a].map(f64::from)));
+            let face = if face.dot(normal) < 0.0 { -face } else { face };
+            out.push((corners, face));
+        }
+    }
+    for child in &node.children {
+        world_triangles(child, world, out);
+    }
+}
+
+/// A landed roof mostly comes to lie overturned, so what it shows from beneath carries
+/// its damage too: boarding over most of its plan that follows the slopes, creases and
+/// dents rather than one flat deck or an open shell.
+#[test]
+fn a_landed_roofs_underside_is_as_crumpled_as_its_sheet() {
+    use crate::sim::tower_structure::{PART_COUNT, PieceLook};
+    let structure = tower_structure();
+    let roof = (PART_COUNT..PART_COUNT + 64)
+        .find(|&index| structure.look(index) == Some(PieceLook::Roof))
+        .unwrap();
+    let mut triangles = Vec::new();
+    world_triangles(
+        &tower_debris(0xbd864a, &PartSet::from_indices([roof])),
+        glam::DMat4::IDENTITY,
+        &mut triangles,
+    );
+    let beneath: Vec<_> = triangles
+        .iter()
+        .filter(|(_, face)| face.length() > 1e-9 && face.normalize().y < -0.3)
+        .collect();
+    let area: f64 = beneath
+        .iter()
+        .map(|(_, face)| face.length() / 2.0 * -face.normalize().y)
+        .sum();
+    assert!(area > 15.0, "boarding under most of the roof ({area} m²)");
+    // Away from the folds (the east end past the crease, the bent front eave), what
+    // is seen from beneath (the lowest surface over each point) rises from the eaves
+    // to the ridge as the sheet does, rather than lying as one deck at the eave line.
+    let seen = |x: f64, z: f64| {
+        beneath
+            .iter()
+            .filter_map(|(c, _)| {
+                let flat = |p: glam::DVec3| glam::DVec2::new(p.x, p.z);
+                let (a, b, q) = (flat(c[0]), flat(c[1]), flat(c[2]));
+                let at = glam::DVec2::new(x, z);
+                let area = (b - a).perp_dot(q - a);
+                let u = (q - b).perp_dot(at - b) / area;
+                let v = (a - q).perp_dot(at - q) / area;
+                let w = 1.0 - u - v;
+                (u >= 0.0 && v >= 0.0 && w >= 0.0).then(|| u * c[0].y + v * c[1].y + w * c[2].y)
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let heights: Vec<f64> = (0..12)
+        .flat_map(|i| (0..9).map(move |k| (-2.4 + 0.25 * f64::from(i), -1.2 + 0.3 * f64::from(k))))
+        .map(|(x, z)| seen(x, z))
+        .filter(|y| y.is_finite())
+        .collect();
+    let (low, high) = heights
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), &y| {
+            (l.min(y), h.max(y))
+        });
+    assert!(
+        heights.len() > 90,
+        "boarding over the unfolded part ({} of 108 points)",
+        heights.len()
+    );
+    assert!(
+        high - low > 0.8,
+        "the underside follows the slopes ({} m)",
+        high - low
+    );
+}
+
 #[test]
 fn wreck_aging_darkens_over_two_and_a_half_seconds() {
     assert_eq!(wreck_brightness(0.0), 0.8);
