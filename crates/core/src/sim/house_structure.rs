@@ -242,7 +242,7 @@ const PARTITION_AT: f64 = -0.12;
 const PARTITION_DOOR: f64 = 0.45;
 /// How close (m) two parts' boxes are to count as touching.
 const CONTACT: f64 = 0.06;
-/// A gable end is braced by roof parts this near (m) to it.
+/// A gable end or the ridge is braced by roof sheets this near (m) to it.
 const ROOF_BRACE: f64 = 0.15;
 /// An upper storey's wall part is held by a floor strip this near (m) in plan.
 const FLOOR_REACH: f64 = 0.3;
@@ -1394,7 +1394,7 @@ impl HouseStructure {
             PartKind::Gable => {
                 let braced = (0..self.parts.len()).any(|other| {
                     standing(other)
-                        && matches!(self.parts[other].kind, PartKind::Sheet | PartKind::Ridge)
+                        && self.parts[other].kind == PartKind::Sheet
                         && self.touch(index, other, ROOF_BRACE)
                 });
                 let wall_whole = (0..self.parts.len()).all(|other| {
@@ -1403,6 +1403,13 @@ impl HouseStructure {
                 });
                 !braced && !wall_whole
             }
+            // The ridge beam is held in by its rafters: with no roof sheet left on it,
+            // it is a bare beam between the gables, and comes down.
+            PartKind::Ridge => !(0..self.parts.len()).any(|other| {
+                standing(other)
+                    && self.parts[other].kind == PartKind::Sheet
+                    && self.touch(index, other, ROOF_BRACE)
+            }),
             // The inner wall stands braced by the floor over it.
             PartKind::Partition => !(0..self.parts.len()).any(|other| {
                 standing(other)
@@ -1921,6 +1928,22 @@ mod tests {
             let falling = structure.unsupported(&gone);
             assert!(gables(0).iter().all(|&g| falling.contains(g)), "{:?}", design.style.form);
             assert!(gables(1).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+        }
+    }
+
+    #[test]
+    fn the_ridge_comes_down_with_the_roof_sheets_on_it() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            let sheets = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| structure.parts[index].kind == PartKind::Sheet),
+            );
+            let falling = structure.unsupported(&sheets);
+            for (index, part) in structure.parts.iter().enumerate() {
+                if matches!(part.kind, PartKind::Ridge | PartKind::Chimney) {
+                    assert!(falling.contains(index), "{:?}: {:?} {index} stands bare", design.style.form, part.kind);
+                }
+            }
         }
     }
 
