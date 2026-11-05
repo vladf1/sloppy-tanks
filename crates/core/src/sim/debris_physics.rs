@@ -4,6 +4,7 @@ use rapier3d::prelude::{ActiveEvents, ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Serialize};
 
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
+use super::house_physics::{BLAST_HEIGHT, blast_house_debris};
 use super::math::{Point3, Vec2, hypot3};
 use super::physics::{from_vector, vector};
 use super::simulation::Simulation;
@@ -80,12 +81,21 @@ pub fn track_debris_contacts(
     collider.set_contact_force_event_threshold((mass * IMPACT_FORCE_PER_MASS) as f32);
 }
 
+/// A blast on the ground at `origin` throwing the debris round it, a cottage's loose
+/// parts as a blast at [`BLAST_HEIGHT`] breaks and throws them.
+pub fn blast_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, power: f64) {
+    blast_loose_debris(simulation, origin, radius, power);
+    let point = Point3::new(origin.x, BLAST_HEIGHT, origin.z);
+    blast_house_debris(simulation, point, radius, power);
+}
+
+/// [`blast_debris`] on every piece but a cottage's loose parts.
 /// Fixed-size fragment pool + a short movable-cover list; no all-pairs debris work.
 /// Sleeping bodies are deliberately included, and this never consumes combat RNG.
-pub fn blast_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, power: f64) {
+pub fn blast_loose_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, power: f64) {
     for i in 0..simulation.fragments.len() {
         let fragment = &simulation.fragments[i];
-        if fragment.life <= DEBRIS_CLEANUP_SECONDS {
+        if fragment.life <= DEBRIS_CLEANUP_SECONDS || fragment.house_parts.is_some() {
             continue;
         }
         let lever = if fragment.wreck.is_some() {

@@ -607,6 +607,10 @@ fn a_falling_part_striking_a_standing_one_hard_breaks_it() {
         "resting weight breaks nothing"
     );
     // A hard landing: the stub breaks.
+    let body = s.world.colliders[falling].parent().unwrap();
+    for fragment in s.fragments.iter_mut().filter(|f| f.body == body) {
+        fragment.house_velocity = Some(Point3::new(0.0, -12.0, 0.0));
+    }
     crush_house_parts(&mut s, &[contact(1200.0)]);
     assert!(gone(&s, house).contains(stub), "a hard strike breaks it");
 }
@@ -687,5 +691,201 @@ fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
             down.contains(CHIMNEY_PART),
             "{what}: the chimney comes down with the roof"
         );
+    }
+}
+
+/// The cottage's loose bodies: (fragment id, parts, middle, speed).
+fn loose_bodies(s: &Simulation, house: usize) -> Vec<(u32, PartSet, Point3, f64)> {
+    let id = s.covers[house].id;
+    s.fragments
+        .iter()
+        .filter(|f| f.house_id == Some(id) && f.house_parts.is_some())
+        .map(|f| {
+            let body = &s.world.bodies[f.body];
+            let at = body.center_of_mass();
+            (
+                f.id,
+                f.house_parts.unwrap(),
+                Point3::new(at.x.into(), at.y.into(), at.z.into()),
+                body.linvel().length().into(),
+            )
+        })
+        .collect()
+}
+
+/// An eave wall shot out above its footing: the slope over it comes down, lands and
+/// comes to rest. Returns the biggest loose body's fragment id.
+fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let wall: Vec<usize> = (0..layout.parts.len())
+        .filter(|&index| layout.parts[index].wall == Some(2))
+        .collect();
+    s.break_house_parts(house, PartSet::from_indices(wall), None, None);
+    run(s, 8.0);
+    let bodies = loose_bodies(s, house);
+    let (id, parts, at, speed) = *bodies
+        .iter()
+        .max_by_key(|(id, parts, _, _)| (parts.len(), std::cmp::Reverse(*id)))
+        .expect("the slope fell");
+    assert!(
+        parts.len() >= 2,
+        "a section of several parts lies there: {bodies:?}"
+    );
+    assert!(speed < 0.1, "it has come to rest: {speed}");
+    assert!(at.y < 1.5, "on the ground: {at:?}");
+    id
+}
+
+/// A standard shell from 15 m off toward `at`, along whichever axis is clear of the
+/// cottage's remains.
+fn fire_at(s: &mut Simulation, house: usize, at: Point3, weapon_kind: Weapon) {
+    let c = &s.covers[house];
+    let away = Vec2::new(at.x - c.x, at.z - c.z);
+    let length = away.x.hypot(away.z).max(1e-6);
+    let from = Vec2::new(at.x + away.x / length * 15.0, at.z + away.z / length * 15.0);
+    fire(s, from, Vec2::new(at.x, at.z), weapon_kind);
+}
+
+#[test]
+fn a_fallen_roof_section_breaks_under_shells_down_to_debris_that_clears() {
+    let (mut s, house) = lone_cottage();
+    let rng = s.rng.state;
+    let section = fallen_roof(&mut s, house);
+    let (_, parts, at, _) = loose_bodies(&s, house)
+        .into_iter()
+        .find(|body| body.0 == section)
+        .unwrap();
+    let body = s.fragments.iter().find(|f| f.id == section).unwrap().body;
+    assert!(
+        s.world.bodies[body].is_sleeping() || s.world.bodies[body].linvel().length() < 0.05,
+        "it lies still"
+    );
+    // A shell at it: the struck part shatters, the rest breaks into a few pieces that
+    // are thrown a little.
+    s.events.clear();
+    fire_at(&mut s, house, at, Weapon::Standard);
+    let mut burst = false;
+    for _ in 0..90 {
+        idle(&mut s);
+        burst |= s.events.iter().any(|e| e.kind == SimEventType::Explosion);
+    }
+    assert!(burst, "the shell burst on it");
+    assert!(
+        s.fragments.iter().all(|f| f.id != section),
+        "the section broke up"
+    );
+    let pieces: Vec<_> = loose_bodies(&s, house)
+        .into_iter()
+        .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+        .collect();
+    let left: usize = pieces.iter().map(|(_, p, _, _)| p.len()).sum();
+    assert!(left < parts.len(), "the struck part shattered");
+    if parts.len() > 2 {
+        assert!(pieces.len() >= 2, "into pieces: {pieces:?}");
+        assert!(
+            pieces.iter().all(|(_, p, _, _)| p.len() < parts.len()),
+            "smaller ones"
+        );
+    }
+    // Shell after shell at what is left of it: each breaks it down further, until
+    // nothing of it is left.
+    let mut remaining = left;
+    for _ in 0..parts.len() * 3 {
+        let Some((_, _, at, _)) = loose_bodies(&s, house)
+            .into_iter()
+            .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+            .max_by_key(|(id, p, _, _)| (p.len(), std::cmp::Reverse(*id)))
+        else {
+            break;
+        };
+        fire_at(&mut s, house, at, Weapon::Standard);
+        run(&mut s, 1.5);
+        let now: usize = loose_bodies(&s, house)
+            .iter()
+            .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+            .map(|(_, p, _, _)| p.len())
+            .sum();
+        assert!(now <= remaining, "nothing grows back: {remaining} -> {now}");
+        remaining = now;
+    }
+    assert_eq!(remaining, 0, "the section was shot to splinters");
+    assert_eq!(s.rng.state, rng, "no random draw");
+}
+
+#[test]
+fn an_armour_piercing_round_breaks_a_fallen_section_and_flies_on() {
+    let (mut s, house) = lone_cottage();
+    let section = fallen_roof(&mut s, house);
+    let (_, parts, at, _) = loose_bodies(&s, house)
+        .into_iter()
+        .find(|body| body.0 == section)
+        .unwrap();
+    fire_at(&mut s, house, at, Weapon::Piercing);
+    let mut explosions = 0;
+    for _ in 0..90 {
+        s.events.clear();
+        idle(&mut s);
+        explosions += s
+            .events
+            .iter()
+            .filter(|e| e.kind == SimEventType::Explosion)
+            .count();
+    }
+    assert_eq!(explosions, 0, "no burst");
+    assert!(s.fragments.iter().all(|f| f.id != section), "it broke");
+    let left: usize = loose_bodies(&s, house)
+        .iter()
+        .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+        .map(|(_, p, _, _)| p.len())
+        .sum();
+    assert!(
+        left < parts.len(),
+        "it broke where it was struck: {left} of {}",
+        parts.len()
+    );
+}
+
+#[test]
+fn a_levelled_cottage_leaves_no_loose_debris_after_twenty_seconds() {
+    use sloppy_core::sim::SimulationSetup;
+    use sloppy_core::sim::level_rules::single_player_rules;
+    use sloppy_core::sim::stress_test_level::stress_test_level;
+    let village = lone_cottage();
+    let mut stress = Simulation::new(
+        731.0,
+        single_player_rules(stress_test_level()).merged(SimulationSetup::default()),
+    );
+    stress.start();
+    let human = stress.human_index().expect("a human tank");
+    let c = stress
+        .covers
+        .iter()
+        .find(|cover| cover.structure.is_some())
+        .expect("a Stress Grid cottage")
+        .clone();
+    clear_arena(&mut stress, &[human]);
+    place_tank(&mut stress, 0, -40.0, -40.0, None);
+    stress.tanks[0].protection = 999.0;
+    let cottage = stress.add_cover(&CoverDef::house(c.x, c.z, c.w, c.d, c.h, c.color));
+    for (mut s, house) in [village, (stress, cottage)] {
+        let baseline = s.fragments.len();
+        // Levelled from within by a heavy blast at each wall, then shot at as it lies.
+        s.damage_every_house_part(house, 1000.0, None);
+        run(&mut s, 3.0);
+        let mut most = 0;
+        for k in 0..3 {
+            if let Some((_, _, at, _)) = loose_bodies(&s, house).get(k).copied() {
+                fire_at(&mut s, house, at, Weapon::Standard);
+            }
+            run(&mut s, 1.0);
+            most = most.max(s.fragments.len());
+        }
+        assert!(most > baseline, "pieces lay there");
+        run(&mut s, 20.0 - 6.0);
+        assert!(
+            loose_bodies(&s, house).is_empty(),
+            "every loose piece sank away"
+        );
+        assert_eq!(s.fragments.len(), baseline, "and nothing else is left");
     }
 }

@@ -468,6 +468,9 @@ pub struct Fragment {
     pub house_velocity: Option<Point3>,
     /// When it came to rest up on its cottage's remains, while it is shoved off them.
     pub house_wedged: Option<f64>,
+    /// A piece of a body that already broke (on landing or under fire): it lands on
+    /// without breaking up again, and breaks only where it is struck.
+    pub house_broken: bool,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
