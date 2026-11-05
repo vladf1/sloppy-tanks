@@ -458,7 +458,10 @@ pub(super) fn clip_meshes<C: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::house_fracture::{Crack, clip_vertices};
+    use crate::sim::house_fracture::EdgeKind;
+
+    /// Past the wall's top and bottom, where the lines run on straight.
+    const FAR: f64 = 50.0;
 
     /// A wall-sized grid of `columns` × `rows` quads in the plane z = 0.
     fn grid(columns: u32, rows: u32) -> Mesh {
@@ -483,8 +486,8 @@ mod tests {
         mesh
     }
 
-    /// Every triangle clipped through every cell's sides, as shards were cut before
-    /// triangles that cannot reach a cell were passed over.
+    /// Every triangle clipped through every cell's sides, with no triangle passed over
+    /// for being unable to reach a cell.
     fn plain_clip(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) -> Mesh {
         let vertex = |i: u32| Vertex {
             p: widen(mesh.positions[i as usize]),
@@ -518,7 +521,9 @@ mod tests {
             for cell in &region.cells {
                 let mut polygon = triangle.to_vec();
                 for side in cell {
-                    polygon = clip_vertices(&polygon, side, project, mix);
+                    let mut clipped = Vec::new();
+                    clip_vertices_into(&polygon, side, project, mix, &mut clipped);
+                    polygon = clipped;
                     if polygon.len() < 3 {
                         break;
                     }
@@ -531,8 +536,43 @@ mod tests {
         out
     }
 
+    /// The strip between two jagged lines (`s` at heights `t` both share), one
+    /// convex cell per band between those heights.
+    fn strip(left: Option<&[DVec2]>, right: Option<&[DVec2]>) -> ShardRegion {
+        let line = left.or(right).expect("a line");
+        let cells = line
+            .windows(2)
+            .enumerate()
+            .map(|(band, pair)| {
+                let (t0, t1) = (pair[0].y, pair[1].y);
+                let at = |line: &[DVec2]| (line[band].x + line[band + 1].x) / 2.0;
+                let inside = match (left, right) {
+                    (Some(l), Some(r)) => (at(l) + at(r)) / 2.0,
+                    (Some(l), None) => at(l) + 1.0,
+                    (None, Some(r)) => at(r) - 1.0,
+                    (None, None) => 0.0,
+                };
+                let keep = DVec2::new(inside, (t0 + t1) / 2.0);
+                let level = |t: f64| {
+                    Side::through(DVec2::new(0.0, t), DVec2::new(1.0, t), keep, EdgeKind::Band)
+                };
+                let mut sides = vec![level(t0), level(t1)];
+                for line in [left, right].into_iter().flatten() {
+                    sides.push(Side::through(
+                        line[band],
+                        line[band + 1],
+                        keep,
+                        EdgeKind::Broken,
+                    ));
+                }
+                sides
+            })
+            .collect();
+        ShardRegion { cells }
+    }
+
     #[test]
-    fn shards_cut_only_the_triangles_they_reach_as_a_full_clip_would() {
+    fn regions_cut_only_the_triangles_they_reach_as_a_full_clip_would() {
         let mesh = grid(40, 30);
         let plane = PartPlane {
             origin: DVec3::ZERO,
@@ -541,24 +581,33 @@ mod tests {
         };
         let mut wander = [0.21, -0.17, 0.09, -0.05].into_iter().cycle();
         let knots = [0.4, 0.9, 1.5, 2.2, 2.7];
-        let cracks = [-0.7, 0.2, 1.1].map(|s| Crack::new(s, &knots, || wander.next().unwrap()));
+        let lines = [-0.7, 0.2, 1.1].map(|s| {
+            let inner: Vec<DVec2> = knots
+                .iter()
+                .map(|&t| DVec2::new(s + wander.next().unwrap(), t))
+                .collect();
+            let mut points = vec![DVec2::new(inner[0].x, -FAR)];
+            points.extend(&inner);
+            points.push(DVec2::new(inner[inner.len() - 1].x, FAR));
+            points
+        });
         let regions = [
-            ShardRegion::between(None, Some(&cracks[0]), None),
-            ShardRegion::between(Some(&cracks[0]), Some(&cracks[1]), None),
-            ShardRegion::between(Some(&cracks[1]), Some(&cracks[2]), None),
-            ShardRegion::between(Some(&cracks[2]), None, None),
+            strip(None, Some(&lines[0])),
+            strip(Some(&lines[0]), Some(&lines[1])),
+            strip(Some(&lines[1]), Some(&lines[2])),
+            strip(Some(&lines[2]), None),
         ];
         let mut triangles = 0;
         for region in &regions {
             let cut = clip_mesh(&mesh, &ShardClip::new(&plane, region))
-                .expect("every shard keeps some wall");
+                .expect("every region keeps some wall");
             let plain = plain_clip(&mesh, &plane, region);
             assert_eq!(cut.positions, plain.positions);
             assert_eq!(cut.normals, plain.normals);
             assert_eq!(cut.uvs, plain.uvs);
             triangles += cut.positions.len() / 3;
         }
-        // Together the shards hold the whole wall, cut along the cracks.
+        // Together the regions hold the whole wall, cut along the lines.
         assert!(triangles > mesh.triangle_count());
     }
 }

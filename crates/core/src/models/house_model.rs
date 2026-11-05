@@ -189,7 +189,7 @@ impl Parts {
     /// parts' ground.
     fn ground_slot(&self) -> usize {
         if self.split {
-            HousePart::Mound as usize
+            HousePart::Ground as usize
         } else {
             0
         }
@@ -377,7 +377,7 @@ pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64) -> CottagePie
     {
         let mut meshes = kit.finish_scaled(&uv);
         grime(&mut meshes, roof.ridge);
-        if part == HousePart::Mound {
+        if part == HousePart::Ground {
             add_weathered(&mut ground, meshes, &palette, walls);
             ground.children.extend(nodes);
             continue;
