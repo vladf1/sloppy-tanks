@@ -471,6 +471,8 @@ pub struct Fragment {
     /// A piece of a body that already broke (on landing or under fire): it lands on
     /// without breaking up again, and breaks only where it is struck.
     pub house_broken: bool,
+    /// Being laid down off the thin edge it came to rest on.
+    pub house_laying: bool,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

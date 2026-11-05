@@ -922,3 +922,86 @@ fn shells_through_a_gable_window_break_the_gables_not_the_roof() {
         "the roof stands on its eave walls: {roof:?}"
     );
 }
+
+#[test]
+fn a_fallen_piece_left_on_its_edge_is_laid_down() {
+    use rapier3d::prelude::{Pose, Rotation, Vector};
+    let (mut s, house) = lone_cottage();
+    fallen_roof(&mut s, house);
+    let c = s.covers[house].clone();
+    // A single sheet, stood on its edge in the open beside the cottage.
+    let (id, body) = s
+        .fragments
+        .iter()
+        .find(|f| {
+            f.house_id == Some(c.id)
+                && f.house_parts.is_some_and(|parts| {
+                    parts.len() <= 2
+                        && parts
+                            .iter()
+                            .all(|part| kind(&s, house, part) == PartKind::Sheet)
+                })
+        })
+        .map(|f| (f.id, f.body))
+        .expect("a fallen sheet");
+    let height = |s: &Simulation| {
+        let (low, high) = s.world.bodies[body].colliders().iter().fold(
+            (f32::INFINITY, f32::NEG_INFINITY),
+            |(low, high), &h| {
+                // From the body's pose now, not the colliders' as of the last step.
+                let collider = &s.world.colliders[h];
+                let pose = s.world.bodies[body].position()
+                    * collider.position_wrt_parent().copied().unwrap_or_default();
+                let aabb = collider.shape().compute_aabb(&pose);
+                (low.min(aabb.mins.y), high.max(aabb.maxs.y))
+            },
+        );
+        (low, high - low)
+    };
+    // Stood on its edge in the open 12 m off the cottage, held from toppling (as loose
+    // boards round it would hold it), as a slope comes to rest on its eave.
+    let pitch = s.covers[house]
+        .structure
+        .as_ref()
+        .unwrap()
+        .layout
+        .roof
+        .pitch
+        .atan() as f32;
+    let place = |s: &mut Simulation, angle: f32| {
+        let turn = Rotation::from_axis_angle(Vector::X, angle);
+        let rigid = &mut s.world.bodies[body];
+        rigid.set_position(Pose::from_parts(Vector::ZERO, turn), true);
+        let middle = rigid.center_of_mass();
+        let target = Vector::new(c.x as f32, 3.0, (c.z + 12.0) as f32);
+        rigid.set_position(Pose::from_parts(target - middle, turn), true);
+    };
+    let half = std::f32::consts::FRAC_PI_2;
+    let upright = [half - pitch, -half - pitch, half + pitch, -half + pitch]
+        .into_iter()
+        .max_by(|&a, &b| {
+            place(&mut s, a);
+            let ha = height(&s).1;
+            place(&mut s, b);
+            let hb = height(&s).1;
+            ha.total_cmp(&hb)
+        })
+        .unwrap();
+    place(&mut s, upright);
+    let (low, tall) = height(&s);
+    assert!(tall > 1.0, "stood on its edge: {tall}");
+    let rigid = &mut s.world.bodies[body];
+    let at = rigid.translation();
+    rigid.set_translation(at - Vector::new(0.0, low, 0.0), false);
+    rigid.set_linvel(Vector::ZERO, false);
+    rigid.set_angvel(Vector::ZERO, false);
+    rigid.lock_rotations(true, true);
+    run(&mut s, 3.0);
+    assert!(s.fragments.iter().any(|f| f.id == id), "it lies on");
+    // Turned down to within about 22 degrees of level (held, it lies tilted there).
+    let (_, flat) = height(&s);
+    assert!(
+        flat < tall * 0.45,
+        "laid down: {flat} m tall, {tall} on edge"
+    );
+}

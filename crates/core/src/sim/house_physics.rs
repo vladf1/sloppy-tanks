@@ -15,7 +15,8 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use rapier3d::prelude::{
-    ActiveEvents, ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle,
+    ActiveEvents, ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle,
+    Rotation, Vector,
 };
 
 use super::data::group;
@@ -121,6 +122,20 @@ const PIECE_LIFE_LEAST: f64 = 4.0;
 const FALLING_DAMPING: (f32, f32) = (0.1, 0.3);
 const SETTLE_AFTER: f64 = 2.0;
 const SETTLED_DAMPING: (f32, f32) = (2.0, 3.0);
+
+/// A loose piece come to rest this long (s) after it came loose, slower than this
+/// (m/s), on a thin edge (its face's normal's rise under [`LEANING`], about 45
+/// degrees; a post or the ridge on its end, its length's rise over [`ON_END`]) and not
+/// propped on the remains, is laid down: turned over the way it leans at [`LAY_RATE`]
+/// (rad/s) about its foot until its face's rise reaches [`LAID`] (or its length's
+/// falls under [`LAID_STICK`]).
+const LAY_AFTER: f64 = 1.0;
+const LAY_SLOWER: f32 = 0.5;
+const LEANING: f32 = 0.7;
+const ON_END: f32 = 0.7;
+const LAY_RATE: f32 = 2.5;
+const LAID: f32 = 0.93;
+const LAID_STICK: f32 = 0.35;
 
 /// The linear and angular damping of a loose part `age` seconds after it came loose.
 pub fn house_debris_damping(age: f64) -> (f32, f32) {
@@ -1132,8 +1147,122 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
         }
+        lay_down_on_edge(simulation, index, age);
         index += 1;
     }
+}
+
+/// How a loose piece lies: a plate's face normal or a stick's length, in its body's
+/// frame (the cottage's, world-aligned, where it fell from), from its biggest part.
+#[derive(Clone, Copy)]
+enum Lie {
+    Face(DVec3),
+    Length(DVec3),
+}
+
+fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
+    let biggest = parts.iter().max_by(|&a, &b| {
+        let volume = |i: usize| (layout.parts[i].max - layout.parts[i].min).element_product();
+        volume(a).total_cmp(&volume(b)).then(b.cmp(&a))
+    })?;
+    let part = &layout.parts[biggest];
+    let pitch = layout.roof.pitch;
+    let build = match (part.kind, part.slope, part.wall) {
+        (PartKind::Chimney, ..) => return None,
+        (PartKind::Post, ..) => Lie::Length(DVec3::Y),
+        (PartKind::Ridge, ..) => Lie::Length(DVec3::Z),
+        (PartKind::Floor, ..) => Lie::Face(DVec3::Y),
+        (PartKind::Partition, ..) => Lie::Face(DVec3::Z),
+        (PartKind::Sheet, Some((slope, _)), _) => Lie::Face(
+            match slope {
+                super::house_layout::HousePart::RightRoof => DVec3::new(pitch, 1.0, 0.0),
+                super::house_layout::HousePart::LeftRoof => DVec3::new(-pitch, 1.0, 0.0),
+                super::house_layout::HousePart::FrontRoof => DVec3::new(0.0, 1.0, pitch),
+                _ => DVec3::new(0.0, 1.0, -pitch),
+            }
+            .normalize(),
+        ),
+        (_, _, Some(wall)) => {
+            let design = &layout.design;
+            Lie::Face(super::house_layout::wall_frames(design.w, design.d)[wall].1)
+        }
+        _ => return None,
+    };
+    let design = &layout.design;
+    Some(match build {
+        Lie::Face(v) => Lie::Face(design.to_world(v)),
+        Lie::Length(v) => Lie::Length(design.to_world(v)),
+    })
+}
+
+/// Loose body `index`, come to rest on a thin edge (a roof slope on its eave, a wall
+/// section on its foot, a post on its end) and not propped on what still stands, is
+/// laid down a step: nothing rests on an edge. No random draw.
+fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
+    let fragment = &simulation.fragments[index];
+    let (Some(parts), Some(house)) = (fragment.house_parts, fragment.house_id) else {
+        return;
+    };
+    let handle = fragment.body;
+    let laying = fragment.house_laying;
+    let body = &simulation.world.bodies[handle];
+    if fragment.life <= DEBRIS_CLEANUP_SECONDS
+        || age < LAY_AFTER
+        || (!laying && body.linvel().length() > LAY_SLOWER)
+    {
+        return;
+    }
+    let Some(layout) = simulation
+        .covers
+        .iter()
+        .find(|cover| cover.id == house)
+        .and_then(|cover| cover.structure.as_ref())
+        .map(|state| state.layout.clone())
+    else {
+        return;
+    };
+    let Some(lie) = lie(&layout, &parts) else {
+        return;
+    };
+    let rotation = *body.rotation();
+    let (now, target, done, start) = match lie {
+        Lie::Face(normal) => {
+            let now = rotation * vector(normal.x, normal.y, normal.z);
+            let target = if now.y >= 0.0 { Vector::Y } else { -Vector::Y };
+            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+        }
+        Lie::Length(along) => {
+            let now = rotation * vector(along.x, along.y, along.z);
+            let flat = Vector::new(now.x, 0.0, now.z);
+            let target = if flat.length() > 1e-3 { flat.normalize() } else { Vector::X };
+            let rise = now.y.abs();
+            (now, target, rise <= LAID_STICK, rise > ON_END)
+        }
+    };
+    if done || !(laying || start) || on_remains(simulation, handle) {
+        simulation.fragments[index].house_laying = false;
+        return;
+    }
+    simulation.fragments[index].house_laying = true;
+    let low = body
+        .colliders()
+        .iter()
+        .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
+        .fold(f32::INFINITY, f32::min);
+    let middle = body.center_of_mass();
+    let axis = now.cross(target);
+    let off = axis.length();
+    if off < 1e-4 {
+        return;
+    }
+    let angle = now.angle_between(target).min(LAY_RATE * STEP as f32);
+    let step = Rotation::from_axis_angle(axis / off, angle);
+    let foot = Vector::new(middle.x, low, middle.z);
+    let at = foot + step * (body.translation() - foot);
+    let body = &mut simulation.world.bodies[handle];
+    body.set_position(Pose::from_parts(at, step * rotation), true);
+    body.set_linvel(Vector::ZERO, true);
+    body.set_angvel(Vector::ZERO, true);
 }
 
 /// Loose cottage parts landing hard on standing ones break them: a standing part takes
