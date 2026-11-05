@@ -733,6 +733,24 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     );
     assert!(speed < 0.1, "it has come to rest: {speed}");
     assert!(at.y < 1.5, "on the ground: {at:?}");
+    // No slope lies whole: each broke into pieces when it came down.
+    let slope_sheets = (0..layout.parts.len())
+        .filter(|&index| {
+            layout.parts[index]
+                .slope
+                .is_some_and(|(slope, _)| slope == HousePart::RightRoof)
+        })
+        .count();
+    for (_, parts, _, _) in &bodies {
+        let sheets = parts
+            .iter()
+            .filter(|&part| layout.parts[part].kind == PartKind::Sheet)
+            .count();
+        assert!(
+            sheets < slope_sheets,
+            "a slope lies whole: {sheets} of {slope_sheets}"
+        );
+    }
     id
 }
 

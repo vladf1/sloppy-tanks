@@ -105,7 +105,15 @@ const LOOSE_THROW_DAMAGE: f64 = 40.0;
 const LOOSE_THROW_MOST: f64 = 1.8;
 /// A falling body breaks up into its parts when its velocity changes by this much
 /// (m/s) in one tick: a hard landing.
-const SHATTER_SPEED: f64 = 2.5;
+const SHATTER_SPEED: f64 = 1.5;
+/// A body that came down without a hard landing (slid off its stubs, laid itself
+/// down) breaks up all the same once it lies still this long (s) after it came loose:
+/// no slope lies on the ground as one clean slab.
+const BREAK_AT_REST: f64 = 1.5;
+const REST_SPEED: f32 = 0.3;
+/// The pieces of a body breaking where it lies tip at this rate (rad/s) about their
+/// break line, alternately, so the break shows as a crease, not a seam.
+const CREASE_SPIN: f64 = 1.2;
 /// Seconds a loose part lies before it sinks away (plus the cleanup fade): from
 /// [`PART_LIFE`] to [`PART_LIFE`] + [`PART_LIFE_SPREAD`] by its parts, so a pile sinks
 /// one piece after another, and a ruin is clear of them by its hard deadline.
@@ -841,11 +849,23 @@ impl Simulation {
             let rigid_body = &mut self.world.bodies[body];
             let middle = rigid_body.center_of_mass();
             let mut velocity = linvel + angvel.cross(middle - center);
-            if let Some((from, strength)) = throw {
-                velocity += throw_velocity(from_vector(middle), from, strength, section.len());
+            let mut spin = angvel;
+            match throw {
+                Some((from, strength)) => {
+                    velocity += throw_velocity(from_vector(middle), from, strength, section.len());
+                }
+                None => {
+                    // Broken where it fell: each piece tips about the line it broke
+                    // along, one way then the other.
+                    let out = (middle - center).with_y(0.0);
+                    if out.length() > 1e-3 {
+                        let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
+                        spin += Vector::Y.cross(out.normalize()) * (sign * CREASE_SPIN) as f32;
+                    }
+                }
             }
             rigid_body.set_linvel(velocity, true);
-            rigid_body.set_angvel(angvel, true);
+            rigid_body.set_angvel(spin, true);
             self.reserve_fragments(1);
             let fragment_id = self.allocate_id();
             if let Some(&first) = colliders.first() {
@@ -1120,9 +1140,10 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             simulation.chimney_to_bricks(index);
             continue;
         }
+        let at_rest = age > BREAK_AT_REST && body.linvel().length() < REST_SPEED;
         if parts.len() > 1
             && !fragment.house_broken
-            && change > SHATTER_SPEED
+            && (change > SHATTER_SPEED || at_rest)
             && room
             && fragment.life > DEBRIS_CLEANUP_SECONDS
         {

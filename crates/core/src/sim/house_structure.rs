@@ -242,6 +242,8 @@ const PARTITION_AT: f64 = -0.12;
 const PARTITION_DOOR: f64 = 0.45;
 /// How close (m) two parts' boxes are to count as touching.
 const CONTACT: f64 = 0.06;
+/// A gable end is braced by roof parts this near (m) to it.
+const ROOF_BRACE: f64 = 0.15;
 /// An upper storey's wall part is held by a floor strip this near (m) in plan.
 const FLOOR_REACH: f64 = 0.3;
 /// A part reaching this near the plinth's top stands on the ground.
@@ -1387,8 +1389,34 @@ impl HouseStructure {
                     });
                 !braced || (part.upper_storey && !self.upper_storey_held(index, down))
             }
+            // A gable end braced by no roof any more stands only on a whole wall: a
+            // gable triangle over a broken wall is a stage flat.
+            PartKind::Gable => {
+                let braced = (0..self.parts.len()).any(|other| {
+                    standing(other)
+                        && matches!(self.parts[other].kind, PartKind::Sheet | PartKind::Ridge)
+                        && self.touch(index, other, ROOF_BRACE)
+                });
+                let wall_whole = (0..self.parts.len()).all(|other| {
+                    let below = &self.parts[other];
+                    below.wall != part.wall || below.kind == PartKind::Gable || standing(other)
+                });
+                !braced && !wall_whole
+            }
+            // The inner wall stands braced by the floor over it.
+            PartKind::Partition => !(0..self.parts.len()).any(|other| {
+                standing(other)
+                    && self.parts[other].kind == PartKind::Floor
+                    && self.touch(index, other, CONTACT)
+            }),
             _ => false,
         }
+    }
+
+    /// Whether parts `a` and `b`'s boxes come within `gap` (m) of each other.
+    fn touch(&self, a: usize, b: usize, gap: f64) -> bool {
+        let (a, b) = (&self.parts[a], &self.parts[b]);
+        (b.min - a.max).max(a.min - b.max).max_element() <= gap
     }
 
     /// Whether upper-storey wall part `index` still has its nearer corner post and the
@@ -1864,6 +1892,36 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 0);
+    }
+
+    #[test]
+    fn a_gable_end_with_its_roof_gone_stands_only_on_its_whole_wall() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if structure.roof.form != RoofForm::Gable {
+                continue;
+            }
+            let roof = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| structure.parts[index].kind.roof()),
+            );
+            let parts = &structure.parts;
+            let gables = |wall: usize| {
+                (0..parts.len())
+                    .filter(|&index| parts[index].kind == PartKind::Gable && parts[index].wall == Some(wall))
+                    .collect::<Vec<_>>()
+            };
+            // Roof gone, walls whole: the gables stand.
+            let falling = structure.unsupported(&roof);
+            assert!(gables(0).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+            // And a bay of wall 0 shot out under them as well: wall 0's gable goes.
+            let bay = (0..structure.parts.len())
+                .find(|&index| structure.parts[index].wall == Some(0) && structure.parts[index].kind == PartKind::Panel)
+                .unwrap();
+            let gone = roof.union(&PartSet::from_indices([bay]));
+            let falling = structure.unsupported(&gone);
+            assert!(gables(0).iter().all(|&g| falling.contains(g)), "{:?}", design.style.form);
+            assert!(gables(1).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+        }
     }
 
     #[test]
