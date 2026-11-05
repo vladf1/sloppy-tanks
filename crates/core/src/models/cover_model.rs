@@ -15,7 +15,8 @@ use super::concrete_surfaces::{concrete_barrier, concrete_wall};
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
-use super::house_model::{house, house_heap};
+use super::house_model::house_heap;
+use super::house_parts_model::structural_house;
 use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{
@@ -27,6 +28,7 @@ use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
 use crate::sim::house_layout::is_house_heap;
+use crate::sim::house_structure::PartSet;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
@@ -58,6 +60,8 @@ pub struct CoverShape {
     pub debris_seed: Option<f64>,
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
+    /// A cottage's parts broken or fallen from it.
+    pub broken: PartSet,
 }
 
 impl From<&RenderCover> for CoverShape {
@@ -73,6 +77,7 @@ impl From<&RenderCover> for CoverShape {
             debris_seed: cover.debris_seed,
             timber_hits: cover.timber_hits.clone(),
             timber_join: cover.timber_join,
+            broken: cover.broken,
         }
     }
 }
@@ -134,7 +139,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
         // Every shell holes a cottage where it struck; an untouched one keeps its
         // place in the static covers' draws.
-        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, &c.timber_hits),
+        CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {

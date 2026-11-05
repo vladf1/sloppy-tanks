@@ -1,6 +1,7 @@
 //! The authoritative fixed-step simulation: one Rapier world, the entity records, and the
 //! tick order that seeded matches depend on.
 
+use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap};
 
 use rapier3d::prelude::*;
@@ -20,7 +21,11 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
-use super::house_layout::{HouseDesign, HousePart, is_house_heap};
+use super::house_layout::is_house_heap;
+use super::house_physics::{
+    StructureState, house_structure, settle_house_debris, standing_colliders,
+};
+use super::house_structure::{HouseStructure, PartSet};
 
 use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
@@ -36,7 +41,6 @@ use super::pickups::collect_pickup;
 use super::projectiles::step_projectiles;
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
-use super::scenery_pieces::settle_house_pieces;
 use super::shooter_rewind::ShooterRewind;
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
@@ -470,7 +474,11 @@ impl Simulation {
 
     /// Create a cover record and its physics body from an authored placement.
     pub fn add_cover(&mut self, def: &CoverDef) -> usize {
-        let (body, colliders) = self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h);
+        let structure = (def.kind == CoverKind::House).then(|| {
+            StructureState::new(Arc::new(house_structure(def.x, def.z, def.w, def.d, def.h)))
+        });
+        let (body, colliders) =
+            self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h, structure.as_ref());
         let cover = Cover {
             id: self.allocate_id(),
             kind: def.kind,
@@ -492,6 +500,7 @@ impl Simulation {
             kick: None,
             motion: None,
             fallen_at: None,
+            structure,
         };
         let index = self.covers.len();
         if cover.kind.movable() {
@@ -518,16 +527,9 @@ impl Simulation {
             }
         }
         if self.covers[index].kind == CoverKind::House {
-            // A rebuilt cottage clears the heap its collapse left and the pieces still
-            // lying on it: the mound is a fixed body that would stand inside the new
-            // walls, and its shards would be thrown out of them.
-            let cover = &self.covers[index];
-            let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
-            let (offset, _) = design.heap_box();
-            let (x, z, id) = (cover.x + offset.x, cover.z + offset.y, cover.id);
-            if let Some(rubble) = self.rubble_at(x, z, true) {
-                self.retire_cover(rubble);
-            }
+            // A rebuilt cottage clears its parts still lying about: they would be
+            // thrown out of the new walls.
+            let id = self.covers[index].id;
             let pieces: Vec<RigidBodyHandle> = self
                 .fragments
                 .iter()
@@ -537,6 +539,12 @@ impl Simulation {
             self.fragments.retain(|fragment| fragment.house_id != Some(id));
             for body in pieces {
                 self.remove_body(body);
+            }
+            if let Some(state) = &mut self.covers[index].structure {
+                for handle in state.colliders.iter().flatten() {
+                    self.cover_by_collider.remove(handle);
+                }
+                *state = StructureState::new(state.layout.clone());
             }
         }
         // A felled tree keeps its body as the stump footprint.
@@ -556,7 +564,9 @@ impl Simulation {
         cover.timber_hits.clear();
         cover.kick = None;
         let (kind, x, z, w, d, h) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
-        let (body, colliders) = self.cover_body(kind, x, z, w, d, h);
+        let structure = cover.structure.take();
+        let (body, colliders) = self.cover_body(kind, x, z, w, d, h, structure.as_ref());
+        self.covers[index].structure = structure;
         self.covers[index].body = body;
         self.covers[index].collider = colliders[0];
         self.register_cover(index, &colliders);
@@ -587,6 +597,7 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn cover_body(
         &mut self,
         kind: CoverKind,
@@ -595,8 +606,12 @@ impl Simulation {
         w: f64,
         d: f64,
         h: f64,
+        structure: Option<&StructureState>,
     ) -> (RigidBodyHandle, Vec<ColliderHandle>) {
-        let parts = cover_parts(kind, x, z, w, d, h);
+        let parts = match structure {
+            Some(state) => house_parts(&state.layout, x, z, &state.gone),
+            None => cover_parts(kind, x, z, w, d, h),
+        };
         let body = self.world.insert_body(parts.body);
         let colliders = parts
             .colliders
@@ -610,6 +625,13 @@ impl Simulation {
     }
 
     fn register_cover(&mut self, index: usize, colliders: &[ColliderHandle]) {
+        // A cottage's colliders are its standing parts, each marked with its index.
+        if let Some(state) = &mut self.covers[index].structure {
+            for &handle in colliders {
+                let part = self.world.colliders[handle].user_data as usize;
+                state.colliders[part] = Some(handle);
+            }
+        }
         let cover = &mut self.covers[index];
         if cover.kind.movable() {
             cover.motion = Some(CoverMotion {
@@ -807,7 +829,7 @@ impl Simulation {
             }
         }
         prepare_debris_cleanup(self);
-        settle_house_pieces(self);
+        settle_house_debris(self);
         let mut i = self.fragments.len();
         while i > 0 {
             i -= 1;
@@ -823,18 +845,20 @@ impl Simulation {
             if !hold {
                 fragment.life -= STEP;
             }
-            // A collapse's rubble mound keeps to the cottage's own shards as it sinks:
-            // as plain debris it would block the tanks it never meant to.
-            let mound = fragment
-                .house_piece
-                .is_some_and(|piece| piece.part == HousePart::Mound);
-            if fragment.life <= DEBRIS_CLEANUP_SECONDS && !mound {
+            if fragment.life <= DEBRIS_CLEANUP_SECONDS {
                 let body = fragment.body;
-
-                let collider = self.world.bodies[body].colliders()[0];
-                let collider = &mut self.world.colliders[collider];
-                if packed_groups(collider.collision_groups()) != group::FRAGMENT {
-                    collider.set_collision_groups(interaction_groups(group::FRAGMENT));
+                // A cottage's loose parts fade through everything, all their colliders.
+                let colliders = if fragment.house_parts.is_some() {
+                    self.world.bodies[body].colliders().len()
+                } else {
+                    1
+                };
+                for k in 0..colliders {
+                    let collider = self.world.bodies[body].colliders()[k];
+                    let collider = &mut self.world.colliders[collider];
+                    if packed_groups(collider.collision_groups()) != group::FRAGMENT {
+                        collider.set_collision_groups(interaction_groups(group::FRAGMENT));
+                    }
                 }
             }
             if self.fragments[i].life <= 0.0 {
@@ -1218,6 +1242,16 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
         body: builder.translation(vector(x, h / 2.0, z)),
         colliders,
         tank_footprint,
+    }
+}
+
+/// A cottage's fixed body at its ground centre with a collider for each of its
+/// standing parts (those not in `gone`), shared with client prediction.
+pub fn house_parts(layout: &HouseStructure, x: f64, z: f64, gone: &PartSet) -> CoverParts {
+    CoverParts {
+        body: RigidBodyBuilder::fixed().translation(vector(x, 0.0, z)),
+        colliders: standing_colliders(layout, gone),
+        tank_footprint: None,
     }
 }
 

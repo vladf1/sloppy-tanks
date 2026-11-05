@@ -5,9 +5,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::house_structure::PartSet;
 use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
-use super::house_layout::HousePiece;
 use super::map_options::MapId;
 use super::maps::GroundKind;
 use super::math::{Point3, Quat4, Vec2};
@@ -127,6 +127,8 @@ pub struct RenderCover {
     pub debris_seed: Option<f64>,
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
+    /// A cottage's parts broken or fallen from it.
+    pub broken: PartSet,
     pub motion: Option<RenderCoverMotion>,
     /// Body pose; destroyed cover without a body stays at its footprint.
     pub position: Point3,
@@ -201,8 +203,9 @@ pub struct RenderFragment {
     pub timber_part: Option<TimberPart>,
     pub tower_piece: Option<TowerPiece>,
     pub crate_piece: Option<CratePiece>,
-    pub house_piece: Option<HousePiece>,
     pub house_id: Option<u32>,
+    /// The parts of cottage `house_id` this body is.
+    pub house_parts: Option<PartSet>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub created_at: Option<f64>,
@@ -348,6 +351,10 @@ impl Simulation {
             view.debris_seed = cover.debris_seed;
             view.timber_hits.clone_from(&cover.timber_hits);
             view.timber_join = cover.timber_join;
+            view.broken = cover
+                .structure
+                .as_ref()
+                .map_or(PartSet::EMPTY, |state| state.gone);
             view.motion = cover.motion.map(RenderCoverMotion::from);
             (view.position, view.rotation) = if self.world.bodies.contains(cover.body) {
                 (
@@ -440,8 +447,8 @@ impl Simulation {
         view.timber_part.clone_from(&fragment.timber_part);
         view.tower_piece = fragment.tower_piece;
         view.crate_piece = fragment.crate_piece;
-        view.house_piece = fragment.house_piece;
         view.house_id = fragment.house_id;
+        view.house_parts = fragment.house_parts;
         view.tree_cover_id = fragment.tree_cover_id;
         view.tree_center_y = fragment.tree_center_y;
         view.created_at = fragment.created_at;

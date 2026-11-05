@@ -18,7 +18,7 @@ use sloppy_core::sim::stress_test_level::{
 use sloppy_core::sim::{
     CoverKind, MatchPhase, Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
-use support::{assert_spawns_and_pickups_clear, damage_from};
+use support::{assert_spawns_and_pickups_clear, damage_from, fell_cottage};
 
 fn stress_simulation(extra: SimulationSetup) -> Simulation {
     Simulation::new(
@@ -148,12 +148,11 @@ fn stress_configuration_survives_respawns_and_resets_and_never_ends_at_the_norma
     }
 }
 
-/// The grid's cottages take the village's shells, keep their marks, and fall into
-/// their pieces and a heap along the back wall, the front of the footprint opening to
-/// routes. All eight falling at once stay within the grid's fragment budget, and a
-/// reset stands them back up with no body left over.
+/// The grid's cottages break where they are shot and fall when their footing is gone,
+/// all eight at once within the grid's fragment budget, opening their footprints to
+/// routes; a reset stands them back up with no body left over.
 #[test]
-fn stress_cottages_fall_like_the_villages_within_the_fragment_budget() {
+fn stress_cottages_fall_within_the_fragment_budget() {
     let mut sim = stress_simulation(SimulationSetup::default());
     let bodies = sim.world.bodies.len();
     let covers = sim.covers.len();
@@ -166,44 +165,29 @@ fn stress_cottages_fall_like_the_villages_within_the_fragment_budget() {
     let house = houses[0];
     let c = &sim.covers[house];
     let impact = Point3::new(c.x + c.w / 2.0, 1.0, c.z);
-    for i in 1..15 {
-        sim.damage_cover(house, shell, id, team, None, Some(impact));
-        assert!(sim.covers[house].alive, "standing after {i} shells");
-    }
-    assert!(
-        !sim.covers[house].timber_hits.is_empty(),
-        "the shells mark it"
-    );
     sim.damage_cover(house, shell, id, team, None, Some(impact));
-    assert!(!sim.covers[house].alive, "down after fifteen shells");
-    for &house in &houses[1..] {
-        sim.damage_cover(house, 10_000.0, id, team, None, None);
+    assert!(sim.covers[house].alive);
+    assert!(
+        !sim.covers[house]
+            .structure
+            .as_ref()
+            .unwrap()
+            .gone
+            .is_empty(),
+        "the shell breaks what it reaches"
+    );
+    for &house in &houses {
+        fell_cottage(&mut sim, house);
     }
     assert!(sim.fragments.len() <= sim.max_fragments);
-    assert!(sim.fragments.iter().any(|f| f.house_piece.is_some()));
-    assert_eq!(sim.covers.len(), covers + houses.len(), "one heap each");
+    assert!(sim.fragments.iter().any(|f| f.house_parts.is_some()));
+    assert_eq!(sim.covers.len(), covers, "no heap: the ruins are the parts");
     for &house in &houses {
         let c = &sim.covers[house];
-        assert!(!c.alive);
-        let design = HouseDesign::of(c.x, c.z, c.w, c.d, c.h);
-        let place = |local: DVec3| {
-            let p = design.to_world(local);
-            Vec2::new(c.x + p.x, c.z + p.z)
-        };
-        let (offset, _) = design.heap_box();
-        let heap = sim
-            .rubble_at(c.x + offset.x, c.z + offset.y, true)
-            .expect("the collapse leaves its heap");
+        assert!(!c.alive, "{} {} is levelled", c.x, c.z);
         assert!(
-            sim.nav
-                .is_blocked(Vec2::new(sim.covers[heap].x, sim.covers[heap].z))
-        );
-        let front = place(DVec3::new(0.0, 0.0, design.d / 2.0 - 1.2));
-        assert!(
-            !sim.nav.is_blocked(front),
-            "{} {}: its front opens",
-            c.x,
-            c.z
+            !sim.nav.is_blocked(Vec2::new(c.x, c.z)),
+            "its footprint opens"
         );
     }
 
@@ -212,7 +196,8 @@ fn stress_cottages_fall_like_the_villages_within_the_fragment_budget() {
     assert_eq!(sim.covers.len(), covers);
     for &house in &houses {
         let c = &sim.covers[house];
-        assert!(c.alive && c.hp == HOUSE_HEALTH && c.timber_hits.is_empty());
+        assert!(c.alive && c.hp == HOUSE_HEALTH);
+        assert!(c.structure.as_ref().unwrap().gone.is_empty());
         assert!(sim.nav.is_blocked(Vec2::new(c.x, c.z)));
     }
 }

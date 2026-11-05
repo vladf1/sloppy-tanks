@@ -212,3 +212,21 @@ pub fn assert_spawns_and_pickups_clear(sim: &mut Simulation) -> Vec<Vec2> {
     }
     points
 }
+
+/// Bring cottage `house` down the way a battle does: every part standing on the
+/// ground breaks, so the rest of it falls.
+pub fn fell_cottage(s: &mut Simulation, house: usize) {
+    let layout = s.covers[house]
+        .structure
+        .as_ref()
+        .expect("a cottage")
+        .layout
+        .clone();
+    let footing = sloppy_core::sim::house_structure::PartSet::from_indices(
+        (0..layout.parts.len()).filter(|&index| {
+            layout.parts[index].grounded
+                && layout.parts[index].kind != sloppy_core::sim::house_structure::PartKind::Chimney
+        }),
+    );
+    s.break_house_parts(house, footing, None, None);
+}

@@ -21,7 +21,7 @@ use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, SimEventType, Simulation, SimulationSetup, VehicleCommand, Weapon,
 };
-use support::{assert_spawns_and_pickups_clear, set_translation};
+use support::{assert_spawns_and_pickups_clear, fell_cottage, set_translation};
 
 const YARD: f64 = ARENA * SUPERSTRESS_SCALE;
 
@@ -326,14 +326,14 @@ fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
     }
 }
 
-/// A cottage falls into its pieces and heap, waits while a tank stands in its open
-/// footprint, then rises intact: its marks gone, its heap and pieces cleared with
-/// their bodies, routes blocked again, and its heap record reused the next time it
-/// falls. A reset leaves the yard's first bodies.
+/// A cottage shot and brought down waits while a tank stands in its footprint, then
+/// rises whole: its fallen parts cleared with their bodies and routes blocked again,
+/// each time it falls. A reset leaves the yard's first bodies.
 #[test]
-fn a_cottage_rebuilds_intact_over_its_heap_and_reuses_it_each_time_it_falls() {
+fn a_fallen_cottage_rebuilds_whole_each_time_it_falls() {
     let mut sim = superstress(731.0);
     let bodies = sim.world.bodies.len();
+    let covers = sim.covers.len();
     let house = sim
         .covers
         .iter()
@@ -341,46 +341,40 @@ fn a_cottage_rebuilds_intact_over_its_heap_and_reuses_it_each_time_it_falls() {
         .unwrap();
     let c = &sim.covers[house];
     let (x, z, id) = (c.x, c.z, c.id);
-    let design = HouseDesign::of(c.x, c.z, c.w, c.d, c.h);
-    let place = |local: DVec3| {
-        let p = design.to_world(local);
-        Vec2::new(x + p.x, z + p.z)
-    };
-    let front = place(DVec3::new(0.0, 0.0, design.d / 2.0 - 1.2));
-    let (offset, _) = design.heap_box();
-    let heap_at = (x + offset.x, z + offset.y);
     let impact = Point3::new(x + c.w / 2.0, 1.0, z);
     for tank in 0..sim.tanks.len() {
         set_translation(&mut sim, tank, 30.0, 0.0);
     }
     let (owner, team) = (sim.human().id, sim.human().team);
     let shell = weapon(Weapon::Standard).damage;
-    let mut covers = None;
     for cycle in 0..3 {
-        for _ in 0..4 {
-            sim.damage_cover(house, shell, owner, team, None, Some(impact));
-        }
-        assert!(!sim.covers[house].timber_hits.is_empty(), "cycle {cycle}");
-        sim.damage_cover(house, 10_000.0, owner, team, None, None);
+        sim.damage_cover(house, shell, owner, team, None, Some(impact));
+        assert!(
+            !sim.covers[house]
+                .structure
+                .as_ref()
+                .unwrap()
+                .gone
+                .is_empty()
+        );
+        fell_cottage(&mut sim, house);
         assert!(!sim.covers[house].alive);
-        let heap = sim
-            .rubble_at(heap_at.0, heap_at.1, true)
-            .expect("the collapse leaves its heap");
-        assert!(sim.nav.is_blocked(Vec2::new(heap_at.0, heap_at.1)));
-        assert!(!sim.nav.is_blocked(front), "cycle {cycle}: the front opens");
+        assert!(
+            !sim.nav.is_blocked(Vec2::new(x, z)),
+            "cycle {cycle}: it opens"
+        );
         assert!(sim.fragments.iter().any(|f| f.house_id == Some(id)));
         assert!(sim.fragments.len() <= sim.max_fragments);
-        let count = *covers.get_or_insert(sim.covers.len());
-        assert_eq!(sim.covers.len(), count, "cycle {cycle}: the heap is reused");
+        assert_eq!(sim.covers.len(), covers);
 
         superstress_rules(&mut sim);
         sim.elapsed += REBUILD_SECONDS;
         if cycle == 0 {
-            set_translation(&mut sim, 0, front.x, front.z);
+            set_translation(&mut sim, 0, x, z);
             superstress_rules(&mut sim);
             assert!(
                 !sim.covers[house].alive,
-                "a tank on the open floor delays it"
+                "a tank in its footprint delays it"
             );
             set_translation(&mut sim, 0, 30.0, 0.0);
         }
@@ -389,19 +383,19 @@ fn a_cottage_rebuilds_intact_over_its_heap_and_reuses_it_each_time_it_falls() {
         assert!(cover.alive, "cycle {cycle}: the cottage rebuilt");
         assert_eq!(cover.id, id);
         assert_eq!(cover.hp, HOUSE_HEALTH);
-        assert!(cover.timber_hits.is_empty(), "it stands unmarked");
-        assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&house));
-        assert!(sim.rubble_at(heap_at.0, heap_at.1, true).is_none());
         assert!(
-            !sim.world.bodies.contains(sim.covers[heap].body),
-            "no heap body"
+            cover.structure.as_ref().unwrap().gone.is_empty(),
+            "it stands whole"
         );
+        assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&house));
         assert!(
             sim.fragments.iter().all(|f| f.house_id != Some(id)),
-            "its pieces are cleared"
+            "its fallen parts are cleared"
         );
-        assert!(sim.nav.is_blocked(Vec2::new(x, z)));
-        assert!(sim.nav.is_blocked(front), "routes go round it again");
+        assert!(
+            sim.nav.is_blocked(Vec2::new(x, z)),
+            "routes go round it again"
+        );
         assert_eq!(sim.world.bodies.len(), bodies + sim.fragments.len());
     }
     sim.reset(None);

@@ -701,9 +701,10 @@ impl WoodChips {
             (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
             (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
-            (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
-                self.shatter(event, random)
-            }
+            (
+                SimEventType::Shatter,
+                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::House),
+            ) => self.shatter(event, random),
             _ => {}
         }
     }

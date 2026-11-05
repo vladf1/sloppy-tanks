@@ -20,7 +20,7 @@ use sloppy_core::models::{
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
-use sloppy_core::sim::house_layout::chimney_struck;
+use sloppy_core::sim::house_structure::CHIMNEY_PART;
 use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
@@ -113,7 +113,7 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         .map(|hit| format!("{hit:?}"))
         .collect();
     format!(
-        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}",
+        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}/{:x?}",
         cover.kind,
         cover.w,
         cover.h,
@@ -121,6 +121,7 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         cover.color,
         cover.timber_join,
         hits.join(";"),
+        cover.broken.0,
     )
 }
 
@@ -376,9 +377,9 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
 /// Where a fallen chimney's smoke is sent, out of sight below the ground.
 const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
 
-/// Whether a cottage's chimney is up: a strike on the roof by its stack topples it.
+/// Whether a cottage's chimney is up: it smokes until it breaks or falls.
 fn chimney_stands(cover: &RenderCover) -> bool {
-    cover.alive && !chimney_struck(cover.w, cover.d, cover.h, &cover.timber_hits)
+    !cover.broken.contains(CHIMNEY_PART)
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.

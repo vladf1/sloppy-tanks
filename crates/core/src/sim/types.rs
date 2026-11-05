@@ -8,11 +8,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::bot_personalities::BotPersonality;
 use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
-use super::house_layout::HousePiece;
 use super::humvee_tactics::HumveeTactics;
 pub use super::kinds::{CoverKind, FragmentShape, PickupKind, Team, VehicleKind, WreckPart};
 pub use super::math::{Point3, Quat4, Vec2};
-use super::scenery_pieces::HouseStub;
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart, TimberWall};
 use super::tower_layout::TowerPiece;
 
@@ -368,6 +366,8 @@ pub struct Cover {
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
     pub fallen_at: Option<f64>,
+    /// A cottage's structure: its parts, which of them are gone and their colliders.
+    pub structure: Option<super::house_physics::StructureState>,
 }
 
 /// Planar projectile state. vx/vz are metres per second; life is remaining seconds.
@@ -399,6 +399,8 @@ pub struct Shot {
     pub weapon: Weapon,
     /// One shell interception for a fresh piercing round, zero otherwise.
     pub piercing: u32,
+    /// Metres an HE shell that struck a cottage flies on before it bursts.
+    pub fuse: Option<f64>,
     /// Two fresh piercing rounds pass through each other exactly once.
     pub pierced_shot: Option<u32>,
     /// A defense gets one chance per projectile, even after a miss or bounce.
@@ -458,18 +460,12 @@ pub struct Fragment {
     pub tower_piece: Option<TowerPiece>,
     /// The section of a broken cargo crate this piece is drawn as.
     pub crate_piece: Option<CratePiece>,
-    /// The part of a collapsed cottage this piece is drawn as, and that cottage's
-    /// cover id (its model is built from the cover).
-    pub house_piece: Option<HousePiece>,
+    /// The cottage whose parts this body is.
     pub house_id: Option<u32>,
-    /// How often a cottage shard left standing on edge has been tipped over.
-    pub house_topples: u8,
-    /// When (simulation seconds) a shell last threw this cottage shard about, so it
-    /// may be tipped down again if it comes to rest on edge.
-    pub house_kicked: Option<f64>,
-    /// A stub of a collapsed cottage's wall, led down onto the ground and leaned
-    /// in against the pile before it is let go.
-    pub house_stub: Option<HouseStub>,
+    /// The parts of a cottage's structure this body is (they fell together).
+    pub house_parts: Option<super::house_structure::PartSet>,
+    /// Its velocity last tick, to tell a hard landing.
+    pub house_velocity: Option<Point3>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

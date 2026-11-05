@@ -261,6 +261,9 @@ enum Build {
     Standing,
     /// Each collapse piece apart, as the cottage was when it fell.
     Pieces,
+    /// Each part apart, lined inside as a broken wall shows it, with the plinth and
+    /// the yard kept with the ground: the structural cottage's parts are cut from it.
+    Parts,
 }
 
 /// Where the parts of a cottage go while it is built: the standing model keeps
@@ -342,13 +345,13 @@ const HOUSE_WRECK: &str = "house-wreck";
 
 impl Parts {
     fn new(build: Build) -> Self {
-        let count = if build == Build::Pieces {
-            HousePart::ALL.len()
-        } else {
+        let count = if build == Build::Standing {
             2
+        } else {
+            HousePart::ALL.len()
         };
         Self {
-            split: build == Build::Pieces,
+            split: build != Build::Standing,
             kits: (0..count).map(|_| Kit::new()).collect(),
             courses: (0..count).map(|_| Courses::default()).collect(),
             nodes: (0..count).map(|_| Vec::new()).collect(),
@@ -371,17 +374,29 @@ impl Parts {
     /// Where what lies on the ground round the cottage goes: the standing cottage's
     /// walls, or a collapse's ground.
     fn ground(&mut self) -> &mut Kit<Surface> {
+        let slot = self.ground_slot();
         match &mut self.aside {
             Some(aside) => &mut aside.ground,
-            None => &mut self.kits[0],
+            None => &mut self.kits[slot],
         }
     }
 
     /// Where the loose nodes lying on the ground go.
     fn ground_nodes(&mut self) -> &mut Vec<Node> {
+        let slot = self.ground_slot();
         match &mut self.aside {
             Some(aside) => &mut aside.ground_nodes,
-            None => &mut self.nodes[0],
+            None => &mut self.nodes[slot],
+        }
+    }
+
+    /// The kit of what stays on the ground: the standing cottage's walls, or the
+    /// parts' mound.
+    fn ground_slot(&self) -> usize {
+        if self.split {
+            HousePart::Mound as usize
+        } else {
+            0
         }
     }
 
@@ -405,7 +420,8 @@ impl Parts {
 
     /// The plinth, steps and splash blocks: the standing cottage only.
     fn base(&mut self) -> Option<&mut Kit<Surface>> {
-        (!self.split).then(|| &mut self.kits[0])
+        let slot = self.ground_slot();
+        self.aside.is_none().then(|| &mut self.kits[slot])
     }
 }
 
@@ -581,15 +597,6 @@ fn satin(color: u32) -> Arc<Material> {
 }
 
 static OCTAHEDRON: Cache<(), Mesh> = Cache::new("house_model::OCTAHEDRON");
-
-/// `house(group, c)`: the village cottage for a cover box, its type chosen from its
-/// position and marked where the shells and blasts that hit it struck.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, hits: &[TimberHit]) {
-    let design = HouseDesign::of(x, z, w, d, h);
-    let palette = palette(&design, x, z);
-    group.children.push(cottage(&design, &palette, hits));
-}
 
 /// A cottage whose door faces `street` quarter turns (see [`door_direction`]);
 /// scenery outside the arena chooses its own.
@@ -957,6 +964,96 @@ fn finish_piece(shape: &PieceShape, mut shard: Node) -> Node {
     flatten(&mut root);
     batch(&mut root);
     root
+}
+
+/// A structural cottage's model, each part of it apart ([`Build::Parts`]): its walls,
+/// roof slopes and chimney finished and painted for the standing cottage, their shingle
+/// courses, the nodes they carry, each wall's openings and what stays on the ground
+/// (the plinth, the steps and the yard), all in the build frame.
+pub(super) struct CottagePieces {
+    pub(super) roof: Roof,
+    pub(super) palette: Palette,
+    pub(super) parts: Vec<CottagePiece>,
+    pub(super) openings: [Vec<[f64; 4]>; 4],
+    pub(super) ground: Node,
+}
+
+/// One part of a [`CottagePieces`].
+pub(super) struct CottagePiece {
+    pub(super) part: HousePart,
+    pub(super) meshes: KitMeshes<Surface>,
+    pub(super) shingles: Option<Mesh>,
+    pub(super) nodes: Vec<Node>,
+}
+
+pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64) -> CottagePieces {
+    let palette = palette(design, x, z);
+    let (roof, parts, _) = cottage_parts(design, Build::Parts, &[]);
+    let walls = design.style.walls;
+    let uv = cottage_uv(walls);
+    let Parts {
+        kits,
+        courses,
+        nodes,
+        openings,
+        lot,
+        lot_nodes,
+        ..
+    } = parts;
+    let mut ground = Node::group("");
+    let mut pieces = Vec::new();
+    for (((part, kit), courses), nodes) in
+        HousePart::ALL.into_iter().zip(kits).zip(courses).zip(nodes)
+    {
+        let mut meshes = kit.finish_scaled(&uv);
+        grime(&mut meshes, roof.ridge);
+        if part == HousePart::Mound {
+            add_weathered(&mut ground, meshes, &palette, walls, false);
+            ground.children.extend(nodes);
+            continue;
+        }
+        let shingles = (!courses.positions.is_empty()).then(|| courses.weathered_mesh(&roof));
+        pieces.push(CottagePiece {
+            part,
+            meshes,
+            shingles,
+            nodes,
+        });
+    }
+    add_weathered(&mut ground, lot.finish_scaled(&uv), &palette, walls, false);
+    ground.children.extend(lot_nodes);
+    CottagePieces {
+        roof,
+        palette,
+        parts: pieces,
+        openings,
+        ground,
+    }
+}
+
+/// Paint a structural cottage's part meshes (and the torn edges cut for them) as the
+/// standing cottage's.
+pub(super) fn paint_cottage(
+    group: &mut Node,
+    meshes: KitMeshes<Surface>,
+    design: &HouseDesign,
+    palette: &Palette,
+) {
+    add_weathered(group, meshes, palette, design.style.walls, false);
+}
+
+/// A cottage's shingle courses, weathered as the standing roof's.
+pub(super) fn cottage_shingles(mesh: Mesh, palette: &Palette) -> Node {
+    let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
+        vertex_colors: true,
+        ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
+    });
+    shadowed(Arc::new(mesh), material)
+}
+
+/// The texture scale of a cottage's finishes.
+pub(super) fn cottage_scale(design: &HouseDesign) -> impl Fn(Surface) -> f64 {
+    cottage_uv(design.style.walls)
 }
 
 /// A cottage's kits for `build`, with its marks cut into its walls and roof, and how
@@ -5173,7 +5270,7 @@ fn house_roof(
     breach_eave_cues(parts, design, roof, &breaks, hits);
     shed_shingles(parts, design, roof, roof_holes);
 
-    if !parts.split {
+    if parts.aside.is_none() {
         yard(&mut parts.lot, design, false);
         garden(&mut parts.lot, &mut parts.lot_nodes, design, false, None);
     }
@@ -8624,237 +8721,5 @@ fn corner_remnants(kit: &mut Kit<Surface>, design: &HouseDesign, rng: &mut Rando
                     DVec3::new(0.0, 0.0, rng.range(-0.3, 0.3)),
                 ),
         );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn triangles(node: &Node) -> usize {
-        let own = node
-            .drawable
-            .as_ref()
-            .map_or(0, |drawable| drawable.mesh.triangle_count());
-        own + node.children.iter().map(triangles).sum::<usize>()
-    }
-
-    fn village() -> Vec<(f64, f64, f64, f64, f64)> {
-        crate::sim::arena::arena_layout()
-            .into_iter()
-            .filter(|c| c.kind == crate::sim::types::CoverKind::House)
-            .map(|c| (c.x, c.z, c.w, c.d, c.h))
-            .collect()
-    }
-
-    /// Every vertex and transform of a node tree, to compare two builds.
-    fn contents(node: &Node, out: &mut Vec<f64>) {
-        out.extend(node.position.to_array());
-        out.extend(node.rotation.to_array());
-        if let Some(drawable) = &node.drawable {
-            let mesh = &drawable.mesh;
-            out.extend(mesh.positions.iter().flatten().map(|&v| f64::from(v)));
-            out.extend(mesh.normals.iter().flatten().map(|&v| f64::from(v)));
-            out.extend(mesh.colors.iter().flatten().map(|&v| f64::from(v)));
-            out.extend(mesh.uvs.iter().flatten().map(|&v| f64::from(v)));
-            out.push(f64::from(drawable.material.color.0));
-        }
-        for child in &node.children {
-            contents(child, out);
-        }
-    }
-
-    #[test]
-    fn a_cottage_built_in_steps_matches_one_built_at_once() {
-        let (x, z, w, d, h) = village()[0];
-        let wall = TimberHit {
-            x: 0.5,
-            y: 1.2,
-            z: 3.0,
-            size: 1.0,
-        };
-        let roof = TimberHit {
-            x: 0.8,
-            y: h - 0.3,
-            z: 0.2,
-            size: 2.0,
-        };
-        for hits in [vec![wall], vec![TimberHit { size: 5.0, ..wall }, roof]] {
-            let shape = super::super::CoverShape {
-                kind: crate::sim::types::CoverKind::House,
-                x,
-                z,
-                w,
-                d,
-                h,
-                color: 0,
-                debris_seed: None,
-                timber_hits: hits.clone(),
-                timber_join: None,
-            };
-            let at_once = super::super::cover_model(&shape, super::super::TreeDetail::Full, 0);
-            let mut build = HouseCoverBuild::new(x, z, w, d, h, &hits);
-            let mut steps = 1;
-            let stepped = loop {
-                match build.step() {
-                    Some(root) => break root,
-                    None => steps += 1,
-                }
-            };
-            // The kits a section at a time (plinth, four walls, roof), then the walls'
-            // and the roof's meshes.
-            assert_eq!(steps, 8);
-            let (mut a, mut b) = (Vec::new(), Vec::new());
-            contents(&at_once, &mut a);
-            contents(&stepped, &mut b);
-            assert!(!a.is_empty() && a == b, "{hits:?}");
-        }
-    }
-
-    /// Variety never costs more than the one cottage design did (about 6,400
-    /// triangles), a second floor's windows and belt course about half again, and
-    /// big breaches torn through every wall and two holes in the roof at most 9,000
-    /// more, with the roof and walls sliced where they sag over them (only struck
-    /// houses carry them; two big breaches at most 5,600).
-    #[test]
-    fn cottages_stay_within_the_former_triangle_budget() {
-        let mut over = Vec::new();
-        for (x, z, w, d, h) in village() {
-            // A breach grown big in each wall and two roof holes.
-            let mut hits: Vec<TimberHit> = (0..4)
-                .map(|i| TimberHit {
-                    x: [w / 2.0, -w / 2.0, 0.6, -0.6][i],
-                    y: 1.2,
-                    z: [0.4, -0.4, d / 2.0, -d / 2.0][i],
-                    size: 6.0,
-                })
-                .collect();
-            hits.extend([(0.25, 1.0), (-0.25, -1.0)].map(|(fx, fz)| TimberHit {
-                x: w * fx,
-                y: h - 0.4,
-                z: fz,
-                size: 3.0,
-            }));
-            for (cost, hits) in [(0, &[][..]), (5_600, &hits[..2]), (9_000, &hits[..])] {
-                let mut group = Node::group("");
-                house(&mut group, x, z, w, d, h, hits);
-                let count = triangles(&group);
-                let floors = if h >= crate::sim::house_layout::TWO_STOREY {
-                    9_000
-                } else {
-                    6_400
-                };
-                if count > floors + cost {
-                    over.push(format!("{x} {z} {} hits: {count}", hits.len()));
-                }
-            }
-        }
-        assert!(over.is_empty(), "{over:?}");
-    }
-
-    /// A mark of `size` on the middle of a cottage's wall without the door, 0.3 m
-    /// off its centre.
-    fn side_wall_mark(design: &HouseDesign, size: f64) -> TimberHit {
-        let index = if design.door_wall == 0 { 2 } else { 0 };
-        let (center, _, along, _) =
-            crate::sim::house_layout::wall_frames(design.w, design.d)[index];
-        let world = design.to_world(center + along * 0.3);
-        TimberHit {
-            x: world.x,
-            y: 1.0,
-            z: world.z,
-            size,
-        }
-    }
-
-    /// Marks on one wall break that wall and nothing else: no other wall is holed,
-    /// the roof keeps every shingle course whole and the chimney stands.
-    #[test]
-    fn a_shelled_wall_leaves_the_rest_of_the_cottage_as_it_was() {
-        let (x, z, w, d, h) = village()[0];
-        let design = HouseDesign::of(x, z, w, d, h);
-        let roof = design.roof();
-        let hit = side_wall_mark(&design, 4.0);
-        let (_, parts, _) = cottage_parts(&design, Build::Standing, &[hit]);
-        let struck: Vec<usize> = (0..4).filter(|&i| !parts.holes[i].is_empty()).collect();
-        assert_eq!(struck.len(), 1, "{struck:?}");
-        assert!(roof_holes(&design, &roof, &[hit]).is_empty());
-        assert!(!design.chimney_struck(&[hit]));
-        let (_, intact, _) = cottage_parts(&design, Build::Standing, &[]);
-        assert_eq!(
-            parts.courses[1].positions.len(),
-            intact.courses[1].positions.len(),
-            "the roof's shingles are untouched"
-        );
-    }
-
-    /// A breach grows with every shell that lands on it.
-    #[test]
-    fn a_breach_grows_with_its_mark() {
-        let (x, z, w, d, h) = village()[0];
-        let design = HouseDesign::of(x, z, w, d, h);
-        let areas: Vec<f64> = [1.0, 1.4, 1.8, 2.6, 3.4]
-            .into_iter()
-            .map(|size| {
-                let hit = side_wall_mark(&design, size);
-                let (_, parts, _) = cottage_parts(&design, Build::Standing, &[hit]);
-                parts.holes.iter().flatten().map(Hole::area).sum()
-            })
-            .collect();
-        // It never shrinks, and grows overall; while the window it tore out is
-        // wider than what its shells tore, the window's opening sets its size.
-        assert!(
-            areas.windows(2).all(|pair| pair[1] >= pair[0]) && areas[4] > areas[0] * 1.5,
-            "{areas:?}"
-        );
-    }
-
-    /// The most draws a standing cottage takes: satin, siding, stone, brick, shingles
-    /// and glass.
-    const STANDING_DRAWS: usize = 6;
-
-    fn shown_draws(node: &Node) -> usize {
-        if !node.visible {
-            return 0;
-        }
-        usize::from(node.drawable.is_some()) + node.children.iter().map(shown_draws).sum::<usize>()
-    }
-
-    fn draws(node: &Node) -> usize {
-        let mut count = usize::from(node.drawable.is_some());
-        for child in &node.children {
-            count += draws(child);
-        }
-        count
-    }
-
-    #[test]
-    fn collapse_pieces_and_heaps_draw_once_a_finish() {
-        // One cottage with a shingled roof and one without cover every branch.
-        let cottages = village();
-        let shingled = |&(x, z, w, d, h): &(f64, f64, f64, f64, f64)| {
-            HouseDesign::of(x, z, w, d, h).style.cover == RoofCover::Shingles
-        };
-        let picks = [
-            cottages.iter().find(|c| shingled(c)),
-            cottages.iter().find(|c| !shingled(c)),
-        ];
-        for &(x, z, w, d, h) in picks.map(|pick| pick.expect("both roof covers in the village")) {
-            let pieces = house_pieces(x, z, w, d, h, &[]);
-            let design = HouseDesign::of(x, z, w, d, h);
-            assert_eq!(pieces.len(), design.pieces(&RoofBreaks::default()).len());
-            // A piece is drawn in the standing cottage's finishes, so it costs at most
-            // the draws the standing cottage does.
-            for (piece, node) in &pieces {
-                assert!((1..=STANDING_DRAWS).contains(&draws(node)), "{piece:?}");
-            }
-        }
-        let (x, z, w, d, _) = cottages[0];
-        let mut heap = Node::group("");
-        house_heap(&mut heap, x, z, w, d - HOUSE_HEAP.depth, 77.0 * 512.0);
-        batch(&mut heap.children[0]);
-        // The wreck, the plinth as it stood and each lot prop as it stood (the
-        // crushed ones hidden).
-        assert!(shown_draws(&heap) <= 10, "heap: {}", shown_draws(&heap));
     }
 }

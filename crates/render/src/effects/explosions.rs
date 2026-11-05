@@ -1052,9 +1052,10 @@ impl ExplosionEffects {
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
         let wood = match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo))
-            | (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
-                Some(WoodDust::Hit)
-            }
+            | (
+                SimEventType::Shatter,
+                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::House),
+            ) => Some(WoodDust::Hit),
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => Some(WoodDust::Burst),
             _ => None,
         };

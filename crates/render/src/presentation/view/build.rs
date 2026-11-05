@@ -5,14 +5,16 @@
 //! [`Presentation::begin_prepare`] take the same steps at once, in the same order, so
 //! an arena comes out the same either way.
 
+use sloppy_core::models::house_debris;
 use sloppy_core::models::round_texture_files;
+use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::render_state::RenderCover;
-use sloppy_core::sim::timber_layout::{TimberHit, TimberWall, timber_parts};
+use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
 
 use super::{
-    CoverPlan, DEBRIS_SHAPES, HousePreparation, Lifetime, PendingScenery, Preparation,
-    Presentation, SAMPLE_WRECK, SceneryModel, cover_damage_stage, model_catalog, timber_part_model,
+    CoverPlan, DEBRIS_SHAPES, Lifetime, PendingScenery, Preparation, Presentation, SAMPLE_WRECK,
+    SceneryModel, cover_damage_stage, model_catalog, timber_part_model,
 };
 use crate::presentation::geometry_cache;
 use crate::presentation::theme::Theme;
@@ -75,12 +77,6 @@ impl Presentation {
         self.cover_looks.clear();
         self.fragments.clear();
         self.shared_debris.clear();
-        self.house_pieces.clear();
-        // Its models are the round's, which `reset_round` frees.
-        self.house_prep = HousePreparation::default();
-        // Round models go with the round.
-        self.settled.clear();
-        self.house_motion.clear();
         self.pickups.clear();
         self.supply_pieces.clear();
         self.mines.clear();
@@ -273,20 +269,20 @@ impl Presentation {
                         .push(self.renderer.add_model(&model.root, Lifetime::Round));
                 }
             }
-            // A cottage's look follows its marks rather than its health: one with a
-            // big breach and a holed roof registers every damaged finish.
-            if cover.kind == CoverKind::House && seen.insert("house-marks".into()) {
-                let mark = |x: f64, y: f64, z: f64, size: f64| TimberHit { x, y, z, size };
+            // A cottage with gaps in its walls registers its torn edges and lining,
+            // and its fallen parts their fading look.
+            if cover.kind == CoverKind::House && seen.insert("house-parts".into()) {
+                let broken = PartSet::from_indices(5..12);
                 let damaged = RenderCover {
-                    timber_hits: vec![
-                        mark(0.0, 1.0, cover.d / 2.0, 5.0),
-                        mark(cover.w * 0.25, cover.h - 0.4, 0.5, 2.0),
-                    ],
+                    broken,
                     ..cover.clone()
                 };
                 let model = model_catalog::cover_model(&damaged, 0);
                 self.sample_models
                     .push(self.renderer.add_model(&model.root, Lifetime::Round));
+                let debris = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, &broken);
+                self.sample_models
+                    .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
             }
             if cover.kind == CoverKind::Timber && seen.insert("timber-parts".into()) {
                 let wall = TimberWall {

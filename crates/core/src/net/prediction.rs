@@ -17,6 +17,9 @@ use super::own_shots::{CoverCast, CoverHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
+use crate::sim::house_physics::house_structure;
+use crate::sim::house_structure::PartSet;
+use crate::sim::simulation::house_parts;
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -321,6 +324,8 @@ struct PredictedHull {
 enum CoverForm {
     Standing,
     Stump,
+    /// A cottage's standing parts: those not in the set.
+    Parts(PartSet),
 }
 
 struct CoverBody {
@@ -590,9 +595,19 @@ impl TankPredictor {
             Some(motion) => (motion.origin_x, motion.origin_z, motion.w, motion.d),
             None => (cover.x, cover.z, cover.w, cover.d),
         };
-        let parts = cover_parts(cover.kind, x, z, w, d, cover.h);
+        let parts = match form {
+            CoverForm::Parts(broken) => {
+                house_parts(&house_structure(x, z, w, d, cover.h), x, z, &broken)
+            }
+            _ => cover_parts(cover.kind, x, z, w, d, cover.h),
+        };
         let body = self.world.insert_body(parts.body);
         match form {
+            CoverForm::Parts(_) => {
+                for collider in parts.colliders {
+                    self.world.insert_collider(collider, Some(body));
+                }
+            }
             CoverForm::Standing => {
                 for collider in parts.colliders {
                     self.world.insert_collider(collider, Some(body));
@@ -855,7 +870,9 @@ impl CoverCast for TankPredictor {
 
 /// How a cover record stands in the predicted world, or `None` when nothing is left of it.
 fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
-    if cover.alive {
+    if cover.kind == CoverKind::House {
+        Some(CoverForm::Parts(cover.broken))
+    } else if cover.alive {
         Some(CoverForm::Standing)
     } else if cover.kind == CoverKind::Tree {
         Some(CoverForm::Stump)
@@ -898,8 +915,6 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
         group::TIMBER_DEBRIS
     } else if fragment.tower_piece.is_some() {
         group::CRUSHED_FRAME
-    } else if fragment.house_piece.is_some() {
-        group::HOUSE_SHARD
     } else {
         group::PUSHABLE_DEBRIS
     };

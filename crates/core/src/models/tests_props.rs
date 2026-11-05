@@ -5,6 +5,7 @@
 use super::*;
 use crate::geometry::reference_tests::fnv;
 use crate::scene::{Node, TextureSource};
+use crate::sim::house_structure::PartSet;
 use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts,
 };
@@ -32,6 +33,7 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
         debris_seed: Some(7.0),
         timber_hits: Vec::new(),
         timber_join: None,
+        broken: PartSet::EMPTY,
     }
 }
 
@@ -67,6 +69,11 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         });
         shape
     };
+    // A cottage with a run of its parts shot out, torn edges round the gap.
+    let gapped = |mut shape: CoverShape| {
+        shape.broken = PartSet::from_indices(5..14);
+        shape
+    };
     let full = TreeDetail::Full;
     // (label, shape, detail, last damage stage, triangle budget)
     #[rustfmt::skip]
@@ -77,7 +84,8 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("concrete wall", cover(CoverKind::Boundary, [1.0, 122.0, 2.2], 0x8a8a8a), full, 0, 160),
         ("tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), full, 0, 1_500),
         ("background tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), TreeDetail::Background, 0, 340),
-        ("cottage", hit(cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c)), full, 2, 10_000),
+        ("cottage", cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c), full, 0, 10_000),
+        ("gapped cottage", gapped(cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c)), full, 0, 14_000),
         ("timber", hit(joined(cover(CoverKind::Timber, [4.1, 0.9, 2.8], 0xb47a49))), full, 3, 630),
         ("timber post", cover(CoverKind::Timber, [0.9, 0.9, 2.8], 0x805336), full, 3, 760),
         ("drum", cover(CoverKind::Drum, [1.2, 1.2, 1.7], 0xff5b24), full, 0, 1_400),
@@ -213,6 +221,7 @@ fn tower_rubble_wears_concrete_and_timber() {
         debris_seed: Some(7.0),
         timber_hits: Vec::new(),
         timber_join: None,
+        broken: PartSet::EMPTY,
     };
     let textures = |kind| node_textures(&cover_model(&shape(kind), TreeDetail::Full, 0));
     let tower = textures(CoverKind::Tower);

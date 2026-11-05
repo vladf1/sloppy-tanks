@@ -26,7 +26,7 @@ use crate::sim::crate_layout::CratePiece;
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
-use crate::sim::house_layout::{HousePart, HousePiece};
+use crate::sim::house_structure::PartSet;
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -105,68 +105,6 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("east-wall", TowerPiece::EastWall),
     ("roof", TowerPiece::Roof),
     ("ladder", TowerPiece::Ladder),
-];
-/// Every shard a cottage breaks into, part by part (as [`HousePiece::ALL`]).
-pub const HOUSE_PIECES: [(&str, HousePiece); 59] = [
-    ("front-wall-0", HousePiece::new(HousePart::FrontWall, 0)),
-    ("front-wall-1", HousePiece::new(HousePart::FrontWall, 1)),
-    ("front-wall-2", HousePiece::new(HousePart::FrontWall, 2)),
-    ("front-wall-3", HousePiece::new(HousePart::FrontWall, 3)),
-    ("front-wall-4", HousePiece::new(HousePart::FrontWall, 4)),
-    ("front-wall-5", HousePiece::new(HousePart::FrontWall, 5)),
-    ("front-wall-6", HousePiece::new(HousePart::FrontWall, 6)),
-    ("front-wall-7", HousePiece::new(HousePart::FrontWall, 7)),
-    ("back-wall-0", HousePiece::new(HousePart::BackWall, 0)),
-    ("back-wall-1", HousePiece::new(HousePart::BackWall, 1)),
-    ("back-wall-2", HousePiece::new(HousePart::BackWall, 2)),
-    ("back-wall-3", HousePiece::new(HousePart::BackWall, 3)),
-    ("back-wall-4", HousePiece::new(HousePart::BackWall, 4)),
-    ("back-wall-5", HousePiece::new(HousePart::BackWall, 5)),
-    ("back-wall-6", HousePiece::new(HousePart::BackWall, 6)),
-    ("back-wall-7", HousePiece::new(HousePart::BackWall, 7)),
-    ("right-wall-0", HousePiece::new(HousePart::RightWall, 0)),
-    ("right-wall-1", HousePiece::new(HousePart::RightWall, 1)),
-    ("right-wall-2", HousePiece::new(HousePart::RightWall, 2)),
-    ("right-wall-3", HousePiece::new(HousePart::RightWall, 3)),
-    ("right-wall-4", HousePiece::new(HousePart::RightWall, 4)),
-    ("right-wall-5", HousePiece::new(HousePart::RightWall, 5)),
-    ("right-wall-6", HousePiece::new(HousePart::RightWall, 6)),
-    ("right-wall-7", HousePiece::new(HousePart::RightWall, 7)),
-    ("left-wall-0", HousePiece::new(HousePart::LeftWall, 0)),
-    ("left-wall-1", HousePiece::new(HousePart::LeftWall, 1)),
-    ("left-wall-2", HousePiece::new(HousePart::LeftWall, 2)),
-    ("left-wall-3", HousePiece::new(HousePart::LeftWall, 3)),
-    ("left-wall-4", HousePiece::new(HousePart::LeftWall, 4)),
-    ("left-wall-5", HousePiece::new(HousePart::LeftWall, 5)),
-    ("left-wall-6", HousePiece::new(HousePart::LeftWall, 6)),
-    ("left-wall-7", HousePiece::new(HousePart::LeftWall, 7)),
-    ("right-roof-0", HousePiece::new(HousePart::RightRoof, 0)),
-    ("right-roof-1", HousePiece::new(HousePart::RightRoof, 1)),
-    ("right-roof-2", HousePiece::new(HousePart::RightRoof, 2)),
-    ("right-roof-3", HousePiece::new(HousePart::RightRoof, 3)),
-    ("right-roof-4", HousePiece::new(HousePart::RightRoof, 4)),
-    ("right-roof-5", HousePiece::new(HousePart::RightRoof, 5)),
-    ("right-roof-6", HousePiece::new(HousePart::RightRoof, 6)),
-    ("right-roof-7", HousePiece::new(HousePart::RightRoof, 7)),
-    ("left-roof-0", HousePiece::new(HousePart::LeftRoof, 0)),
-    ("left-roof-1", HousePiece::new(HousePart::LeftRoof, 1)),
-    ("left-roof-2", HousePiece::new(HousePart::LeftRoof, 2)),
-    ("left-roof-3", HousePiece::new(HousePart::LeftRoof, 3)),
-    ("left-roof-4", HousePiece::new(HousePart::LeftRoof, 4)),
-    ("left-roof-5", HousePiece::new(HousePart::LeftRoof, 5)),
-    ("left-roof-6", HousePiece::new(HousePart::LeftRoof, 6)),
-    ("left-roof-7", HousePiece::new(HousePart::LeftRoof, 7)),
-    ("front-roof-0", HousePiece::new(HousePart::FrontRoof, 0)),
-    ("front-roof-1", HousePiece::new(HousePart::FrontRoof, 1)),
-    ("front-roof-2", HousePiece::new(HousePart::FrontRoof, 2)),
-    ("front-roof-3", HousePiece::new(HousePart::FrontRoof, 3)),
-    ("back-roof-0", HousePiece::new(HousePart::BackRoof, 0)),
-    ("back-roof-1", HousePiece::new(HousePart::BackRoof, 1)),
-    ("back-roof-2", HousePiece::new(HousePart::BackRoof, 2)),
-    ("back-roof-3", HousePiece::new(HousePart::BackRoof, 3)),
-    ("chimney-0", HousePiece::new(HousePart::Chimney, 0)),
-    ("chimney-1", HousePiece::new(HousePart::Chimney, 1)),
-    ("mound", HousePiece::new(HousePart::Mound, 0)),
 ];
 pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
     ("wall", CratePiece::Wall),
@@ -297,6 +235,8 @@ const LABEL_BYTES: usize = 640;
 const MAX_TIMBER_HITS: usize = 32;
 const MAX_TIMBER_MARKS: usize = 32;
 const TIMBER_HITS_BYTES: usize = MAX_TIMBER_HITS * 4 * 10 + 10;
+/// A cottage's part set: its words as varints.
+const PART_SET_BYTES: usize = 4 * 10;
 const TIMBER_PART_BYTES: usize = 256 + MAX_TIMBER_MARKS * 50;
 const SCORES_BYTES: usize = 20;
 
@@ -306,7 +246,6 @@ const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
-const HOUSE_NAMES: [&str; 59] = names(&HOUSE_PIECES);
 
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
@@ -378,6 +317,7 @@ wire_fields!(
             "timberHits",
             FieldKind::Blob(TIMBER_HITS_BYTES, timber_hits_json)
         ),
+        BROKEN = Field::new("broken", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
         MAX_HP = Field::nullable("maxHp", VALUE),
         X = Field::new("x", POSITION),
         Z = Field::new("z", POSITION),
@@ -428,8 +368,8 @@ wire_fields!(
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
         CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
-        HOUSE_PIECE = Field::new("housePiece", FieldKind::Choice(&HOUSE_NAMES)),
         HOUSE_ID = Field::new("houseId", COUNT),
+        HOUSE_PARTS = Field::new("houseParts", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
     }
 );
 
@@ -589,6 +529,26 @@ fn read_timber_hits(bytes: &[u8]) -> ReadResult<Vec<TimberHit>> {
         });
     }
     finished(&reader, hits)
+}
+
+fn write_part_set(out: &mut Vec<u8>, set: &PartSet) {
+    for word in set.0 {
+        put_varint(out, word);
+    }
+}
+
+fn read_part_set(bytes: &[u8]) -> ReadResult<PartSet> {
+    let mut reader = WireReader::new(bytes);
+    let mut set = PartSet::EMPTY;
+    for word in &mut set.0 {
+        *word = reader.varint()?;
+    }
+    finished(&reader, set)
+}
+
+fn part_set_json(bytes: &[u8]) -> ReadResult<Value> {
+    let set = read_part_set(bytes)?;
+    Ok(Value::Array(set.iter().map(|index| json!(index)).collect()))
 }
 
 fn timber_hits_json(bytes: &[u8]) -> ReadResult<Value> {
@@ -844,6 +804,12 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
         VALUE_SCALE,
     );
     record.set_flag(ALIVE, cover.alive);
+    match &cover.structure {
+        Some(state) if !state.gone.is_empty() => {
+            record.set_blob(BROKEN, |out| write_part_set(out, &state.gone));
+        }
+        _ => record.clear(BROKEN),
+    }
     if cover.timber_hits.is_empty() {
         record.clear(TIMBER_HITS);
     } else {
@@ -913,7 +879,10 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     }
     set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
     set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
-    set_choice(record, HOUSE_PIECE, &HOUSE_PIECES, fragment.house_piece);
+    match &fragment.house_parts {
+        Some(parts) => record.set_blob(HOUSE_PARTS, |out| write_part_set(out, parts)),
+        None => record.clear(HOUSE_PARTS),
+    }
     if let Some(house) = fragment.house_id {
         record.set_count(HOUSE_ID, u64::from(house));
     }
@@ -1384,6 +1353,12 @@ pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
         debris_seed: fields.number(DEBRIS_SEED).map(|seed| seed as f64),
         position: fields.point(POSITION_X)?,
         rotation: fields.rotation(ROTATION_X)?,
+        broken: fields
+            .blob(BROKEN)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("broken: {e}"))?
+            .unwrap_or_default(),
         timber_hits: match fields.blob(TIMBER_HITS) {
             Some(bytes) => read_timber_hits(bytes).map_err(|e| format!("timberHits: {e}"))?,
             None => Vec::new(),
@@ -1419,8 +1394,12 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map_err(|e| format!("timberPart: {e}"))?,
         tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
         crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
-        house_piece: fields.opt_choice(HOUSE_PIECE, &HOUSE_PIECES)?,
         house_id: fields.opt_count32(HOUSE_ID)?,
+        house_parts: fields
+            .blob(HOUSE_PARTS)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("houseParts: {e}"))?,
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,

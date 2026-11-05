@@ -20,7 +20,7 @@ mod driving;
 mod game;
 mod game_options;
 mod hit_registration;
-mod house_destruction;
+mod house_structure;
 mod humvee;
 mod initial_state;
 mod laser_defense;

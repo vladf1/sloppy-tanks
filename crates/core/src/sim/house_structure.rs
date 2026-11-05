@@ -17,6 +17,7 @@
 //! model it is drawn from: rectangles in the plane of a [`HousePart`] of the model.
 
 use glam::{DVec2, DVec3};
+use serde::{Deserialize, Serialize};
 
 use super::house_fracture::PartPlane;
 use super::house_layout::{
@@ -29,7 +30,7 @@ pub const MAX_PARTS: usize = 256;
 
 /// A set of a cottage's parts by index: the parts broken or fallen from a cottage, or
 /// those falling as one body.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PartSet(pub [u64; MAX_PARTS / 64]);
 
 impl PartSet {
@@ -135,6 +136,9 @@ impl PartKind {
     }
 }
 
+/// The chimney's index among a cottage's parts, after the four corner posts.
+pub const CHIMNEY_PART: usize = 4;
+
 /// A brick cottage's walls take this much more than clapboard ones.
 const BRICK_STRENGTH: f64 = 1.6;
 
@@ -152,8 +156,9 @@ const REST: f32 = 1.0;
 const HANG: f32 = 0.55;
 /// Neighbouring panels nailed to the same studs.
 const PANEL_TIE: f32 = 0.45;
-/// A plate spanning on from its neighbour: a header carries a few metres over a gap.
-const PLATE_TIE: f32 = 0.6;
+/// A plate spanning on from its neighbour: a header bridges one bay over a gap, not
+/// two (0.55² falls under [`FALL_BELOW`]).
+const PLATE_TIE: f32 = 0.55;
 /// A plate framed into a corner post.
 const POST_TIE: f32 = 0.9;
 /// Gable pieces, attic floor strips: boarded to their neighbours.
@@ -318,6 +323,56 @@ pub fn part_plane(design: &HouseDesign, part: HousePart) -> PartPlane {
     }
 }
 
+/// The outline of the model's `part` in its plane ([`part_plane`]), as its collapse
+/// pieces had it: where a torn edge along a missing neighbour ends.
+pub fn part_outline(design: &HouseDesign, part: HousePart) -> Vec<DVec2> {
+    let roof = design.roof();
+    let (xe, ze, rh) = (roof.eave_x, roof.rake_z, roof.ridge_half);
+    let gutter = xe + 0.17;
+    if let Some(index) = part.wall_index() {
+        let half = wall_frames(design.w, design.d)[index].3;
+        let mut outline = vec![
+            DVec2::new(-half, PLINTH),
+            DVec2::new(half, PLINTH),
+            DVec2::new(half, roof.wall),
+        ];
+        if roof.form == RoofForm::Gable && index < 2 {
+            outline.push(DVec2::new(0.0, roof.ridge));
+        }
+        outline.push(DVec2::new(-half, roof.wall));
+        return outline;
+    }
+    match (part, roof.form) {
+        (HousePart::RightRoof | HousePart::LeftRoof, RoofForm::Gable) => vec![
+            DVec2::new(-ze, 0.0),
+            DVec2::new(ze, 0.0),
+            DVec2::new(ze, gutter),
+            DVec2::new(-ze, gutter),
+        ],
+        (HousePart::RightRoof | HousePart::LeftRoof, RoofForm::Hip) => vec![
+            DVec2::new(-rh, 0.0),
+            DVec2::new(rh, 0.0),
+            DVec2::new(ze, xe),
+            DVec2::new(ze, gutter),
+            DVec2::new(-ze, gutter),
+            DVec2::new(-ze, xe),
+        ],
+        (HousePart::FrontRoof | HousePart::BackRoof, _) => vec![
+            DVec2::new(0.0, rh),
+            DVec2::new(xe, ze),
+            DVec2::new(xe, ze + 0.17),
+            DVec2::new(-xe, ze + 0.17),
+            DVec2::new(-xe, ze),
+        ],
+        _ => vec![
+            DVec2::new(-FAR, -FAR),
+            DVec2::new(FAR, -FAR),
+            DVec2::new(FAR, FAR),
+            DVec2::new(-FAR, FAR),
+        ],
+    }
+}
+
 /// A cottage's parts and how they hold each other up.
 #[derive(Clone, Debug, PartialEq)]
 pub struct HouseStructure {
@@ -356,6 +411,8 @@ impl HouseStructure {
             supports: Vec::new(),
         };
         structure.build_posts();
+        structure.build_chimney();
+        debug_assert_eq!(structure.parts.len() - 1, CHIMNEY_PART);
         for index in 0..4 {
             structure.build_wall(index);
         }
@@ -381,6 +438,25 @@ impl HouseStructure {
         }
         debug_assert!(structure.parts.len() <= MAX_PARTS);
         structure
+    }
+
+    /// The chimney above the deck; its stack stands on its own footing.
+    fn build_chimney(&mut self) {
+        let flue = self.design.flue();
+        let (bottom, top) = self.design.chimney_span();
+        let reach = DVec3::new(CHIMNEY / 2.0, 0.0, CHIMNEY / 2.0);
+        let mut chimney = StructurePart::cuboid(
+            PartKind::Chimney,
+            DVec3::new(flue.x, bottom, flue.z) - reach,
+            DVec3::new(flue.x, top, flue.z) + reach,
+            vec![PartCell {
+                part: HousePart::Chimney,
+                min: DVec2::splat(-FAR),
+                max: DVec2::splat(FAR),
+            }],
+        );
+        chimney.grounded = true;
+        self.parts.push(chimney);
     }
 
     /// The four corner posts: front right, front left, back right, back left.
@@ -622,6 +698,9 @@ impl HouseStructure {
                     continue;
                 }
                 let (a, b) = (&self.parts[i], &self.parts[j]);
+                if a.kind == PartKind::Chimney || b.kind == PartKind::Chimney {
+                    continue;
+                }
                 let apart = (b.min - a.max).max(a.min - b.max);
                 if apart.max_element() > CONTACT {
                     continue;
@@ -778,22 +857,6 @@ impl HouseStructure {
                 Vec::new(),
             ));
         }
-        // The chimney above the deck; its stack stands on its own footing.
-        let flue = self.design.flue();
-        let (bottom, top) = self.design.chimney_span();
-        let reach = DVec3::new(CHIMNEY / 2.0, 0.0, CHIMNEY / 2.0);
-        let mut chimney = StructurePart::cuboid(
-            PartKind::Chimney,
-            DVec3::new(flue.x, bottom, flue.z) - reach,
-            DVec3::new(flue.x, top, flue.z) + reach,
-            vec![PartCell {
-                part: HousePart::Chimney,
-                min: DVec2::splat(-FAR),
-                max: DVec2::splat(FAR),
-            }],
-        );
-        chimney.grounded = true;
-        self.parts.push(chimney);
     }
 
     /// Supports of the roof (sheets, ridge, chimney: parts from `first` on): the
@@ -1072,7 +1135,8 @@ fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
         Relation::Beside => match (of, by) {
             (Post, _) => 0.0,
             (Floor, Plate) => JOIST_SEAT,
-            (Plate, Floor) => HANG,
+            // Joists sit on the plate; they do not hold it up.
+            (Plate, Floor) => LOOSE_TIE,
             (Plate, Plate) => PLATE_TIE,
             (Plate, Post) => POST_TIE,
             (Gable, Gable) | (Floor, Floor) => BOARD_TIE,

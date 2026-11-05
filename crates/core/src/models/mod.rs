@@ -55,6 +55,7 @@ beyond_geometry! {
     mod barrel_debris;
     mod barrel_surfaces;
     mod cover_model;
+    mod house_parts_model;
     mod crate_model;
     pub mod effects_props;
     mod flags;
@@ -131,6 +132,7 @@ beyond_geometry! {
 beyond_geometry! {
     pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
     pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
+    pub use house_parts_model::{house_debris, structural_house};
     pub use crate_model::crate_piece_model;
     pub use effects_props::{aged_wreck_material, wreck_brightness};
     pub use flags::{FLAG_CLOTH_NODE, flags_model};
