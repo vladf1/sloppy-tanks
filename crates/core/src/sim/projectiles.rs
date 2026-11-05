@@ -868,7 +868,11 @@ fn strike_house_part(simulation: &mut Simulation, si: usize, cover: usize, part:
                 simulation.shots[si].fuse = Some(FUSE_DISTANCE);
                 false
             } else {
-                simulation.events.push(impact);
+                // A fused round striking a wall from inside bursts in the room: the
+                // wall's outer face shows no hit.
+                if shot.fuse.is_none() {
+                    simulation.events.push(impact);
+                }
                 burst_in_house(simulation, &shot);
                 true
             }

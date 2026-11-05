@@ -222,6 +222,8 @@ const ENCLOSED_LIGHT: f64 = 0.12;
 const ENCLOSED_SCALE: f64 = 0.3;
 /// The height of a fireball's middle over its foot, at scale 1 (m).
 const ENCLOSED_FIRE_MIDDLE: f64 = 1.0;
+/// How far (m) a burst in a room is drawn back toward the hole it came in by.
+const ENCLOSED_SETBACK: f64 = 0.45;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
 /// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
 /// wall: the pile's loose dust goes up with it.
@@ -1182,10 +1184,21 @@ impl ExplosionEffects {
         if barrel {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
         }
-        // A shell's burst in a room stays in the room, at the height it went off.
+        // A shell's burst in a room stays in the room, at the height it went off, drawn
+        // a little back toward the hole it came in by, clear of a wall it struck from
+        // inside, whose face its fire would show through.
         if blast.enclosed {
             blast.scale = ENCLOSED_SCALE;
             blast.y = event.height.unwrap_or(1.0);
+            if let Some(hole) = event.from {
+                let (dx, dz) = (hole.x - event.x, hole.z - event.z);
+                let length = dx.hypot(dz);
+                if length > 1e-6 {
+                    let back = (length * 0.5).min(ENCLOSED_SETBACK);
+                    blast.x += dx / length * back;
+                    blast.z += dz / length * back;
+                }
+            }
         }
         // Timber and a tower going down raise more dust than a shell's pop.
         if kind == Kind::Collapse {
