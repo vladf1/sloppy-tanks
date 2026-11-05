@@ -56,6 +56,9 @@ const BLAST_CORE: f64 = 0.5;
 /// A falling body breaks into its sections when its velocity changes by this much
 /// (m/s) in one tick: a hard landing.
 const LANDING_SPEED: f64 = 2.5;
+/// The dust a tower's top raises where it crashes down: its reach (m) and height (m).
+const CRASH_SIZE: f64 = 7.0;
+const CRASH_HEIGHT: f64 = 1.5;
 /// The share of the falling frame's spin each section keeps when it breaks up.
 const LANDING_SPIN: f32 = 0.5;
 /// Seconds a loose section lies before it sinks away (plus the cleanup fade), and its
@@ -568,9 +571,10 @@ impl Simulation {
         c.hp = c.max_hp * state.standing_share();
         let levelled = !state.levelled && DECKS.iter().all(|&deck| state.gone.contains(deck));
         if levelled {
+            // It counts as destroyed as its deck starts down; its dust and noise come
+            // when the deck lands ([`settle_tower_debris`]).
             state.levelled = true;
             c.alive = false;
-            let (x, z, h, id, color) = (c.x, c.z, c.h, c.id, c.color);
             self.destroyed += 1;
             if let Some((owner, team)) = by
                 && self
@@ -580,13 +584,6 @@ impl Simulation {
             {
                 self.combat_record.cover_destroyed += 1;
             }
-            let mut destroy = SimEvent::at(SimEventType::Destroy, x, z);
-            destroy.cover_kind = Some(CoverKind::Tower);
-            destroy.height = Some(h);
-            destroy.id = Some(id);
-            destroy.size = Some(7.0);
-            destroy.color = Some(color);
-            self.events.push(destroy);
         }
         let parts = &tower_structure().parts;
         let blocking = left.iter().any(|index| parts[index].blocks_ground());
@@ -711,9 +708,12 @@ impl Simulation {
             if let Some(&first) = colliders.first() {
                 track_debris_contacts(self, body, first, fragment_id, DebrisMaterial::Wood);
             }
+            // A section is a body of its own from its landing: it falls flat over the
+            // next moments before it is damped to rest, rather than freezing on its edge.
             let mut piece = fragment.clone();
             piece.id = fragment_id;
             piece.body = body;
+            piece.created_at = Some(self.elapsed);
             piece.tower_parts = Some(section);
             piece.tower_velocity = Some(from_vector(self.world.bodies[body].linvel()));
             self.fragments.push(piece);
@@ -741,6 +741,18 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
             let sections = tower_sections(&parts);
             let room = simulation.fragments.len() + sections.len() - 1 <= simulation.max_fragments;
             if sections.len() > 1 && room {
+                // The tower's top crashing down raises its dust and noise where it lands.
+                if DECKS.iter().any(|&deck| parts.contains(deck)) {
+                    let at = from_vector(body.center_of_mass());
+                    let (tower, color) = (fragment.tower_id, fragment.color);
+                    let mut crash = SimEvent::at(SimEventType::Destroy, at.x, at.z);
+                    crash.cover_kind = Some(CoverKind::Tower);
+                    crash.height = Some(CRASH_HEIGHT);
+                    crash.id = tower;
+                    crash.size = Some(CRASH_SIZE);
+                    crash.color = Some(color);
+                    simulation.events.push(crash);
+                }
                 simulation.break_tower_fragment(index, sections);
                 continue;
             }

@@ -256,6 +256,17 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
             !s.covers[tower].alive,
             "corner {corner}: its deck is coming down"
         );
+        let crashes = |s: &Simulation| {
+            s.events
+                .iter()
+                .filter(|e| e.kind == SimEventType::Destroy && e.id == Some(c.id))
+                .map(|e| Vec2::new(e.x - c.x, e.z - c.z))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            crashes(&s).is_empty(),
+            "corner {corner}: no crash before it lands"
+        );
         let falling = bodies(&s, tower);
         assert_eq!(
             falling.len(),
@@ -316,6 +327,17 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
             "corner {corner}: the top fell toward the missing leg: {moved:?}"
         );
         assert!(roof_end.y < 3.0, "corner {corner}: the roof is down");
+        let crash = crashes(&s);
+        assert_eq!(
+            crash.len(),
+            1,
+            "corner {corner}: one crash where the top landed"
+        );
+        assert!(
+            crash[0].x * ox + crash[0].z * oz > 0.0,
+            "corner {corner}: it raises its dust on the side it fell: {:?}",
+            crash[0]
+        );
         assert!(
             bodies(&s, tower).len() > 4,
             "corner {corner}: it broke into sections where it landed"
