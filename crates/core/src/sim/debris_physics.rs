@@ -279,6 +279,7 @@ pub fn hit_projectile_debris(
 pub fn drain_debris_contacts(simulation: &mut Simulation) {
     let mut count = 0;
     let contacts = simulation.contact_forces.drain();
+    super::house_physics::crush_house_parts(simulation, &contacts);
     for event in &contacts {
         if count >= IMPACTS_PER_TICK {
             continue;

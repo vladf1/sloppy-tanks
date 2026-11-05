@@ -14,7 +14,9 @@
 use std::sync::Arc;
 
 use glam::DVec3;
-use rapier3d::prelude::{ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle};
+use rapier3d::prelude::{
+    ActiveEvents, ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle,
+};
 
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
@@ -25,7 +27,8 @@ use super::house_layout::HouseDesign;
 use super::house_structure::{HouseStructure, PartKind, PartSet};
 use super::math::{Point3, Vec2};
 use super::navigation::Footprint;
-use super::physics::{from_vector, interaction_groups, query_filter, vector};
+use super::data::STEP;
+use super::physics::{ContactForce, from_vector, interaction_groups, query_filter, vector};
 use super::simulation::Simulation;
 use super::types::{Cover, CoverKind, Fragment, SimEvent, SimEventType, Team};
 
@@ -62,6 +65,16 @@ const BRICK_DENSITY: f64 = 0.8;
 /// tips at this rate (rad/s), so nothing hangs level in the air where it stood.
 const SLUMP_SPEED: f64 = 0.6;
 const SLUMP_TIP: f64 = 0.6;
+/// A loose part resting (slower than this, m/s) with its middle this high (m) up on its
+/// cottage's standing parts, this long (s) after it came loose, is wedged there.
+const WEDGE_SPEED: f64 = 0.2;
+const WEDGE_HEIGHT: f64 = 1.0;
+const WEDGE_AFTER: f64 = 0.4;
+/// The damage each unit of impulse a falling part strikes a standing one with does.
+const CRUSH_DAMAGE: f64 = 6.0;
+/// Contact force per unit of a loose part's mass that counts as striking what it lands
+/// on rather than resting its weight there.
+const CRUSH_FORCE_PER_MASS: f64 = 40.0;
 /// How fast (m/s) a blast throws the parts it tears loose away from it.
 const BLAST_THROW: f64 = 2.5;
 /// A falling body breaks up into its parts when its velocity changes by this much
@@ -643,10 +656,18 @@ impl Simulation {
         parts: &PartSet,
         body: RigidBodyHandle,
     ) -> Vec<ColliderHandle> {
-        house_debris_colliders(layout, parts)
+        let colliders: Vec<ColliderHandle> = house_debris_colliders(layout, parts)
             .into_iter()
             .map(|collider| self.world.insert_collider(collider, Some(body)))
-            .collect()
+            .collect();
+        // Every part reports what it lands on hard ([`crush_house_parts`]).
+        let threshold = (f64::from(self.world.bodies[body].mass()) * CRUSH_FORCE_PER_MASS) as f32;
+        for &handle in &colliders {
+            let collider = &mut self.world.colliders[handle];
+            collider.set_active_events(ActiveEvents::CONTACT_FORCE_EVENTS);
+            collider.set_contact_force_event_threshold(threshold);
+        }
+        colliders
     }
 
     fn add_house_fragment(
@@ -736,6 +757,7 @@ impl Simulation {
 /// Each tick: loose cottage parts that land hard break up, and those lying a while
 /// are damped to rest.
 pub fn settle_house_debris(simulation: &mut Simulation) {
+    unwedge_house_debris(simulation);
     let mut index = 0;
     while index < simulation.fragments.len() {
         let fragment = &simulation.fragments[index];
@@ -763,6 +785,104 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             body.set_angular_damping(angular);
         }
         index += 1;
+    }
+}
+
+/// Loose cottage parts landing hard on standing ones break them: a standing part takes
+/// [`CRUSH_DAMAGE`] for every unit of impulse falling parts struck it with this tick,
+/// from the contact forces past their weight that the step reported (a roof slab
+/// coming down on a wall stub, not one resting on it). Parts are taken in cottage, then
+/// part order: no random draw.
+pub fn crush_house_parts(simulation: &mut Simulation, contacts: &[ContactForce]) {
+    let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
+    for contact in contacts {
+        for (falling, standing) in [
+            (contact.collider1, contact.collider2),
+            (contact.collider2, contact.collider1),
+        ] {
+            let Some(part) = simulation.house_part(standing) else {
+                continue;
+            };
+            let Some(body) = simulation
+                .world
+                .colliders
+                .get(falling)
+                .and_then(|collider| collider.parent())
+            else {
+                continue;
+            };
+            if !simulation
+                .fragments
+                .iter()
+                .any(|fragment| fragment.body == body && fragment.house_parts.is_some())
+            {
+                continue;
+            }
+            let impulse = f64::from(contact.total_force_magnitude) * STEP;
+            let from = from_vector(simulation.world.bodies[body].center_of_mass());
+            match struck.iter_mut().find(|(key, _, _)| *key == part) {
+                Some((_, total, _)) => *total += impulse,
+                None => struck.push((part, impulse, from)),
+            }
+        }
+    }
+    struck.sort_by_key(|((cover, part), _, _)| (*cover, *part));
+    for ((cover, part), impulse, from) in struck {
+        let Some(center) = part_center(&simulation.covers[cover], part) else {
+            continue;
+        };
+        let along = Vec2::new(center.x - from.x, center.z - from.z);
+        simulation.strike_house(cover, part, impulse * CRUSH_DAMAGE, false, center, along, None);
+    }
+}
+
+/// A loose part come to rest up on what still stands of its cottage (a roof slab
+/// lying across two gables like a lid, a floor strip on wall stubs) bears down on the
+/// parts it rests on until they give: they break, and it comes down. Parts are taken
+/// in fragment, then part order: no random draw.
+fn unwedge_house_debris(simulation: &mut Simulation) {
+    let mut wedged: Vec<(usize, usize)> = Vec::new();
+    for fragment in &simulation.fragments {
+        let (Some(_), Some(created)) = (fragment.house_parts, fragment.created_at) else {
+            continue;
+        };
+        if simulation.elapsed - created < WEDGE_AFTER || fragment.life <= DEBRIS_CLEANUP_SECONDS {
+            continue;
+        }
+        let body = &simulation.world.bodies[fragment.body];
+        if f64::from(body.center_of_mass().y) < WEDGE_HEIGHT
+            || f64::from(body.linvel().length()) > WEDGE_SPEED
+        {
+            continue;
+        }
+        for &collider in body.colliders() {
+            for pair in simulation.world.contact_pairs_with(collider) {
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                if let Some(part) = simulation.house_part(other)
+                    && pair.has_any_active_contact()
+                    && !wedged.contains(&part)
+                {
+                    wedged.push(part);
+                }
+            }
+        }
+    }
+    wedged.sort_unstable();
+    let mut index = 0;
+    while index < wedged.len() {
+        let cover = wedged[index].0;
+        let parts = PartSet::from_indices(
+            wedged[index..]
+                .iter()
+                .take_while(|(other, _)| *other == cover)
+                .map(|&(_, part)| part),
+        );
+        index += parts.len();
+        simulation.break_house_parts(cover, parts, None, None);
     }
 }
 

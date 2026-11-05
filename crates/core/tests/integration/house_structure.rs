@@ -516,3 +516,46 @@ fn a_shot_out_corner_brings_down_its_eave_and_the_roof_over_it() {
     // The far corner's roof still stands.
     assert!(s.covers[house].alive);
 }
+
+#[test]
+fn a_roof_coming_down_breaks_what_it_lands_on_and_never_lies_up_on_it() {
+    let (mut s, house) = lone_cottage();
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    // An eave wall shot out above its lowest course: the slope over it comes down on
+    // the gables and the stubs left standing.
+    let eave = 2;
+    let stubs: Vec<usize> = (0..layout.parts.len())
+        .filter(|&index| layout.parts[index].wall == Some(eave) && layout.parts[index].grounded)
+        .collect();
+    let upper: Vec<usize> = (0..layout.parts.len())
+        .filter(|&index| layout.parts[index].wall == Some(eave) && !layout.parts[index].grounded)
+        .collect();
+    let rng = s.rng.state;
+    s.break_house_parts(house, PartSet::from_indices(upper), None, None);
+    assert!(
+        s.fragments
+            .iter()
+            .any(|fragment| fragment.house_parts.is_some()),
+        "the slope fell"
+    );
+    run(&mut s, 3.0);
+    let crushed = stubs
+        .iter()
+        .filter(|&&stub| gone(&s, house).contains(stub))
+        .count();
+    assert!(crushed > 0, "the falling roof broke none of the stubs");
+    // Nothing lies up on what stands, like a lid.
+    for fragment in s
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.house_parts.is_some())
+    {
+        let body = &s.world.bodies[fragment.body];
+        assert!(
+            body.center_of_mass().y < 1.5 || body.linvel().length() > 0.2,
+            "a loose part rests up at {:?}",
+            body.center_of_mass()
+        );
+    }
+    assert_eq!(s.rng.state, rng, "no random draw");
+}
