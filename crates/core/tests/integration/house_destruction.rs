@@ -731,8 +731,9 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
     let d = design(&s, house);
     let wall = fall(DVec3::new(0.4, 1.0, d.d / 2.0), 0.35);
     // The fingerprint of the fall as it was before roof-driven collapses caved in
-    // (since round 14 its slopes crease where they land on the eave walls' stubs).
-    assert_eq!(speeds_print(&wall), 169_931);
+    // (since round 14 its slopes crease where they land on the eave walls' stubs,
+    // and its lower walls over the heap fall in onto it).
+    assert_eq!(speeds_print(&wall), -98_713);
     let roof = fall(DVec3::new(0.5, d.h - 0.35, 0.3), 0.35);
     let mean = |fall: &Fall, pick: &dyn Fn(HousePiece) -> bool, of: &dyn Fn(DVec3) -> f64| {
         let values: Vec<f64> = fall
@@ -1084,7 +1085,7 @@ fn a_breached_cottages_roof_leads_down_over_the_breach_and_settles_into_its_heap
         s.covers[house].kick = Some(Vec2::new(inward.x, inward.z));
         shell_at(&mut s, house, DVec3::new(d.w / 2.0, 1.0, 0.4));
     }
-    tick(&mut s, 0.3);
+    tick(&mut s, 0.24);
     let mean = |s: &Simulation,
                 pick: &dyn Fn(HousePart) -> bool,
                 of: &dyn Fn(&Simulation, &RigidBodyHandle) -> f64| {
@@ -1104,7 +1105,7 @@ fn a_breached_cottages_roof_leads_down_over_the_breach_and_settles_into_its_heap
         over < behind - 0.3,
         "over the breach {over}, behind {behind}"
     );
-    tick(&mut s, 5.7);
+    tick(&mut s, 5.76);
     let height = |s: &Simulation, body: &RigidBodyHandle| s.body_translation(*body).y;
     let roof = mean(&s, &|part| part.is_roof(), &height);
     assert!(roof < HOUSE_HEAP.height, "the roof lies at {roof}");
@@ -1194,4 +1195,67 @@ fn a_fallen_cottages_garden_is_crushed_a_stretch_at_a_time() {
         assert!((area(&a) - area(&b)).abs() < 0.1 * area(&a), "{a:?} {b:?}");
     }
     assert!(gardens > 0);
+}
+
+/// A felled cottage's chimney does not ride the fallen roof standing: once down on
+/// the wreck its stack crumbles away into the pile, and the lumps of brickwork it
+/// threw off lie on with the pile instead of vanishing with the loose boards.
+#[test]
+fn a_fallen_chimney_crumbles_into_bricks_that_lie_with_the_pile() {
+    let (s, _) = fallen_cottage(3.0);
+    let stack = |f: &&sloppy_core::sim::Fragment| {
+        f.house_piece.is_some_and(|p| p.part == HousePart::Chimney)
+    };
+    let bricks = |s: &Simulation| {
+        s.fragments
+            .iter()
+            .filter(|f| f.house_piece.is_none() && f.color == 0x9c4a32)
+            .count()
+    };
+    assert!(
+        s.fragments
+            .iter()
+            .filter(stack)
+            .all(|f| f.life <= sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS),
+        "the stack is crumbling away"
+    );
+    assert!(bricks(&s) >= 4, "{} lumps", bricks(&s));
+    let (s, _) = fallen_cottage(8.0);
+    assert!(s.fragments.iter().filter(stack).count() == 0);
+    assert!(bricks(&s) >= 4, "{} lumps at 8 s", bricks(&s));
+}
+
+/// A cottage felled through one wall brings its roof down with it: no roof piece
+/// ever rises above where it stood (a narrow strip at a gable end once levered up
+/// off the pile like a seesaw plank), shot through a gable or under a slope.
+#[test]
+fn no_roof_piece_rises_above_where_it_stood_in_a_wall_driven_fall() {
+    for struck in [DVec3::new(0.16, 1.0, 1.0), DVec3::new(1.0, 1.0, 0.13)] {
+        let (mut s, house) = lone_cottage();
+        let d = design(&s, house);
+        let struck = DVec3::new(struck.x * d.w / 2.0, 1.0, struck.z * d.d / 2.0);
+        while s.covers[house].alive {
+            shell_at(&mut s, house, struck);
+        }
+        let roof: Vec<(u32, f64)> = s
+            .fragments
+            .iter()
+            .filter(|f| f.house_piece.is_some_and(|p| p.part.is_roof()))
+            .map(|f| (f.id, s.body_translation(f.body).y))
+            .collect();
+        assert!(roof.len() >= 2);
+        for _ in 0..(4.0 / STEP) as usize {
+            idle(&mut s);
+            for &(id, start) in &roof {
+                if let Some(f) = s.fragments.iter().find(|f| f.id == id) {
+                    let y = s.body_translation(f.body).y;
+                    assert!(
+                        y < start + 0.1,
+                        "{:?} rose to {y} from {start}",
+                        f.house_piece
+                    );
+                }
+            }
+        }
+    }
 }

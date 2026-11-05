@@ -64,10 +64,11 @@ const PATCH_CORNER: f32 = 1.15;
 /// [`CHUNK_SHARDS`] of them are merged.
 const STILL_SECONDS: f64 = 0.12;
 const REBUILD_GAP: f64 = 0.4;
-/// Shards merged into one chunk: a cottage's pile takes about eight chunks, a few
-/// draws each, rather than one draw per shard, and a frame merges at most one chunk
-/// (about a megabyte and a half of vertices).
-const CHUNK_SHARDS: usize = 4;
+/// Shards merged into one chunk: a cottage's pile takes about six to eight chunks,
+/// a few draws each, rather than one draw per shard, and a frame merges at most one
+/// chunk (about two megabytes of vertices). Four a chunk left the creased roof's
+/// extra pieces drawing some fifty more draws a frame while a pile lay.
+const CHUNK_SHARDS: usize = 6;
 /// Movement (m, and quaternion difference) a still shard may show between frames.
 const STILL_DISTANCE: f32 = 0.006;
 const STILL_TURN: f32 = 0.004;
@@ -700,8 +701,8 @@ mod tests {
             assert!(freed.is_empty());
             merges += usize::from(merged);
         }
-        // Ten shards: two full chunks, then the last two once the pile goes quiet.
-        assert_eq!(merges, 3);
+        // Ten shards: a full chunk, then the last four once the pile goes quiet.
+        assert_eq!(merges, 2);
         assert!((1..=10).all(|id| settled.merged(id)));
         // A shard shoved off the pile frees its own chunk, whose other shards merge
         // again at once; the shoved one rests on its own.
@@ -717,7 +718,7 @@ mod tests {
         // pressed a chunk a frame.
         let (mut freed, _) = frame(&mut settled, &mut now, shoved, true, &mut next);
         freed.sort_unstable();
-        assert_eq!(freed, vec![1, 2, 3]);
+        assert_eq!(freed, vec![1, 2]);
         let mut remains = 0;
         while let Some((house, parts)) = settled.remains() {
             assert_eq!(house, 9);
@@ -729,10 +730,10 @@ mod tests {
             settled.remains_built(house, 30 + remains);
             remains += 1;
         }
-        assert_eq!(remains, 3);
+        assert_eq!(remains, 2);
         let live: HashSet<u32> = HashSet::new();
         assert!(settled.retain(&live).is_empty());
-        assert_eq!(settled.rebuilt(|house| house == 9), vec![30, 31, 32]);
+        assert_eq!(settled.rebuilt(|house| house == 9), vec![30, 31]);
     }
 
     /// A roof slab four metres square, two triangles, a metre and a half up.

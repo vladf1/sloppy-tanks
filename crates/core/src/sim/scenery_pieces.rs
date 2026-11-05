@@ -578,11 +578,14 @@ const UPPER_CLEAR: (f64, f64) = (0.3, 0.0);
 const OUT_TIP: f64 = 0.6;
 /// When (s) a stub of wall, landed, starts to lean in.
 const STUB_LEAN_AT: f64 = 0.05;
-/// Brick spill from the snapped chimney: count, brick size and how hard they are
-/// thrown off the stack (m/s): enough to rattle down the pile and spill round it.
-const LOOSE_BRICKS: usize = 12;
-const BRICK_SIZE: [f64; 3] = [0.24, 0.08, 0.12];
-const BRICK_THROW: (f64, f64) = (0.4, 1.6);
+/// The snapped chimney's brickwork: how many lumps of a few courses it breaks
+/// into, their size, how hard they are thrown off the stack the way it falls (m/s)
+/// and how much they spread from that (m/s): a few chunky lumps that tumble off to
+/// one side of the wreck, not a dozen bricks sprinkled over the roof like confetti.
+const LOOSE_BRICKS: usize = 5;
+const BRICK_SIZE: [f64; 3] = [0.5, 0.28, 0.34];
+const BRICK_THROW: (f64, f64) = (2.6, 3.6);
+const BRICK_SPREAD: (f64, f64) = (0.1, 0.4);
 /// Sideways drift (m/s) and twist (rad/s) that keep neighbouring shards from
 /// falling as one sheet.
 const WALL_DRIFT: f64 = 0.35;
@@ -836,12 +839,14 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             } else {
                 FALLS_IN
             };
-            // Over the heap a lower shard has no floor to stand on: it falls out
-            // behind, leaving the heap's own stub. An upper one may fold in onto
-            // the heap and lie across it.
+            // Over the heap a lower shard has no floor to stand on: it falls in
+            // onto the heap, siding up, leaving the heap's own stub; fallen out
+            // it lay face down on the yard, its plain plaster lining up like a
+            // sheet of card. An upper one may fold in onto the heap and lie
+            // across it.
             let over_heap = shape.center.z < -design.d / 2.0 + HOUSE_HEAP.inset + HOUSE_HEAP.depth;
             let inward = if lower {
-                !over_heap
+                true
             } else {
                 // Under a roof caving in, every wall buckles in beneath it.
                 rng.next() < chance || caved
@@ -994,11 +999,11 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
     for i in 0..LOOSE_BRICKS {
         let around = i as f64 / LOOSE_BRICKS as f64 * PI * 2.0;
         // Courses shed down the stack as well as at the snap.
-        let course = (i % 3) as f64 * 0.22;
+        let course = (i % 3) as f64 * 0.3;
         let local = DVec3::new(
-            flue.x + around.cos() * 0.45,
+            flue.x + around.cos() * 0.3,
             snap - course + breakup.rng.range(-0.1, 0.2),
-            flue.z + around.sin() * 0.45,
+            flue.z + around.sin() * 0.3,
         );
         let at = design.to_world(local);
         let index = breakup.piece(
@@ -1011,9 +1016,11 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
         );
         let body = simulation.fragments[index].body;
         let spread = DVec3::new(around.cos(), 0.0, around.sin());
+        // Off the end of the wreck nearest the stack, clear of the roof coming down.
+        let off = DVec3::new(flue.x, 0.0, flue.z).normalize_or(toward);
         let throw = design.to_world(
-            toward * breakup.rng.range(BRICK_THROW.0, BRICK_THROW.1)
-                + spread * breakup.rng.range(0.3, 1.0)
+            off * breakup.rng.range(BRICK_THROW.0, BRICK_THROW.1)
+                + spread * breakup.rng.range(BRICK_SPREAD.0, BRICK_SPREAD.1)
                 + DVec3::Y * breakup.rng.range(0.5, 1.8),
         );
         let spin = DVec3::new(
