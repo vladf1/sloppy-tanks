@@ -17,6 +17,11 @@ use crate::sim::math::Random;
 
 /// How deep a wall's torn edge runs, from the siding back to the lining.
 const WALL_EDGE: f64 = 0.2;
+/// A clapboard course's height and thickness, and how far at most a torn board's end
+/// reaches past the tear.
+const BOARD_COURSE: f64 = 0.2;
+const BOARD_THICKNESS: f64 = 0.025;
+const BOARD_REACH: f64 = 0.32;
 /// A roof's torn edge: the top of its covering over the deck (no higher than its
 /// sheet), and how far below the deck top it runs, through the deck and a lath.
 const COVER_TOP: f64 = 0.004;
@@ -289,13 +294,39 @@ pub(super) fn wall_breaks(
         let n = outward(region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         for (a, b) in outside_openings(a, b, openings) {
-            // The cut through the wall: charred and shadowed timber, a dark hairline
-            // while the cottage still stands in its shards.
+            // The cut through the wall: the studs' and boards' end grain.
             kit.quad(
-                Surface::Dark,
+                Surface::Wood,
                 [at(a, 0.0), at(b, 0.0), at(b, WALL_EDGE), at(a, WALL_EDGE)],
                 facing,
             );
+            // Along an upright tear, each clapboard breaks off at its own length, so
+            // the hole's side is ragged board ends rather than a sawn line.
+            if n.x.abs() > 0.5 {
+                let (low, high) = (a.y.min(b.y), a.y.max(b.y));
+                let courses = ((high - low) / BOARD_COURSE).floor() as u32;
+                for course in 0..courses {
+                    let y = low + (f64::from(course) + 0.5) * BOARD_COURSE;
+                    let q = DVec2::new(a.x, y);
+                    let reach = rng.range(0.03, BOARD_REACH);
+                    if near_opening(q, reach, openings) {
+                        continue;
+                    }
+                    let along = plane.s * n.x;
+                    let center = at(q + n * reach / 2.0, BOARD_THICKNESS / 2.0);
+                    let frame = DMat4::from_cols(
+                        along.extend(0.0),
+                        DVec3::Y.extend(0.0),
+                        out.extend(0.0),
+                        center.extend(1.0),
+                    ) * pose(DVec3::ZERO, DVec3::new(0.0, 0.0, rng.range(-0.06, 0.06)));
+                    kit.block(
+                        Surface::Siding,
+                        DVec3::new(reach, BOARD_COURSE * 0.92, BOARD_THICKNESS),
+                        frame,
+                    );
+                }
+            }
             let length = (b - a).length();
             let count = (length / SPLINTER_SPACING).round().max(1.0) as u32;
             for i in 0..count {
