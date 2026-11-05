@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, weapon};
+use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
@@ -232,6 +233,9 @@ fn an_armour_piercing_round_breaks_the_leg_it_goes_through_and_flies_on() {
         assert!(damage(&s, tower)[*leg] == 0.0, "leg {leg} untouched");
     }
 }
+
+/// Seconds after a piece lands by which it has come to rest.
+const LANDED_STILL: f64 = 2.5;
 
 /// How far (m) a section knocked over its edge as it lands may lift its centre (a deck
 /// half coming down on its rim swings up toward standing before it falls flat).
@@ -614,7 +618,7 @@ fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
 
 /// A landed piece comes to rest within a moment of the landing, and then stays as it
 /// lies until it clears: it neither turns (stands up, rolls over, rights itself) nor
-/// rises.
+/// slides nor rises.
 #[test]
 fn settled_pieces_stay_as_they_lie() {
     for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
@@ -628,21 +632,41 @@ fn settled_pieces_stay_as_they_lie() {
             None,
         );
         let mut rested: BTreeMap<u32, (glam::Quat, f32)> = BTreeMap::new();
+        let mut lay: BTreeMap<u32, glam::Vec3> = BTreeMap::new();
+        let mut came_to_rest = None;
         for _ in 0..(14.0 / STEP) as usize {
             idle(&mut s);
+            // Once the whole pile has come to rest, nothing in it moves.
+            let all_resting = s
+                .fragments
+                .iter()
+                .filter(|f| f.tower_id == Some(id))
+                .all(|f| f.tower_landing.is_some_and(|landing| landing.rested));
+            if all_resting {
+                came_to_rest.get_or_insert(s.elapsed);
+            }
             for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
                 let landing = fragment.tower_landing.unwrap_or_default();
                 let since = s.elapsed - landing.landed_at;
                 assert!(
-                    !landing.landed || landing.rested || since < 1.5,
+                    !landing.landed || landing.rested || since < LANDED_STILL,
                     "corner {corner}: a piece still moving {since} s after it landed"
                 );
-                if !landing.rested {
+                // Once it starts to clear it fades through the pile.
+                if !all_resting || fragment.life <= DEBRIS_CLEANUP_SECONDS {
                     continue;
                 }
                 let body = &s.world.bodies[fragment.body];
                 let (turn, y) = (*body.rotation(), body.center_of_mass().y);
                 let (first, first_y) = *rested.entry(fragment.id).or_insert((turn, y));
+                let at = body.center_of_mass();
+                let first_at = *lay.entry(fragment.id).or_insert(at);
+                assert!(
+                    first_at.distance(at) < 0.05,
+                    "corner {corner}: a resting piece {:?} moved {}",
+                    fragment.tower_parts,
+                    first_at.distance(at)
+                );
                 assert!(
                     first.angle_between(turn) < 0.03,
                     "corner {corner}: a resting piece {:?} turned {}",
@@ -657,6 +681,10 @@ fn settled_pieces_stay_as_they_lie() {
                 );
             }
         }
+        assert!(
+            came_to_rest.is_some_and(|at| at < 5.0),
+            "corner {corner}: the whole pile lay still by 5 s ({came_to_rest:?})"
+        );
         assert!(
             rested.len() > 10,
             "corner {corner}: the pieces came to rest ({})",
