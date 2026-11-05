@@ -1127,3 +1127,74 @@ fn a_breached_cottages_roof_leads_down_over_the_breach_and_settles_into_its_heap
         }
     }
 }
+
+#[test]
+fn the_slope_across_from_a_dropped_eave_breaks_where_it_lands_on_its_stubs() {
+    let s = village();
+    let mut runs = Vec::new();
+    for house in houses(&s) {
+        let d = design(&s, house);
+        let span = (1.0, -0.9, 0.7);
+        let dropped = RoofBreaks {
+            eave_spans: vec![span],
+            holes: Vec::new(),
+        };
+        let slabs = |breaks: &RoofBreaks, part: HousePart| -> Vec<u8> {
+            d.pieces(breaks)
+                .iter()
+                .filter(|p| p.piece.part == part)
+                .map(|p| p.piece.shard)
+                .collect()
+        };
+        // The far slope comes down across its wall's stubs: broken across into a
+        // ridge slab and an eave slab (or more), never one whole slab.
+        let far = slabs(&dropped, HousePart::LeftRoof);
+        assert!(
+            far.iter().any(|s| s % 2 == 0) && far.iter().any(|s| s % 2 == 1),
+            "{far:?}"
+        );
+        runs.push(far.len());
+        // Undamaged, it may still fall whole, as before.
+        assert!(
+            d.roof_split(-1.0, (-1.0e3, 1.0e3), &RoofBreaks::default())
+                .is_none()
+        );
+        assert_eq!(
+            d.pieces(&dropped).len(),
+            d.pieces(&dropped).len(),
+            "deterministic"
+        );
+    }
+    // The cottages differ: some far slopes also split down a rafter line.
+    assert!(runs.iter().min() < runs.iter().max(), "{runs:?}");
+}
+
+#[test]
+fn a_fallen_cottages_garden_is_crushed_a_stretch_at_a_time() {
+    let s = village();
+    let mut gardens = 0;
+    for house in houses(&s) {
+        let c = &s.covers[house];
+        let props = sloppy_core::models::heap_prop_footprints(c.x, c.z, c.w, c.d, 0.0);
+        // The plinth's front, the yard, then a garden's bed and its stretches.
+        if props.len() <= 3 {
+            continue;
+        }
+        gardens += 1;
+        let bed = props[2];
+        assert!(props.len() >= 5, "{props:?}");
+        for stretch in &props[3..] {
+            assert!(
+                stretch[0] >= bed[0] - 1e-6
+                    && stretch[1] >= bed[1] - 1e-6
+                    && stretch[2] <= bed[2] + 1e-6
+                    && stretch[3] <= bed[3] + 1e-6,
+                "{stretch:?} in {bed:?}"
+            );
+            let area = (stretch[2] - stretch[0]) * (stretch[3] - stretch[1]);
+            let whole = (bed[2] - bed[0]) * (bed[3] - bed[1]);
+            assert!(area < whole * 0.6, "{stretch:?} {bed:?}");
+        }
+    }
+    assert!(gardens > 0);
+}

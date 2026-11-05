@@ -622,6 +622,10 @@ const ROOF_STRIPS: usize = 4;
 /// and how far a split across the slope through a hole rises across the strip.
 const RAFTER_WANDER: f64 = 0.06;
 const HOLE_SPLIT_SLANT: f64 = 0.12;
+/// Where (share of the run out from the ridge) a slope landing across its wall's
+/// stubs breaks across, and how far (m) the break rises across the strip.
+const LANDING_SPLIT: (f64, f64) = (0.5, 0.7);
+const LANDING_SLANT: f64 = 0.25;
 /// How far (m) past a strip's edge a hole tears it across.
 const HOLE_TEAR: f64 = 0.5;
 /// A wall's cracks run beside its windows and door where one is this near (m)
@@ -1086,7 +1090,11 @@ impl HouseDesign {
             -1.0
         };
         let mut jogs = None;
-        if lines.is_empty() && framed && side == framed_side {
+        // The slope across from an eave a breach dropped comes down onto its own
+        // wall's stubs ([`Self::roof_split`]); a framed one splits on its rafter
+        // line too, whichever slope its cottage would otherwise have split.
+        let lands_across = self.lands_across(side, breaks);
+        if lines.is_empty() && framed && (side == framed_side || lands_across) {
             let length = 2.0 * roof.rake_z;
             let z = at.signum()
                 * (roof.rake_z - length * (FRAMED_FROM_END.0 + FRAMED_FROM_END.1 * at.abs()));
@@ -1153,12 +1161,50 @@ impl HouseDesign {
         } else {
             HousePart::LeftRoof
         };
-        let hole = breaks.holes.iter().find(|hole| {
+        let Some(hole) = breaks.holes.iter().find(|hole| {
             hole.x * side > 0.0 && hole.y > from - HOLE_TEAR && hole.y < to + HOLE_TEAR
-        })?;
+        }) else {
+            return self.landing_split(side, (from, to), breaks);
+        };
         let mut rng = self.split_random(part);
         let run = (hole.x * side).clamp(0.4, roof.eave_x - 0.5);
         let slant = rng.range(-HOLE_SPLIT_SLANT, HOLE_SPLIT_SLANT);
+        Some((
+            DVec2::new(-roof.rake_z - 0.5, run - slant),
+            DVec2::new(roof.rake_z + 0.5, run + slant),
+        ))
+    }
+
+    /// Whether the `side` slope is the one across from an eave a breach dropped, and
+    /// nothing broke it itself: when the cottage falls its ridge goes down into the
+    /// house first, behind the breach, and the slope lands across its own wall's
+    /// stubs.
+    fn lands_across(&self, side: f64, breaks: &RoofBreaks) -> bool {
+        breaks.eave_spans.iter().any(|span| span.0 == -side)
+            && !breaks.eave_spans.iter().any(|span| span.0 == side)
+            && !breaks.holes.iter().any(|hole| hole.x * side > 0.0)
+    }
+
+    /// Where a strip of a slope that lands across its wall's stubs
+    /// ([`Self::lands_across`]) breaks across: over the stubs it comes down on, its
+    /// ridge part folding down into the house and its eave part staying on the
+    /// stubs. Each strip breaks at its own run and slant, the cottages differing.
+    fn landing_split(
+        &self,
+        side: f64,
+        (from, _): (f64, f64),
+        breaks: &RoofBreaks,
+    ) -> Option<(DVec2, DVec2)> {
+        if !self.lands_across(side, breaks) {
+            return None;
+        }
+        let roof = self.roof();
+        let index = if side > 0.0 { 3.0 } else { 4.0 };
+        let mut rng = Random::new(
+            f64::from(self.variant) * 19.0 + index * 5.0 + 223.0 + from.clamp(-FAR, FAR) * 3.0,
+        );
+        let run = roof.eave_x * rng.range(LANDING_SPLIT.0, LANDING_SPLIT.1);
+        let slant = rng.range(-LANDING_SLANT, LANDING_SLANT);
         Some((
             DVec2::new(-roof.rake_z - 0.5, run - slant),
             DVec2::new(roof.rake_z + 0.5, run + slant),
