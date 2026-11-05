@@ -6,9 +6,8 @@ use crate::support;
 
 use std::collections::HashSet;
 
-use glam::DVec3;
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
-use sloppy_core::sim::house_layout::{HOUSE_HEALTH, HouseDesign};
+use sloppy_core::sim::house_layout::HOUSE_HEALTH;
 use sloppy_core::sim::level_rules::single_player_rules;
 use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::math::{Point3, Vec2};

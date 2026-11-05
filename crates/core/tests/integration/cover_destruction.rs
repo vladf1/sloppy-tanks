@@ -85,7 +85,18 @@ fn cover_queries_ignore_tanks_and_debris_and_release_destroyed_collider_identiti
     assert!(!s.cover_by_collider.contains_key(&handle));
     assert!(s.visible(a, b));
     s.reset(None);
-    assert_eq!(s.cover_by_collider.len(), s.covers.len());
+    // One collider a cover, a cottage one for each of its parts.
+    let colliders: usize = s
+        .covers
+        .iter()
+        .map(|cover| {
+            cover
+                .structure
+                .as_ref()
+                .map_or(1, |state| state.layout.parts.len())
+        })
+        .sum();
+    assert_eq!(s.cover_by_collider.len(), colliders);
     for (index, cover) in s.covers.iter().enumerate() {
         assert_eq!(s.cover_by_collider.get(&cover.collider), Some(&index));
     }

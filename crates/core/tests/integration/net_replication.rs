@@ -841,7 +841,7 @@ fn find_fields(scene: &Value, missing: &mut BTreeSet<&str>) {
     });
 }
 
-const EXPECTED_FIELDS: [&str; 16] = [
+const EXPECTED_FIELDS: [&str; 17] = [
     "covers.debrisSeed",
     "covers.timberHits",
     "covers.timberJoin",
@@ -852,6 +852,7 @@ const EXPECTED_FIELDS: [&str; 16] = [
     "fragments.material",
     "fragments.sourceKind",
     "fragments.timberPart",
+    "fragments.houseParts",
     "fragments.createdAt",
     "fragments.wreck",
     "fragments.part",
@@ -898,6 +899,17 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                     if sim.covers[cover].alive {
                         sim.damage_cover(cover, 10000.0, 0, Team::Blue, None, None);
                     }
+                }
+                // A cottage brought down from its footing drops its upper parts as
+                // bodies, and a bot's wreck lies with them.
+                if let Some(house) = (0..sim.covers.len())
+                    .find(|&i| sim.covers[i].kind == CoverKind::House && sim.covers[i].alive)
+                {
+                    crate::support::fell_cottage(&mut sim, house);
+                }
+                if let Some(bot) = sim.tanks.iter().position(|tank| !tank.human && tank.alive) {
+                    let team = sim.tanks[bot].team.opponent();
+                    sim.damage_tank(bot, 1.0e6, 0, team, None, None);
                 }
             }
             if tick == 240 && !sim.mines.is_empty() {

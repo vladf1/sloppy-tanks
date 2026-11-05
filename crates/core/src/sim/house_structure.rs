@@ -30,8 +30,26 @@ pub const MAX_PARTS: usize = 256;
 
 /// A set of a cottage's parts by index: the parts broken or fallen from a cottage, or
 /// those falling as one body.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PartSet(pub [u64; MAX_PARTS / 64]);
+
+/// A part set reads and writes as its indices, lowest first, as the scene codec's
+/// JSON form has it.
+impl Serialize for PartSet {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.iter())
+    }
+}
+
+impl<'de> Deserialize<'de> for PartSet {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let indices = Vec::<usize>::deserialize(deserializer)?;
+        if indices.iter().any(|&index| index >= MAX_PARTS) {
+            return Err(serde::de::Error::custom("part index out of range"));
+        }
+        Ok(Self::from_indices(indices))
+    }
+}
 
 impl PartSet {
     pub const EMPTY: Self = Self([0; MAX_PARTS / 64]);

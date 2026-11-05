@@ -128,6 +128,7 @@ pub struct RenderCover {
     pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
     /// A cottage's parts broken or fallen from it.
+    #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub broken: PartSet,
     pub motion: Option<RenderCoverMotion>,
     /// Body pose; destroyed cover without a body stays at its footprint.
