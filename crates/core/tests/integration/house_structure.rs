@@ -223,7 +223,14 @@ fn an_armour_piercing_round_goes_through_breaking_only_what_it_touches() {
     }
     assert_eq!(explosions, 0, "no burst");
     assert!(beyond, "the round flew on through");
-    assert_eq!(gone(&s, house), PartSet::from_indices(crossed));
+    // What it touched, and only the windows that stood on it.
+    let gone = gone(&s, house);
+    assert!(crossed.iter().all(|&part| gone.contains(part)));
+    assert!(
+        gone.iter()
+            .all(|part| crossed.contains(&part) || kind(&s, house, part) == PartKind::Window),
+        "{gone:?}"
+    );
 }
 
 #[test]

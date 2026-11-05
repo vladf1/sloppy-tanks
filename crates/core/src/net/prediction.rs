@@ -18,7 +18,7 @@ use super::own_shots::{CoverCast, CoverHit, PartHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
-use crate::sim::house_physics::{house_debris_colliders, house_structure};
+use crate::sim::house_physics::{house_debris_colliders, house_debris_damping, house_structure};
 use crate::sim::house_structure::{HouseStructure, PartSet};
 use crate::sim::simulation::house_parts;
 use crate::sim::damage::tree_stump;
@@ -580,7 +580,10 @@ impl TankPredictor {
                     }
                 };
                 let body = self.world.insert_body(colliders.0);
-                self.world.bodies[body].set_additional_solver_iterations(2);
+                // As the host steps it: its own pieces with two more solver iterations.
+                if fragment.house_parts.is_none() {
+                    self.world.bodies[body].set_additional_solver_iterations(2);
+                }
                 for collider in colliders.1 {
                     self.world.insert_collider(collider, Some(body));
                 }
@@ -590,6 +593,13 @@ impl TankPredictor {
             let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
             debris.seen = sync;
             let body = &mut self.world.bodies[debris.body];
+            if fragment.house_parts.is_some() {
+                // Damped as the host damps it at its age.
+                let age = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
+                let (linear, angular) = house_debris_damping(age);
+                body.set_linear_damping(linear);
+                body.set_angular_damping(angular);
+            }
             body.set_translation(to_vector(fragment.position), false);
             body.set_rotation(to_rotation(fragment.rotation), false);
             match moving(BodyKind::Fragment, fragment.id) {
@@ -950,10 +960,7 @@ fn collider_key(collider: ColliderHandle) -> u64 {
 /// The host's body for a cottage's loose parts (`drop_house_cluster`): its origin is the
 /// cottage's ground centre the parts fell from.
 fn house_debris_body() -> RigidBodyBuilder {
-    RigidBodyBuilder::dynamic()
-        .linear_damping(0.1)
-        .angular_damping(0.3)
-        .can_sleep(true)
+    RigidBodyBuilder::dynamic().can_sleep(true)
 }
 
 /// How far a fragment's solid parts may lie from its replicated position: a cottage's

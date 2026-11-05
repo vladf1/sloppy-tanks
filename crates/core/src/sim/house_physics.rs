@@ -42,6 +42,9 @@ pub const STRUCTURE_BLAST_REACH: f64 = 0.5;
 pub const BLAST_HEIGHT: f64 = 1.0;
 /// A part shielded from a blast by another standing part takes this share of it.
 const SHIELDED: f64 = 0.35;
+/// A blast shatters the parts within this far (m) of it; parts farther off that it
+/// breaks come loose whole and fall, so splinters fly only where it went off.
+const BLAST_CORE: f64 = 0.5;
 /// A cottage counts as levelled (destroyed, for the score and the levels that rebuild
 /// it) once its roof is down or less than this share of its parts stands.
 const LEVELLED: f64 = 0.45;
@@ -59,6 +62,8 @@ const BRICK_DENSITY: f64 = 0.8;
 /// tips at this rate (rad/s), so nothing hangs level in the air where it stood.
 const SLUMP_SPEED: f64 = 0.6;
 const SLUMP_TIP: f64 = 0.6;
+/// How fast (m/s) a blast throws the parts it tears loose away from it.
+const BLAST_THROW: f64 = 2.5;
 /// A falling body breaks up into its parts when its velocity changes by this much
 /// (m/s) in one tick: a hard landing.
 const SHATTER_SPEED: f64 = 3.5;
@@ -66,10 +71,20 @@ const SHATTER_SPEED: f64 = 3.5;
 /// hard deadline.
 const PART_LIFE: f64 = 12.0;
 const PART_DEADLINE: f64 = 20.0;
-/// After this long (s) a loose part is damped toward rest, so a pile settles rather
-/// than creeping.
+/// A loose part's linear and angular damping while it falls, and after this long (s)
+/// the damping toward rest that settles a pile rather than letting it creep.
+const FALLING_DAMPING: (f32, f32) = (0.1, 0.3);
 const SETTLE_AFTER: f64 = 2.0;
 const SETTLED_DAMPING: (f32, f32) = (2.0, 3.0);
+
+/// The linear and angular damping of a loose part `age` seconds after it came loose.
+pub fn house_debris_damping(age: f64) -> (f32, f32) {
+    if age > SETTLE_AFTER {
+        SETTLED_DAMPING
+    } else {
+        FALLING_DAMPING
+    }
+}
 /// The most splinter events one break sends: a blast breaking many parts throws them
 /// from its heaviest few.
 const SHATTER_EVENTS: usize = 6;
@@ -309,7 +324,8 @@ impl Simulation {
         let layout = state.layout.clone();
         let local = layout.design.to_local(DVec3::new(point.x - c.x, point.y, point.z - c.z));
         let mut broken = PartSet::EMPTY;
-        let mut hits: Vec<(usize, f64)> = Vec::new();
+        let mut loose = PartSet::EMPTY;
+        let mut hits: Vec<(usize, f64, f64)> = Vec::new();
         for (index, part) in layout.parts.iter().enumerate() {
             if !state.standing(index) {
                 continue;
@@ -322,20 +338,24 @@ impl Simulation {
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
-            hits.push((index, damage * share));
+            hits.push((index, damage * share, gap));
         }
         let state = self.covers[cover]
             .structure
             .as_mut()
             .expect("checked above");
-        for (index, amount) in hits {
+        for (index, amount, gap) in hits {
             state.damage[index] += amount;
             if state.damage[index] >= layout.parts[index].strength {
-                broken.insert(index);
+                if gap < BLAST_CORE {
+                    broken.insert(index);
+                } else {
+                    loose.insert(index);
+                }
             }
         }
-        if !broken.is_empty() {
-            self.break_house_parts(cover, broken, Some(point), by);
+        if !broken.is_empty() || !loose.is_empty() {
+            self.break_house_parts_loosening(cover, broken, loose, Some(point), by);
         }
     }
 
@@ -442,6 +462,19 @@ impl Simulation {
         from: Option<Point3>,
         by: Option<(u32, Team)>,
     ) {
+        self.break_house_parts_loosening(cover, broken, PartSet::EMPTY, from, by);
+    }
+
+    /// [`Self::break_house_parts`], with the parts in `loose` torn loose whole: they
+    /// fall with what they took down rather than shattering.
+    pub fn break_house_parts_loosening(
+        &mut self,
+        cover: usize,
+        broken: PartSet,
+        loose: PartSet,
+        from: Option<Point3>,
+        by: Option<(u32, Team)>,
+    ) {
         let c = &self.covers[cover];
         let (x, z) = (c.x, c.z);
         let Some(state) = &c.structure else {
@@ -449,7 +482,12 @@ impl Simulation {
         };
         let layout = state.layout.clone();
         let broken = PartSet::from_indices(broken.iter().filter(|&index| state.standing(index)));
-        if broken.is_empty() {
+        let loose = PartSet::from_indices(
+            loose
+                .iter()
+                .filter(|&index| state.standing(index) && !broken.contains(index)),
+        );
+        if broken.is_empty() && loose.is_empty() {
             return;
         }
         // Splinters from the heaviest broken parts.
@@ -477,11 +515,15 @@ impl Simulation {
             .structure
             .as_ref()
             .map_or(PartSet::EMPTY, |state| state.gone);
-        let falling = layout.unsupported(&gone);
+        let falling = layout.unsupported(&gone.union(&loose)).union(&loose);
         if !falling.is_empty() {
             self.remove_house_parts(cover, &falling);
             for cluster in layout.clusters(&falling) {
-                self.drop_house_cluster(cover, cluster);
+                // A blast throws what it tore loose away from it.
+                let thrown = (cluster.iter().any(|index| loose.contains(index)))
+                    .then_some(from)
+                    .flatten();
+                self.drop_house_cluster(cover, cluster, thrown);
             }
         }
         self.after_house_break(cover, &layout, broken.union(&falling), by);
@@ -554,7 +596,7 @@ impl Simulation {
 
     /// `cluster` of cottage `cover`'s parts coming down as one body, slumping out from
     /// the cottage's middle.
-    fn drop_house_cluster(&mut self, cover: usize, cluster: PartSet) {
+    fn drop_house_cluster(&mut self, cover: usize, cluster: PartSet, blast: Option<Point3>) {
         let c = &self.covers[cover];
         let Some(state) = &c.structure else {
             return;
@@ -564,8 +606,8 @@ impl Simulation {
         let body = self.world.insert_body(
             RigidBodyBuilder::dynamic()
                 .translation(vector(x, 0.0, z))
-                .linear_damping(0.1)
-                .angular_damping(0.3)
+                .linear_damping(FALLING_DAMPING.0)
+                .angular_damping(FALLING_DAMPING.1)
                 .can_sleep(true),
         );
         let colliders = self.insert_house_debris(&layout, &cluster, body);
@@ -576,8 +618,13 @@ impl Simulation {
             .sum::<DVec3>()
             / cluster.len() as f64;
         let out = DVec3::new(center.x, 0.0, center.z).normalize_or_zero();
+        let mut velocity = DVec3::new(out.x * SLUMP_SPEED, -SLUMP_SPEED, out.z * SLUMP_SPEED);
+        if let Some(blast) = blast {
+            let away = DVec3::new(x + center.x - blast.x, 0.0, z + center.z - blast.z);
+            velocity += away.normalize_or_zero() * BLAST_THROW;
+        }
         let rigid_body = &mut self.world.bodies[body];
-        rigid_body.set_linvel(vector(out.x * SLUMP_SPEED, -SLUMP_SPEED, out.z * SLUMP_SPEED), true);
+        rigid_body.set_linvel(vector(velocity.x, velocity.y, velocity.z), true);
         let tip = DVec3::Y.cross(out) * SLUMP_TIP;
         rigid_body.set_angvel(vector(tip.x, tip.y, tip.z), true);
         self.add_house_fragment(cover, id, layout.design.style.siding, body, colliders, cluster);
@@ -655,8 +702,8 @@ impl Simulation {
                 RigidBodyBuilder::dynamic()
                     .translation(position)
                     .rotation(rotation.to_scaled_axis())
-                    .linear_damping(0.1)
-                    .angular_damping(0.3)
+                    .linear_damping(FALLING_DAMPING.0)
+                    .angular_damping(FALLING_DAMPING.1)
                     .can_sleep(true),
             );
             let single = PartSet::from_indices([part]);
@@ -703,12 +750,11 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
         }
         let body_handle = fragment.body;
         simulation.fragments[index].house_velocity = Some(now);
-        if age > SETTLE_AFTER {
-            let body = &mut simulation.world.bodies[body_handle];
-            if body.linear_damping() < SETTLED_DAMPING.0 {
-                body.set_linear_damping(SETTLED_DAMPING.0);
-                body.set_angular_damping(SETTLED_DAMPING.1);
-            }
+        let (linear, angular) = house_debris_damping(age);
+        let body = &mut simulation.world.bodies[body_handle];
+        if body.linear_damping() != linear {
+            body.set_linear_damping(linear);
+            body.set_angular_damping(angular);
         }
         index += 1;
     }

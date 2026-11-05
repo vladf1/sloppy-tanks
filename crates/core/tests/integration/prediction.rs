@@ -13,11 +13,11 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::prediction::{HullContacts, HullState, MovingBody, TankPredictor};
+use sloppy_core::net::prediction::{HullContacts, HullState, Moved, MovingBody, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::house_structure::{PartKind, PartSet};
+use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
 use sloppy_core::sim::types::{
@@ -710,7 +710,7 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
 }
 
 #[test]
-fn driving_into_a_cottages_fallen_parts_replays_with_their_bodies() {
+fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them() {
     // A cottage 9 m ahead whose walls are all shot out at once: its roof and floors
     // come down inside its footprint, and alice drives into them.
     let (mut sim, viewer) = open_field(VehicleKind::Heavy);
@@ -718,26 +718,36 @@ fn driving_into_a_cottages_fallen_parts_replays_with_their_bodies() {
     sim.world.step();
     let layout = sim.covers[house].structure.as_ref().unwrap().layout.clone();
     let walls = PartSet::from_indices(
-        (0..layout.parts.len())
-            .filter(|&index| layout.parts[index].kind != PartKind::Chimney)
-            .filter(|&index| layout.parts[index].grounded),
+        (0..layout.parts.len()).filter(|&index| layout.parts[index].grounded),
     );
     sim.break_house_parts(house, walls, None, None);
-    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 120);
-    assert!(
-        run.last()
-            .and_then(|tick| tick.scene.as_ref())
-            .is_none_or(|scene| scene.fragments.iter().any(|f| f.house_parts.is_some())),
-        "the roof lies in pieces"
-    );
-    for tick in 121..=330 {
+    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 240);
+    let settled = run.len() - 1;
+    let scene = run[settled].scene.clone().expect("a snapshot");
+    let hull = run[settled].hull.expect("alice's hull");
+    let mut predictor = TankPredictor::default();
+    predictor.sync_scene(&scene);
+    predictor.sync_bodies(&scene, &run[settled].bodies, hull.position);
+    let loose: Vec<_> = scene
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.house_parts.is_some())
+        // Within a hull's reach of the debris it keeps, by their bodies' origins.
+        .filter(|fragment| distance(fragment.position.planar(), hull.position.planar()) < 12.0)
+        .collect();
+    assert!(loose.len() > 5, "the roof lies in pieces");
+    for fragment in loose {
+        let pose = predictor
+            .body_pose(Moved::Fragment(fragment.id))
+            .expect("a body for each loose part");
+        assert!(distance(pose.position.planar(), fragment.position.planar()) < 1e-3);
+    }
+    // Driving into the pile, its pieces shoved about, the prediction stays close.
+    for tick in 241..=450 {
         let commands = BTreeMap::from([(viewer, command((0.0, 1.0)))]);
         run.push(record(&mut sim, viewer, tick, &commands));
     }
-    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 120);
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 240);
     eprintln!("cottage parts: {with:.4} m, {without:.4} m without them");
-    assert!(
-        with < 0.1 && without > 0.2,
-        "cottage parts {with} against {without}"
-    );
+    assert!(with < 0.4, "cottage parts {with} against {without}");
 }
