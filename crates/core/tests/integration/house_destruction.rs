@@ -5,6 +5,7 @@
 use crate::{net_support, support};
 
 use glam::DVec3;
+use sloppy_core::models::{WallDamage, house_roof_breaks, house_wall_damage};
 use sloppy_core::net::replication::{StateMirror, StateStream};
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::sim::arena::CoverDef;
@@ -12,7 +13,7 @@ use sloppy_core::sim::damage::MAX_HOUSE_MARKS;
 use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
     BREACH_REACH, HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, RoofBreaks,
-    WALL_DEPTH, heap_house, heap_seed, is_house_heap,
+    WALL_DEPTH, heap_house, heap_seed, is_house_heap, wall_frames,
 };
 use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
@@ -972,4 +973,91 @@ fn shells_either_side_of_a_corner_keep_a_breach_on_each_wall() {
         "front wall has its own: {parts:?}"
     );
     assert_eq!(parts.len(), 2, "{parts:?}");
+}
+
+/// Wall `index`'s first window and the build-frame point a shell flying at hull height
+/// (1 m, under its sill) strikes when aimed at its middle.
+fn window_target(d: &HouseDesign, index: usize) -> ([f64; 4], DVec3, DVec3) {
+    let (center, _, along, _) = wall_frames(d.w, d.d)[index];
+    let window = house_wall_damage(d, &[], index).windows[0];
+    let u = (window[0] + window[2]) / 2.0;
+    (window, center + along * u + DVec3::Y, along)
+}
+
+fn covers_window(damage: &WallDamage, window: [f64; 4]) -> bool {
+    damage
+        .breaches
+        .iter()
+        .any(|b| b[0] <= window[0] && b[1] <= window[1] && b[2] >= window[2] && b[3] >= window[3])
+}
+
+#[test]
+fn a_shell_into_a_window_tears_it_out_with_the_wall_round_it() {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    for index in 0..4 {
+        let (window, target, _) = window_target(&d, index);
+        let rng = s.rng.state;
+        s.covers[house].hp = HOUSE_HEALTH;
+        shell_at(&mut s, house, target);
+        assert_eq!(s.rng.state, rng, "no random draw");
+        let marks = s.covers[house].timber_hits.clone();
+        let damage = house_wall_damage(&d, &marks, index);
+        // Its glass, sash and frame go with the wall round them: the breach takes
+        // in the whole opening and runs out past it into the siding.
+        assert!(damage.torn_out.contains(&0), "wall {index}: {damage:?}");
+        assert!(covers_window(&damage, window), "wall {index}: {damage:?}");
+        let breach = damage
+            .breaches
+            .iter()
+            .find(|b| b[0] <= window[0] && b[2] >= window[2])
+            .unwrap();
+        // (Beside the door its canopy's stud holds on that side.)
+        assert!(
+            (breach[0] < window[0] - 0.1 || breach[2] > window[2] + 0.1)
+                && breach[1] < window[1] - 0.2
+                && breach[3] > window[3],
+            "wall {index}: torn into the siding round it: {breach:?} {window:?}"
+        );
+        // Only that window: any other on the wall keeps its glass.
+        assert!(
+            damage.blown_in.is_empty() && damage.torn_out == vec![0],
+            "wall {index}: {damage:?}"
+        );
+    }
+    // The headers over the windows still carry the roof: one shell drops no eave.
+    let breaks = house_roof_breaks(&d, &s.covers[house].timber_hits);
+    assert!(breaks.eave_spans.is_empty(), "{:?}", breaks.eave_spans);
+}
+
+#[test]
+fn a_breach_that_grows_into_a_window_swallows_it() {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    let index = (0..4)
+        .find(|&index| house_wall_damage(&d, &[], index).windows.len() == 1)
+        .expect("a wall with one window");
+    let (window, target, along) = window_target(&d, index);
+    // Beside the window, clear of its casing; each shell tears the breach on.
+    let beside = target + along * ((window[2] - window[0]) / 2.0 + 0.85);
+    let mut swallowed = false;
+    for _ in 0..4 {
+        shell_at(&mut s, house, beside);
+        let damage = house_wall_damage(&d, &s.covers[house].timber_hits, index);
+        // A breach never stops part way into the window's casing: it holds short of
+        // it or takes the whole window.
+        if damage.torn_out.contains(&0) {
+            assert!(covers_window(&damage, window), "{damage:?}");
+            swallowed = true;
+        } else {
+            assert!(
+                damage
+                    .breaches
+                    .iter()
+                    .all(|b| b[2] <= window[0] || b[0] >= window[2]),
+                "{damage:?}"
+            );
+        }
+    }
+    assert!(swallowed, "four shells beside it reached the window");
 }
