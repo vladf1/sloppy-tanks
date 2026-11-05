@@ -35,8 +35,8 @@ use crate::geometry::math::scale_hex_color;
 use crate::geometry::{Mesh, octahedron_geometry};
 use crate::scene::{Material, Node};
 use crate::sim::house_layout::{
-    CHIMNEY, EAVE_OVERHANG, HouseDesign, HousePart, PLINTH, RAFTER_DEPTH, Roof, RoofCover,
-    RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing, window_columns,
+    CHIMNEY, EAVE_OVERHANG, GardenBed, HouseDesign, HousePart, PLINTH, RAFTER_DEPTH, Roof,
+    RoofCover, RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing, window_columns,
 };
 use crate::sim::math::Random;
 
@@ -76,8 +76,6 @@ const DORMER_HALF: f64 = 0.62;
 /// The kitchen garden behind a cottage: the longest its bed runs along the back
 /// wall and how deep it is (m), how far out from the wall it starts, the
 /// cabbages' spacing along a row, the bean poles' height and the cabbages' green.
-const GARDEN: (f64, f64) = (3.8, 1.8);
-const GARDEN_GAP: f64 = 0.85;
 const GARDEN_SPACING: f64 = 0.55;
 const BEAN_POLE: f64 = 1.15;
 const CABBAGE: u32 = 0x6f9257;
@@ -2484,19 +2482,22 @@ fn yard(kit: &mut Kit<Surface>, design: &HouseDesign) {
 /// neighbours' look alike from above. Low enough to drive over.
 fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) {
     // A cottage stacking its firewood by the wall keeps no garden ([`yard`]).
-    if !design.variant.is_multiple_of(3) {
+    let Some((bed, mut rng)) = design.garden_bed() else {
         return;
-    }
+    };
     let octahedron = OCTAHEDRON.get_or_insert((), || octahedron_geometry(1.0, 0));
     let lot = (design.style.siding >> 3) ^ design.turns.rem_euclid(4) as u32;
-    let mut rng = Random::new(f64::from(design.variant) * 3.0 + f64::from(lot % 97) + 77.0);
-    let (frame, half) = wall_frames(design.w, design.d)[1];
-    let length = (2.0 * half - 0.9).min(GARDEN.0);
-    let offset = rng.range(-0.5, 0.5) * (2.0 * half - 0.6 - length).max(0.0);
-    let depth = GARDEN.1 + rng.range(-0.15, 0.2);
-    let (near, far) = (GARDEN_GAP, GARDEN_GAP + depth);
+    let (frame, _) = wall_frames(design.w, design.d)[1];
+    let GardenBed {
+        u0,
+        u1,
+        near,
+        far,
+        length,
+        offset,
+        depth,
+    } = bed;
     let at = |u: f64, out: f64, y: f64| frame.transform_point3(DVec3::new(u, y, out));
-    let (u0, u1) = (offset - length / 2.0, offset + length / 2.0);
     // Turned soil inside boards laid round it.
     kit.quad(
         Surface::Wood,

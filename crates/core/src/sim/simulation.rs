@@ -640,6 +640,21 @@ impl Simulation {
                 let part = self.world.colliders[handle].user_data as usize;
                 state.colliders[part] = Some(handle);
             }
+            // Its garden's bean poles and cabbages bear what falls on them: only its
+            // loose parts meet them, which come to rest on them rather than through them.
+            let design = state.layout.design;
+            if let Some((bed, _)) = design.garden_bed() {
+                let (a, b) = bed.bounds(&design, GARDEN_PROPS_HEIGHT);
+                let (a, b) = (design.to_world(a), design.to_world(b));
+                let (min, max) = (a.min(b), a.max(b));
+                let (half, center) = ((max - min) / 2.0, (min + max) / 2.0);
+                let collider = ColliderBuilder::cuboid(half.x as f32, half.y as f32, half.z as f32)
+                    .translation(vector(center.x, center.y, center.z))
+                    .collision_groups(interaction_groups(group::GARDEN_PROPS))
+                    .friction(0.6);
+                let body = self.covers[index].body;
+                self.world.insert_collider(collider, Some(body));
+            }
         }
         if let Some(state) = &mut self.covers[index].tower {
             for &handle in colliders {
@@ -1253,6 +1268,9 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
         tank_footprint,
     }
 }
+
+/// How high (m) a cottage garden's poles and plants bear a fallen part.
+const GARDEN_PROPS_HEIGHT: f64 = 0.6;
 
 /// A cottage's fixed body at its ground centre with a collider for each of its
 /// standing parts (those not in `gone`), shared with client prediction.

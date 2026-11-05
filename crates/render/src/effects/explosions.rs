@@ -227,7 +227,7 @@ const ENCLOSED_SCALE: f64 = 0.3;
 /// The height of a fireball's middle over its foot, at scale 1 (m).
 const ENCLOSED_FIRE_MIDDLE: f64 = 1.0;
 /// How far (m) a burst in a room is drawn back toward the hole it came in by.
-const ENCLOSED_SETBACK: f64 = 0.45;
+const ENCLOSED_SETBACK: f64 = 0.2;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
 /// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
 /// wall: the pile's loose dust goes up with it.

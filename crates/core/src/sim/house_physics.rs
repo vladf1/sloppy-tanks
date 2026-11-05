@@ -1125,13 +1125,18 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             index += 1;
             continue;
         };
+        // No loose part flies off faster than a fall or a blast's throw sends it: the
+        // solver pushing apart parts that came loose overlapping (a body dropped into
+        // the space of one that fell a tick earlier) would fling them over the roofs.
+        let handle = fragment.body;
+        cap_loose_speed(&mut simulation.world.bodies[handle]);
+        let fragment = &simulation.fragments[index];
         let body = &simulation.world.bodies[fragment.body];
         let now = from_vector(body.linvel());
         let change = (now.x - before.x)
             .hypot(now.y - before.y)
             .hypot(now.z - before.z);
         let age = simulation.elapsed - fragment.created_at.unwrap_or(simulation.elapsed);
-        let room = simulation.fragments.len() + parts.len() <= simulation.max_fragments;
         // The chimney alone lands as bricks.
         if parts == PartSet::from_indices([CHIMNEY_PART])
             && change > CHIMNEY_LANDING
@@ -1144,10 +1149,10 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
         if parts.len() > 1
             && !fragment.house_broken
             && (change > SHATTER_SPEED || at_rest)
-            && room
             && fragment.life > DEBRIS_CLEANUP_SECONDS
         {
-            // A hard landing breaks the body up into a few pieces.
+            // A hard landing breaks the body up into a few pieces: as many as the
+            // debris budget has room for, at least two (the oldest debris makes way).
             let layout = simulation
                 .covers
                 .iter()
@@ -1155,7 +1160,15 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
                 .and_then(|cover| cover.structure.as_ref())
                 .map(|state| state.layout.clone());
             if let Some(layout) = layout {
-                let sections = loose_sections(&layout, &parts);
+                let mut sections = loose_sections(&layout, &parts);
+                let room = (simulation.max_fragments + 1)
+                    .saturating_sub(simulation.fragments.len())
+                    .max(2);
+                while sections.len() > room {
+                    let last = sections.pop().expect("more than two");
+                    let merged = sections.last_mut().expect("at least two");
+                    *merged = merged.union(&last);
+                }
                 simulation.split_house_fragment(index, &layout, sections, None);
                 continue;
             }
@@ -1179,6 +1192,30 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
         }
         lay_down_on_edge(simulation, index, age);
         index += 1;
+    }
+}
+
+/// The fastest (m/s) a loose cottage part moves up and across, and turns (rad/s): a
+/// blast's throw at its strongest and a little more. Falling is left to gravity.
+const MAX_RISE: f32 = 4.5;
+const MAX_ACROSS: f32 = 6.0;
+const MAX_TURN: f32 = 6.0;
+
+fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
+    let v = body.linvel();
+    let across = Vector::new(v.x, 0.0, v.z);
+    let across = if across.length() > MAX_ACROSS {
+        across * (MAX_ACROSS / across.length())
+    } else {
+        across
+    };
+    let capped = Vector::new(across.x, v.y.min(MAX_RISE), across.z);
+    if capped != v {
+        body.set_linvel(capped, true);
+    }
+    let w = body.angvel();
+    if w.length() > MAX_TURN {
+        body.set_angvel(w * (MAX_TURN / w.length()), true);
     }
 }
 

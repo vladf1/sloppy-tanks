@@ -1029,3 +1029,157 @@ fn a_fallen_piece_left_on_its_edge_is_laid_down() {
         "laid down: {flat} m tall, {tall} on edge"
     );
 }
+
+#[test]
+fn a_blown_out_cottage_falls_rather_than_flying_up() {
+    // The hip-roofed cottage the capture levels: six shells across its +x wall, then
+    // heavy bursts along that wall at 1 and 2.6 m and, two ticks later, the far one.
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    clear_arena(&mut s, &[human]);
+    place_tank(&mut s, 0, -10.0, -40.0, None);
+    s.tanks[0].protection = 999.0;
+    let house = s.add_cover(&CoverDef::house(-45.0, 13.0, 5.0, 6.0, 4.3, 0xb87b4c));
+    s.nav.rebuild(&s.covers, None);
+    let c = s.covers[house].clone();
+    assert_eq!(
+        c.structure.as_ref().unwrap().layout.roof.form,
+        RoofForm::Hip
+    );
+    for k in 0..6 {
+        let z = c.z + [-2.6, -0.52, 1.56][k % 3];
+        fire(
+            &mut s,
+            Vec2::new(c.x + c.w / 2.0 + 9.0, z),
+            Vec2::new(c.x + c.w / 2.0, z),
+            Weapon::Standard,
+        );
+        run(&mut s, 1.5);
+    }
+    let me = (s.tanks[0].id, s.tanks[0].team);
+    let mut first: std::collections::HashMap<u32, f64> = Default::default();
+    let mut worst = (0.0f64, 0u32);
+    let mut watch = |s: &Simulation| {
+        for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
+            let y = f64::from(s.world.bodies[f.body].center_of_mass().y);
+            let start = *first.entry(f.id).or_insert(y);
+            if y - start > worst.0 {
+                worst = (y - start, f.id);
+            }
+        }
+    };
+    for face in [1.0, -1.0] {
+        for i in 0..5 {
+            for y in [1.0, 2.6] {
+                let at = Point3::new(c.x + face * c.w / 2.0, y, c.z - 2.6 + 1.3 * f64::from(i));
+                s.damage_cover(house, 150.0, me.0, me.1, None, Some(at));
+            }
+        }
+        for _ in 0..2 {
+            idle(&mut s);
+            watch(&s);
+        }
+    }
+    for _ in 0..120 {
+        idle(&mut s);
+        watch(&s);
+    }
+    assert!(!s.covers[house].alive, "it came down");
+    // A piece is thrown up at most about a metre; nothing is flung over the roofs.
+    assert!(worst.0 < 1.5, "piece {} rose {:.2} m", worst.1, worst.0);
+}
+
+#[test]
+fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    clear_arena(&mut s, &[human]);
+    place_tank(&mut s, 0, -10.0, -40.0, None);
+    let house = s.add_cover(&CoverDef::house(45.0, -39.0, 5.0, 6.0, 6.8, 0xb87b4c));
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    assert_eq!(layout.design.storeys(), 2);
+    // Its ground floor's walls blown out round it: all above them comes down.
+    let c = s.covers[house].clone();
+    let me = (s.tanks[0].id, s.tanks[0].team);
+    for (dx, dz, along_x) in [
+        (1.0, 0.0, false),
+        (-1.0, 0.0, false),
+        (0.0, 1.0, true),
+        (0.0, -1.0, true),
+    ] {
+        for i in 0..5 {
+            let u = -2.0 + f64::from(i);
+            let (x, z) = if along_x {
+                (c.x + u, c.z + dz * c.d / 2.0)
+            } else {
+                (c.x + dx * c.w / 2.0, c.z + u)
+            };
+            for y in [1.0, 2.6] {
+                s.damage_cover(house, 150.0, me.0, me.1, None, Some(Point3::new(x, y, z)));
+            }
+        }
+    }
+    run(&mut s, 5.0);
+    for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
+        let parts = f.house_parts.unwrap();
+        let floors = parts
+            .iter()
+            .any(|p| layout.parts[p].kind == PartKind::Floor);
+        let walls = parts.iter().any(|p| layout.parts[p].wall.is_some());
+        assert!(
+            !(floors && walls),
+            "a wall and a floor lie fused: {parts:?}"
+        );
+        let body = &s.world.bodies[f.body];
+        assert!(
+            f64::from(body.center_of_mass().y) < 2.0,
+            "a piece stands up {:?}",
+            body.center_of_mass()
+        );
+    }
+}
+
+#[test]
+fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
+    use rapier3d::prelude::{QueryFilter, Vector};
+    use sloppy_core::sim::data::group;
+    use sloppy_core::sim::house_layout::HouseDesign;
+    use sloppy_core::sim::physics::interaction_groups;
+    // A cottage that keeps a garden.
+    let x = (0..60)
+        .map(|k| 20.0 + f64::from(k) * 0.5)
+        .find(|&x| {
+            HouseDesign::of(x, 0.0, 5.0, 7.0, 4.9)
+                .garden_bed()
+                .is_some()
+        })
+        .expect("a cottage with a garden");
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    clear_arena(&mut s, &[human]);
+    let house = s.add_cover(&CoverDef::house(x, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
+    s.world.step();
+    let design = s.covers[house].structure.as_ref().unwrap().layout.design;
+    let (bed, _) = design.garden_bed().unwrap();
+    let (a, b) = bed.bounds(&design, 0.3);
+    let middle = design.to_world((a + b) / 2.0);
+    let at = Vector::new((x + middle.x) as f32, 0.3, middle.z as f32);
+    let meets = |s: &Simulation, groups: u32| {
+        s.world
+            .intersect_point(
+                at,
+                QueryFilter::default().groups(interaction_groups(groups)),
+            )
+            .next()
+            .is_some()
+    };
+    assert!(
+        meets(&s, group::HOUSE_SHARD),
+        "a fallen part rests on the bed"
+    );
+    assert!(!meets(&s, group::TANK), "a tank drives over it");
+    assert!(!meets(&s, group::COVER_QUERY), "a shell flies over it");
+}
