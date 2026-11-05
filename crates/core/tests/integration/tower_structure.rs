@@ -632,10 +632,10 @@ fn settled_pieces_stay_as_they_lie() {
             idle(&mut s);
             for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
                 let landing = fragment.tower_landing.unwrap_or_default();
-                let age = s.elapsed - fragment.created_at.unwrap_or(s.elapsed);
+                let since = s.elapsed - landing.landed_at;
                 assert!(
-                    !landing.landed || landing.rested || age < 1.5,
-                    "corner {corner}: a piece still moving {age} s after it landed"
+                    !landing.landed || landing.rested || since < 1.5,
+                    "corner {corner}: a piece still moving {since} s after it landed"
                 );
                 if !landing.rested {
                     continue;
