@@ -11,11 +11,14 @@
 //! time the pile changed, cost a slow device a 60 ms frame every 0.4 s while it
 //! settled. Presentation only: the shards' bodies are untouched.
 //!
-//! When the pile's shards begin to sink away, the walls' and the mound's (not the
-//! roof's) poses they last rested at stay behind pressed flat ([`SettledShards::remains`]): splintered panels, slabs and
-//! boards strewn low over the floor for the rest of the round, so the collapse never
-//! leaves a swept foundation. They are drawn without a shadow, lie too low for a hull
-//! to clip them visibly, and are pressed a chunk a frame too.
+//! When the pile's shards begin to sink away, the walls' and the mound's poses they
+//! last rested at stay behind pressed flat ([`SettledShards::remains`]): splintered
+//! panels, slabs and boards strewn low over the floor for the rest of the round, so
+//! the collapse never leaves a swept foundation. Of the roof's slabs only a few
+//! crumpled scraps of sheet stay, torn from where each lay ([`Lasting::Scraps`]), so
+//! the remains keep the cottage's roofing among their boards. They are drawn without
+//! a shadow, lie too low for a hull to clip them visibly, and are pressed a chunk a
+//! frame too.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -25,13 +28,34 @@ use sloppy_core::geometry::math::hex_to_linear;
 use sloppy_core::models::{is_paintable, vertex_material};
 use sloppy_core::scene::Node;
 
-use crate::model::{MergedPart, MeshData};
+use crate::model::{MergedPart, MeshData, Vertex};
 
 /// How much of its height a pile keeps once pressed into its lasting remains, and
 /// the least height a pressed piece stands above the ground (m).
 const REMAINS_SQUASH: f32 = 0.32;
 
 const REMAINS_LIFT: f32 = 0.015;
+
+/// What of a shard stays in a pile's lasting remains.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lasting {
+    /// Nothing: the chimney's stack, whose bricks the heap keeps of its own.
+    No,
+    /// All of it, pressed flat: a wall's shard or the mound.
+    Whole,
+    /// A few torn scraps of it, crumpled: a roof slab, which whole and pressed
+    /// flat lay over the floor like a green floor.
+    Scraps,
+}
+
+/// A roof slab's scraps in the remains: how many, their size (m, in the slab's own
+/// frame), how far from its middle they may lie, and how high (m, before the
+/// remains are pressed) their crumples rise and fall, over what length (m).
+const SCRAPS: usize = 3;
+const SCRAP_SIZE: (f32, f32) = (0.45, 1.0);
+const SCRAP_SPREAD: f32 = 1.6;
+const CRUMPLE: f32 = 0.09;
+const CRUMPLE_LENGTH: f32 = 0.37;
 
 /// Seconds a shard keeps still before it may join a chunk, and how long a cottage's
 /// pile must go without another shard coming to rest before fewer than
@@ -62,10 +86,8 @@ struct Shard {
     baked: Option<(u64, Pose)>,
     /// The pose it last rested at, kept for the remains.
     rested: Option<Pose>,
-    /// Whether it stays in the remains: a wall's shard or the mound, not a roof
-    /// slab, which pressed flat lay over the floor like a green floor for the rest
-    /// of the round (the heap keeps broken roofing of its own).
-    lasting: bool,
+    /// What of it stays in the remains.
+    lasting: Lasting,
     still_since: f64,
     fading: bool,
 }
@@ -86,7 +108,7 @@ pub struct Plan<H> {
 /// A collapsed cottage's lasting remains: the shards to press, a chunk a frame, and
 /// the chunks drawn so far.
 struct Remains<H> {
-    pending: Vec<(Node, Pose)>,
+    pending: Vec<(Node, Pose, Option<u32>)>,
     drawn: Vec<H>,
 }
 
@@ -110,7 +132,7 @@ impl<H> Default for SettledShards<H> {
 
 impl<H> SettledShards<H> {
     /// Follow the shard of fragment `id` from cottage `house`, drawn as `node`.
-    pub fn track(&mut self, id: u32, house: u32, node: Node, now: f64, lasting: bool) {
+    pub fn track(&mut self, id: u32, house: u32, node: Node, now: f64, lasting: Lasting) {
         self.shards.insert(
             id,
             Shard {
@@ -284,16 +306,20 @@ impl<H> SettledShards<H> {
             if self.remains.contains_key(&house) {
                 continue;
             }
-            let mut rested: Vec<(u32, Node, Pose)> = self
+            let mut rested: Vec<(u32, Node, Pose, Lasting)> = self
                 .shards
                 .iter()
-                .filter(|(_, shard)| shard.house == house && shard.lasting)
-                .filter_map(|(&id, shard)| Some((id, shard.node.clone(), shard.rested?)))
+                .filter(|(_, shard)| shard.house == house && shard.lasting != Lasting::No)
+                .filter_map(|(&id, shard)| {
+                    Some((id, shard.node.clone(), shard.rested?, shard.lasting))
+                })
                 .collect();
             rested.sort_unstable_by_key(|(id, ..)| *id);
             let pending = rested
                 .into_iter()
-                .map(|(_, node, pose)| (node, pose))
+                .map(|(id, node, pose, lasting)| {
+                    (node, pose, (lasting == Lasting::Scraps).then_some(id))
+                })
                 .collect();
             self.remains.insert(
                 house,
@@ -313,11 +339,21 @@ impl<H> SettledShards<H> {
         let house = *houses.first()?;
         let remains = self.remains.get_mut(&house).expect("listed");
         let take = remains.pending.len().min(CHUNK_SHARDS);
-        let chunk: Vec<(Node, Pose)> = remains.pending.drain(..take).collect();
-        Some((
-            house,
-            merged(chunk.iter().map(|(node, pose)| (node, *pose)), false, true),
-        ))
+        let chunk: Vec<(Node, Pose, Option<u32>)> = remains.pending.drain(..take).collect();
+        let mut parts = merged(
+            chunk
+                .iter()
+                .filter(|(.., scraps)| scraps.is_none())
+                .map(|(node, pose, _)| (node, *pose)),
+            false,
+            true,
+        );
+        for (node, pose, scraps) in &chunk {
+            if let Some(id) = scraps {
+                add_scraps(&mut parts, node, *pose, *id);
+            }
+        }
+        Some((house, parts))
     }
 
     pub fn remains_built(&mut self, house: u32, handle: H) {
@@ -425,6 +461,161 @@ fn gather(
     }
 }
 
+/// A roof slab's lasting scraps, added to `parts` (the remains' chunk): its meshes
+/// at `pose`, cut to [`SCRAPS`] torn patches of its own frame placed by its
+/// fragment `id`, crumpled and pressed like the rest of the remains.
+fn add_scraps(parts: &mut Vec<MergedPart>, node: &Node, pose: Pose, id: u32) {
+    let mut whole = merged(std::iter::once((node, pose)), false, false);
+    let (position, rotation) = pose;
+    let inverse = rotation.inverse();
+    let patches = scrap_patches(id);
+    for part in &mut whole {
+        let source = std::mem::take(&mut part.data);
+        let mut cut = MeshData::default();
+        for triangle in source.indices.as_chunks::<3>().0 {
+            let corners = triangle.map(|i| source.vertices[i as usize]);
+            let local = corners.map(|v| inverse * (Vec3::from(v.position) - position));
+            for patch in &patches {
+                let mut polygon: Vec<(Vertex, Vec3)> = corners.iter().copied().zip(local).collect();
+                for edge in &patch.edges {
+                    polygon = clip_polygon(&polygon, *edge);
+                    if polygon.len() < 3 {
+                        break;
+                    }
+                }
+                if polygon.len() < 3 {
+                    continue;
+                }
+                let base = cut.vertices.len() as u32;
+                for (vertex, local) in &polygon {
+                    cut.vertices.push(crumple(*vertex, *local, rotation, patch));
+                }
+                for k in 1..polygon.len() as u32 - 1 {
+                    cut.indices.extend([base, base + k, base + k + 1]);
+                }
+            }
+        }
+        part.data = cut;
+    }
+    for part in whole
+        .into_iter()
+        .filter(|part| !part.data.indices.is_empty())
+    {
+        match parts
+            .iter_mut()
+            .find(|other| Arc::ptr_eq(&other.material, &part.material))
+        {
+            Some(other) => {
+                let base = other.data.vertices.len() as u32;
+                other.data.vertices.extend(part.data.vertices);
+                other
+                    .data
+                    .indices
+                    .extend(part.data.indices.iter().map(|i| base + i));
+            }
+            None => parts.push(part),
+        }
+    }
+}
+
+/// A torn patch of a slab's frame (x, z): the half-planes that bound it, each
+/// `(normal, offset)` keeping `normal · p <= offset`, and its crumple's phase.
+struct Patch {
+    edges: Vec<(glam::Vec2, f32)>,
+    phase: f32,
+}
+
+/// [`SCRAPS`] patches for the slab of fragment `id`: skewed, unevenly cut
+/// quadrilaterals strewn over its middle, each its own size.
+fn scrap_patches(id: u32) -> Vec<Patch> {
+    let mut seed = id.wrapping_mul(0x9e37_79b9) ^ 0x5bd1_e995;
+    let mut next = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed % 10_000) as f32 / 10_000.0
+    };
+    (0..SCRAPS)
+        .map(|_| {
+            let center = glam::Vec2::new(
+                (next() * 2.0 - 1.0) * SCRAP_SPREAD,
+                (next() * 2.0 - 1.0) * SCRAP_SPREAD,
+            );
+            let size = SCRAP_SIZE.0 + (SCRAP_SIZE.1 - SCRAP_SIZE.0) * next();
+            let turn = next() * std::f32::consts::PI;
+            // Four torn sides, each its own reach and slant from a square's.
+            let edges = (0..4)
+                .map(|k| {
+                    let angle =
+                        turn + k as f32 * std::f32::consts::FRAC_PI_2 + (next() - 0.5) * 0.6;
+                    let normal = glam::Vec2::new(angle.cos(), angle.sin());
+                    let reach = size * (0.35 + 0.3 * next());
+                    (normal, normal.dot(center) + reach)
+                })
+                .collect();
+            Patch {
+                edges,
+                phase: next() * std::f32::consts::TAU,
+            }
+        })
+        .collect()
+}
+
+/// The part of convex `polygon` (vertices with their points in the slab's frame)
+/// on the kept side of `edge`, in the slab's x, z.
+fn clip_polygon(
+    polygon: &[(Vertex, Vec3)],
+    (normal, offset): (glam::Vec2, f32),
+) -> Vec<(Vertex, Vec3)> {
+    let side = |p: Vec3| normal.dot(glam::Vec2::new(p.x, p.z)) - offset;
+    let mut kept = Vec::with_capacity(polygon.len() + 1);
+    for (k, &(a, pa)) in polygon.iter().enumerate() {
+        let (b, pb) = polygon[(k + 1) % polygon.len()];
+        let (da, db) = (side(pa), side(pb));
+        if da <= 0.0 {
+            kept.push((a, pa));
+        }
+        if (da <= 0.0) != (db <= 0.0) {
+            let t = da / (da - db);
+            kept.push((mix_vertex(&a, &b, t), pa.lerp(pb, t)));
+        }
+    }
+    kept
+}
+
+fn mix_vertex(a: &Vertex, b: &Vertex, t: f32) -> Vertex {
+    let lerp3 = |x: [f32; 3], y: [f32; 3]| Vec3::from(x).lerp(Vec3::from(y), t).into();
+    Vertex {
+        position: lerp3(a.position, b.position),
+        normal: Vec3::from(a.normal)
+            .lerp(Vec3::from(b.normal), t)
+            .normalize_or(Vec3::Y)
+            .into(),
+        uv: glam::Vec2::from(a.uv)
+            .lerp(glam::Vec2::from(b.uv), t)
+            .into(),
+        color: glam::Vec4::from(a.color)
+            .lerp(glam::Vec4::from(b.color), t)
+            .into(),
+    }
+}
+
+/// A scrap's vertex bent up and down across the sheet, the way a torn sheet
+/// crumples, then pressed into the remains like the rest.
+fn crumple(mut vertex: Vertex, local: Vec3, rotation: Quat, patch: &Patch) -> Vertex {
+    let wave = (local.x / CRUMPLE_LENGTH + patch.phase).sin()
+        * (local.z / (CRUMPLE_LENGTH * 1.6) - patch.phase).cos();
+    let lift = rotation * Vec3::Y * (CRUMPLE * wave);
+    let position = Vec3::from(vertex.position) + lift;
+    let y = (position.y * REMAINS_SQUASH).max(REMAINS_LIFT);
+    vertex.position = [position.x, y, position.z];
+    let [x, ny, z] = vertex.normal;
+    vertex.normal = Vec3::new(x, ny / REMAINS_SQUASH, z)
+        .normalize_or(Vec3::Y)
+        .into();
+    vertex
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,7 +673,7 @@ mod tests {
     fn resting_shards_merge_a_chunk_a_frame_and_a_moving_one_breaks_only_its_own() {
         let mut settled: SettledShards<u32> = SettledShards::default();
         for id in 1..=10 {
-            settled.track(id, 9, shard(), 0.0, true);
+            settled.track(id, 9, shard(), 0.0, Lasting::Whole);
         }
         let (mut now, mut next) = (0.0, 0);
         let rest = |id: u32| id as f32;
@@ -525,5 +716,57 @@ mod tests {
         let live: HashSet<u32> = HashSet::new();
         assert!(settled.retain(&live).is_empty());
         assert_eq!(settled.rebuilt(|house| house == 9), vec![30, 31, 32]);
+    }
+
+    /// A roof slab four metres square, two triangles, a metre and a half up.
+    fn slab() -> Node {
+        let mesh = sloppy_core::geometry::Mesh {
+            positions: vec![
+                [-2.0, 1.5, -2.0],
+                [2.0, 1.5, -2.0],
+                [2.0, 1.5, 2.0],
+                [-2.0, 1.5, 2.0],
+            ],
+            normals: vec![[0.0, 1.0, 0.0]; 4],
+            uvs: vec![[0.0; 2]; 4],
+            indices: Some(vec![0, 2, 1, 0, 3, 2]),
+            ..Default::default()
+        };
+        let mut root = Node::default();
+        root.children.push(Node::mesh(
+            Arc::new(mesh),
+            Arc::new(sloppy_core::scene::Material::default()),
+        ));
+        root
+    }
+
+    #[test]
+    fn a_roof_slab_leaves_a_few_crumpled_scraps_of_itself_in_the_remains() {
+        let pose = (Vec3::new(10.0, 0.0, -4.0), Quat::from_rotation_y(0.7));
+        for id in [3, 41, 977] {
+            let mut parts = Vec::new();
+            add_scraps(&mut parts, &slab(), pose, id);
+            assert_eq!(parts.len(), 1);
+            let data = &parts[0].data;
+            assert!(!data.indices.is_empty(), "slab {id} keeps scraps");
+            let at = |i: u32| Vec3::from(data.vertices[i as usize].position);
+            let area: f32 = data
+                .indices
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|&[a, b, c]| (at(b) - at(a)).cross(at(c) - at(a)).length() / 2.0)
+                .sum();
+            // Scraps, not the slab: a few small pieces of its sixteen square metres.
+            assert!(area > 0.2 && area < 4.0, "slab {id}: {area} m² of scraps");
+            for vertex in &data.vertices {
+                let p = Vec3::from(vertex.position);
+                // Pressed low with the remains, crumples and all, and torn from
+                // where the slab lay.
+                assert!(p.y <= (1.5 + CRUMPLE) * REMAINS_SQUASH + 1e-4);
+                let local = pose.1.inverse() * (p - pose.0);
+                assert!(local.x.abs() <= 2.0 + 1e-3 && local.z.abs() <= 2.0 + 1e-3);
+            }
+        }
     }
 }

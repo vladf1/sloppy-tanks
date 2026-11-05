@@ -5,6 +5,7 @@
 use crate::{net_support, support};
 
 use glam::DVec3;
+use rapier3d::prelude::RigidBodyHandle;
 use sloppy_core::models::{WallDamage, house_roof_breaks, house_wall_damage};
 use sloppy_core::net::replication::{StateMirror, StateStream};
 use sloppy_core::net::scene_codec::Scene;
@@ -16,6 +17,7 @@ use sloppy_core::sim::house_layout::{
     WALL_DEPTH, heap_house, heap_seed, is_house_heap, wall_frames,
 };
 use sloppy_core::sim::math::Point3;
+use sloppy_core::sim::scenery_pieces::MOUND_SINK;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::TimberHit;
@@ -161,7 +163,9 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
                 (p.x - start.x).abs() < 1e-4 && (p.z - start.z).abs() < 1e-4,
                 "{piece:?} starts where it stood"
             );
-            assert!((p.y - shape.center.y).abs() < 1e-4);
+            // The mound lies sunk into the floor, below the stubs round it.
+            let sink = if mound { MOUND_SINK } else { 0.0 };
+            assert!((p.y - (shape.center.y - sink)).abs() < 1e-4);
         } else {
             assert_eq!(
                 f.shape,
@@ -364,7 +368,8 @@ impl Ruins {
             if piece.part.is_roof() {
                 let p = s.body_translation(fragment.body);
                 roof_slabs += 1;
-                if p.y > 0.75 {
+                // Up on the mound, which lies sunk below the stubs round it.
+                if p.y > 0.5 {
                     raised += 1;
                 }
                 assert!(
@@ -472,10 +477,11 @@ fn extra_level_cottages_are_built_and_fall_like_the_villages() {
         slabs,
         standing,
     } = ruins;
-    // Their some ninety slabs at about the village's rate: three turn over on arm64.
+    // Their slabs at about the village's rate: none turns over on arm64.
     assert!(flipped.len() <= 4, "{flipped:?} of {slabs}");
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
-    // Five on arm64, as in the village; allow the x86-64 CI's one more.
+    // None on arm64 since their pieces settle into the heap rather than on its top;
+    // the village's limit, as the x86-64 CI's physics leaves more on edge.
     assert!(standing.len() <= 6, "{standing:?}");
 }
 
@@ -1060,4 +1066,64 @@ fn a_breach_that_grows_into_a_window_swallows_it() {
         }
     }
     assert!(swallowed, "four shells beside it reached the window");
+}
+
+/// A cottage felled through the wall under one of its slopes: that slope goes down
+/// first, and the roof settles into the heap the cottage leaves, onto the rubble
+/// mound sunk under it, rather than lying level across the heap's top and the stubs
+/// like a table.
+#[test]
+fn a_breached_cottages_roof_leads_down_over_the_breach_and_settles_into_its_heap() {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    let inward = d.to_world(DVec3::new(-1.0, 0.0, 0.0));
+    while s.covers[house].alive {
+        // As a shell flying into the wall under the right slope drives it.
+        s.covers[house].kick = Some(Vec2::new(inward.x, inward.z));
+        shell_at(&mut s, house, DVec3::new(d.w / 2.0, 1.0, 0.4));
+    }
+    tick(&mut s, 0.3);
+    let mean = |s: &Simulation,
+                pick: &dyn Fn(HousePart) -> bool,
+                of: &dyn Fn(&Simulation, &RigidBodyHandle) -> f64| {
+        let values: Vec<f64> = s
+            .fragments
+            .iter()
+            .filter(|f| f.house_piece.is_some_and(|p| pick(p.part)))
+            .map(|f| of(s, &f.body))
+            .collect();
+        values.iter().sum::<f64>() / values.len().max(1) as f64
+    };
+    let falling =
+        |s: &Simulation, body: &RigidBodyHandle| f64::from(s.world.bodies[*body].linvel().y);
+    let over = mean(&s, &|part| part == HousePart::RightRoof, &falling);
+    let behind = mean(&s, &|part| part == HousePart::LeftRoof, &falling);
+    assert!(
+        over < behind - 0.3,
+        "over the breach {over}, behind {behind}"
+    );
+    tick(&mut s, 5.7);
+    let height = |s: &Simulation, body: &RigidBodyHandle| s.body_translation(*body).y;
+    let roof = mean(&s, &|part| part.is_roof(), &height);
+    assert!(roof < HOUSE_HEAP.height, "the roof lies at {roof}");
+    // The heap is cover to tanks and shells but not a shelf for its pieces.
+    let heap_index = heaps(&s)[0];
+    assert_eq!(
+        collider_groups(&s, s.covers[heap_index].body),
+        group::HOUSE_HEAP
+    );
+    let heap = s.covers[heap_index].collider;
+    for f in s.fragments.iter().filter(|f| f.house_piece.is_some()) {
+        for &collider in s.world.bodies[f.body].colliders() {
+            assert!(
+                s.world
+                    .narrow_phase
+                    .contact_pairs_with(collider)
+                    .all(|pair| {
+                        pair.collider1 != heap && pair.collider2 != heap
+                            || !pair.has_any_active_contact()
+                    })
+            );
+        }
+    }
 }

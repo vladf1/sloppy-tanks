@@ -44,7 +44,7 @@ use super::geometry_cache;
 use super::house_prep::{
     HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared, release_spent_houses,
 };
-use super::house_rest::SettledShards;
+use super::house_rest::{Lasting, SettledShards};
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
@@ -3550,7 +3550,13 @@ impl Presentation {
             for child in &mut node.children {
                 child.visible |= child.name == HOUSE_MOUND;
             }
-            let lasting = !piece.part.is_roof() && piece.part != HousePart::Chimney;
+            let lasting = if piece.part.is_roof() {
+                Lasting::Scraps
+            } else if piece.part == HousePart::Chimney {
+                Lasting::No
+            } else {
+                Lasting::Whole
+            };
             self.settled
                 .track(fragment.id, house, node, self.time, lasting);
             look
