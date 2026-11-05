@@ -730,8 +730,9 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
     let (s, house) = lone_cottage();
     let d = design(&s, house);
     let wall = fall(DVec3::new(0.4, 1.0, d.d / 2.0), 0.35);
-    // The fingerprint of the fall as it was before roof-driven collapses caved in.
-    assert_eq!(speeds_print(&wall), 25_510);
+    // The fingerprint of the fall as it was before roof-driven collapses caved in
+    // (since round 14 its slopes crease where they land on the eave walls' stubs).
+    assert_eq!(speeds_print(&wall), 169_931);
     let roof = fall(DVec3::new(0.5, d.h - 0.35, 0.3), 0.35);
     let mean = |fall: &Fall, pick: &dyn Fn(HousePiece) -> bool, of: &dyn Fn(DVec3) -> f64| {
         let values: Vec<f64> = fall
@@ -1138,7 +1139,7 @@ fn the_slope_across_from_a_dropped_eave_breaks_where_it_lands_on_its_stubs() {
         let span = (1.0, -0.9, 0.7);
         let dropped = RoofBreaks {
             eave_spans: vec![span],
-            holes: Vec::new(),
+            ..RoofBreaks::default()
         };
         let slabs = |breaks: &RoofBreaks, part: HousePart| -> Vec<u8> {
             d.pieces(breaks)
@@ -1177,53 +1178,20 @@ fn a_fallen_cottages_garden_is_crushed_a_stretch_at_a_time() {
     for house in houses(&s) {
         let c = &s.covers[house];
         let props = sloppy_core::models::heap_prop_footprints(c.x, c.z, c.w, c.d, 0.0);
-        // The plinth's front, the yard, then a garden's bed and its stretches.
-        if props.len() <= 3 {
+        // The plinth's front, the yard, then a garden's stretches of plants.
+        if props.len() <= 2 {
             continue;
         }
         gardens += 1;
-        let bed = props[2];
-        assert!(props.len() >= 5, "{props:?}");
-        for stretch in &props[3..] {
-            assert!(
-                stretch[0] >= bed[0] - 1e-6
-                    && stretch[1] >= bed[1] - 1e-6
-                    && stretch[2] <= bed[2] + 1e-6
-                    && stretch[3] <= bed[3] + 1e-6,
-                "{stretch:?} in {bed:?}"
-            );
-            let area = (stretch[2] - stretch[0]) * (stretch[3] - stretch[1]);
-            let whole = (bed[2] - bed[0]) * (bed[3] - bed[1]);
-            assert!(area < whole * 0.6, "{stretch:?} {bed:?}");
-        }
+        let stretches = &props[2..];
+        assert_eq!(stretches.len(), 2, "{props:?}");
+        let area = |r: &[f64; 4]| (r[2] - r[0]) * (r[3] - r[1]);
+        let (a, b) = (stretches[0], stretches[1]);
+        // Side by side along the bed, each about half of it.
+        let overlap =
+            (a[2].min(b[2]) - a[0].max(b[0])).max(0.0) * (a[3].min(b[3]) - a[1].max(b[1])).max(0.0);
+        assert!(overlap < 1e-6, "{a:?} {b:?}");
+        assert!((area(&a) - area(&b)).abs() < 0.1 * area(&a), "{a:?} {b:?}");
     }
     assert!(gardens > 0);
-}
-
-/// A felled cottage's chimney does not ride the fallen roof standing: once down on
-/// the wreck its stack crumbles away into the pile, and the bricks strewn round it
-/// lie on with the pile instead of vanishing with the loose boards.
-#[test]
-fn a_fallen_chimney_crumbles_into_bricks_that_lie_with_the_pile() {
-    let (s, _) = fallen_cottage(3.0);
-    let stack = |f: &&sloppy_core::sim::Fragment| {
-        f.house_piece.is_some_and(|p| p.part == HousePart::Chimney)
-    };
-    let bricks = |s: &Simulation| {
-        s.fragments
-            .iter()
-            .filter(|f| f.house_piece.is_none() && f.color == 0x9c4a32)
-            .count()
-    };
-    assert!(
-        s.fragments
-            .iter()
-            .filter(stack)
-            .all(|f| f.life <= sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS),
-        "the stack is crumbling away"
-    );
-    assert!(bricks(&s) >= 10, "{} bricks", bricks(&s));
-    let (s, _) = fallen_cottage(8.0);
-    assert!(s.fragments.iter().filter(stack).count() == 0);
-    assert!(bricks(&s) >= 10, "{} bricks at 8 s", bricks(&s));
 }

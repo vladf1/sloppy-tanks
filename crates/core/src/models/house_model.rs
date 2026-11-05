@@ -111,7 +111,7 @@ const STRIPPED_ROWS: usize = 2;
 /// are sprung.
 const STRIPPED_GROWTH: f64 = 0.15;
 /// The share of the courses round a big breach that keep their siding.
-const STRIPPED_SKIP: f64 = 0.55;
+const STRIPPED_SKIP: f64 = 0.65;
 /// How deep the fresh-split face of a hole's torn boards shows before the
 /// charred timber behind.
 const SPLIT_FACE: f64 = 0.03;
@@ -2846,7 +2846,8 @@ fn course_outline(rng: &mut Random, rows: &[(f64, f64, f64, f64)]) -> Vec<DVec2>
             right + rng.range(-0.04, 0.02),
             y0 + rng.range(0.0, slant),
         ));
-        outline.push(DVec2::new(right + rng.range(-0.05, 0.03), (y0 + y1) / 2.0));
+        // Its split end: a splinter's point into the hole or a bite back.
+        outline.push(DVec2::new(right + rng.range(-0.11, 0.04), (y0 + y1) / 2.0));
         outline.push(DVec2::new(
             right + rng.range(-0.04, 0.02),
             y1 - rng.range(0.0, slant),
@@ -2858,7 +2859,7 @@ fn course_outline(rng: &mut Random, rows: &[(f64, f64, f64, f64)]) -> Vec<DVec2>
             left + rng.range(-0.02, 0.04),
             y1 - rng.range(0.0, slant),
         ));
-        outline.push(DVec2::new(left + rng.range(-0.03, 0.05), (y0 + y1) / 2.0));
+        outline.push(DVec2::new(left + rng.range(-0.04, 0.11), (y0 + y1) / 2.0));
         outline.push(DVec2::new(
             left + rng.range(-0.02, 0.04),
             y0 + rng.range(0.0, slant),
@@ -2870,12 +2871,12 @@ fn course_outline(rng: &mut Random, rows: &[(f64, f64, f64, f64)]) -> Vec<DVec2>
 
 /// How far (share of a course) a snapped board's end corners sit off the course
 /// lines.
-const SNAP_SLANT: f64 = 0.35;
+const SNAP_SLANT: f64 = 0.12;
 /// How far (courses) a breach's torn head bites up into the boards over it: a
 /// straight head under the plate read as sawn.
 const TOP_BITE: f64 = 1.1;
 /// Points along a breach's torn top and bottom edges.
-const TORN_EDGE_KNOTS: usize = 3;
+const TORN_EDGE_KNOTS: usize = 5;
 
 /// A hole's ragged outline, clockwise in the wall plane: the siding torn back
 /// course by course, every board broken off at its own length.
@@ -3363,12 +3364,14 @@ fn stripped_round(
                         DVec3::new(
                             (p + q) / 2.0,
                             (y0 + y1) / 2.0,
-                            0.015 + loose.range(0.005, 0.03),
+                            0.02 + loose.range(0.01, 0.05),
                         ),
+                        // Kicked well out at its foot and one end, so it throws
+                        // a shadow and reads as a loose board, not a paler patch.
                         DVec3::new(
-                            -loose.range(0.06, 0.25),
-                            toward * loose.range(0.02, 0.12),
-                            loose.range(-0.05, 0.05),
+                            -loose.range(0.2, 0.45),
+                            toward * loose.range(0.08, 0.22),
+                            loose.range(-0.08, 0.08),
                         ),
                     ),
             );
@@ -3779,16 +3782,16 @@ fn window_header(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: 
 /// its edge, and a splintered stub of its sill at the other side.
 fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f64) {
     let mut rng = Random::new(seed + 67.0);
-    let (u, w, y0, h) = (opening.u, opening.width, opening.y, opening.height);
+    let (u, w, y0, y1) = (opening.u, opening.width, opening.y, opening.top());
     let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
-    // The jamb, broken off at its own height and leaning a little into the hole.
-    let jamb = h * rng.range(0.45, 0.85);
+    // The jamb on one side, still nailed up, snapped off at its own height.
+    let jamb = (y1 - y0) * rng.range(0.55, 0.9);
     let foot = DVec3::new(u + side * (w + CASING) / 2.0, y0 - 0.02, 0.015);
     let lean = frame
         * shift(foot)
         * pose(
             DVec3::ZERO,
-            DVec3::new(0.0, 0.0, -side * rng.range(0.03, 0.12)),
+            DVec3::new(0.0, 0.0, -side * rng.range(0.03, 0.1)),
         );
     kit.block(
         Surface::Trim,
@@ -3800,53 +3803,109 @@ fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed
         DVec3::new(CASING * 0.8, 0.05, 0.035),
         lean * shift(DVec3::new(0.0, jamb + 0.02, 0.0)),
     );
-    // The sash's stile in the reveal behind it, and glass caught at its edge.
-    let stile = jamb * rng.range(0.6, 0.95);
+    // The casing's head with its drip cap, torn off at the other end and hanging
+    // down across the opening from the nails at this one.
+    let head = w + 2.0 * CASING;
+    let nail = DVec3::new(u + side * (w / 2.0 + CASING * 0.5), y1 + 0.07, 0.03);
     kit.block(
         Surface::Trim,
-        DVec3::new(0.055, stile, 0.05),
+        DVec3::new(head, 0.15, 0.04),
         frame
-            * shift(DVec3::new(
-                u + side * (w / 2.0 - 0.03),
-                y0 + stile / 2.0,
-                -REVEAL + 0.045,
-            )),
+            * shift(nail)
+            * pose(
+                DVec3::ZERO,
+                DVec3::new(rng.range(-0.2, 0.2), 0.0, side * rng.range(0.35, 0.7)),
+            )
+            * shift(DVec3::new(-side * head / 2.0, 0.0, 0.0)),
     );
-    let glass_z = -REVEAL + 0.02;
-    let at = |du: f64, y: f64| frame.transform_point3(DVec3::new(u + side * du, y, glass_z));
-    let facing = frame.transform_vector3(DVec3::Z);
-    for k in 0..2 {
-        let y = y0 + stile * rng.range(0.2, 0.8);
-        let (reach, tall) = (rng.range(0.08, 0.2), rng.range(0.12, 0.3));
-        let edge = w / 2.0 - 0.06 - 0.01 * f64::from(k);
-        kit.quad(
-            Surface::Glass,
-            [
-                at(edge, y),
-                at(edge, y + tall),
-                at(edge - reach, y + tall * rng.range(0.3, 0.7)),
-                at(edge - reach, y + tall * rng.range(0.3, 0.7)),
-            ],
-            facing,
-        );
-    }
-    // The other end of its sill, snapped off short.
-    let stub = rng.range(0.2, 0.4);
-    let sill = frame
-        * shift(DVec3::new(
-            u - side * (w / 2.0 + CASING - stub / 2.0),
-            y0 - 0.03,
-            0.03,
-        ))
+    // The lower sash, its frame whole and a pane of glass left in it with a corner
+    // gone, hanging out of the opening by one top corner.
+    let (sw, sh) = (w - 0.04, (y1 - y0) * 0.5);
+    let corner = DVec3::new(
+        u + side * (w / 2.0 - 0.04),
+        y0 + sh + rng.range(0.0, 0.15),
+        0.05,
+    );
+    let sash = frame
+        * shift(corner)
         * pose(
             DVec3::ZERO,
-            DVec3::new(rng.range(-0.1, 0.1), 0.0, side * rng.range(0.0, 0.12)),
-        );
-    kit.block(Surface::Trim, DVec3::new(stub, 0.05, 0.08), sill);
+            DVec3::new(
+                rng.range(0.15, 0.35),
+                side * rng.range(0.1, 0.3),
+                -side * rng.range(0.3, 0.6),
+            ),
+        )
+        * shift(DVec3::new(-side * sw / 2.0, -sh / 2.0, 0.0));
+    const BAR: f64 = 0.06;
+    for (size, at) in [
+        (
+            DVec3::new(BAR, sh, 0.045),
+            DVec3::new(-(sw - BAR) / 2.0, 0.0, 0.0),
+        ),
+        (
+            DVec3::new(BAR, sh, 0.045),
+            DVec3::new((sw - BAR) / 2.0, 0.0, 0.0),
+        ),
+        (
+            DVec3::new(sw, BAR, 0.045),
+            DVec3::new(0.0, (sh - BAR) / 2.0, 0.0),
+        ),
+        (
+            DVec3::new(sw, BAR * 1.2, 0.045),
+            DVec3::new(0.0, -(sh - BAR) / 2.0, 0.0),
+        ),
+        (
+            DVec3::new(0.03, sh, 0.035),
+            DVec3::new(sw * rng.range(-0.1, 0.1), 0.0, 0.0),
+        ),
+    ] {
+        kit.block(Surface::Trim, size, sash * shift(at));
+    }
+    let (gx, gy) = (sw / 2.0 - BAR, sh / 2.0 - BAR);
+    let cut = rng.range(0.3, 0.7);
+    let pane = |x: f64, y: f64| sash.transform_point3(DVec3::new(x, y, 0.0));
+    kit.quad(
+        Surface::Glass,
+        [
+            pane(-gx, -gy),
+            pane(gx, -gy),
+            pane(gx, gy * (1.0 - 2.0 * cut)),
+            pane(gx * (1.0 - 2.0 * cut), gy),
+        ],
+        sash.transform_vector3(DVec3::Z),
+    );
+    kit.quad(
+        Surface::Glass,
+        [
+            pane(-gx, -gy),
+            pane(gx * (1.0 - 2.0 * cut), gy),
+            pane(-gx, gy),
+            pane(-gx, gy),
+        ],
+        sash.transform_vector3(DVec3::Z),
+    );
+    // The sill, snapped in two: the end under the jamb still in place, the other
+    // hanging down off the wall from the break.
+    let sill = w + 2.0 * CASING + 0.06;
+    let snap = sill * rng.range(0.4, 0.6);
+    let start = u + side * sill / 2.0;
+    let held = frame * shift(DVec3::new(start - side * snap / 2.0, y0 - 0.04, 0.04));
+    kit.block(Surface::Trim, DVec3::new(snap, 0.05, 0.1), held);
+    let hinge = DVec3::new(start - side * snap, y0 - 0.04, 0.04);
+    let rest = sill - snap;
+    let hanging = frame
+        * shift(hinge)
+        * pose(
+            DVec3::ZERO,
+            DVec3::new(rng.range(-0.25, 0.1), 0.0, side * rng.range(0.4, 0.8)),
+        )
+        * shift(DVec3::new(-side * rest / 2.0, 0.0, 0.0));
+    kit.block(Surface::Trim, DVec3::new(rest, 0.05, 0.1), hanging);
     kit.block(
         Surface::Splinters,
-        DVec3::new(0.04, 0.045, 0.07),
-        sill * shift(DVec3::new(side * stub / 2.0, 0.0, 0.0)),
+        DVec3::new(0.05, 0.05, 0.09),
+        frame * shift(hinge),
     );
 }
 
@@ -3881,11 +3940,8 @@ const FALLEN_GLASS: usize = 4;
 fn fallen_window_box(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f64) {
     let mut rng = Random::new(seed + 79.0);
     let hung = DVec3::new(opening.u, opening.y - 0.29, 0.17);
-    let lying = DVec3::new(
-        opening.u + rng.range(-0.25, 0.25),
-        0.12,
-        rng.range(0.4, 0.6),
-    );
+    // Thrown clear of the spill at the wall's foot, where it shows.
+    let lying = DVec3::new(opening.u + rng.range(-0.3, 0.3), 0.12, rng.range(0.75, 1.0));
     let fallen = frame
         * shift(lying)
         * pose(
@@ -3898,8 +3954,10 @@ fn fallen_window_box(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, se
         )
         * shift(-hung);
     window_box(kit, fallen, opening);
+    // Its soil spilt on the ground, brown earth (the unlit-opening black read as a
+    // hole in the ground).
     kit.block(
-        Surface::Dark,
+        Surface::Wood,
         DVec3::new(opening.width * 0.7, 0.03, 0.3),
         frame
             * pose(
@@ -4218,7 +4276,30 @@ pub fn house_roof_breaks(design: &HouseDesign, hits: &[TimberHit]) -> RoofBreaks
             .iter()
             .map(|hole| hole.plan)
             .collect(),
+        onto_stubs: onto_stubs(design, hits, &holes),
     }
+}
+
+/// The slopes that come down onto their eave wall's stubs: the cottage's walls,
+/// not its roof, gave way (their marks outweigh the roof's, the simulation's own
+/// test for a wall-driven fall), and the eave wall under the slope (2 under the
+/// right, 3 under the left) has no breach to let it in.
+fn onto_stubs(design: &HouseDesign, hits: &[TimberHit], holes: &[Vec<Hole>; 4]) -> Vec<f64> {
+    let (roof, walls) = hits.iter().fold((0.0, 0.0), |(roof, walls), mark| {
+        if is_roof_mark(mark.y, design.h) {
+            (roof + mark.size, walls)
+        } else {
+            (roof, walls + mark.size)
+        }
+    });
+    if walls <= roof {
+        return Vec::new();
+    }
+    [(2, 1.0), (3, -1.0)]
+        .into_iter()
+        .filter(|&(index, _)| holes[index].is_empty())
+        .map(|(_, side)| side)
+        .collect()
 }
 
 /// What a cottage's marks tore through one wall, in its wall frame (`[u0, y0, u1,
@@ -6487,17 +6568,17 @@ fn garden_plot(design: &HouseDesign) -> Option<(DMat4, f64, f64, f64, f64)> {
 
 /// How flat a crushed garden's plants are pressed (share of their height).
 const CRUSHED: f64 = 0.3;
-/// The stretches along a bed of cabbages that a collapse crushes one by one.
-const CABBAGE_STRETCHES: usize = 3;
+/// The stretches along a bed a collapse crushes the plants in, one by one: few,
+/// as each is a draw of its own on the heap while it stands.
+const GARDEN_STRETCHES: usize = 2;
 
-/// The stretches a garden's plants are crushed in, one by one: its rows of
-/// cabbages cut along the bed, or each pair of bean poles.
+/// The stretches a garden's plants are crushed in, one by one: its two halves
+/// along the bed.
 fn garden_stretches(design: &HouseDesign) -> usize {
-    let lot = (design.style.siding >> 3) ^ design.turns.rem_euclid(4) as u32;
-    match garden_plot(design) {
-        None => 0,
-        Some(_) if lot.is_multiple_of(2) => CABBAGE_STRETCHES,
-        Some((_, u0, u1, _, _)) => ((u1 - u0) / 0.8).floor().clamp(2.0, 4.0) as usize,
+    if garden_plot(design).is_some() {
+        GARDEN_STRETCHES
+    } else {
+        0
     }
 }
 
@@ -6628,7 +6709,7 @@ fn garden(
         let count = (length / 0.8).floor().clamp(2.0, 4.0) as usize;
         for k in 0..count {
             let u = u0 + 0.3 + k as f64 * (length - 0.9) / (count - 1) as f64;
-            let keep = wanted(1 + k);
+            let keep = wanted(garden_part(u, u0, u1, stretches));
             let top = at(u, (near + far) / 2.0, BEAN_POLE);
             for side in [-1.0, 1.0] {
                 let foot = at(u, (near + far) / 2.0 + side * 0.3, 0.0);
@@ -6881,8 +6962,8 @@ fn heap_props(design: &HouseDesign) -> Vec<[f64; 4]> {
     // The yard: the barrel's corner is what the wreck can reach.
     let (x, z) = (bw / 2.0 + 0.36, bd / 2.0 - 0.5);
     props.push([x - 0.45, z - 0.45, x + 0.45, z + 0.45]);
-    // The garden: its bed, then each stretch of its plants on its own, so the wreck
-    // crushes only the plants it comes down on.
+    // The garden: each stretch of its plants on its own, so the wreck crushes only
+    // the plants it comes down on.
     if let Some((frame, u0, u1, near, far)) = garden_plot(design) {
         let footprint = |a: f64, b: f64| {
             let corners = [(a, near), (b, near), (b, far), (a, far)]
@@ -6899,7 +6980,7 @@ fn heap_props(design: &HouseDesign) -> Vec<[f64; 4]> {
                 .unwrap_or_default();
             [lo.x, lo.z, hi.x, hi.z]
         };
-        props.push(footprint(u0, u1));
+        // The bed itself lies with the heap's lot as it stood.
         let stretches = garden_stretches(design);
         let step = (u1 - u0) / stretches as f64;
         for k in 0..stretches {
@@ -6954,8 +7035,8 @@ fn heap_prop_nodes(design: &HouseDesign, palette: &Palette) -> Vec<[Node; 2]> {
         [yard_node(false), yard_node(true)],
     ];
     if garden_plot(design).is_some() {
-        // The bed, then its stretches of plants ([`heap_props`]).
-        for part in 0..=garden_stretches(design) {
+        // Its stretches of plants ([`heap_props`]); the bed is the heap's own.
+        for part in 1..=garden_stretches(design) {
             nodes.push([garden_node(false, part), garden_node(true, part)]);
         }
     }
@@ -7261,6 +7342,9 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
             mottle(Arc::make_mut(&mut drawable.mesh), seed);
         }
     }
+    // The garden's bed stays as it was, whatever lands on it: only its plants are
+    // crushed ([`heap_props`]).
+    garden(&mut plinth, &mut Vec::new(), &design, false, Some(0));
     let mut plinth = plinth.finish_scaled(cottage_uv(walls));
     grime(&mut plinth, ridge);
     add_weathered(&mut node, plinth, &palette, walls, false);

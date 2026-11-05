@@ -572,6 +572,10 @@ impl PieceShape {
 pub struct RoofBreaks {
     pub eave_spans: Vec<(f64, f64, f64)>,
     pub holes: Vec<DVec2>,
+    /// The slopes (side ±1) that come down onto their eave wall's stubs: the
+    /// walls gave way (their shells outweigh the roof's) and that eave wall has no
+    /// breach, so it stands as stubs under the slope rather than letting it in.
+    pub onto_stubs: Vec<f64>,
 }
 
 /// Fractions of a wall's height (plinth to wall top) where its cracks change
@@ -616,6 +620,8 @@ const ROOF_CRACK_END: f64 = 0.8;
 /// A section's edge may tear nearer its gable, leaving the rake that stood on the
 /// gable wall as its own strip.
 const SECTION_RAKE: f64 = 0.5;
+/// The narrowest strip (m) a dropped eave section's edge leaves at the rake.
+const RAKE_STRIP: f64 = 1.4;
 const ROOF_CRACK_APART: f64 = 0.7;
 const ROOF_STRIPS: usize = 4;
 /// How far (m) a crack down a rafter line strays from it (the torn sheet's edge),
@@ -626,6 +632,8 @@ const HOLE_SPLIT_SLANT: f64 = 0.12;
 /// stubs breaks across, and how far (m) the break rises across the strip.
 const LANDING_SPLIT: (f64, f64) = (0.5, 0.7);
 const LANDING_SLANT: f64 = 0.25;
+/// A strip this wide (m) or wider creases where it lands even beside a wider one.
+const LANDING_WIDE: f64 = 2.6;
 /// How far (m) past a strip's edge a hole tears it across.
 const HOLE_TEAR: f64 = 0.5;
 /// A wall's cracks run beside its windows and door where one is this near (m)
@@ -1070,6 +1078,10 @@ impl HouseDesign {
             .iter()
             .filter(|span| span.0 == side)
             .flat_map(|&(_, from, to)| [from - SECTION_EDGE, to + SECTION_EDGE])
+            // The section's slab takes in the end of it next a rake rather than
+            // leave a strip narrower than this there: alone, a long narrow verge
+            // strip stood up like a seesaw plank as the slope fell.
+            .map(|z| z.clamp(-(roof.rake_z - RAKE_STRIP), roof.rake_z - RAKE_STRIP))
             .map(|z| (z, end + ROOF_CRACK_END - SECTION_RAKE))
             .chain(
                 breaks
@@ -1180,25 +1192,45 @@ impl HouseDesign {
     /// house first, behind the breach, and the slope lands across its own wall's
     /// stubs.
     fn lands_across(&self, side: f64, breaks: &RoofBreaks) -> bool {
-        breaks.eave_spans.iter().any(|span| span.0 == -side)
+        (breaks.onto_stubs.contains(&side) || breaks.eave_spans.iter().any(|span| span.0 == -side))
             && !breaks.eave_spans.iter().any(|span| span.0 == side)
             && !breaks.holes.iter().any(|hole| hole.x * side > 0.0)
     }
 
-    /// Where a strip of a slope that lands across its wall's stubs
-    /// ([`Self::lands_across`]) breaks across: over the stubs it comes down on, its
-    /// ridge part folding down into the house and its eave part staying on the
-    /// stubs. Each strip breaks at its own run and slant, the cottages differing.
+    /// Where a slope that lands across its wall's stubs ([`Self::lands_across`])
+    /// breaks across: over the stubs it comes down on, its ridge part folding down
+    /// into the house and its eave part staying on the stubs. Only its widest strip
+    /// creases so (the others land whole), at its own run and slant, so the slope
+    /// comes down in two to three pieces of different sizes, the cottages
+    /// differing; every strip breaking across shredded it into a stack of planks.
     fn landing_split(
         &self,
         side: f64,
-        (from, _): (f64, f64),
+        (from, to): (f64, f64),
         breaks: &RoofBreaks,
     ) -> Option<(DVec2, DVec2)> {
         if !self.lands_across(side, breaks) {
             return None;
         }
         let roof = self.roof();
+        let lines: Vec<f64> = self
+            .roof_cracks(side, breaks)
+            .iter()
+            .map(|crack| crack.at(roof.eave_x * 0.5))
+            .collect();
+        let edges: Vec<f64> = [-roof.rake_z]
+            .into_iter()
+            .chain(lines)
+            .chain([roof.rake_z])
+            .collect();
+        let widest = edges
+            .windows(2)
+            .max_by(|a, b| (a[1] - a[0]).total_cmp(&(b[1] - b[0])))
+            .map_or(0.0, |pair| (pair[0] + pair[1]) / 2.0);
+        let (lo, hi) = (from.max(-roof.rake_z), to.min(roof.rake_z));
+        if (widest < lo || widest > hi) && hi - lo < LANDING_WIDE {
+            return None;
+        }
         let index = if side > 0.0 { 3.0 } else { 4.0 };
         let mut rng = Random::new(
             f64::from(self.variant) * 19.0 + index * 5.0 + 223.0 + from.clamp(-FAR, FAR) * 3.0,
@@ -2003,7 +2035,7 @@ mod tests {
             let span = (1.0, -0.9, 0.7);
             let broken = RoofBreaks {
                 eave_spans: vec![span],
-                holes: Vec::new(),
+                ..RoofBreaks::default()
             };
             let along: Vec<f64> = design
                 .roof_cracks(1.0, &broken)
@@ -2020,8 +2052,8 @@ mod tests {
                 "{along:?}"
             );
             let holed = RoofBreaks {
-                eave_spans: Vec::new(),
                 holes: vec![DVec2::new(-1.2, 0.3)],
+                ..RoofBreaks::default()
             };
             let pieces = design.pieces(&holed);
             let left: Vec<u8> = pieces
