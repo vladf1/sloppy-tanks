@@ -1135,8 +1135,12 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
         let body = &s.world.bodies[f.body];
         assert!(
             f64::from(body.center_of_mass().y) < 2.0,
-            "a piece stands up {:?}",
-            body.center_of_mass()
+            "a piece stands up {:?}: {:?}",
+            body.center_of_mass(),
+            parts
+                .iter()
+                .map(|p| layout.parts[p].kind)
+                .collect::<Vec<_>>()
         );
     }
 }
@@ -1182,4 +1186,44 @@ fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
     );
     assert!(!meets(&s, group::TANK), "a tank drives over it");
     assert!(!meets(&s, group::COVER_QUERY), "a shell flies over it");
+}
+
+#[test]
+fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
+    // The capture's roof strikes: rocket-strength bursts on the roof surface.
+    let (mut s, house) = lone_cottage();
+    let c = s.covers[house].clone();
+    let me = (s.tanks[0].id, s.tanks[0].team);
+    let roof_y = |v: f64| c.h - (v.abs() / (c.d / 2.0 + 0.4)) * (c.h - 2.6) + 0.15;
+    let points = [
+        (0.0, 0.0),
+        (0.9, 1.4),
+        (-0.8, -1.3),
+        (1.1, -1.6),
+        (-1.0, 1.7),
+        (0.3, 2.2),
+        (-0.4, -2.3),
+    ];
+    for (u, v) in points {
+        let at = Point3::new(c.x + u, roof_y(v), c.z + v);
+        s.damage_cover(house, 65.0, me.0, me.1, None, Some(at));
+        run(&mut s, 0.5);
+    }
+    run(&mut s, 3.0);
+    for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
+        let body = &s.world.bodies[f.body];
+        let (low, high) =
+            body.colliders()
+                .iter()
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &k| {
+                    let aabb = s.world.colliders[k].compute_aabb();
+                    (low.min(aabb.mins.y), high.max(aabb.maxs.y))
+                });
+        assert!(
+            high - low < 1.2,
+            "piece {} stands {:.2} m tall",
+            f.id,
+            high - low
+        );
+    }
 }
