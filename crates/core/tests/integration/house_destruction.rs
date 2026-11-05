@@ -951,3 +951,25 @@ fn a_shell_beside_a_breach_tears_it_on_over_where_it_landed() {
         "{again:?}"
     );
 }
+
+#[test]
+fn shells_either_side_of_a_corner_keep_a_breach_on_each_wall() {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    // One shell on the side wall just short of the corner, then two on the front wall
+    // just round it: close enough that a search by distance alone would merge them.
+    shell_at(&mut s, house, DVec3::new(d.w / 2.0, 1.0, d.d / 2.0 - 0.2));
+    for _ in 0..2 {
+        shell_at(&mut s, house, DVec3::new(d.w / 2.0 - 0.2, 1.0, d.d / 2.0));
+    }
+    let parts = struck(&s, house);
+    assert!(
+        parts.contains(&HousePart::wall(2)),
+        "side wall kept its breach: {parts:?}"
+    );
+    assert!(
+        parts.contains(&HousePart::wall(0)),
+        "front wall has its own: {parts:?}"
+    );
+    assert_eq!(parts.len(), 2, "{parts:?}");
+}

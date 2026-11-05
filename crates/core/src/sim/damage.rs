@@ -67,6 +67,11 @@ fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
     };
     let shells = (amount / weapon(Weapon::Standard).damage)
         .clamp(HOUSE_MARK_SHELLS.0, HOUSE_MARK_SHELLS.1);
+    // A shell only grows a breach on the part it struck: near a corner the nearest
+    // breach can be round on the other wall, and merging into it would carry it over
+    // to this one and take the other wall's damage with it.
+    let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+    let part = design.struck_part(&hit);
     let marks = &mut cover.timber_hits;
     let roof = is_roof_mark(hit.y, cover.h);
     let reach = |mark: &TimberHit| {
@@ -78,7 +83,9 @@ fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
         }
     };
     // The first nearest on a tie, so the choice never depends on float noise.
-    let nearest = (0..marks.len()).min_by(|&a, &b| reach(&marks[a]).total_cmp(&reach(&marks[b])));
+    let nearest = (0..marks.len())
+        .filter(|&index| design.struck_part(&marks[index]) == part)
+        .min_by(|&a, &b| reach(&marks[a]).total_cmp(&reach(&marks[b])));
     match nearest {
         Some(index) if reach(&marks[index]) < 0.0 || marks.len() >= MAX_HOUSE_MARKS => {
             let mark = &mut marks[index];
@@ -87,9 +94,22 @@ fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
                 mark.size = grown.min(HOUSE_MARK_LARGEST);
             } else {
                 grow_toward(mark, &hit, grown);
+                // Grown on past the strike round a corner, it would count as the
+                // next wall's: it stays centred where it was struck instead.
+                if design.struck_part(mark) != part {
+                    (mark.x, mark.y, mark.z) = (hit.x, hit.y, hit.z);
+                }
             }
         }
-        _ => marks.push(hit),
+        _ if marks.len() < MAX_HOUSE_MARKS => marks.push(hit),
+        // Every breach it may keep is on other parts: the smallest gives way, so the
+        // wall struck shows the shell (the first smallest on a tie).
+        _ => {
+            let smallest = (0..marks.len())
+                .min_by(|&a, &b| marks[a].size.total_cmp(&marks[b].size))
+                .unwrap_or(0);
+            marks[smallest] = hit;
+        }
     }
 }
 
