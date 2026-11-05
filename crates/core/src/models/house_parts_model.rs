@@ -287,7 +287,19 @@ fn piece_into(
             .cloned(),
     );
     // Torn timber along each cell's edges where its neighbours are gone, all of the
-    // piece's in one kit.
+    // piece's in one kit. Board ends keep clear of a window or door still in the wall,
+    // but tear on into one that went.
+    let openings = pieces.openings.clone().map(|openings| {
+        openings
+            .into_iter()
+            .filter(|o| {
+                let middle = DVec2::new((o[0] + o[2]) / 2.0, (o[1] + o[3]) / 2.0);
+                drawn.iter().any(|(_, cell)| {
+                    middle.x > cell.min.x && middle.x < cell.max.x && middle.y > cell.min.y && middle.y < cell.max.y
+                })
+            })
+            .collect::<Vec<_>>()
+    });
     let mut torn = Kit::new();
     for (&(index, _), sides) in drawn.iter().zip(&region.cells) {
         let cell = ShardRegion {
@@ -295,7 +307,7 @@ fn piece_into(
         };
         let mut rng = Random::new(f64::from(design.variant) * 7.0 + index as f64 * 13.0 + 3.0);
         if let Some(wall) = piece.part.wall_index() {
-            wall_breaks(&mut torn, &plane, &outline, &cell, &pieces.openings[wall], &mut rng);
+            wall_breaks(&mut torn, &plane, &outline, &cell, &openings[wall], &mut rng);
         } else if piece.part.is_roof() {
             roof_breaks(&mut torn, &plane, &outline, &cell, &pieces.roof, &mut rng);
         }

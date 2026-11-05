@@ -219,6 +219,10 @@ const DOOR_RISE: f64 = 2.0;
 const BELT_OVER: f64 = 0.3;
 const UPPER_SILL: f64 = 0.35;
 const UPPER_WINDOW: f64 = 1.2;
+/// How far (m) a ground-floor window's cells reach into the bays beside it for its
+/// shutters, leaving at least [`NARROWEST_SIDE`] of a bay to the bay.
+const SHUTTER_REACH: f64 = 0.4;
+const NARROWEST_SIDE: f64 = 0.12;
 /// The course of wall under a window's lower panel (m over the plinth).
 const WINDOW_FOOT: f64 = 0.35;
 /// A window's trim reaches this far (m) past its opening: the head casing and drip cap
@@ -654,7 +658,21 @@ impl HouseStructure {
         let part = HousePart::wall(index);
         let gable = self.gable_wall(index);
         let upper_floor = self.upper_floor();
-        for (from, to, column) in self.columns(index) {
+        let columns = self.columns(index);
+        let sill = PLINTH + SILL;
+        // How far a ground-floor window's cells reach into the bay beside it, so the
+        // shutters hung there go with the window: (into the left bay, the right).
+        let reach = |c: usize| -> (f64, f64) {
+            if columns[c].2 != Column::Window {
+                return (0.0, 0.0);
+            }
+            let into = |n: Option<&(f64, f64, Column)>| {
+                n.filter(|bay| bay.2 == Column::Bay)
+                    .map_or(0.0, |bay| SHUTTER_REACH.min(bay.1 - bay.0 - NARROWEST_SIDE).max(0.0))
+            };
+            (into(c.checked_sub(1).and_then(|k| columns.get(k))), into(columns.get(c + 1)))
+        };
+        for (c, &(from, to, column)) in columns.iter().enumerate() {
             let bands = self.bands(column);
             let last_band = bands.len() - 1;
             // Where each band's cell starts and ends up the wall: a window's takes its
@@ -679,7 +697,7 @@ impl HouseStructure {
                 let (p, q) = (corner(from, bottom, 0.0), corner(to, top, WALL_DEPTH));
                 // The model's cell: the bottom band reaches on down past the plinth
                 // and the top one up into the eaves (on a gable wall, up to the gable).
-                let cell = PartCell {
+                let mut cell = PartCell {
                     part,
                     min: DVec2::new(from, if b == 0 { -FAR } else { trim(b, bottom, false) }),
                     max: DVec2::new(
@@ -687,7 +705,29 @@ impl HouseStructure {
                         if b < last_band || gable { trim(b, top, true) } else { FAR },
                     ),
                 };
-                let mut part = StructurePart::cuboid(kind, p.min(q), p.max(q), vec![cell]);
+                let mut cells = Vec::new();
+                let window_band = (bottom - sill).abs() < CONTACT;
+                if kind == PartKind::Window && window_band {
+                    // The shutters beside it, in the bays' window-high bands.
+                    let (left, right) = reach(c);
+                    for (a, z) in [(from - left, from), (to, to + right)] {
+                        if z - a > 1e-6 {
+                            cells.push(PartCell {
+                                part,
+                                min: DVec2::new(a, bottom),
+                                max: DVec2::new(z, top),
+                            });
+                        }
+                    }
+                } else if column == Column::Bay && window_band {
+                    // What the windows beside it took of this band for their shutters.
+                    let left = c.checked_sub(1).map_or(0.0, |k| reach(k).1);
+                    let right = if c + 1 < columns.len() { reach(c + 1).0 } else { 0.0 };
+                    cell.min.x += left;
+                    cell.max.x -= right;
+                }
+                cells.insert(0, cell);
+                let mut part = StructurePart::cuboid(kind, p.min(q), p.max(q), cells);
                 part.wall = Some(index);
                 part.upper_storey = upper_floor.is_some_and(|floor| bottom >= floor - CONTACT);
                 self.parts.push(part);
