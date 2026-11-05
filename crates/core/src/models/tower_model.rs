@@ -15,7 +15,7 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::{DMat4, DVec2, DVec3};
+use glam::{DMat4, DQuat, DVec2, DVec3};
 
 use super::batching::batch;
 use super::building_kit::{
@@ -61,9 +61,6 @@ const SEAM_SPACING: f64 = 0.45;
 const GAP: (f64, f64) = (1.3, 2.2);
 /// A stub's section (a little inside the post's).
 const STUB: f64 = 0.33;
-/// How far (m per metre of stub over its shoe) a torn-out leg's stub bends over the way
-/// the tower fell.
-const STUB_LEAN: f64 = 0.6;
 /// The bite a shell that did not cut a leg took out of it: its middle (shell height),
 /// half its height, the share of the post's section it took and the fibres torn out.
 const BITE_Y: f64 = 1.0;
@@ -72,8 +69,20 @@ const BITE_DEPTH: f64 = 0.4;
 const BITE_FIBRES: usize = 9;
 /// How far (m) over the bite's middle a shot-out leg's stub stands, ragged and charred.
 const SHOT_STUB_OVER: f64 = 0.1;
+/// Lumps of torn wood in a bite's hollow and teeth on each side of its rim.
+const BITE_LUMPS: usize = 9;
+const BITE_TEETH: usize = 5;
+/// Scorch fading out from a burst's mark, darkest first, and a stub charred through.
+const SCORCH_FADE: [u32; 3] = [0x231a14, 0x3e3024, 0x5f4b37];
+const CHARRED: u32 = 0x3a2b20;
+/// How far (m) the top of a stub the fall tore out is bent over the way it went.
+const TORN_STUB_LEAN: f64 = 0.24;
 /// Fibres torn out of a broken member's end.
 const SPLINTERS: usize = 5;
+/// Where (a share of its length) each landed leg's upper length cracks through, and
+/// how far (rad) a cracked member kinks there.
+const LEG_CRACK: [f64; 4] = [0.45, 0.6, 0.35, 0.52];
+const CRACK_KINK: f64 = 0.22;
 /// How far (m) a joined X-brace panel's bent diagonal bows out of it.
 const PANEL_BOW: f64 = 0.22;
 /// A deck plank snaps within this far (m) of the cut, and this share of planks is lost.
@@ -82,7 +91,22 @@ const PLANKS_LOST: f64 = 0.12;
 /// A landed roof's crease (x, m from the middle) and how far (rad) its east end is
 /// folded under there; its boards' width and its rafters' spacing and depth.
 const ROOF_CREASE_X: f64 = 0.7;
-const ROOF_FOLD: f64 = 0.45;
+const ROOF_FOLD: f64 = 0.6;
+/// How far (m) in from the front eave a landed roof bends under, and by how much (rad).
+const EAVE_BEND_AT: f64 = 0.85;
+const EAVE_BEND: f64 = 0.55;
+/// The sheet torn back off the back slope: its span along x, its length down the slope
+/// (m) and the turns (rad) of its two halves curling back over it.
+const TORN_SHEET_X: (f64, f64) = (-2.0, -0.7);
+const TORN_SHEET_LENGTH: f64 = 1.3;
+const TORN_SHEET_CURL: [f64; 2] = [2.3, 3.2];
+/// Scrapes through the paint on each long slope of a landed roof.
+const ROOF_SCRAPES: usize = 7;
+/// A torn-off shutter's split: how far (rad) its half beyond the crack is bent back.
+const SHUTTER_SPLIT: f64 = 0.45;
+/// The bare timber of a landed roof's underside: its boards and its rafters.
+const ROOF_BOARDS: u32 = 0x6a543d;
+const ROOF_RAFTERS: u32 = 0x55412f;
 const ROOF_BOARD: f64 = 0.3;
 const RAFTER_SPACING: f64 = 0.62;
 const RAFTER_DEPTH: f64 = 0.14;
@@ -232,7 +256,7 @@ fn part_model(group: &mut Node, kit: &mut Kit<Surface>, part: usize, scars: &Sca
     } else if let Some(corner) = corner_of(&LOWER_LEGS) {
         let low = TOWER_BASE.height + 0.03;
         if scars.struck.contains(part) {
-            bitten_leg(group, corner, low, &mut next);
+            bitten_leg(group, kit, corner, low, &mut next);
         } else {
             group.children.push(leg_run(corner, low, GIRT_Y, next()));
         }
@@ -290,14 +314,22 @@ fn leg_run(corner: usize, from: f64, to: f64, seed: i32) -> Node {
 }
 
 /// A leg's lower lift with the bite a shell took out of it at shell height on its
-/// outer face: a charred notch with fibres sticking out of it.
-fn bitten_leg(group: &mut Node, corner: usize, low: f64, next: &mut impl FnMut() -> i32) {
+/// outer face: a ragged hollow of torn wood, charred in it, its rim teeth and fibres
+/// curling out the way the burst pushed them, the post scorched round it and fading out.
+fn bitten_leg(
+    group: &mut Node,
+    kit: &mut Kit<Surface>,
+    corner: usize,
+    low: f64,
+    next: &mut impl FnMut() -> i32,
+) {
     let (sx, sz) = CORNERS[corner];
     let (x, z) = (sx * TOWER_BASE.offset, sz * TOWER_BASE.post_z);
     let (bottom, top) = (BITE_Y - BITE_HALF, BITE_Y + BITE_HALF);
     group.children.push(leg_run(corner, low, bottom, next()));
     group.children.push(leg_run(corner, top, GIRT_Y, next()));
-    // What is left across the bite: the post less its outer face.
+    let mut rng = Random::new(f64::from(corner as u32) * 13.7 + 0.31);
+    // What is left across the bite: the post less its outer face, its torn face raw.
     let bite = POST * BITE_DEPTH;
     let core = POST - bite;
     let face = x + sx * (POST / 2.0 - bite);
@@ -308,41 +340,69 @@ fn bitten_leg(group: &mut Node, corner: usize, low: f64, next: &mut impl FnMut()
         BITE_Y,
         z,
     );
-    // Charred faces of the cut: its back and the ends above and below it.
-    put(
-        group,
-        timber_member(DVec3::new(0.014, top - bottom, POST - 0.02), next(), SCORCH),
-        face + sx * 0.006,
-        BITE_Y,
-        z,
-    );
-    for y in [bottom + 0.008, top - 0.008] {
-        put(
-            group,
-            timber_member(DVec3::new(bite, 0.016, POST - 0.02), next(), SCORCH),
-            face + sx * bite / 2.0,
-            y,
-            z,
+    // The hollow's floor: torn wood in uneven lumps, charred in patches.
+    for k in 0..BITE_LUMPS {
+        let y = rng.range(bottom + 0.02, top - 0.02);
+        let across = rng.range(-0.13, 0.13);
+        let size = DVec3::new(
+            rng.range(0.02, 0.07),
+            rng.range(0.04, 0.12),
+            rng.range(0.05, 0.12),
         );
+        let raw = k % 3 != 0;
+        let at = DVec3::new(face + sx * size.x / 2.0, y, z + across);
+        if raw {
+            kit.block(Surface::Splinters, size, DMat4::from_translation(at));
+        } else {
+            put(group, timber_member(size, next(), SCORCH), at.x, at.y, at.z);
+        }
     }
+    // Teeth along the rim, and fibres curling out of it.
     let out = DVec3::X * sx;
-    let mut rng = Random::new(f64::from(corner as u32) * 13.7 + 0.31);
+    for (edge, inward) in [(top, -1.0), (bottom, 1.0)] {
+        for _ in 0..BITE_TEETH {
+            let zz = z + rng.range(-0.15, 0.15);
+            let from = DVec3::new(face + sx * rng.range(0.03, bite), edge, zz);
+            let to = from + DVec3::Y * inward * rng.range(0.03, 0.09) + out * rng.range(0.0, 0.05);
+            group.children.push(member(
+                from,
+                to,
+                rng.range(0.02, 0.05),
+                rng.range(0.02, 0.04),
+                DVec3::Z,
+                next(),
+                if rng.next() < 0.5 { SCORCH } else { FRESH_WOOD },
+            ));
+        }
+    }
     for i in 0..BITE_FIBRES {
         let from = DVec3::new(
-            face,
-            rng.range(bottom + 0.03, top - 0.03),
+            face + sx * rng.range(0.0, bite),
+            if i % 2 == 0 { top - 0.01 } else { bottom + 0.01 },
             z + rng.range(-0.14, 0.14),
         );
-        let to = from + out * rng.range(0.07, 0.2) + DVec3::Y * rng.range(-0.1, 0.1);
-        group.children.push(member(
-            from,
-            to,
-            rng.range(0.018, 0.035),
-            rng.range(0.015, 0.03),
-            DVec3::Z,
-            next(),
-            if i % 3 == 0 { SCORCH } else { FRESH_WOOD },
-        ));
+        let curl = if i % 2 == 0 { 1.0 } else { -1.0 };
+        let middle = from + out * rng.range(0.05, 0.1) + DVec3::Y * curl * rng.range(0.0, 0.04);
+        let tip = middle + out * rng.range(0.02, 0.05) + DVec3::Y * curl * rng.range(0.04, 0.09);
+        let (width, depth) = (rng.range(0.012, 0.025), rng.range(0.01, 0.02));
+        for (a, b) in [(from, middle), (middle, tip)] {
+            group.children.push(member(a, b, width, depth, DVec3::Z, next(), FRESH_WOOD));
+        }
+    }
+    // Scorch on the post round the bite, darkest at it and fading out.
+    let outer = x + sx * (POST / 2.0 + 0.003);
+    for (k, &paint) in SCORCH_FADE.iter().enumerate() {
+        let reach = BITE_HALF + 0.05 * (k as f64 + 1.0);
+        let span = POST * (0.95 - 0.2 * k as f64);
+        for y in [BITE_Y - reach, BITE_Y + reach - 0.05] {
+            put(
+                group,
+                timber_member(DVec3::new(0.006, 0.05, span), next(), paint),
+                outer,
+                y + 0.025,
+                z,
+            );
+        }
     }
 }
 
@@ -391,6 +451,27 @@ fn snapped(group: &mut Node, member: &Member, broken: [bool; 2], seed: i32, colo
     }
 }
 
+/// A member cracked through at `at` (a share of its length) and kinked there, its two
+/// lengths still hanging together by splinters; broken at the ends named too.
+fn cracked(group: &mut Node, member: &Member, at: f64, broken: [bool; 2], seed: i32, color: u32) {
+    let crack = member.from.lerp(member.to, at);
+    let along = (member.to - member.from).normalize();
+    let normal = (member.normal - along * member.normal.dot(along)).normalize();
+    let bent = crack + DQuat::from_axis_angle(normal.cross(along), CRACK_KINK) * (member.to - crack);
+    snapped(group, &Member { to: crack, ..*member }, [broken[0], true], seed, color);
+    snapped(
+        group,
+        &Member {
+            from: crack,
+            to: bent,
+            ..*member
+        },
+        [true, broken[1]],
+        seed + 7,
+        color,
+    );
+}
+
 /// A piece a landing broke off, drawn as it lay in the tower before it broke.
 fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usize, look: PieceLook) {
     let seed = 900 + 41 * index as i32;
@@ -404,11 +485,13 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
                 depth: POST,
                 normal: DVec3::X,
             };
-            snapped(group, &run, [true, to < POST_TOP], seed, TOWER_POST);
             if to >= POST_TOP {
-                group
-                    .children
-                    .push(framed(&knee_member(corner), seed + 5, TOWER_BRACE));
+                // Torn off the beams and cracked through part way down, its knee brace
+                // torn off the outrigger.
+                cracked(group, &run, LEG_CRACK[corner], [true, true], seed, TOWER_POST);
+                snapped(group, &knee_member(corner), [false, true], seed + 5, TOWER_BRACE);
+            } else {
+                snapped(group, &run, [true, true], seed, TOWER_POST);
             }
         }
         PieceLook::Diagonal { face, upper } => {
@@ -422,29 +505,36 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
             } else {
                 Member { to: middle, ..outer }
             };
-            snapped(group, &half, [upper, !upper], seed, TOWER_BRACE);
+            cracked(group, &half, 0.55, [true, true], seed, TOWER_BRACE);
         }
         PieceLook::Panel { face, snapped: torn } => {
             let [outer, inner, girt] = face_members_of(face);
             let middle = outer.from.lerp(outer.to, 0.5);
             if torn {
+                // The outer diagonal snapped at the bolts, the inner one cracked part way
+                // and the girt torn from a leg: short broken lengths on the panel.
                 let lower = Member { to: middle, ..outer };
-                snapped(group, &lower, [false, true], seed, TOWER_BRACE);
+                snapped(group, &lower, [true, true], seed, TOWER_BRACE);
+                cracked(group, &inner, 0.3, [true, true], seed + 2, TOWER_BRACE);
+                cracked(group, &girt, 0.62, [true, true], seed + 3, TOWER_BRACE);
             } else {
-                // Bent out of the panel at its middle, still on its bolts at both ends.
+                // Twisted: bent out of the panel at its middle, still on its bolts there,
+                // torn from the legs at its ends.
                 let kink = middle + outer.normal * PANEL_BOW;
-                group.children.push(framed(&Member { to: kink, ..outer }, seed, TOWER_BRACE));
-                group.children.push(framed(
+                snapped(group, &Member { to: kink, ..outer }, [true, false], seed, TOWER_BRACE);
+                snapped(
+                    group,
                     &Member {
                         from: kink,
                         ..outer
                     },
+                    [false, true],
                     seed + 1,
                     TOWER_BRACE,
-                ));
+                );
+                snapped(group, &inner, [true, true], seed + 2, TOWER_BRACE);
+                snapped(group, &girt, [true, true], seed + 3, TOWER_BRACE);
             }
-            group.children.push(framed(&inner, seed + 2, TOWER_BRACE));
-            group.children.push(framed(&girt, seed + 3, TOWER_BRACE));
             if face < 2 {
                 bent_bolts(kit, face, 1);
             }
@@ -470,21 +560,29 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
             door(kit, frame, &entry_opening(), CABIN_WALL);
         }
         PieceLook::Shutter { wall } => {
+            // Split along a slat: half the shutter bent back off the other.
             let (frame, _) = cabin_frames()[wall];
             let u = if wall == 0 { SHUTTER_X[0] } else { -SHUTTER_X[1] };
-            awning(kit, frame, &window_opening(u));
+            let mut own = Kit::new();
+            awning(&mut own, frame, &window_opening(u));
+            let x = SHUTTER_X[wall];
+            let z = if wall == 0 { 1.0 } else { -1.0 } * (CABIN_Z + 0.4);
+            let crack = Fold {
+                pivot: DVec3::new(x + 0.1, 0.0, z),
+                axis: DVec3::Y,
+                side: DVec3::X,
+                angle: SHUTTER_SPLIT,
+            };
+            add_building(group, folded(own, &[crack]), &palette(color));
         }
         PieceLook::Roof => {
             let mut own = Kit::new();
             hip_roof(&mut own, true);
-            let mut meshes = own.finish_scaled(uv_per_metre);
-            for (_, mesh) in &mut meshes {
-                let mut folded = (**mesh).clone();
-                fold(&mut folded);
-                *mesh = Arc::new(folded);
-            }
-            add_building(group, meshes, &palette(color));
-            roof_underside(group, seed);
+            torn_sheet(&mut own);
+            scrapes(&mut own);
+            let folds = roof_folds();
+            add_building(group, folded(own, &folds), &palette(color));
+            roof_underside(group, seed, &folds);
         }
     }
 }
@@ -516,63 +614,178 @@ fn shattered(glass: &Mesh, seed: u32) -> Mesh {
     mesh
 }
 
-/// The roof's crease: points east of it turn down about it, the hip and eave there
-/// bent under where the roof struck.
-fn fold_point(p: DVec3) -> DVec3 {
-    let pivot = DVec2::new(ROOF_CREASE_X, CABIN_TOP);
-    if p.x <= pivot.x {
-        return p;
-    }
-    let (sin, cos) = (-ROOF_FOLD).sin_cos();
-    let d = DVec2::new(p.x - pivot.x, p.y - pivot.y);
-    DVec3::new(
-        pivot.x + d.x * cos - d.y * sin,
-        pivot.y + d.x * sin + d.y * cos,
-        p.z,
-    )
+/// A bend of a landed piece: the points on the `side` of the plane through `pivot`
+/// containing `axis` turn about that axis by `angle`.
+#[derive(Clone, Copy, Debug)]
+struct Fold {
+    pivot: DVec3,
+    axis: DVec3,
+    side: DVec3,
+    angle: f64,
 }
 
-fn fold(mesh: &mut Mesh) {
-    let (sin, cos) = (-ROOF_FOLD).sin_cos();
-    for (position, normal) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
-        let p = DVec3::from_array(position.map(f64::from));
-        if p.x > ROOF_CREASE_X {
-            *position = fold_point(p).as_vec3().to_array();
-            let n = DVec3::from_array(normal.map(f64::from));
-            *normal = DVec3::new(n.x * cos - n.y * sin, n.x * sin + n.y * cos, n.z)
-                .as_vec3()
-                .to_array();
+impl Fold {
+    fn turn(&self) -> DQuat {
+        DQuat::from_axis_angle(self.axis.normalize(), self.angle)
+    }
+
+    fn reaches(&self, p: DVec3) -> bool {
+        (p - self.pivot).dot(self.side) > 0.0
+    }
+
+    fn point(&self, p: DVec3) -> DVec3 {
+        if self.reaches(p) {
+            self.pivot + self.turn() * (p - self.pivot)
+        } else {
+            p
+        }
+    }
+}
+
+/// `p` and its normal `n` bent by `folds` in turn (each judged where the point lies
+/// before it).
+fn bend(folds: &[Fold], mut p: DVec3, mut n: DVec3) -> (DVec3, DVec3) {
+    for fold in folds {
+        if fold.reaches(p) {
+            p = fold.point(p);
+            n = fold.turn() * n;
+        }
+    }
+    (p, n)
+}
+
+/// A kit's meshes bent by `folds`.
+fn folded(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surface> {
+    let mut meshes = kit.finish_scaled(uv_per_metre);
+    for (_, mesh) in &mut meshes {
+        let mut bent: Mesh = (**mesh).clone();
+        for (position, normal) in bent.positions.iter_mut().zip(&mut bent.normals) {
+            let (p, n) = bend(
+                folds,
+                DVec3::from_array(position.map(f64::from)),
+                DVec3::from_array(normal.map(f64::from)),
+            );
+            *position = p.as_vec3().to_array();
+            *normal = n.as_vec3().to_array();
+        }
+        *mesh = Arc::new(bent);
+    }
+    meshes
+}
+
+/// How a landed roof is crumpled: its east end folded down across the ridge where it
+/// struck, and its front eave bent under.
+fn roof_folds() -> [Fold; 2] {
+    let ez = CABIN_Z + ROOF_OVERHANG;
+    let eave = ez - EAVE_BEND_AT;
+    [
+        Fold {
+            pivot: DVec3::new(ROOF_CREASE_X, CABIN_TOP, 0.0),
+            axis: DVec3::Z,
+            side: DVec3::X,
+            angle: -ROOF_FOLD,
+        },
+        Fold {
+            pivot: DVec3::new(0.0, CABIN_TOP + ROOF_EDGE + ROOF_PITCH * EAVE_BEND_AT, eave),
+            axis: DVec3::X,
+            side: DVec3::Z,
+            angle: EAVE_BEND,
+        },
+    ]
+}
+
+/// A sheet torn back off the west end of the back slope, curled up over itself, and the
+/// darker boards bared under it.
+fn torn_sheet(kit: &mut Kit<Surface>) {
+    let ez = CABIN_Z + ROOF_OVERHANG;
+    let slope = ROOF_PITCH.atan();
+    // Up the back slope toward the ridge, and out of it.
+    let up = DVec3::new(0.0, slope.sin(), slope.cos());
+    let out = DVec3::new(0.0, slope.cos(), -slope.sin());
+    let surface = |z: f64| DVec3::new(0.0, CABIN_TOP + ROOF_EDGE + ROOF_PITCH * (ez + z), z);
+    let (x0, x1) = TORN_SHEET_X;
+    let width = x1 - x0;
+    let hinge = surface(-ez + TORN_SHEET_LENGTH) + DVec3::X * (x0 + x1) / 2.0 + out * 0.02;
+    // The bared deck: dark boards across the gap.
+    for k in 0..4 {
+        let along = TORN_SHEET_LENGTH * (f64::from(k) + 0.5) / 4.0;
+        let at = surface(-ez + along) + DVec3::X * (x0 + x1) / 2.0 + out * 0.012;
+        kit.block(
+            Surface::Splinters,
+            DVec3::new(width - 0.04, TORN_SHEET_LENGTH / 4.0 - 0.03, 0.02),
+            DMat4::from_translation(at) * DMat4::from_rotation_x(-(PI / 2.0 - slope)),
+        );
+    }
+    // The sheet: hinged at its top, peeled back over in two bends.
+    let mut from = hinge;
+    for (k, turn) in TORN_SHEET_CURL.into_iter().enumerate() {
+        let length = TORN_SHEET_LENGTH / 2.0;
+        let direction = DQuat::from_axis_angle(DVec3::X, turn) * -up;
+        let to = from + direction * length;
+        kit.block(
+            Surface::Roof,
+            DVec3::new(width - 0.02 * k as f64, 0.02, length),
+            aim(from, to) * DMat4::from_translation(DVec3::Z * (length / 2.0)),
+        );
+        from = to;
+    }
+}
+
+/// Where a landed roof struck the ground: bare steel scraped through its paint in
+/// streaks down both long slopes, so a slope lying face up reads as battered sheet.
+fn scrapes(kit: &mut Kit<Surface>) {
+    let (ex, ez) = (CABIN_X + ROOF_OVERHANG, CABIN_Z + ROOF_OVERHANG);
+    let slope = ROOF_PITCH.atan();
+    let mut rng = Random::new(5.3);
+    for side in [-1.0, 1.0] {
+        for _ in 0..ROOF_SCRAPES {
+            let x = rng.range(-ex + 0.4, ex - 0.4);
+            let run = rng.range(0.3, ez - 0.3);
+            let z = side * (ez - run);
+            let y = CABIN_TOP + ROOF_EDGE + ROOF_PITCH * run + 0.012;
+            let tilt = DMat4::from_rotation_x(side * slope);
+            let turn = DMat4::from_rotation_y(rng.range(-0.5, 0.5));
+            kit.block(
+                Surface::Iron,
+                DVec3::new(rng.range(0.4, 1.1), 0.01, rng.range(0.06, 0.16)),
+                DMat4::from_translation(DVec3::new(x, y, z)) * tilt * turn,
+            );
         }
     }
 }
 
 /// A landed roof's underside: boards across its rafters where the soffit was, the
-/// rafters under them, folded with the roof.
-fn roof_underside(group: &mut Node, seed: i32) {
+/// rafters under them, both raw and darker than the painted sheet, bent with it.
+fn roof_underside(group: &mut Node, seed: i32, folds: &[Fold]) {
     let (ex, ez) = (CABIN_X + ROOF_OVERHANG, CABIN_Z + ROOF_OVERHANG);
     let mut next = seeds(seed);
     let mut lay = |group: &mut Node, from: DVec3, to: DVec3, width: f64, depth: f64, color: u32| {
-        let (from, to) = (fold_point(from), fold_point(to));
+        let (from, _) = bend(folds, from, DVec3::Y);
+        let (to, _) = bend(folds, to, DVec3::Y);
         group.children.push(member(from, to, width, depth, DVec3::Y, next(), color));
     };
-    // Boards along x, broken at the crease, under the sheet.
+    let crease = ROOF_CREASE_X;
+    let eave = ez - EAVE_BEND_AT;
+    // Boards along x, broken at the crease and over the bent eave, under the sheet.
     let boards = (2.0 * ez / ROOF_BOARD).floor() as i32;
     let y = CABIN_TOP - 0.015;
     for i in 0..boards {
         let z = -ez + ROOF_BOARD * (f64::from(i) + 0.5);
-        for (a, b) in [(-ex + 0.02, ROOF_CREASE_X - 0.01), (ROOF_CREASE_X + 0.01, ex - 0.02)] {
-            lay(group, DVec3::new(a, y, z), DVec3::new(b, y, z), ROOF_BOARD - 0.015, 0.025, TOWER_DECK);
+        for (a, b) in [(-ex + 0.02, crease - 0.01), (crease + 0.01, ex - 0.02)] {
+            lay(group, DVec3::new(a, y, z), DVec3::new(b, y, z), ROOF_BOARD - 0.015, 0.025, ROOF_BOARDS);
         }
     }
-    // Rafters along z under the boards.
+    // Rafters along z under the boards, snapped where the eave bent.
     let rafters = (2.0 * ex / RAFTER_SPACING).floor() as i32;
     let y = CABIN_TOP - 0.03 - RAFTER_DEPTH / 2.0;
     for i in 0..=rafters {
         let x = -ex + 0.1 + (2.0 * ex - 0.2) * f64::from(i) / f64::from(rafters);
-        if (x - ROOF_CREASE_X).abs() < 0.08 {
+        if (x - crease).abs() < 0.08 {
             continue;
         }
-        lay(group, DVec3::new(x, y, -ez + 0.05), DVec3::new(x, y, ez - 0.05), 0.08, RAFTER_DEPTH, TOWER_POST);
+        for (a, b) in [(-ez + 0.05, eave - 0.02), (eave + 0.02, ez - 0.05)] {
+            lay(group, DVec3::new(x, y, a), DVec3::new(x, y, b), 0.08, RAFTER_DEPTH, ROOF_RAFTERS);
+        }
     }
 }
 
@@ -639,7 +852,7 @@ fn footing(
         let base = TOWER_BASE.height + 0.03;
         let seed = next();
         if scars.struck.contains(LOWER_LEGS[corner]) {
-            // Cut by shells at shell height: up to the bite, charred and torn.
+            // Cut by shells at shell height: up to the bite, charred black and torn.
             let stub = Member {
                 from: DVec3::new(x, base, z),
                 to: DVec3::new(x, BITE_Y + SHOT_STUB_OVER, z),
@@ -647,26 +860,31 @@ fn footing(
                 depth: STUB,
                 normal: DVec3::X,
             };
-            snapped(group, &stub, [false, true], seed, TOWER_POST);
-            put(
-                group,
-                timber_member(DVec3::new(STUB + 0.01, 0.025, STUB + 0.01), seed + 3, SCORCH),
-                x,
-                BITE_Y - BITE_HALF,
-                z,
-            );
+            snapped(group, &stub, [false, true], seed, CHARRED);
+            for (k, &paint) in SCORCH_FADE.iter().enumerate() {
+                put(
+                    group,
+                    timber_member(DVec3::new(STUB + 0.008, 0.05, STUB + 0.008), seed + 3 + k as i32, paint),
+                    x,
+                    BITE_Y + SHOT_STUB_OVER - 0.03 - 0.05 * k as f64,
+                    z,
+                );
+            }
         } else {
-            // Torn out by the fall: a short stub bent over the way the tower went.
+            // Torn out by the fall: split in two and bent over the way the tower went.
             let top = TOWER_BASE.height + STUB_REACH;
-            let lean = DVec3::new(fall.x, 0.0, fall.y) * STUB_LEAN * (top - SHOE_TOP);
-            let stub = Member {
-                from: DVec3::new(x, base, z),
-                to: DVec3::new(x, top, z) + lean,
-                width: STUB,
-                depth: STUB,
-                normal: DVec3::X,
-            };
-            snapped(group, &stub, [false, true], seed, TOWER_POST);
+            let lean = DVec3::new(fall.x, 0.0, fall.y) * TORN_STUB_LEAN;
+            let across = DVec3::new(-fall.y, 0.0, fall.x) * STUB / 4.0;
+            for (k, side) in [-1.0, 1.0].into_iter().enumerate() {
+                let sliver = Member {
+                    from: DVec3::new(x, base, z) + across * side,
+                    to: DVec3::new(x, top, z) + across * side * 1.6 + lean * (1.0 - 0.3 * k as f64),
+                    width: STUB / 2.0,
+                    depth: STUB,
+                    normal: DVec3::new(-fall.y, 0.0, fall.x),
+                };
+                snapped(group, &sliver, [false, true], seed + 11 * k as i32, TOWER_POST);
+            }
         }
     }
 }
