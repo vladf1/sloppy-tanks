@@ -58,6 +58,9 @@ pub struct CoverShape {
     pub timber_join: Option<TimberJoin>,
     /// A cottage's or a watchtower's parts broken or fallen from it.
     pub broken: PartSet,
+    /// A watchtower's parts that have been struck, standing or not (a cottage's look
+    /// ignores it).
+    pub cracked: PartSet,
 }
 
 impl From<&RenderCover> for CoverShape {
@@ -73,6 +76,7 @@ impl From<&RenderCover> for CoverShape {
             timber_hits: cover.timber_hits.clone(),
             timber_join: cover.timber_join,
             broken: cover.broken,
+            cracked: cover.cracked,
         }
     }
 }
@@ -166,7 +170,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         }
         // The parts of a watchtower that still stand, its footings for good; an
         // untouched one is the model every tower shares.
-        CoverKind::Tower => tower(group, c.color, &c.broken),
+        CoverKind::Tower => tower(group, c.color, &c.broken, &c.cracked),
         CoverKind::Tree => unreachable!("trees return early"),
         CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {
             fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);

@@ -24,6 +24,7 @@ use sloppy_core::sim::house_structure::CHIMNEY_PART;
 use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
+use sloppy_core::sim::tower_structure::LOWER_LEGS;
 
 use super::theme::Theme;
 
@@ -110,7 +111,7 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         .map(|hit| format!("{hit:?}"))
         .collect();
     format!(
-        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}/{:x?}",
+        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}/{:x?}{}",
         cover.kind,
         cover.w,
         cover.h,
@@ -119,7 +120,21 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         cover.timber_join,
         hits.join(";"),
         cover.broken.0,
+        tower_scars(cover),
     )
+}
+
+/// What a watchtower's look shows of the shells that struck it: its struck legs (a
+/// bite while they stand, a tall stub once shot out). Nothing for other cover.
+pub fn tower_scars(cover: &RenderCover) -> String {
+    if cover.kind != CoverKind::Tower {
+        return String::new();
+    }
+    let legs: Vec<usize> = LOWER_LEGS
+        .into_iter()
+        .filter(|&leg| cover.cracked.contains(leg))
+        .collect();
+    format!("/struck{legs:?}")
 }
 
 /// `physicalCoverModel`'s model: the cover's full-detail model, batched.

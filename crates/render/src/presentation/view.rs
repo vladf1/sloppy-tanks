@@ -25,6 +25,7 @@ use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
 use sloppy_core::sim::timber_layout::{TimberHit, TimberPart};
+use sloppy_core::sim::tower_structure::LOWER_LEGS;
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
@@ -722,13 +723,20 @@ struct TreeView {
 /// other covers' marks.
 fn look_print(cover: &RenderCover) -> u64 {
     if matches!(cover.kind, CoverKind::House | CoverKind::Tower) {
-        return cover
+        let print = cover
             .broken
             .0
             .iter()
             .fold(0xcbf2_9ce4_8422_2325, |print, &word| {
                 (print ^ word).wrapping_mul(0x0100_0000_01b3)
             });
+        // A watchtower's struck legs show too.
+        let struck = LOWER_LEGS
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, leg)| cover.kind == CoverKind::Tower && cover.cracked.contains(leg))
+            .fold(0u64, |bits, (corner, _)| bits | 1 << corner);
+        return (print ^ struck).wrapping_mul(0x0100_0000_01b3);
     }
     marks_print(&cover.timber_hits)
 }

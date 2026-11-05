@@ -34,6 +34,7 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
         timber_hits: Vec::new(),
         timber_join: None,
         broken: PartSet::EMPTY,
+        cracked: PartSet::EMPTY,
     }
 }
 
@@ -95,7 +96,7 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("timber post", cover(CoverKind::Timber, [0.9, 0.9, 2.8], 0x805336), full, 3, 760),
         ("drum", cover(CoverKind::Drum, [1.2, 1.2, 1.7], 0xff5b24), full, 0, 1_400),
         ("tower", cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a), full, 0, 19_600),
-        ("toppled tower", toppled(cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a)), full, 0, 1_300),
+        ("toppled tower", toppled(cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a)), full, 0, 2_200),
         ("container", cover(CoverKind::Container, [6.0, 14.0, 3.6], 0xd37c38), full, 0, 2_300),
         ("cargo crate", hit(cover(CoverKind::Cargo, [2.4, 2.4, 2.0], 0x8a6a3c)), full, 2, 5_800),
         ("concrete barrier", cover(CoverKind::Concrete, [8.0, 1.1, 1.5], 0xb5b5a5), full, 0, 300),
@@ -225,6 +226,7 @@ fn a_toppled_towers_footings_wear_concrete_and_timber() {
         timber_hits: Vec::new(),
         timber_join: None,
         broken,
+        cracked: PartSet::EMPTY,
     };
     let textures = |broken| node_textures(&cover_model(&shape(broken), TreeDetail::Full, 0));
     let tower = textures(PartSet::EMPTY);

@@ -250,6 +250,7 @@ fn world(map: MapId, theme: MapTheme, stones: impl Fn(&Node, &str) -> bool) -> W
             timber_hits: Vec::new(),
             timber_join: None,
             broken: Default::default(),
+            cracked: Default::default(),
         };
         world.add(
             &cover_model(&shape, TreeDetail::Full, 0),

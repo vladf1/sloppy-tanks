@@ -56,6 +56,10 @@ const BURNOUT_FIRE_SCALE: f64 = 0.72;
 const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
 const COLLAPSE_LIFETIME: f64 = 3.2;
+/// A watchtower's crash dust: earth and timber tan, and how much farther its second
+/// skirt rolls.
+const TOWER_DUST: u32 = 0xb59c76;
+const TOWER_CRASH_SPREAD: f64 = 1.5;
 const COLLAPSE_DUST: f64 = 1.35;
 /// A cottage's collapse dust: how long it hangs, when its walls start to strike
 /// the ground (s after the break) and over how long they go on landing, how many
@@ -385,6 +389,9 @@ enum Kind {
     Hit(Struck),
     /// Heavy debris slamming down: a skirt of the ground's dust.
     Landing,
+    /// A watchtower's top crashing down: earth and timber dust rolling out low where
+    /// it struck and settling within a few seconds, no column.
+    TowerCrash,
 }
 
 /// How a fireball erupts: lobes bursting out round its source ("seams") and the
@@ -736,6 +743,7 @@ impl Blast {
             Kind::Hit(Struck::Siding) => SIDING_HIT_LIFETIME,
             Kind::Hit(Struck::Rubble) => RUBBLE_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
+            Kind::TowerCrash => COLLAPSE_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
     }
@@ -1130,6 +1138,8 @@ impl ExplosionEffects {
             Kind::Blast
         } else if event.cover_kind == Some(CoverKind::House) {
             Kind::HouseFall
+        } else if event.cover_kind == Some(CoverKind::Tower) {
+            Kind::TowerCrash
         } else {
             Kind::Collapse
         };
@@ -1562,6 +1572,17 @@ impl ExplosionEffects {
                 self.ring(b, t, inner.scale);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
+            Kind::TowerCrash => {
+                // The ground's earth with the timber's tan in it, lit the same from
+                // every side: no dark column standing over the wreck.
+                let dust = mixed(b.dust, linear(TOWER_DUST), 0.5);
+                self.skirt(b, t, dust);
+                let mut wider = *b;
+                wider.scale *= TOWER_CRASH_SPREAD;
+                wider.phase += 1.3;
+                self.skirt(&wider, t - 0.15, scaled(dust, 1.08));
+                self.haze(b, t, lifetime, scaled(dust, 1.12));
+            }
             Kind::Collapse => {
                 let dust = linear(DUST);
                 self.haze(b, t, lifetime, dust);
