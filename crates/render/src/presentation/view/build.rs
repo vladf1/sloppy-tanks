@@ -274,6 +274,13 @@ impl Presentation {
             // A cottage with gaps in its walls registers its torn edges and lining,
             // and its fallen parts their fading look.
             if cover.kind == CoverKind::House && seen.insert("house-parts".into()) {
+                // From the smallest cottage: the sample only registers the looks, and a
+                // bigger one's build raised the page's peak heap for good.
+                let cover = covers
+                    .iter()
+                    .filter(|cover| cover.kind == CoverKind::House)
+                    .min_by(|a, b| (a.w * a.d * a.h).total_cmp(&(b.w * b.d * b.h)))
+                    .unwrap_or(cover);
                 let broken = PartSet::from_indices(5..12);
                 let damaged = RenderCover {
                     broken,
