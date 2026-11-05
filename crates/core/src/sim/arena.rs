@@ -78,7 +78,7 @@ impl CoverDef {
         Self::new(CoverKind::Tower, x, z, 6.0, 5.0, 7.5, 180.0, 0xbd864a)
     }
 
-    /// A village cottage: it stands up to fifteen shells, then collapses.
+    /// A village cottage, built of parts that break where they are struck.
     pub const fn house(x: f64, z: f64, w: f64, d: f64, h: f64, color: u32) -> Self {
         Self::new(CoverKind::House, x, z, w, d, h, HOUSE_HEALTH, color)
     }

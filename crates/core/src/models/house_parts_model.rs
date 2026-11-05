@@ -18,7 +18,7 @@ use super::house_model::{CottagePieces, cottage_pieces, cottage_scale, cottage_s
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
-use crate::sim::house_layout::HouseDesign;
+use crate::sim::house_layout::{HouseDesign, PLINTH, WALL_DEPTH};
 use crate::sim::house_structure::{
     HouseStructure, PartCell, PartKind, PartSet, part_outline, part_plane,
 };
@@ -41,7 +41,17 @@ pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64
         (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
     );
     let mut cottage = parts_node(&layout, &pieces, &standing);
-    cottage.children.push(pieces.ground);
+    // The ground floor's boards over the plinth, which a gutted cottage shows.
+    let mut floor = Kit::new();
+    floor.block(
+        Surface::Wood,
+        DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
+        DMat4::from_translation(DVec3::new(0.0, PLINTH + FLOOR_BOARDS / 2.0, 0.0)),
+    );
+    paint_cottage(&mut cottage, floor.finish_scaled(cottage_scale(&design)), &design, &pieces.palette);
+    flatten_into(&mut cottage, pieces.ground);
+    // One draw per finish for the whole cottage, its plinth and yard with it.
+    batch(&mut cottage);
     cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
     group.children.push(cottage);
 }
@@ -53,13 +63,14 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
     let layout = HouseStructure::new(&design);
     let pieces = cottage_pieces(&design, x, z);
     let mut node = parts_node(&layout, &pieces, parts);
+    batch(&mut node);
     node.set_rotation_euler(0.0, design.yaw(), 0.0);
     let mut root = Node::group("house-debris");
     root.children.push(node);
     root
 }
 
-/// The model of `draw`'s parts in the build frame, batched.
+/// The model of `draw`'s parts in the build frame, to batch.
 fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -> Node {
     let design = &layout.design;
     let mut group = Node::group("");
@@ -158,8 +169,21 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -
         }
     }
     paint_cottage(&mut group, inside.finish_scaled(cottage_scale(design)), design, &pieces.palette);
-    batch(&mut group);
     group
+}
+
+/// `node`'s children into `group`, carrying its transform onto them: the yard's
+/// props join the cottage's draws.
+fn flatten_into(group: &mut Node, node: Node) {
+    let matrix = node.local_matrix();
+    for mut child in node.children {
+        let (scale, rotation, translation) =
+            (matrix * child.local_matrix()).to_scale_rotation_translation();
+        child.position = translation;
+        child.rotation = rotation;
+        child.scale = scale;
+        group.children.push(child);
+    }
 }
 
 /// A drawn cell's sides in its part's plane: an edge where a drawn neighbour carries
@@ -212,3 +236,4 @@ fn cell_sides(cell: &PartCell, drawn: &[(usize, PartCell)]) -> Vec<Side> {
     }
     sides
 }
+

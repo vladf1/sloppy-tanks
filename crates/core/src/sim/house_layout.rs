@@ -13,9 +13,8 @@ use glam::{DVec2, DVec3};
 
 use super::math::js_round;
 
-/// Hit points of a cottage: fifteen standard shells, more than three watchtowers,
-/// so levelling one is a deliberate effort rather than the work of stray fire (in
-/// seeded bot battles every cottage stands after a minute and most after five).
+/// A cottage's full health. It stands as long as its frame carries it
+/// (`house_structure`); its health only reports the share of its parts still standing.
 pub const HOUSE_HEALTH: f64 = 600.0;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).

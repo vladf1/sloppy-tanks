@@ -409,6 +409,10 @@ pub(super) fn paint_cottage(
     design: &HouseDesign,
     palette: &Palette,
 ) {
+    // Siding cut or torn since it was weathered takes its weathering again, so every
+    // siding mesh carries the vertex colours its draw expects.
+    let mut meshes = meshes;
+    grime(&mut meshes, design.h);
     add_weathered(group, meshes, palette, design.style.walls);
 }
 

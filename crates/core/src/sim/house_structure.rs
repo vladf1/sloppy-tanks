@@ -1081,13 +1081,22 @@ impl HouseStructure {
         support
     }
 
-    /// The standing parts (not in `gone`) the frame no longer holds up.
+    /// The standing parts (not in `gone`) the frame no longer holds up. A part seated
+    /// on parts that give way loses that seat too, so this settles round by round
+    /// until nothing more gives way.
     pub fn unsupported(&self, gone: &PartSet) -> PartSet {
-        let stability = self.stability(&|index| !gone.contains(index));
-        PartSet::from_indices(
-            (0..self.parts.len())
-                .filter(|&index| !gone.contains(index) && stability[index] < FALL_BELOW),
-        )
+        let mut falling = PartSet::EMPTY;
+        loop {
+            let down = gone.union(&falling);
+            let stability = self.stability(&|index| !down.contains(index));
+            let more = PartSet::from_indices((0..self.parts.len()).filter(|&index| {
+                !down.contains(index) && stability[index] < FALL_BELOW
+            }));
+            if more.is_empty() {
+                return falling;
+            }
+            falling = falling.union(&more);
+        }
     }
 
     /// `falling` in the groups that come down together: parts linked to each other
@@ -1145,8 +1154,9 @@ fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
     use PartKind::*;
     match relation {
         Relation::Below => REST,
+        // A beam carries what lies on it; it does not hang from it.
         Relation::Above => match of {
-            Panel | Window | Door | Partition | Gable | Plate => HANG,
+            Panel | Window | Door | Partition | Gable => HANG,
             Floor => BOARD_TIE,
             _ => 0.0,
         },

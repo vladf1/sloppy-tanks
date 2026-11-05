@@ -34,7 +34,7 @@ use super::types::{Cover, CoverKind, Fragment, SimEvent, SimEventType, Team};
 pub const FUSE_DISTANCE: f64 = 1.0;
 /// An HE shell's burst inside a cottage: its reach (m) over the parts round it; the
 /// damage falls off to nothing at the edge.
-pub const HE_BLAST_RADIUS: f64 = 1.6;
+pub const HE_BLAST_RADIUS: f64 = 1.4;
 /// Blasts from outside (rockets, mines, drums): the share of their reach over tanks
 /// that they reach over a cottage's parts.
 pub const STRUCTURE_BLAST_REACH: f64 = 0.5;
