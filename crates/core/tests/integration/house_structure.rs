@@ -1140,3 +1140,46 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
         );
     }
 }
+
+#[test]
+fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
+    use rapier3d::prelude::{QueryFilter, Vector};
+    use sloppy_core::sim::data::group;
+    use sloppy_core::sim::house_layout::HouseDesign;
+    use sloppy_core::sim::physics::interaction_groups;
+    // A cottage that keeps a garden.
+    let x = (0..60)
+        .map(|k| 20.0 + f64::from(k) * 0.5)
+        .find(|&x| {
+            HouseDesign::of(x, 0.0, 5.0, 7.0, 4.9)
+                .garden_bed()
+                .is_some()
+        })
+        .expect("a cottage with a garden");
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    clear_arena(&mut s, &[human]);
+    let house = s.add_cover(&CoverDef::house(x, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
+    s.world.step();
+    let design = s.covers[house].structure.as_ref().unwrap().layout.design;
+    let (bed, _) = design.garden_bed().unwrap();
+    let (a, b) = bed.bounds(&design, 0.3);
+    let middle = design.to_world((a + b) / 2.0);
+    let at = Vector::new((x + middle.x) as f32, 0.3, middle.z as f32);
+    let meets = |s: &Simulation, groups: u32| {
+        s.world
+            .intersect_point(
+                at,
+                QueryFilter::default().groups(interaction_groups(groups)),
+            )
+            .next()
+            .is_some()
+    };
+    assert!(
+        meets(&s, group::HOUSE_SHARD),
+        "a fallen part rests on the bed"
+    );
+    assert!(!meets(&s, group::TANK), "a tank drives over it");
+    assert!(!meets(&s, group::COVER_QUERY), "a shell flies over it");
+}

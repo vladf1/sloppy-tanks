@@ -11,7 +11,7 @@ use std::f64::consts::PI;
 
 use glam::{DVec2, DVec3};
 
-use super::math::js_round;
+use super::math::{Random, js_round};
 
 /// A cottage's full health. It stands as long as its frame carries it
 /// (`house_structure`); its health only reports the share of its parts still standing.
@@ -375,6 +375,38 @@ impl Wing {
 /// The walls as (outside-face centre, outward normal, along-wall direction, half
 /// length): front (+z), back, right (+x) and left, the order the model builds them.
 /// The along direction is the wall frame's +x seen from outside.
+/// The kitchen garden behind some cottages: the longest its bed runs along the back
+/// wall and how deep it is (m), and how far out from the wall it starts.
+pub const GARDEN: (f64, f64) = (3.8, 1.8);
+pub const GARDEN_GAP: f64 = 0.85;
+
+/// A cottage's garden bed along its back wall ([`wall_frames`] 1), in that wall's frame:
+/// from `u0` to `u1` along it and from `near` to `far` out from it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GardenBed {
+    pub u0: f64,
+    pub u1: f64,
+    pub near: f64,
+    pub far: f64,
+    /// Its length along the wall, its middle there and its depth out from it.
+    pub length: f64,
+    pub offset: f64,
+    pub depth: f64,
+}
+
+impl GardenBed {
+    /// The bed's box in the build frame, from the ground up to `height`.
+    pub fn bounds(&self, design: &HouseDesign, height: f64) -> (DVec3, DVec3) {
+        let (center, out, along, _) = wall_frames(design.w, design.d)[1];
+        let corner = |u: f64, o: f64, y: f64| center + along * u + out * o + DVec3::Y * y;
+        let (a, b) = (
+            corner(self.u0, self.near, 0.0),
+            corner(self.u1, self.far, height),
+        );
+        (a.min(b), a.max(b))
+    }
+}
+
 pub fn wall_frames(w: f64, d: f64) -> [(DVec3, DVec3, DVec3, f64); 4] {
     [
         (DVec3::new(0.0, 0.0, d / 2.0), DVec3::Z, DVec3::X, w / 2.0),
@@ -451,6 +483,30 @@ impl HouseDesign {
             door_wall,
             antenna: (variant / 5).is_multiple_of(3),
         }
+    }
+
+    /// Its garden bed, which one cottage in three keeps (the rest stack firewood by the
+    /// wall), and the cosmetic random stream its planting goes on with.
+    pub fn garden_bed(&self) -> Option<(GardenBed, Random)> {
+        if !self.variant.is_multiple_of(3) {
+            return None;
+        }
+        let half = wall_frames(self.w, self.d)[1].3;
+        let lot = (self.style.siding >> 3) ^ self.turns.rem_euclid(4) as u32;
+        let mut rng = Random::new(f64::from(self.variant) * 3.0 + f64::from(lot % 97) + 77.0);
+        let length = (2.0 * half - 0.9).min(GARDEN.0);
+        let offset = rng.range(-0.5, 0.5) * (2.0 * half - 0.6 - length).max(0.0);
+        let depth = GARDEN.1 + rng.range(-0.15, 0.2);
+        let bed = GardenBed {
+            u0: offset - length / 2.0,
+            u1: offset + length / 2.0,
+            near: GARDEN_GAP,
+            far: GARDEN_GAP + depth,
+            length,
+            offset,
+            depth,
+        };
+        Some((bed, rng))
     }
 
     pub fn yaw(&self) -> f64 {

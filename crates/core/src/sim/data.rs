@@ -319,4 +319,6 @@ pub mod group {
     /// A cottage's loose part wedged on its remains, dropping through them: it skips
     /// standing cover.
     pub const HOUSE_SHARD_THROUGH: u32 = 0x0108_0305;
+    /// A cottage garden's poles and plants: met by its fallen parts alone.
+    pub const GARDEN_PROPS: u32 = 0x0200_0100;
 }
