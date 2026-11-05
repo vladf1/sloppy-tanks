@@ -48,7 +48,7 @@ pub const BLAST_HEIGHT: f64 = 1.0;
 const SHIELDED: f64 = 0.35;
 /// A blast shatters the parts within this far (m) of it; parts farther off that it
 /// breaks come loose whole and fall, so splinters fly only where it went off.
-const BLAST_CORE: f64 = 0.5;
+const BLAST_CORE: f64 = 0.8;
 /// A cottage counts as levelled (destroyed, for the score and the levels that rebuild
 /// it) once its roof is down or less than this share of its parts stands.
 const LEVELLED: f64 = 0.45;
@@ -147,10 +147,6 @@ const ON_END: f32 = 0.7;
 const LAY_RATE: f32 = 2.5;
 const LAID: f32 = 0.93;
 const LAID_STICK: f32 = 0.35;
-/// A piece propped on what still stands of its cottage is laid down only from this
-/// steep (its face's normal's rise, about 53 degrees): one leaning there like a door
-/// against the wall, not a slope lying against a stub.
-const PROPPED_UPRIGHT: f32 = 0.6;
 
 /// The linear and angular damping of a loose part `age` seconds after it came loose.
 pub fn house_debris_damping(age: f64) -> (f32, f32) {
@@ -420,7 +416,9 @@ impl Simulation {
             if gap >= radius {
                 continue;
             }
-            let mut share = 1.0 - gap / radius;
+            // A burst's force holds near it and falls away toward the edge of its
+            // reach: what stands within a metre of it feels most of it.
+            let mut share = 1.0 - (gap / radius).powi(2);
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
@@ -1310,13 +1308,7 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
                 if now.with_y(0.0).dot(out) >= 0.0 { -Vector::Y } else { Vector::Y }
             });
             let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
-            // Propped, only a piece standing near upright is turned down.
-            let start = if propped {
-                now.y.abs() < PROPPED_UPRIGHT
-            } else {
-                now.y.abs() < LEANING
-            };
-            (now, target, now.y.abs() >= LAID, start)
+            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
         }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);

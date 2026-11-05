@@ -109,13 +109,20 @@ fn a_shell_breaks_the_panel_it_strikes_and_the_gap_lets_the_next_through() {
     };
     let rng = s.rng.state;
     let (near, far) = (Vec2::new(x, 20.0), Vec2::new(x, -20.0));
-    // Only the struck panel, though the burst inside may blow out the glass over it.
+    // The struck panel and, from the burst a metre in, the wall over it in its column
+    // (bays are split up the wall) and the inner wall by it; nothing beside it.
     let only = |s: &Simulation, struck: &[usize]| {
         let gone = gone(s, house);
+        let column = |part: usize| {
+            let (min, max) = part_box(&s.covers[house], part).unwrap();
+            struck.iter().any(|&hit| {
+                let (a, b) = part_box(&s.covers[house], hit).unwrap();
+                min.x.max(a.x) < max.x.min(b.x) - 0.05 && min.z.max(a.z) < max.z.min(b.z) - 0.05
+            })
+        };
+        let inside = |part: usize| kind(s, house, part) == PartKind::Partition;
         struck.iter().all(|&part| gone.contains(part))
-            && gone
-                .iter()
-                .all(|part| struck.contains(&part) || kind(s, house, part) == PartKind::Window)
+            && gone.iter().all(|part| column(part) || inside(part))
     };
     fire(&mut s, near, far, Weapon::Standard);
     run(&mut s, 1.5);
