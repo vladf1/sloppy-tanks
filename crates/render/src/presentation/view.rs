@@ -39,6 +39,7 @@ use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
+use super::house_rest::HousePiles;
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
@@ -1048,6 +1049,8 @@ pub struct Presentation {
     /// instead of piling onto this one.
     busy: bool,
     fragments: HashMap<u32, FragmentView>,
+    /// Cottages' loose parts come to rest, merged into chunks.
+    piles: HousePiles<(ModelId, InstanceId)>,
     /// Debris models built this round, shared by every fragment that looks the same:
     /// crate walls split at a few places, so sizes repeat between crates, and every
     /// watchtower of a paint breaks into the same pieces.
@@ -1146,6 +1149,7 @@ impl Presentation {
             cover_looks: Vec::new(),
             busy: false,
             fragments: HashMap::new(),
+            piles: HousePiles::default(),
             shared_debris: HashMap::new(),
             debris_warmups: Vec::new(),
             chimneys: Vec::new(),
@@ -3269,6 +3273,10 @@ impl Presentation {
                 self.renderer.remove_model(model);
             }
         }
+        for (model, instance) in self.piles.retain(&self.live) {
+            self.renderer.remove_instance(instance);
+            self.renderer.remove_model(model);
+        }
         // Pieces drawn so far this frame, per shape.
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
@@ -3362,6 +3370,37 @@ impl Presentation {
             if view.fades {
                 self.renderer.set_opacity(view.instance, 1.0 - cleanup);
             }
+            if self.piles.tracks(fragment.id) {
+                self.piles
+                    .observe(fragment.id, view.pose, cleanup > 0.0, self.time);
+            }
+        }
+        self.settle_piles();
+    }
+
+    /// Bake resting cottage parts into merged chunks, one a frame, and hide their own
+    /// views; show again the ones whose chunk broke up. The merges are one-off models,
+    /// merged straight into the upload layout and not kept once uploaded.
+    fn settle_piles(&mut self) {
+        let plan = self.piles.plan(self.time);
+        for (model, instance) in plan.freed {
+            self.renderer.remove_instance(instance);
+            self.renderer.remove_model(model);
+        }
+        if let Some((chunk, parts)) = plan.build {
+            let model = self.renderer.add_merged_model(parts, Lifetime::Round);
+            if let Some(instance) =
+                self.renderer
+                    .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+            {
+                self.piles.built(chunk, (model, instance));
+            }
+        }
+        for (&id, view) in &self.fragments {
+            if self.piles.tracks(id) {
+                self.renderer
+                    .set_visible(view.instance, !self.piles.merged(id));
+            }
         }
     }
 
@@ -3379,7 +3418,10 @@ impl Presentation {
             // ground centre, where the body started.
             let cover = covers.iter().find(|cover| cover.id == house)?;
             let node = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, &parts);
-            house_debris_look(&mut self.renderer, &node)
+            let look = house_debris_look(&mut self.renderer, &node);
+            self.piles
+                .track(fragment.id, house, Arc::new(node), self.time);
+            look
         } else if let Some(piece) = fragment.tower_piece {
             let piece = self.shared_debris(SharedDebris::Tower(piece, fragment.color));
             (piece.model, FragmentLook::Shared(piece.bounds))

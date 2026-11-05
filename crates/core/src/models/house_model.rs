@@ -318,6 +318,12 @@ fn satin(color: u32) -> Arc<Material> {
 
 static OCTAHEDRON: Cache<(), Mesh> = Cache::new("house_model::OCTAHEDRON");
 
+/// A whole cottage for a cottage cover, built as one standing model: the same look
+/// as its parts drawn whole, in the draws and triangles of the standing build.
+pub(super) fn standing_house(design: &HouseDesign, x: f64, z: f64) -> Node {
+    cottage(design, &palette(design, x, z))
+}
+
 /// A cottage whose door faces `street` quarter turns (see [`door_direction`]);
 /// scenery outside the arena chooses its own.
 #[allow(clippy::too_many_arguments)]

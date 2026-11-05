@@ -76,6 +76,8 @@ impl Presentation {
         self.cover_models.clear();
         self.cover_looks.clear();
         self.fragments.clear();
+        // Their chunks' models are the round's; `reset_round` frees them.
+        self.piles.clear();
         self.shared_debris.clear();
         self.pickups.clear();
         self.supply_pieces.clear();

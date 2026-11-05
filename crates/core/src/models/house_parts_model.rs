@@ -14,7 +14,7 @@ use glam::{DMat4, DVec2, DVec3};
 use super::batching::batch;
 use super::building_kit::Surface;
 use super::house_collapse::{ShardClip, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
-use super::house_model::{CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
+use super::house_model::{standing_house, CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
@@ -32,8 +32,6 @@ const ON_LINE: f64 = 1e-6;
 const FLOOR_BOARDS: f64 = 0.04;
 /// How far (m) the footing stands proud of the wall's face.
 const PLINTH_LIP: f64 = 0.05;
-/// The whole plinth's chamfer (m), as the standing cottage's.
-const PLINTH_CHAMFER: f64 = 0.03;
 /// A part's side this close (m) to the cottage's outline is on its face.
 const ON_FACE: f64 = 0.01;
 
@@ -82,6 +80,14 @@ impl HouseBuild {
 
     /// One step of the build; true once it is done.
     pub fn step(&mut self) -> bool {
+        if !self.open {
+            // A whole cottage is the standing model, built in one step.
+            if self.next == 0 {
+                self.group = standing_house(&self.layout.design, self.x, self.z);
+                self.next = 1;
+            }
+            return true;
+        }
         let Some(pieces) = &self.pieces else {
             self.pieces = Some(cottage_pieces(&self.layout.design, self.x, self.z));
             return false;
@@ -96,37 +102,29 @@ impl HouseBuild {
 
     /// The built cottage, turned into the world about its ground centre.
     fn finish_cottage(self) -> Node {
+        if !self.open {
+            return self.group;
+        }
         let Self {
             layout,
             standing,
-            open,
             pieces,
             mut group,
             ..
         } = self;
         let pieces = pieces.expect("built");
         let design = &layout.design;
-        rooms_into(&mut group, &layout, &pieces, &standing, open);
+        rooms_into(&mut group, &layout, &pieces, &standing, true);
+        // The ground floor's boards laid on the ground inside the footing, which a
+        // gutted cottage shows and a tank driving in rolls over, and the footing under
+        // the parts still standing.
         let mut floor = Kit::new();
-        if open {
-            // The ground floor's boards laid on the ground inside the footing, which a
-            // gutted cottage shows and a tank driving in rolls over, and the footing
-            // under the parts still standing.
-            floor.block(
-                Surface::Wood,
-                DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
-                DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
-            );
-            footings(&mut floor, &layout, &standing);
-        } else {
-            // The whole plinth in one block.
-            floor.chamfer_block(
-                Surface::Stone,
-                DVec3::new(design.w + 2.0 * PLINTH_LIP, PLINTH, design.d + 2.0 * PLINTH_LIP),
-                PLINTH_CHAMFER,
-                DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
-            );
-        }
+        floor.block(
+            Surface::Wood,
+            DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
+            DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
+        );
+        footings(&mut floor, &layout, &standing);
         paint_cottage(&mut group, floor.finish_scaled(cottage_scale(design)), design, &pieces.palette);
         flatten_into(&mut group, pieces.ground);
         // One draw per finish for the whole cottage, its plinth and yard with it.
@@ -179,10 +177,31 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
     let pieces = cottage_pieces(&design, x, z);
     let mut node = parts_node(&layout, &pieces, parts, true);
     batch(&mut node);
+    // A small piece casts no shadow: a collapse brings down dozens, each a shadow draw
+    // per finish, and only the big sections' shadows show from the battlefield.
+    let (low, high) = parts.iter().fold(
+        (DVec3::INFINITY, DVec3::NEG_INFINITY),
+        |(low, high), index| (low.min(layout.parts[index].min), high.max(layout.parts[index].max)),
+    );
+    if (high - low).max_element() < SHADOWLESS_UNDER {
+        uncast(&mut node);
+    }
     node.set_rotation_euler(0.0, design.yaw(), 0.0);
     let mut root = Node::group("house-debris");
     root.children.push(node);
     root
+}
+
+/// Loose pieces smaller than this (m) across cast no shadow.
+const SHADOWLESS_UNDER: f64 = 1.8;
+
+fn uncast(node: &mut Node) {
+    if let Some(drawable) = &mut node.drawable {
+        drawable.cast_shadow = false;
+    }
+    for child in &mut node.children {
+        uncast(child);
+    }
 }
 
 /// The model of `draw`'s parts in the build frame, to batch.
