@@ -1617,6 +1617,11 @@ fn breach_eave_cues(
         );
         // Where it lay: the dark slot it left in the covering, and the
         // battens across it.
+        let slot_surface = if parts.split {
+            Surface::Wood
+        } else {
+            Surface::Dark
+        };
         let kit = parts.kit(piece);
         let half = SHEET_WIDTH / 2.0;
         let at = |run: f64, along: f64| {
@@ -1634,8 +1639,10 @@ fn breach_eave_cues(
                 z - half + 2.0 * half * (k + 1) as f64 / strips,
             );
             let (a, b) = (rng.range(0.0, 0.09), rng.range(0.0, 0.09));
+            // Dark over the attic while the roof stands; on a fallen slab, the deck
+            // boards it was nailed to (a black slot rode into the rubble).
             kit.quad(
-                Surface::Dark,
+                slot_surface,
                 [at(low - a, z0), at(high, z0), at(high, z1), at(low - b, z1)],
                 DVec3::new(side * roof.pitch, 1.0, 0.0).normalize(),
             );
@@ -4142,7 +4149,13 @@ fn window_header(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: 
 /// What a torn-out window leaves in its opening: one jamb of its casing still
 /// nailed up, snapped part way, with the sash's stile beside it and glass caught at
 /// its edge, and a splintered stub of its sill at the other side.
-fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f64) {
+fn window_remnants(
+    kit: &mut Kit<Surface>,
+    frame: DMat4,
+    opening: &Opening,
+    seed: f64,
+    knocks: f64,
+) {
     let mut rng = Random::new(seed + 67.0);
     let (u, w, y0, y1) = (opening.u, opening.width, opening.y, opening.top());
     let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
@@ -4192,10 +4205,11 @@ fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed
         * shift(corner)
         * pose(
             DVec3::ZERO,
+            // Swung further on its last nail by every shell after the first.
             DVec3::new(
-                rng.range(0.15, 0.35),
+                rng.range(0.15, 0.35) + 0.05 * knocks,
                 side * rng.range(0.1, 0.3),
-                -side * rng.range(0.3, 0.6),
+                -side * (rng.range(0.3, 0.6) + SASH_KNOCK * knocks).min(1.45),
             ),
         )
         * shift(DVec3::new(-side * sw / 2.0, -sh / 2.0, 0.0));
@@ -4225,28 +4239,30 @@ fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed
         kit.block(Surface::Trim, size, sash * shift(at));
     }
     let (gx, gy) = (sw / 2.0 - BAR, sh / 2.0 - BAR);
-    let cut = rng.range(0.3, 0.7);
+    // Most of its pane gone: jagged shards left in two corners of the frame,
+    // fewer with every shell after the first.
     let pane = |x: f64, y: f64| sash.transform_point3(DVec3::new(x, y, 0.0));
-    kit.quad(
-        Surface::Glass,
-        [
-            pane(-gx, -gy),
-            pane(gx, -gy),
-            pane(gx, gy * (1.0 - 2.0 * cut)),
-            pane(gx * (1.0 - 2.0 * cut), gy),
-        ],
-        sash.transform_vector3(DVec3::Z),
-    );
-    kit.quad(
-        Surface::Glass,
-        [
-            pane(-gx, -gy),
-            pane(gx * (1.0 - 2.0 * cut), gy),
-            pane(-gx, gy),
-            pane(-gx, gy),
-        ],
-        sash.transform_vector3(DVec3::Z),
-    );
+    let facing = sash.transform_vector3(DVec3::Z);
+    for (k, (cx, cy)) in [(-1.0, -1.0), (1.0, 1.0)].into_iter().enumerate() {
+        let (a, b, c) = (
+            rng.range(0.3, 0.9),
+            rng.range(0.3, 0.9),
+            rng.range(0.15, 0.45),
+        );
+        if (k as f64) < knocks - 1.0 {
+            continue;
+        }
+        kit.quad(
+            Surface::Glass,
+            [
+                pane(cx * gx, cy * gy),
+                pane(cx * gx * (1.0 - 2.0 * a), cy * gy),
+                pane(cx * gx * (1.0 - 2.0 * c), cy * gy * (1.0 - 2.0 * c)),
+                pane(cx * gx, cy * gy * (1.0 - 2.0 * b)),
+            ],
+            facing,
+        );
+    }
     // The sill, snapped in two: the end under the jamb still in place, the other
     // hanging down off the wall from the break.
     let sill = w + 2.0 * CASING + 0.06;
@@ -4271,6 +4287,9 @@ fn window_remnants(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed
     );
 }
 
+/// How far (rad) each shell after the first swings a torn-out window's hanging sash.
+const SASH_KNOCK: f64 = 0.18;
+
 /// The glass of a torn-out window in the debris under it, catching the light.
 fn fallen_glass(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f64) {
     let mut rng = Random::new(seed + 71.0);
@@ -4281,7 +4300,7 @@ fn fallen_glass(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f
             0.015,
             rng.range(0.15, 0.8),
         );
-        let (a, b) = (rng.range(0.0, PI * 2.0), rng.range(0.07, 0.16));
+        let (a, b) = (rng.range(0.0, PI * 2.0), rng.range(0.1, 0.22));
         let corner = |angle: f64, r: f64| {
             frame.transform_point3(c + DVec3::new(angle.cos() * r, 0.0, angle.sin() * r))
         };
@@ -4295,7 +4314,7 @@ fn fallen_glass(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f
 }
 
 /// Glass shards a torn-out window leaves on the ground under it.
-const FALLEN_GLASS: usize = 4;
+const FALLEN_GLASS: usize = 6;
 
 /// The flower box under a torn-out window, knocked off its brackets and lying
 /// tipped on the ground below, its soil spilt.
@@ -4303,7 +4322,13 @@ fn fallen_window_box(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, se
     let mut rng = Random::new(seed + 79.0);
     let hung = DVec3::new(opening.u, opening.y - 0.29, 0.17);
     // Thrown clear of the spill at the wall's foot, where it shows.
-    let lying = DVec3::new(opening.u + rng.range(-0.3, 0.3), 0.12, rng.range(0.75, 1.0));
+    // Beside the spill under the breach, where it shows.
+    let aside = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+    let lying = DVec3::new(
+        opening.u + aside * rng.range(0.55, 0.8),
+        0.12,
+        rng.range(0.45, 0.7),
+    );
     let fallen = frame
         * shift(lying)
         * pose(
@@ -4914,7 +4939,21 @@ fn house_wall(
             // The header over it still spans the breach, carrying the wall above;
             // a jamb and a stub of its sill stay, glass caught at their edges.
             window_header(kit, frame, opening, seed);
-            window_remnants(kit, frame, opening, seed);
+            // Each shell after the first into the opening knocks its remnants
+            // about further.
+            let rect = [
+                opening.u - opening.width / 2.0,
+                opening.y,
+                opening.u + opening.width / 2.0,
+                opening.top(),
+            ];
+            let size = holes
+                .iter()
+                .filter(|hole| hole.gap(rect) <= 0.0)
+                .map(|hole| hole.size)
+                .fold(1.0, f64::max);
+            let knocks = ((size - 1.0) / SHELL_GROWTH).floor().clamp(0.0, 6.0);
+            window_remnants(kit, frame, opening, seed, knocks);
             {
                 let ground = match aside.as_deref_mut() {
                     Some(aside) => &mut aside.ground,
