@@ -73,6 +73,9 @@ impl GameMode {
     }
 }
 
+/// Debris this far (m) outside a rebuilt cottage's walls goes with its ruin.
+const REBUILD_CLEARANCE: f64 = 0.5;
+
 /// Level rules, run at the end of every playing tick with the same fixed step.
 pub type AfterStep = fn(&mut Simulation);
 
@@ -526,16 +529,29 @@ impl Simulation {
             }
         }
         if self.covers[index].kind == CoverKind::House {
-            // A rebuilt cottage clears its parts still lying about: they would be
-            // thrown out of the new walls.
-            let id = self.covers[index].id;
+            // A rebuilt cottage clears its parts still lying about and any other debris
+            // inside its walls: the new walls would throw it out over the roof.
+            let cover = &self.covers[index];
+            let (id, x, z, w, d) = (cover.id, cover.x, cover.z, cover.w, cover.d);
+            let inside = |body: RigidBodyHandle| {
+                let at = from_vector(self.world.bodies[body].center_of_mass());
+                (at.x - x).abs() < w / 2.0 + REBUILD_CLEARANCE
+                    && (at.z - z).abs() < d / 2.0 + REBUILD_CLEARANCE
+            };
+            let cleared: Vec<bool> = self
+                .fragments
+                .iter()
+                .map(|fragment| fragment.house_id == Some(id) || inside(fragment.body))
+                .collect();
             let pieces: Vec<RigidBodyHandle> = self
                 .fragments
                 .iter()
-                .filter(|fragment| fragment.house_id == Some(id))
-                .map(|fragment| fragment.body)
+                .zip(&cleared)
+                .filter(|(_, cleared)| **cleared)
+                .map(|(fragment, _)| fragment.body)
                 .collect();
-            self.fragments.retain(|fragment| fragment.house_id != Some(id));
+            let mut keep = cleared.iter().map(|cleared| !cleared);
+            self.fragments.retain(|_| keep.next().unwrap_or(true));
             for body in pieces {
                 self.remove_body(body);
             }

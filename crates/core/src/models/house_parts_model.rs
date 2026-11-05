@@ -32,6 +32,8 @@ const ON_LINE: f64 = 1e-6;
 const FLOOR_BOARDS: f64 = 0.04;
 /// How far (m) the footing stands proud of the wall's face.
 const PLINTH_LIP: f64 = 0.05;
+/// The whole plinth's chamfer (m), as the standing cottage's.
+const PLINTH_CHAMFER: f64 = 0.03;
 /// A part's side this close (m) to the cottage's outline is on its face.
 const ON_FACE: f64 = 0.01;
 
@@ -44,17 +46,29 @@ pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64
     let standing = PartSet::from_indices(
         (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
     );
-    let mut cottage = parts_node(&layout, &pieces, &standing);
-    // The ground floor's boards laid on the ground inside the footing, which a gutted
-    // cottage shows and a tank driving in rolls over, and the footing under the parts
-    // still standing.
+    // A whole cottage shows nothing of its rooms: they are drawn once a gap opens.
+    let open = !broken.is_empty();
+    let mut cottage = parts_node(&layout, &pieces, &standing, open);
     let mut floor = Kit::new();
-    floor.block(
-        Surface::Wood,
-        DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
-        DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
-    );
-    footings(&mut floor, &layout, &standing);
+    if open {
+        // The ground floor's boards laid on the ground inside the footing, which a
+        // gutted cottage shows and a tank driving in rolls over, and the footing under
+        // the parts still standing.
+        floor.block(
+            Surface::Wood,
+            DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
+            DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
+        );
+        footings(&mut floor, &layout, &standing);
+    } else {
+        // The whole plinth in one block.
+        floor.chamfer_block(
+            Surface::Stone,
+            DVec3::new(design.w + 2.0 * PLINTH_LIP, PLINTH, design.d + 2.0 * PLINTH_LIP),
+            PLINTH_CHAMFER,
+            DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
+        );
+    }
     paint_cottage(&mut cottage, floor.finish_scaled(cottage_scale(&design)), &design, &pieces.palette);
     flatten_into(&mut cottage, pieces.ground);
     // One draw per finish for the whole cottage, its plinth and yard with it.
@@ -93,7 +107,7 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
     let design = HouseDesign::of(x, z, w, d, h);
     let layout = HouseStructure::new(&design);
     let pieces = cottage_pieces(&design, x, z);
-    let mut node = parts_node(&layout, &pieces, parts);
+    let mut node = parts_node(&layout, &pieces, parts, true);
     batch(&mut node);
     node.set_rotation_euler(0.0, design.yaw(), 0.0);
     let mut root = Node::group("house-debris");
@@ -102,7 +116,7 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
 }
 
 /// The model of `draw`'s parts in the build frame, to batch.
-fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -> Node {
+fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, inside: bool) -> Node {
     let design = &layout.design;
     let mut group = Node::group("");
     for piece in &pieces.parts {
@@ -170,8 +184,8 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -
             paint_cottage(&mut group, torn.finish_scaled(cottage_scale(design)), design, &pieces.palette);
         }
     }
-    let mut inside = Kit::new();
-    for index in draw.iter() {
+    let mut rooms = Kit::new();
+    for index in draw.iter().filter(|_| inside) {
         let Some(part) = layout.parts.get(index) else {
             continue;
         };
@@ -181,25 +195,25 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet) -
             // Boards over a plastered ceiling.
             PartKind::Floor => {
                 let boards = DVec3::new(size.x, FLOOR_BOARDS, size.z);
-                inside.block(
+                rooms.block(
                     Surface::Wood,
                     boards,
                     DMat4::from_translation(DVec3::new(middle.x, part.max.y - FLOOR_BOARDS / 2.0, middle.z)),
                 );
                 let ceiling = DVec3::new(size.x, size.y - FLOOR_BOARDS, size.z);
-                inside.block(
+                rooms.block(
                     Surface::Lining,
                     ceiling,
                     DMat4::from_translation(DVec3::new(middle.x, part.min.y + ceiling.y / 2.0, middle.z)),
                 );
             }
             PartKind::Partition => {
-                inside.block(Surface::Lining, size, DMat4::from_translation(middle));
+                rooms.block(Surface::Lining, size, DMat4::from_translation(middle));
             }
             _ => {}
         }
     }
-    paint_cottage(&mut group, inside.finish_scaled(cottage_scale(design)), design, &pieces.palette);
+    paint_cottage(&mut group, rooms.finish_scaled(cottage_scale(design)), design, &pieces.palette);
     group
 }
 

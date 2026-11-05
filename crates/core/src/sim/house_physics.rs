@@ -402,22 +402,28 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
-    /// Every standing part of cottage `cover` takes `amount`.
+    /// Every standing part of cottage `cover` takes `amount`. The walls on the ground
+    /// that it breaks shatter; what it breaks above them comes loose whole and falls.
     pub fn damage_every_house_part(&mut self, cover: usize, amount: f64, by: Option<(u32, Team)>) {
         let Some(state) = &mut self.covers[cover].structure else {
             return;
         };
-        let mut broken = PartSet::EMPTY;
+        let (mut broken, mut loose) = (PartSet::EMPTY, PartSet::EMPTY);
         for index in 0..state.layout.parts.len() {
             if state.standing(index) {
                 state.damage[index] += amount;
-                if state.damage[index] >= state.layout.parts[index].strength {
-                    broken.insert(index);
+                let part = &state.layout.parts[index];
+                if state.damage[index] >= part.strength {
+                    if part.grounded {
+                        broken.insert(index);
+                    } else {
+                        loose.insert(index);
+                    }
                 }
             }
         }
-        if !broken.is_empty() {
-            self.break_house_parts(cover, broken, None, by);
+        if !broken.is_empty() || !loose.is_empty() {
+            self.break_house_parts_loosening(cover, broken, loose, None, by);
         }
     }
 
