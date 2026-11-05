@@ -15,7 +15,8 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::tower_physics::tower_part_box;
 use sloppy_core::sim::tower_structure::{
-    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PieceLook, ROOF, TowerPartKind, tower_structure,
+    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, ROOF, TowerPartKind,
+    tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -719,6 +720,62 @@ fn settled_pieces_stay_as_they_lie() {
 
 /// A landing breaks members, not joints: the legs snap part way along and the cabin
 /// comes apart into its walls, door and shutters, within the debris budget.
+/// Once a falling roof lands crumpled it stays the crumpled piece through the rest of
+/// the fall, its rest and its clearing: no body ever carries the whole, uncrumpled
+/// roof again, and the piece does not come back once it has cleared.
+#[test]
+fn a_crumpled_roof_never_turns_whole_again() {
+    let structure = tower_structure();
+    let crumpled = (PART_COUNT..PART_COUNT + 64)
+        .find(|&index| structure.look(index) == Some(PieceLook::Roof))
+        .expect("the roof has a landed piece");
+    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
+        let (mut s, tower) = lone_tower();
+        let id = s.covers[tower].id;
+        s.break_tower_parts(
+            tower,
+            PartSet::from_indices([leg]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
+        let (mut landed_at, mut cleared_at) = (None, None);
+        for _ in 0..(40.0 / STEP) as usize {
+            idle(&mut s);
+            let carried = |index: usize| {
+                s.fragments
+                    .iter()
+                    .filter(|f| f.tower_id == Some(id))
+                    .any(|f| f.tower_parts.is_some_and(|parts| parts.contains(index)))
+            };
+            let (whole, piece) = (carried(ROOF), carried(crumpled));
+            if piece {
+                assert!(
+                    cleared_at.is_none(),
+                    "corner {corner}: the crumpled roof came back at {} s",
+                    s.elapsed
+                );
+                landed_at.get_or_insert(s.elapsed);
+            } else if landed_at.is_some() {
+                cleared_at.get_or_insert(s.elapsed);
+            }
+            assert!(
+                !(whole && landed_at.is_some()),
+                "corner {corner}: the whole roof stood again at {} s",
+                s.elapsed
+            );
+        }
+        assert!(
+            landed_at.is_some(),
+            "corner {corner}: the roof landed crumpled"
+        );
+        assert!(
+            cleared_at.is_some(),
+            "corner {corner}: the crumpled roof cleared"
+        );
+    }
+}
+
 #[test]
 fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
     let (mut s, tower) = lone_tower();
