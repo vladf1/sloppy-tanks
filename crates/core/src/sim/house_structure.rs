@@ -216,6 +216,12 @@ const DOOR_RISE: f64 = 2.0;
 const BELT_OVER: f64 = 0.3;
 const UPPER_SILL: f64 = 0.35;
 const UPPER_WINDOW: f64 = 1.2;
+/// The course of wall under a window's lower panel (m over the plinth).
+const WINDOW_FOOT: f64 = 0.35;
+/// A window's trim reaches this far (m) past its opening: the head casing and drip cap
+/// over it and the sill and apron under it go with the window, not the wall round it.
+const WINDOW_HEAD_TRIM: f64 = 0.2;
+const WINDOW_SILL_TRIM: f64 = 0.12;
 /// Roof sheets: about this long along the ridge, and the share of a slope's run the
 /// upper row takes.
 const SHEET_LENGTH: f64 = 2.4;
@@ -610,8 +616,12 @@ impl HouseStructure {
         let door_top = PLINTH + DOOR_RISE;
         let mut bands = match column {
             Column::Door => vec![(PLINTH, head.max(door_top), PartKind::Door)],
+            // Under a window, a low course of wall over the footing that a shell at
+            // hull height passes over: a shot under the sill leaves a ragged hole over
+            // it, not a doorway.
             Column::Window => vec![
-                (PLINTH, sill, PartKind::Panel),
+                (PLINTH, PLINTH + WINDOW_FOOT, PartKind::Panel),
+                (PLINTH + WINDOW_FOOT, sill, PartKind::Panel),
                 (sill, head, PartKind::Window),
             ],
             Column::Bay => vec![(PLINTH, sill, PartKind::Panel), (sill, head, PartKind::Panel)],
@@ -642,6 +652,22 @@ impl HouseStructure {
         for (from, to, column) in self.columns(index) {
             let bands = self.bands(column);
             let last_band = bands.len() - 1;
+            // Where each band's cell starts and ends up the wall: a window's takes its
+            // trim from the bands over and under it.
+            let trim = |b: usize, edge: f64, upward: bool| {
+                let window = |k: Option<usize>| k.and_then(|k| bands.get(k)).is_some_and(|band| band.2 == PartKind::Window);
+                match upward {
+                    // A band's top: under a window it stops short of the sill trim; a
+                    // window's reaches over its head trim.
+                    true if window(Some(b + 1)) => edge - WINDOW_SILL_TRIM,
+                    true if window(Some(b)) => edge + WINDOW_HEAD_TRIM,
+                    // A band's bottom: over a window it starts above the head trim; a
+                    // window's reaches under its sill trim.
+                    false if window(b.checked_sub(1)) => edge + WINDOW_HEAD_TRIM,
+                    false if window(Some(b)) => edge - WINDOW_SILL_TRIM,
+                    _ => edge,
+                }
+            };
             for (b, &(bottom, top, kind)) in bands.iter().enumerate() {
                 let corner =
                     |s: f64, t: f64, depth: f64| center + along * s + DVec3::Y * t - out * depth;
@@ -650,8 +676,11 @@ impl HouseStructure {
                 // and the top one up into the eaves (on a gable wall, up to the gable).
                 let cell = PartCell {
                     part,
-                    min: DVec2::new(from, if b == 0 { -FAR } else { bottom }),
-                    max: DVec2::new(to, if b < last_band || gable { top } else { FAR }),
+                    min: DVec2::new(from, if b == 0 { -FAR } else { trim(b, bottom, false) }),
+                    max: DVec2::new(
+                        to,
+                        if b < last_band || gable { trim(b, top, true) } else { FAR },
+                    ),
                 };
                 let mut part = StructurePart::cuboid(kind, p.min(q), p.max(q), vec![cell]);
                 part.wall = Some(index);
@@ -1573,7 +1602,11 @@ mod tests {
         for design in village() {
             let structure = HouseStructure::new(&design);
             for (index, part) in structure.parts.iter().enumerate() {
-                if part.kind != PartKind::Panel || part.min.y > PLINTH + 0.1 {
+                // A low panel a shell at hull height strikes (over a window's foot).
+                if part.kind != PartKind::Panel
+                    || part.min.y > PLINTH + WINDOW_FOOT + 0.01
+                    || part.max.y < 1.0
+                {
                     continue;
                 }
                 let gone = PartSet::from_indices([index]);

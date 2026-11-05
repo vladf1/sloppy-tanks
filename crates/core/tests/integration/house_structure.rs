@@ -760,19 +760,25 @@ fn a_fallen_roof_section_breaks_under_shells_down_to_debris_that_clears() {
         s.world.bodies[body].is_sleeping() || s.world.bodies[body].linvel().length() < 0.05,
         "it lies still"
     );
-    // A shell at it: the struck part shatters, the rest breaks into a few pieces that
-    // are thrown a little.
-    s.events.clear();
-    fire_at(&mut s, house, at, Weapon::Standard);
+    // Shells at it (any other piece in their way breaks first): the struck part
+    // shatters, the rest breaks into a few pieces that are thrown a little.
     let mut burst = false;
-    for _ in 0..90 {
-        idle(&mut s);
-        burst |= s.events.iter().any(|e| e.kind == SimEventType::Explosion);
+    for _ in 0..6 {
+        if s.fragments.iter().all(|f| f.id != section) {
+            break;
+        }
+        fire_at(&mut s, house, at, Weapon::Standard);
+        for _ in 0..90 {
+            s.events.clear();
+            idle(&mut s);
+            burst |= s.events.iter().any(|e| e.kind == SimEventType::Explosion);
+        }
     }
-    assert!(burst, "the shell burst on it");
+    assert!(burst, "the shells burst");
     assert!(
         s.fragments.iter().all(|f| f.id != section),
-        "the section broke up"
+        "the section broke up: {parts:?} at {at:?} among {:?}",
+        loose_bodies(&s, house)
     );
     let pieces: Vec<_> = loose_bodies(&s, house)
         .into_iter()

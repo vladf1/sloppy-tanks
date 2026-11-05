@@ -308,6 +308,7 @@ fn part_paint(layout: &HouseStructure, index: usize) -> u32 {
         PartKind::Sheet | PartKind::Ridge => style.roof,
         PartKind::Chimney => CHIMNEY_BRICK,
         PartKind::Floor | PartKind::Partition => 0xc9b48f,
+        PartKind::Window => style.trim,
         _ => style.siding,
     }
 }
@@ -557,7 +558,7 @@ impl Simulation {
             return;
         };
         let layout = state.layout.clone();
-        let broken = PartSet::from_indices(broken.iter().filter(|&index| state.standing(index)));
+        let mut broken = PartSet::from_indices(broken.iter().filter(|&index| state.standing(index)));
         let loose = PartSet::from_indices(
             loose
                 .iter()
@@ -565,6 +566,14 @@ impl Simulation {
         );
         if broken.is_empty() && loose.is_empty() {
             return;
+        }
+        // A window the break leaves without its sill or frame does not drop out whole:
+        // its glass goes and its sash breaks up as it comes out.
+        let after = state.gone.union(&broken).union(&loose);
+        for index in layout.unsupported(&after).iter() {
+            if layout.parts[index].kind == PartKind::Window {
+                broken.insert(index);
+            }
         }
         // Splinters from the heaviest broken parts.
         let mut thrown: Vec<usize> = broken.iter().collect();
