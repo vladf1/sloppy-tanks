@@ -1046,14 +1046,13 @@ pub struct Presentation {
     /// instead of piling onto this one.
     busy: bool,
     fragments: HashMap<u32, FragmentView>,
-    /// Cottages' loose parts come to rest, merged into chunks.
+    /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
     piles: HousePiles<(ModelId, InstanceId)>,
     /// Debris models built this round, shared by every fragment that looks the same:
-    /// crate walls split at a few places, so sizes repeat between crates, and every
-    /// watchtower of a paint breaks into the same pieces.
+    /// crate walls split at a few places, so sizes repeat between crates.
     shared_debris: HashMap<SharedDebris, BoundedModel>,
     /// Debris looks this round's covers can break into, still to build; one is built
-    /// a frame, so a crate or tower breaking builds none.
+    /// a frame, so a crate breaking builds none.
     debris_warmups: Vec<SharedDebris>,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
@@ -1733,8 +1732,7 @@ impl Presentation {
     /// instance. A combined cover that changes its look moves out to its own.
     /// Queue every shared debris look this round's covers can break into: crate walls
     /// and lids split in a few patterns only, so each size of crate has a few dozen
-    /// sections, and each paint of watchtower falls into its twelve pieces. Looks pop
-    /// from the back, so the towers' pieces, the costliest to build, come first.
+    /// sections.
     fn queue_debris(&mut self, covers: &[RenderCover]) {
         self.debris_warmups.clear();
         let mut crates = Vec::new();

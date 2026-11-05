@@ -65,8 +65,8 @@ pub struct PickupInspection {
 #[derive(Clone, Debug)]
 pub struct FragmentInspection {
     pub id: u32,
-    /// "piece", "wreck" or "owned" (timber members, watchtower pieces and falling
-    /// crowns).
+    /// "piece", "wreck", "owned" (timber members, cottages' and watchtowers' fallen
+    /// parts and falling crowns) or "shared" (crate sections).
     pub look: &'static str,
     pub shown: bool,
     pub opacity: f32,
