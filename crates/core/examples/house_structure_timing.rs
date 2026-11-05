@@ -2,12 +2,15 @@
 //! `cargo run -p sloppy-core --release --example house_structure_timing`.
 //! Prints the village cottages' part and collider counts, the time to lay one out, to
 //! break one wall panel (with the support recompute and any fall), to burst an HE
-//! shell inside one, to level one from its footing, and a world step with the village's
-//! fourteen cottages standing against one with their bodies taken out. Manual evidence,
-//! not a CI gate.
+//! shell inside one, to level one from its footing, to rebuild the biggest cottage's
+//! model after a break (what the page does for each cottage a frame breaks), and a world
+//! step with the village's fourteen cottages standing against one with their bodies
+//! taken out. Manual evidence, not a CI gate.
 
 use std::time::Instant;
 
+use sloppy_core::models::{HouseBuild, house_debris, structural_house};
+use sloppy_core::scene::Node;
 use sloppy_core::sim::house_physics::{HE_BLAST_RADIUS, house_structure};
 use sloppy_core::sim::house_structure::{PartKind, PartSet};
 use sloppy_core::sim::math::Point3;
@@ -63,6 +66,67 @@ fn main() {
         })
         .collect();
     println!("lay out one cottage: {}", summary(layout_ms));
+
+    // The biggest cottage's model, rebuilt as the page rebuilds it after a break: with
+    // one panel gone, with a third of its parts gone, and a fallen slope's body.
+    let biggest = *houses
+        .iter()
+        .max_by_key(|&&i| s.covers[i].structure.as_ref().unwrap().layout.parts.len())
+        .unwrap();
+    let c = s.covers[biggest].clone();
+    let layout = c.structure.as_ref().unwrap().layout.clone();
+    let panel = (0..layout.parts.len())
+        .find(|&i| layout.parts[i].kind == PartKind::Panel && layout.parts[i].grounded)
+        .unwrap();
+    let third = PartSet::from_indices((0..layout.parts.len()).filter(|i| i % 3 == 0));
+    let slope = PartSet::from_indices(
+        (0..layout.parts.len()).filter(|&i| layout.parts[i].kind == PartKind::Sheet),
+    );
+    for (what, broken) in [
+        ("whole", PartSet::EMPTY),
+        ("one panel gone", PartSet::from_indices([panel])),
+        ("a third gone", third),
+    ] {
+        let samples = (0..ROUNDS / 4)
+            .map(|_| {
+                let start = Instant::now();
+                let mut group = Node::group("");
+                structural_house(&mut group, c.x, c.z, c.w, c.d, c.h, &broken);
+                std::hint::black_box(group);
+                start.elapsed().as_secs_f64() * 1e3
+            })
+            .collect();
+        println!(
+            "rebuild the biggest cottage's model ({} parts), {what}: {}",
+            layout.parts.len(),
+            summary(samples)
+        );
+        // The same a step at a time, as the page spreads it over frames.
+        let mut steps = Vec::new();
+        for _ in 0..ROUNDS / 4 {
+            let mut build = HouseBuild::new(c.x, c.z, c.w, c.d, c.h, &broken);
+            loop {
+                let start = Instant::now();
+                let done = build.step();
+                steps.push(start.elapsed().as_secs_f64() * 1e3);
+                if done {
+                    break;
+                }
+            }
+            let start = Instant::now();
+            std::hint::black_box(build.finish());
+            steps.push(start.elapsed().as_secs_f64() * 1e3);
+        }
+        println!("  a step of it: {}", summary(steps));
+    }
+    let samples = (0..ROUNDS / 4)
+        .map(|_| {
+            let start = Instant::now();
+            std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, &slope));
+            start.elapsed().as_secs_f64() * 1e3
+        })
+        .collect();
+    println!("build its fallen roof's body model: {}", summary(samples));
 
     // Break each lower wall panel in turn (rebuilding the cottage between), so the
     // support recompute runs on a whole cottage each time.

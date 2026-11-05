@@ -9,11 +9,11 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, cover_damage_stage,
-    crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_debris, part,
-    pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models, tank_model,
-    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
-    tree_part, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, HouseBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
+    cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
+    house_debris, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
+    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
+    tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -776,6 +776,8 @@ struct CoverLook {
 enum LookPhase {
     /// Its model still to build.
     Unbuilt,
+    /// A cottage's model, built a wall or roof slope a step.
+    Building(Box<HouseBuild>),
     /// Ready to upload and show.
     Ready(CoverModel),
 }
@@ -2562,6 +2564,31 @@ impl Presentation {
             let phase = &mut self.cover_looks[index].phase;
             let installed = match phase {
                 // A look another cover already shows needs no model of its own.
+                LookPhase::Unbuilt
+                    if cover.kind == CoverKind::House
+                        && !self
+                            .cover_models
+                            .contains_key(&Self::cover_model_key(cover, stage)) =>
+                {
+                    *phase = LookPhase::Building(Box::new(HouseBuild::new(
+                        cover.x,
+                        cover.z,
+                        cover.w,
+                        cover.d,
+                        cover.h,
+                        &cover.broken,
+                    )));
+                    false
+                }
+                LookPhase::Building(build) => {
+                    if build.step()
+                        && let LookPhase::Building(build) =
+                            std::mem::replace(phase, LookPhase::Unbuilt)
+                    {
+                        *phase = LookPhase::Ready(model_catalog::house_cover_model(*build));
+                    }
+                    false
+                }
                 LookPhase::Unbuilt
                     if !self
                         .cover_models

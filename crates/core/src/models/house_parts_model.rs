@@ -14,7 +14,7 @@ use glam::{DMat4, DVec2, DVec3};
 use super::batching::batch;
 use super::building_kit::Surface;
 use super::house_collapse::{ShardClip, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
-use super::house_model::{CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
+use super::house_model::{CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
@@ -40,41 +40,111 @@ const ON_FACE: f64 = 0.01;
 /// The standing cottage for a cottage cover box, drawn from its parts not in
 /// `broken`, with its plinth and yard.
 pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) {
-    let design = HouseDesign::of(x, z, w, d, h);
-    let layout = HouseStructure::new(&design);
-    let pieces = cottage_pieces(&design, x, z);
-    let standing = PartSet::from_indices(
-        (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
-    );
-    // A whole cottage shows nothing of its rooms: they are drawn once a gap opens.
-    let open = !broken.is_empty();
-    let mut cottage = parts_node(&layout, &pieces, &standing, open);
-    let mut floor = Kit::new();
-    if open {
-        // The ground floor's boards laid on the ground inside the footing, which a
-        // gutted cottage shows and a tank driving in rolls over, and the footing under
-        // the parts still standing.
-        floor.block(
-            Surface::Wood,
-            DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
-            DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
+    let mut build = HouseBuild::new(x, z, w, d, h, broken);
+    while !build.step() {}
+    group.children.push(build.finish_cottage());
+}
+
+/// A cottage's model built a step at a time, so a page can spread a damaged cottage's
+/// rebuild over frames: its pieces first, then one wall or roof slope a step, then its
+/// rooms, plinth and yard.
+pub struct HouseBuild {
+    x: f64,
+    z: f64,
+    layout: HouseStructure,
+    standing: PartSet,
+    /// Whether a gap shows its rooms.
+    open: bool,
+    pieces: Option<CottagePieces>,
+    next: usize,
+    group: Node,
+}
+
+impl HouseBuild {
+    pub fn new(x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) -> Self {
+        let layout = HouseStructure::new(&HouseDesign::of(x, z, w, d, h));
+        let standing = PartSet::from_indices(
+            (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
         );
-        footings(&mut floor, &layout, &standing);
-    } else {
-        // The whole plinth in one block.
-        floor.chamfer_block(
-            Surface::Stone,
-            DVec3::new(design.w + 2.0 * PLINTH_LIP, PLINTH, design.d + 2.0 * PLINTH_LIP),
-            PLINTH_CHAMFER,
-            DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
-        );
+        Self {
+            x,
+            z,
+            layout,
+            standing,
+            // A whole cottage shows nothing of its rooms: they are drawn once a gap
+            // opens.
+            open: !broken.is_empty(),
+            pieces: None,
+            next: 0,
+            group: Node::group(""),
+        }
     }
-    paint_cottage(&mut cottage, floor.finish_scaled(cottage_scale(&design)), &design, &pieces.palette);
-    flatten_into(&mut cottage, pieces.ground);
-    // One draw per finish for the whole cottage, its plinth and yard with it.
-    batch(&mut cottage);
-    cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
-    group.children.push(cottage);
+
+    /// One step of the build; true once it is done.
+    pub fn step(&mut self) -> bool {
+        let Some(pieces) = &self.pieces else {
+            self.pieces = Some(cottage_pieces(&self.layout.design, self.x, self.z));
+            return false;
+        };
+        if let Some(piece) = pieces.parts.get(self.next) {
+            piece_into(&mut self.group, &self.layout, pieces, piece, &self.standing);
+            self.next += 1;
+            return false;
+        }
+        true
+    }
+
+    /// The built cottage, turned into the world about its ground centre.
+    fn finish_cottage(self) -> Node {
+        let Self {
+            layout,
+            standing,
+            open,
+            pieces,
+            mut group,
+            ..
+        } = self;
+        let pieces = pieces.expect("built");
+        let design = &layout.design;
+        rooms_into(&mut group, &layout, &pieces, &standing, open);
+        let mut floor = Kit::new();
+        if open {
+            // The ground floor's boards laid on the ground inside the footing, which a
+            // gutted cottage shows and a tank driving in rolls over, and the footing
+            // under the parts still standing.
+            floor.block(
+                Surface::Wood,
+                DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
+                DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
+            );
+            footings(&mut floor, &layout, &standing);
+        } else {
+            // The whole plinth in one block.
+            floor.chamfer_block(
+                Surface::Stone,
+                DVec3::new(design.w + 2.0 * PLINTH_LIP, PLINTH, design.d + 2.0 * PLINTH_LIP),
+                PLINTH_CHAMFER,
+                DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
+            );
+        }
+        paint_cottage(&mut group, floor.finish_scaled(cottage_scale(design)), design, &pieces.palette);
+        flatten_into(&mut group, pieces.ground);
+        // One draw per finish for the whole cottage, its plinth and yard with it.
+        batch(&mut group);
+        group.set_rotation_euler(0.0, design.yaw(), 0.0);
+        group
+    }
+
+    /// The built cottage as its cover's model (`cover_model`): placed at its ground
+    /// centre.
+    pub fn finish(self) -> Node {
+        let position = DVec3::new(self.x, 0.0, self.z);
+        Node {
+            position,
+            children: vec![self.finish_cottage()],
+            ..Node::default()
+        }
+    }
 }
 
 /// The fieldstone footing under each of `standing`'s parts on the ground (the outer walls'
@@ -117,73 +187,99 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
 
 /// The model of `draw`'s parts in the build frame, to batch.
 fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, inside: bool) -> Node {
-    let design = &layout.design;
     let mut group = Node::group("");
     for piece in &pieces.parts {
-        let cells: Vec<(usize, PartCell)> = layout
-            .parts
-            .iter()
-            .enumerate()
-            .flat_map(|(index, part)| {
-                part.cells
-                    .iter()
-                    .filter(|cell| cell.part == piece.part)
-                    .map(move |cell| (index, *cell))
-            })
-            .collect();
-        let drawn: Vec<(usize, PartCell)> = cells
-            .iter()
-            .copied()
-            .filter(|(index, _)| draw.contains(*index))
-            .collect();
-        if drawn.is_empty() {
-            continue;
+        piece_into(&mut group, layout, pieces, piece, draw);
+    }
+    rooms_into(&mut group, layout, pieces, draw, inside);
+    group
+}
+
+/// `piece`'s cells of `draw`'s parts into `group`: the piece as built when all of them
+/// are drawn, else cut to them with torn edges where their neighbours are gone.
+fn piece_into(
+    group: &mut Node,
+    layout: &HouseStructure,
+    pieces: &CottagePieces,
+    piece: &CottagePiece,
+    draw: &PartSet,
+) {
+    let design = &layout.design;
+    let cells: Vec<(usize, PartCell)> = layout
+        .parts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, part)| {
+            part.cells
+                .iter()
+                .filter(|cell| cell.part == piece.part)
+                .map(move |cell| (index, *cell))
+        })
+        .collect();
+    let drawn: Vec<(usize, PartCell)> = cells
+        .iter()
+        .copied()
+        .filter(|(index, _)| draw.contains(*index))
+        .collect();
+    if drawn.is_empty() {
+        return;
+    }
+    if drawn.len() == cells.len() {
+        // All of it: the part as built.
+        paint_cottage(group, piece.meshes.clone(), design, &pieces.palette);
+        if let Some(shingles) = &piece.shingles {
+            group.children.push(cottage_shingles(shingles.clone(), &pieces.palette));
         }
-        if drawn.len() == cells.len() {
-            // All of it: the part as built.
-            paint_cottage(&mut group, piece.meshes.clone(), design, &pieces.palette);
-            if let Some(shingles) = &piece.shingles {
-                group.children.push(cottage_shingles(shingles.clone(), &pieces.palette));
-            }
-            group.children.extend(piece.nodes.iter().cloned());
-            continue;
-        }
-        let plane = part_plane(design, piece.part);
-        let outline = part_outline(design, piece.part);
-        for &(index, cell) in &drawn {
-            let region = ShardRegion {
-                cells: vec![cell_sides(&cell, &drawn)],
-            };
-            let clip = ShardClip::new(&plane, &region);
-            paint_cottage(
-                &mut group,
-                clip_meshes(&piece.meshes, &clip),
-                design,
-                &pieces.palette,
-            );
-            if let Some(shingles) = &piece.shingles
-                && let Some(mesh) = clip_mesh(shingles, &clip)
-            {
-                group.children.push(cottage_shingles(mesh, &pieces.palette));
-            }
-            group.children.extend(
-                piece
-                    .nodes
-                    .iter()
-                    .filter(|node| region.contains(plane.project(node.position)))
-                    .cloned(),
-            );
-            // Torn timber along the edges where its neighbours are gone.
-            let mut rng = Random::new(f64::from(design.variant) * 7.0 + index as f64 * 13.0 + 3.0);
-            let mut torn = Kit::new();
-            if let Some(wall) = piece.part.wall_index() {
-                wall_breaks(&mut torn, &plane, &outline, &region, &pieces.openings[wall], &mut rng);
-            } else if piece.part.is_roof() {
-                roof_breaks(&mut torn, &plane, &outline, &region, &pieces.roof, &mut rng);
-            }
-            paint_cottage(&mut group, torn.finish_scaled(cottage_scale(design)), design, &pieces.palette);
+        group.children.extend(piece.nodes.iter().cloned());
+        return;
+    }
+    let plane = part_plane(design, piece.part);
+    let outline = part_outline(design, piece.part);
+    // The drawn cells cut out of the piece in one pass over its meshes, each
+    // triangle projected once and clipped by the cells it reaches.
+    let region = ShardRegion {
+        cells: drawn.iter().map(|(_, cell)| cell_sides(cell, &drawn)).collect(),
+    };
+    let clip = ShardClip::new(&plane, &region);
+    paint_cottage(
+        group,
+        clip_meshes(&piece.meshes, &clip),
+        design,
+        &pieces.palette,
+    );
+    if let Some(shingles) = &piece.shingles
+        && let Some(mesh) = clip_mesh(shingles, &clip)
+    {
+        group.children.push(cottage_shingles(mesh, &pieces.palette));
+    }
+    group.children.extend(
+        piece
+            .nodes
+            .iter()
+            .filter(|node| region.contains(plane.project(node.position)))
+            .cloned(),
+    );
+    // Torn timber along each cell's edges where its neighbours are gone, all of the
+    // piece's in one kit.
+    let mut torn = Kit::new();
+    for (&(index, _), sides) in drawn.iter().zip(&region.cells) {
+        let cell = ShardRegion {
+            cells: vec![sides.clone()],
+        };
+        let mut rng = Random::new(f64::from(design.variant) * 7.0 + index as f64 * 13.0 + 3.0);
+        if let Some(wall) = piece.part.wall_index() {
+            wall_breaks(&mut torn, &plane, &outline, &cell, &pieces.openings[wall], &mut rng);
+        } else if piece.part.is_roof() {
+            roof_breaks(&mut torn, &plane, &outline, &cell, &pieces.roof, &mut rng);
         }
     }
+    paint_cottage(group, torn.finish_scaled(cottage_scale(design)), design, &pieces.palette);
+}
+
+/// The rooms of `draw`'s parts (attic floor strips and the partition) into `group`,
+/// when `inside` shows them.
+fn rooms_into(group: &mut Node, layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, inside: bool) {
+    let design = &layout.design;
     let mut rooms = Kit::new();
     for index in draw.iter().filter(|_| inside) {
         let Some(part) = layout.parts.get(index) else {
@@ -213,8 +309,7 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, i
             _ => {}
         }
     }
-    paint_cottage(&mut group, rooms.finish_scaled(cottage_scale(design)), design, &pieces.palette);
-    group
+    paint_cottage(group, rooms.finish_scaled(cottage_scale(design)), design, &pieces.palette);
 }
 
 /// `node`'s children into `group`, carrying its transform onto them: the yard's

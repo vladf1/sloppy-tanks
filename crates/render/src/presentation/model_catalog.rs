@@ -15,8 +15,8 @@ use std::collections::HashMap;
 use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
-    self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, cover_damage_stage, tree_part,
+    self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, HouseBuild, Scenery, SmokeCover,
+    TreeDetail, WATERWHEEL, batch, branch_drop_stage, cover_damage_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
@@ -132,6 +132,13 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
     batch(&mut root);
     let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
     CoverModel { root, tree }
+}
+
+/// A cottage's model from its finished stepwise build, as [`cover_model`] builds it.
+pub fn house_cover_model(build: HouseBuild) -> CoverModel {
+    let mut root = build.finish();
+    batch(&mut root);
+    CoverModel { root, tree: None }
 }
 
 fn tree_parts(root: &Node) -> TreeParts {
