@@ -137,30 +137,25 @@ const SWALLOW: f64 = 2.6;
 /// The share of a wall's area its breaches have torn out at which every window in
 /// it breaks: the frame racks round them.
 const RACKED_WALL: f64 = 0.22;
-/// How far a roof sags over a breach that has taken out the wall under its eave (or
-/// gable) at most, and the share of the wall's length the breach spans when the sag
-/// starts and when it is full.
-const ROOF_SAG: f64 = 0.7;
-const SAG_SPAN: (f64, f64) = (0.12, 0.45);
 /// How far round a roof hole the deck dips (times its size) and how deep at most.
 const HOLE_DIP: (f64, f64) = (1.6, 0.14);
-/// How far (m) either side of a breach the eave drop tapers back to the studs still
-/// standing, and how deep (m) the end bay of a gable is, which alone comes down
-/// when the corner post under it is gone.
-const SAG_TAPER: f64 = 0.6;
-const GABLE_BAY: f64 = 1.2;
-/// A breach reaching this close (m) to its wall's end has eaten the corner post;
-/// the roof at that corner then drops along the breach and [`SAG_TAPER`] past it, by
-/// up to this share of [`ROOF_SAG`].
+/// A breach in an eave wall that has eaten the wall up to within this much (m) of
+/// its top plate, and is this wide (m) or more, breaks the eave over it: that
+/// section of the roof, rafters and all, turns down about the ridge as one rigid
+/// piece, its eave end this far (m) lower once the breach is this wide (m).
+const EAVE_BREAK_REACH: f64 = 0.3;
+const EAVE_BREAK_WIDTH: f64 = 0.7;
+const EAVE_DROP: (f64, f64) = (0.25, 0.6);
+const EAVE_DROP_WIDTH: f64 = 2.4;
+/// How far (m) inside the gable walls (or hips) a broken eave section stops: the
+/// end rafters bear on them. Breaches this close (m) along the wall share a break.
+const EAVE_BREAK_END: f64 = 0.35;
+const EAVE_BREAK_JOIN: f64 = 0.3;
+/// How deep (m) in from the eave wall's face the wall over a breach turns with its
+/// eave section.
+const EAVE_WALL_BAND: f64 = 0.35;
+/// A breach reaching this close (m) to its wall's end has eaten the corner post.
 const CORNER_REACH: f64 = 0.3;
-const CORNER_SAG: f64 = 0.7;
-/// A breach whose top comes this close (m) to its wall's top lets the roof down
-/// fully, and one whose top is further down than the second only the less, down to
-/// none: the studs over it have lost their footing either way.
-const SAG_REACH: (f64, f64) = (1.1, 2.4);
-/// A breach this wide (m) starts to let the roof over it down, and this wide does
-/// fully, however long its wall: the rafters over it lose their wall alike.
-const SAG_WIDTH: (f64, f64) = (0.5, 2.0);
 /// Patches of shingles a shelled roof has shed round each roof hole, and over a
 /// breach that reaches the eave; their radius (m), and the loose shingles each
 /// sheds onto the roof and the ground.
@@ -1175,13 +1170,40 @@ fn flatten(root: &mut Node) {
 
 /// How a shelled cottage's frame has given (build frame), worked out from its
 /// breaches and roof holes alone. A timber frame stands rigid until a member breaks,
-/// so its walls stay plumb and its courses straight: only over a breach that has
-/// taken out the wall under the eave (or under a gable end) does the eave come down,
-/// in a short span over the breach, the rafters there turning about the ridge, and
-/// round each roof hole the deck dips. Drops never add up: where two meet, the
-/// deeper holds. The standing cottage and its collapse pieces are moved alike.
+/// so its walls stay plumb, their courses straight and its windows square. Over a
+/// breach in an eave wall that has eaten up to the top plate, the eave section over
+/// it breaks away along clean lines and turns down about the ridge as one rigid
+/// piece ([`EaveBreak`]); round each roof hole the deck dips. Everything else is
+/// left where it was built. The standing cottage and its collapse pieces are moved
+/// alike.
 struct Settle {
-    sags: Vec<Sag>,
+    dips: Vec<Dip>,
+    breaks: Vec<EaveBreak>,
+}
+
+/// A section of a roof's slope broken away over a breach in the eave wall under it:
+/// the slope on `side` of the ridge (±x) between `from` and `to` along it (z), with
+/// the wall over the breach (above `below`, within [`EAVE_WALL_BAND`] of its face at
+/// `face`), turned `angle` about the ridge line at `ridge` so its eave end comes down.
+#[derive(Clone, Copy, Debug)]
+struct EaveBreak {
+    side: f64,
+    from: f64,
+    to: f64,
+    below: f64,
+    face: f64,
+    ridge: f64,
+    pitch: f64,
+    angle: f64,
+}
+
+/// A dip in the deck round a roof hole at `center` (x, z), `radius` wide and `drop`
+/// deep, above `above`.
+struct Dip {
+    center: DVec2,
+    radius: f64,
+    drop: f64,
+    above: f64,
 }
 
 /// A triangle corner a [`Settle`] splits and moves: its point, normal, texture
@@ -1207,34 +1229,162 @@ impl Corner {
     }
 }
 
-/// The spacing (m) of the planes a sag slices the surfaces it bends along, and the
+/// The spacing (m) of the planes a dip slices the surfaces it bends along, and the
 /// most slices a triangle takes along each axis.
 const SAG_STEP: f64 = 1.2;
 const MAX_SLICES: i64 = 40;
 
-/// A sag of the roof: over a breach under an eave or a gable end, or round a hole in
-/// the deck.
-enum Sag {
-    /// Over a breach of the wall `out` from the middle (unit x or z), centred at
-    /// `center` along it with `half` its reach, dropping by `drop` at the wall's line
-    /// above `from` (the breach's top): nothing from `inner` in from the wall (the
-    /// ridge under an eave, the last rafter bay inside a gable) to all at `span`.
-    Wall {
-        out: DVec3,
-        center: f64,
-        half: f64,
-        drop: f64,
-        from: f64,
-        inner: f64,
-        span: f64,
-    },
-    /// Round a roof hole at `center` (x, z), `radius` wide and `drop` deep.
-    Dip {
-        center: DVec2,
-        radius: f64,
-        drop: f64,
-        above: f64,
-    },
+/// The eave sections a cottage's breaches have broken ([`EaveBreak`]), from its
+/// walls' breaches: each eave wall's breaches up to its top plate, wide enough to
+/// leave the rafters over them unsupported, joined where they nearly meet. A wider
+/// breach turns its section further, so damage only ever deepens.
+fn eave_breaks(design: &HouseDesign, roof: &Roof, holes: &[Vec<Hole>; 4]) -> Vec<EaveBreak> {
+    let frames = wall_frames(design.w, design.d);
+    // Within the gable walls, or the hips' feet.
+    let end = match roof.form {
+        RoofForm::Gable => design.d / 2.0 - EAVE_BREAK_END,
+        RoofForm::Hip => roof.ridge_half.min(design.d / 2.0 - EAVE_BREAK_END),
+    };
+    let mut breaks = Vec::new();
+    for index in [2, 3] {
+        let (frame, half) = frames[index];
+        let side = frame.transform_vector3(DVec3::Z).x.signum();
+        let along = |u: f64| frame.transform_point3(DVec3::new(u, 0.0, 0.0)).z;
+        let mut spans: Vec<(f64, f64, f64, f64)> = holes[index]
+            .iter()
+            .filter(|hole| {
+                let [u0, _, u1, y1] = hole.bounds;
+                y1 >= roof.wall - EAVE_BREAK_REACH
+                    && (u1 - u0 >= EAVE_BREAK_WIDTH
+                        || u1 >= half - CORNER_REACH
+                        || u0 <= -half + CORNER_REACH)
+            })
+            .map(|hole| {
+                let [u0, _, u1, y1] = hole.bounds;
+                let (a, b) = (along(u0), along(u1));
+                let width = ((u1 - u0 - EAVE_BREAK_WIDTH) / (EAVE_DROP_WIDTH - EAVE_BREAK_WIDTH))
+                    .clamp(0.0, 1.0);
+                (a.min(b), a.max(b), y1, width)
+            })
+            .collect();
+        spans.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut joined: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for span in spans {
+            match joined.last_mut() {
+                Some(last) if span.0 <= last.1 + EAVE_BREAK_JOIN => {
+                    last.1 = last.1.max(span.1);
+                    last.2 = last.2.min(span.2);
+                    last.3 = last.3.max(span.3);
+                }
+                _ => joined.push(span),
+            }
+        }
+        for (a, b, top, width) in joined {
+            let (from, to) = (a.max(-end), b.min(end));
+            if to - from < EAVE_BREAK_WIDTH * 0.5 {
+                continue;
+            }
+            let drop = EAVE_DROP.0 + (EAVE_DROP.1 - EAVE_DROP.0) * width;
+            breaks.push(EaveBreak {
+                side,
+                from,
+                to,
+                below: top.min(roof.eave_y) - 0.05,
+                face: side * design.w / 2.0,
+                ridge: roof.ridge,
+                pitch: roof.pitch,
+                angle: (drop / roof.eave_x).clamp(-1.0, 1.0).asin(),
+            });
+        }
+    }
+    breaks
+}
+
+/// The torn edges of a broken eave section ([`EaveBreak`]), hidden inside the deck
+/// while it lies flush: along each of its lines from ridge to eave the cut through
+/// the deck, dark, on both sides, and battens snapped off across it, so the section
+/// turned down shows a clean break with timber sticking out of it.
+fn eave_break_edges(parts: &mut Parts, roof: &Roof, section: &EaveBreak) {
+    let piece = if section.side > 0.0 {
+        HousePart::RightRoof
+    } else {
+        HousePart::LeftRoof
+    };
+    let kit = parts.kit(piece);
+    let side = section.side;
+    let reach = roof.eave_x - 0.03;
+    let at = |x: f64, z: f64, down: f64| DVec3::new(side * x, roof.top(side * x, z) - down, z);
+    for (line, into) in [(section.from, 1.0), (section.to, -1.0)] {
+        // Each side's cut: the fixed slope's just outside the line, the section's just
+        // inside it, each facing the gap that opens between them.
+        for (offset, facing) in [(-EDGE_CUT, into), (EDGE_CUT, -into)] {
+            let z = line + into * offset;
+            kit.quad(
+                Surface::Dark,
+                [
+                    at(EDGE_RIDGE, z, 0.0),
+                    at(reach, z, 0.0),
+                    at(reach, z, roof.thick),
+                    at(EDGE_RIDGE, z, roof.thick),
+                ],
+                DVec3::Z * facing,
+            );
+        }
+        // Battens across the line, which the break snaps in two, a stub on each side.
+        let count = ((reach - EDGE_RIDGE) / BATTEN_SPACING).floor() as i32;
+        for k in 1..count {
+            let x = EDGE_RIDGE + f64::from(k) * BATTEN_SPACING;
+            let length = 0.16 + 0.08 * f64::from(k % 3);
+            let center = at(x, line + into * 0.03 * f64::from(k % 2), roof.thick * 0.55);
+            kit.block(
+                Surface::Wood,
+                DVec3::new(0.05, 0.022, length),
+                DMat4::from_translation(center),
+            );
+        }
+    }
+}
+
+/// How far (m) either side of a broken eave section's line its cut faces sit, how far
+/// down from the ridge they start, and the spacing of the battens across the break.
+const EDGE_CUT: f64 = 0.008;
+const EDGE_RIDGE: f64 = 0.12;
+const BATTEN_SPACING: f64 = 0.42;
+
+impl EaveBreak {
+    /// Whether a point (a polygon's centre) lies on the broken section: the slope,
+    /// its deck and rafters over the span, or the wall over the breach.
+    fn holds(&self, p: DVec3) -> bool {
+        let x = self.side * p.x;
+        if x < 0.02 || p.z <= self.from || p.z >= self.to {
+            return false;
+        }
+        let under = self.ridge - self.pitch * x;
+        p.y >= under - RAFTER_DEPTH - 0.08
+            || (x > self.side * self.face - EAVE_WALL_BAND && p.y > self.below)
+    }
+
+    /// Whether anything in the box `lo`..`hi` could be on it or cut by its lines.
+    fn touches(&self, lo: DVec3, hi: DVec3) -> bool {
+        // The box's furthest reach out on the section's side of the ridge.
+        let out = if self.side > 0.0 { hi.x } else { -lo.x };
+        let under = self.ridge - self.pitch * out - RAFTER_DEPTH - 0.08;
+        out > 0.0 && hi.z > self.from && lo.z < self.to && hi.y > self.below.min(under)
+    }
+
+    /// The section's turn about the ridge line, its eave end going down.
+    fn rotation(&self) -> glam::DQuat {
+        glam::DQuat::from_rotation_z(-self.side * self.angle)
+    }
+
+    fn point(&self, p: DVec3) -> DVec3 {
+        let hinge = DVec3::new(0.0, self.ridge, 0.0);
+        hinge + self.rotation() * (p - hinge)
+    }
+
+    fn normal(&self, n: DVec3) -> DVec3 {
+        self.rotation() * n
+    }
 }
 
 impl Settle {
@@ -1244,77 +1394,10 @@ impl Settle {
         holes: &[Vec<Hole>; 4],
         roof_holes: &[RoofHole],
     ) -> Self {
-        let frames = wall_frames(design.w, design.d);
-        let mut sags = Vec::new();
-        for (index, (frame, half)) in frames.iter().enumerate() {
-            let out = frame.transform_vector3(DVec3::Z);
-            for hole in &holes[index] {
-                let [u0, y0, u1, y1] = hole.bounds;
-                let along = frame.transform_vector3(DVec3::X);
-                let at = |u: f64| {
-                    frame
-                        .transform_point3(DVec3::new(u, 0.0, 0.0))
-                        .dot(along.abs())
-                };
-                // The eave walls (±x) carry the deck's edge, which hangs below their
-                // top: it drops with the strip of wall over the breach, the rafters
-                // over it turning about the ridge. Under a gable only its end bay
-                // comes down, hinged at the rafter inside it.
-                let eave = out.x.abs() > 0.5;
-                let from = if eave { y1.min(roof.eave_y) - 0.05 } else { y1 };
-                let span = if eave { roof.eave_x } else { roof.rake_z };
-                let inner = if eave { 0.0 } else { span - GABLE_BAY };
-                // A breach that has taken the wall up to near its top plate, and wide
-                // enough to leave the rafters over it without their studs, lets the
-                // roof over it down.
-                let share = (u1 - u0) / (2.0 * half);
-                let full = ((share - SAG_SPAN.0) / (SAG_SPAN.1 - SAG_SPAN.0))
-                    .max((u1 - u0 - SAG_WIDTH.0) / (SAG_WIDTH.1 - SAG_WIDTH.0))
-                    .clamp(0.0, 1.0);
-                let reach = ((y1 - (roof.wall - SAG_REACH.1)) / (SAG_REACH.1 - SAG_REACH.0))
-                    .clamp(0.0, 1.0);
-                // The drop tapers to the studs still standing either side, within
-                // the wall: its corners keep their posts.
-                let taper = SAG_TAPER.min(u0 + half).min(half - u1).max(0.05);
-                // A gable wall bears no rafters: a breach in it leaves its rake
-                // standing on the wall either side, and the ridge on its post.
-                if eave && full * reach > 0.0 {
-                    sags.push(Sag::Wall {
-                        out,
-                        center: at((u0 + u1) / 2.0),
-                        half: (u1 - u0) / 2.0 + taper,
-                        drop: ROOF_SAG * full * reach,
-                        from,
-                        inner,
-                        span,
-                    });
-                }
-                // One that has eaten the corner post, however low, lets that corner
-                // of the roof down, the more the more of the post it took.
-                let corner = if u1 >= half - CORNER_REACH {
-                    Some(*half)
-                } else if u0 <= -half + CORNER_REACH {
-                    Some(-*half)
-                } else {
-                    None
-                };
-                if let Some(end) = corner {
-                    let post = ((y1 - y0) / (roof.wall - PLINTH)).clamp(0.0, 1.0);
-                    sags.push(Sag::Wall {
-                        out,
-                        center: at(end),
-                        half: (u1 - u0) + SAG_TAPER,
-                        drop: ROOF_SAG * CORNER_SAG * post,
-                        from: from.min(y1),
-                        inner,
-                        span,
-                    });
-                }
-            }
-        }
+        let mut dips = Vec::new();
         // A broken ridge lets the roof down along the break.
         for (a, b) in broken_ridge(roof, roof_holes) {
-            sags.push(Sag::Dip {
+            dips.push(Dip {
                 center: DVec2::new(0.0, (a + b) / 2.0),
                 radius: (b - a) / 2.0 + RIDGE_DIP.0,
                 drop: RIDGE_DIP.1,
@@ -1322,23 +1405,49 @@ impl Settle {
             });
         }
         for hole in roof_holes {
-            sags.push(Sag::Dip {
+            dips.push(Dip {
                 center: hole.plan,
                 radius: hole.half_along.max(hole.half_across) * HOLE_DIP.0,
                 drop: HOLE_DIP.1 * ((hole.size - 1.0) / 2.0).clamp(0.25, 1.0),
                 above: roof.eave_y - 0.05,
             });
         }
-        Self { sags }
+        Self {
+            dips,
+            breaks: eave_breaks(design, roof, holes),
+        }
     }
 
     fn still(&self) -> bool {
-        self.sags.is_empty()
+        self.dips.is_empty() && self.breaks.is_empty()
+    }
+
+    /// The broken eave section a point (a polygon's centre) lies on, if any.
+    fn section(&self, p: DVec3) -> Option<&EaveBreak> {
+        self.breaks.iter().find(|b| b.holds(p))
     }
 
     /// Where a point of the square cottage (build frame) has moved to.
     fn point(&self, p: DVec3) -> DVec3 {
-        p - DVec3::Y * self.drop(p)
+        self.moved(p, self.section(p))
+    }
+
+    /// Where `p` has moved to, dipped round the roof holes and turned with the eave
+    /// section `on`.
+    fn moved(&self, p: DVec3, on: Option<&EaveBreak>) -> DVec3 {
+        let dipped = p - DVec3::Y * self.drop(p);
+        match on {
+            Some(section) => section.point(dipped),
+            None => dipped,
+        }
+    }
+
+    fn turned(&self, p: DVec3, n: DVec3, on: Option<&EaveBreak>) -> DVec3 {
+        let n = self.normal(p, n);
+        match on {
+            Some(section) => section.normal(n),
+            None => n,
+        }
     }
 
     fn mesh(&self, mesh: &mut Mesh) {
@@ -1349,10 +1458,12 @@ impl Settle {
         let sliced = mesh.indices.is_none()
             && (0..count / 3).any(|t| {
                 let p = [3 * t, 3 * t + 1, 3 * t + 2].map(|i| widen(mesh.positions[i]));
-                self.slices(p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]))
+                let (lo, hi) = (p[0].min(p[1]).min(p[2]), p[0].max(p[1]).max(p[2]));
+                self.slices(lo, hi) || self.breaks.iter().any(|b| b.touches(lo, hi))
             });
         if !sliced {
-            // A mesh no sag slices is moved where it lies, keeping its arrays.
+            // A mesh no dip slices and no broken eave reaches is moved where it lies,
+            // keeping its arrays.
             for i in 0..count {
                 let (p, n) = (widen(mesh.positions[i]), widen(mesh.normals[i]));
                 mesh.positions[i] = narrow(self.point(p));
@@ -1461,43 +1572,33 @@ impl Settle {
         (hi - lo).max_element() > SAG_STEP && self.sliced_axes(lo, hi) != [None; 2]
     }
 
-    /// The stretches along x and z where the sags reaching the box `lo`..`hi`
-    /// (build frame) vary sharply: along the wall under an eave or gable sag, both
-    /// ways round a dip. Triangles there are sliced before they are moved, so a sag
-    /// bends the roof and the wall over a breach instead of sliding past their long
-    /// faces.
+    /// The stretches along x and z where the dips reaching the box `lo`..`hi`
+    /// (build frame) vary: triangles there are sliced before they are moved, so a
+    /// dip bends the deck rather than sliding past its long faces.
     fn sliced_axes(&self, lo: DVec3, hi: DVec3) -> [Option<(f64, f64)>; 2] {
         let mut axes: [Option<(f64, f64)>; 2] = [None; 2];
         let mut add = |axis: usize, from: f64, to: f64| {
             axes[axis] = Some(axes[axis].map_or((from, to), |(a, b)| (a.min(from), b.max(to))));
         };
-        for sag in self.sags.iter().filter(|sag| sag.reaches(lo, hi)) {
-            match *sag {
-                Sag::Wall {
-                    out, center, half, ..
-                } => add(usize::from(out.x.abs() > 0.5), center - half, center + half),
-                Sag::Dip { center, radius, .. } => {
-                    add(0, center.x - radius, center.x + radius);
-                    add(1, center.y - radius, center.y + radius);
-                }
-            }
+        for dip in self.dips.iter().filter(|dip| dip.reaches(lo, hi)) {
+            add(0, dip.center.x - dip.radius, dip.center.x + dip.radius);
+            add(1, dip.center.y - dip.radius, dip.center.y + dip.radius);
         }
         axes
     }
 
-    /// How far the sags lower a point: the deepest of them, as a member that has
-    /// already come down is not brought lower by another break beside it.
+    /// How far the dips lower a point: the deepest of them.
     fn drop(&self, p: DVec3) -> f64 {
-        self.sags
+        self.dips
             .iter()
-            .map(|sag| sag.drop_at(p))
+            .map(|dip| dip.drop_at(p))
             .fold(0.0, f64::max)
     }
 
-    /// A normal `n` at `p` turned with the sags' slope there, so a sagging roof is
+    /// A normal `n` at `p` turned with the dips' slope there, so a dipping deck is
     /// shaded as one smooth bent sheet rather than facets.
     fn normal(&self, p: DVec3, n: DVec3) -> DVec3 {
-        if self.sags.is_empty() {
+        if self.dips.is_empty() {
             return n;
         }
         const EPS: f64 = 0.05;
@@ -1507,11 +1608,6 @@ impl Settle {
         (n + DVec3::new(fx, 0.0, fz) * n.y).normalize_or(n)
     }
 
-    /// Slice `triangles` where a sag reaches them along a fixed grid of planes
-    /// ([`SAG_STEP`] apart across x and z), move every corner as the frame gave and
-    /// turn its normal with the sag, handing the corners to `emit` in order. The cut
-    /// points on an edge depend on the edge alone, so the bent surface keeps no
-    /// cracks between neighbouring triangles.
     fn reshape(
         &self,
         triangles: impl IntoIterator<Item = [Corner; 3]>,
@@ -1520,69 +1616,68 @@ impl Settle {
         self.reshape_pair(triangles, |_, moved| emit(moved));
     }
 
-    /// [`reshape`](Self::reshape), handing `emit` each corner both where it was built
-    /// (sliced but not moved) and where it has moved to.
+    /// Cut `triangles` along the broken eave sections' lines and where the dips
+    /// reach them along a fixed grid of planes ([`SAG_STEP`] apart across x and z),
+    /// then move each piece: rigidly with the section its centre lies on, and down
+    /// with the dips, handing `emit` each corner both where it was built (cut but not
+    /// moved) and where it has moved to. The cut points on an edge depend on the edge
+    /// alone, so neighbouring triangles keep no cracks where nothing broke.
     fn reshape_pair(
         &self,
         triangles: impl IntoIterator<Item = [Corner; 3]>,
         mut emit: impl FnMut(Corner, Corner),
     ) {
-        let mut emit_moved = |corner: Corner| {
-            emit(
-                corner,
-                Corner {
-                    p: self.point(corner.p),
-                    n: self.normal(corner.p, corner.n),
-                    ..corner
-                },
-            );
-        };
         let mut pieces: Vec<Vec<Corner>> = Vec::new();
         for t in triangles {
             let lo = t[0].p.min(t[1].p).min(t[2].p);
             let hi = t[0].p.max(t[1].p).max(t[2].p);
-            let axes = self.sliced_axes(lo, hi);
-            if !self.slices(lo, hi) {
-                t.into_iter().for_each(&mut emit_moved);
-                continue;
-            }
             pieces.clear();
             pieces.push(t.to_vec());
-            for (axis, range) in [(0, axes[0]), (2, axes[1])] {
-                let Some((from, to)) = range else {
-                    continue;
-                };
-                // Only across the sag's own stretch: beyond it nothing bends. Each
-                // kink gets a cut of its own, so it stays sharp.
-                let step = SAG_STEP;
-                let first = (lo[axis].max(from - step) / step).floor() as i64 + 1;
-                let last = (hi[axis].min(to + step) / step).ceil() as i64 - 1;
-                let mut cuts: Vec<f64> = (first..=last.min(first + MAX_SLICES))
-                    .map(|k| k as f64 * step)
-                    .collect();
-                cuts.extend(self.sags.iter().filter_map(|sag| match *sag {
-                    Sag::Wall { out, center, .. }
-                        if usize::from(out.x.abs() > 0.5) * 2 == axis
-                            && center > lo[axis]
-                            && center < hi[axis] =>
-                    {
-                        Some(center)
+            let cut = |pieces: &mut Vec<Vec<Corner>>, axis: usize, at: f64| {
+                if lo[axis] >= at || hi[axis] <= at {
+                    return;
+                }
+                let mut next = Vec::with_capacity(pieces.len() + 2);
+                for polygon in pieces.drain(..) {
+                    let (below, above) = slice(&polygon, axis, at);
+                    next.extend([below, above].into_iter().filter(|p| p.len() >= 3));
+                }
+                *pieces = next;
+            };
+            for section in self.breaks.iter().filter(|b| b.touches(lo, hi)) {
+                cut(&mut pieces, 2, section.from);
+                cut(&mut pieces, 2, section.to);
+                cut(&mut pieces, 1, section.below);
+            }
+            if self.slices(lo, hi) {
+                let axes = self.sliced_axes(lo, hi);
+                for (axis, range) in [(0, axes[0]), (2, axes[1])] {
+                    let Some((from, to)) = range else {
+                        continue;
+                    };
+                    // Only across the dip's own stretch: beyond it nothing bends.
+                    let step = SAG_STEP;
+                    let first = (lo[axis].max(from - step) / step).floor() as i64 + 1;
+                    let last = (hi[axis].min(to + step) / step).ceil() as i64 - 1;
+                    for k in first..=last.min(first + MAX_SLICES) {
+                        cut(&mut pieces, axis, k as f64 * step);
                     }
-                    _ => None,
-                }));
-                for cut in cuts {
-                    let mut next = Vec::with_capacity(pieces.len() + 2);
-                    for polygon in pieces.drain(..) {
-                        let (below, above) = slice(&polygon, axis, cut);
-                        next.extend([below, above].into_iter().filter(|p| p.len() >= 3));
-                    }
-                    pieces = next;
                 }
             }
             for polygon in &pieces {
+                let center =
+                    polygon.iter().map(|corner| corner.p).sum::<DVec3>() / polygon.len() as f64;
+                let on = self.section(center);
                 for i in 1..polygon.len() - 1 {
                     for corner in [polygon[0], polygon[i], polygon[i + 1]] {
-                        emit_moved(corner);
+                        emit(
+                            corner,
+                            Corner {
+                                p: self.moved(corner.p, on),
+                                n: self.turned(corner.p, corner.n, on),
+                                ..corner
+                            },
+                        );
                     }
                 }
             }
@@ -1612,72 +1707,24 @@ fn slice(polygon: &[Corner], axis: usize, cut: f64) -> (Vec<Corner>, Vec<Corner>
     (below, above)
 }
 
-impl Sag {
+impl Dip {
     /// Whether it could move anything in the box `lo`..`hi` (build frame).
     fn reaches(&self, lo: DVec3, hi: DVec3) -> bool {
-        match *self {
-            Sag::Wall {
-                out,
-                center,
-                half,
-                from,
-                ..
-            } => {
-                let axis = DVec3::new(out.z.abs(), 0.0, out.x.abs());
-                let (a, b) = (lo.dot(axis), hi.dot(axis));
-                let outward = hi.dot(out.max(DVec3::ZERO)) - lo.dot((-out).max(DVec3::ZERO));
-                a.min(b) < center + half && a.max(b) > center - half && outward > 0.0 && hi.y > from
-            }
-            Sag::Dip {
-                center,
-                radius,
-                above,
-                ..
-            } => {
-                let nearest = center.clamp(DVec2::new(lo.x, lo.z), DVec2::new(hi.x, hi.z));
-                hi.y >= above && (nearest - center).length() < radius
-            }
-        }
+        let nearest = self
+            .center
+            .clamp(DVec2::new(lo.x, lo.z), DVec2::new(hi.x, hi.z));
+        hi.y >= self.above && (nearest - self.center).length() < self.radius
     }
 
     fn drop_at(&self, p: DVec3) -> f64 {
-        match *self {
-            Sag::Wall {
-                out,
-                center,
-                half,
-                drop,
-                from,
-                inner,
-                span,
-            } => {
-                // How far out toward the breached wall (1 at its line and past it, to
-                // the eave), along it from the breach, and up from the breach's top.
-                // A tent along the wall, kinked where the top plate and the rafters
-                // over the breach broke, and straight out from where the rafters
-                // turn (the ridge, or a gable's last bay) to the eave.
-                let outward = ((p.dot(out) - inner) / (span - inner)).clamp(0.0, 1.0);
-                let along = p.dot(DVec3::new(out.z.abs(), 0.0, out.x.abs())) - center;
-                let near = (1.0 - (along / half).abs()).max(0.0);
-                let up = ((p.y - from) / 0.35).clamp(0.0, 1.0);
-                drop * outward * near * up
-            }
-            Sag::Dip {
-                center,
-                radius,
-                drop,
-                above,
-            } => {
-                if p.y < above {
-                    return 0.0;
-                }
-                let r = (DVec2::new(p.x, p.z) - center).length() / radius;
-                if r >= 1.0 {
-                    0.0
-                } else {
-                    drop * (1.0 - r * r).powi(2)
-                }
-            }
+        if p.y < self.above {
+            return 0.0;
+        }
+        let r = (DVec2::new(p.x, p.z) - self.center).length() / self.radius;
+        if r >= 1.0 {
+            0.0
+        } else {
+            self.drop * (1.0 - r * r).powi(2)
         }
     }
 }
@@ -1866,7 +1913,7 @@ fn torn_eave(parts: &Parts, w: f64, d: f64, roof: &Roof, side: f64) -> Option<(f
             let [u0, _, u1, y1] = hole.bounds;
             let (_, half) = wall_frames(w, d)[index];
             let corner = u1 >= half - CORNER_REACH || u0 <= -half + CORNER_REACH;
-            hole.big() && (y1 >= roof.wall - SAG_REACH.0 || corner)
+            y1 >= roof.wall - EAVE_BREAK_REACH && (u1 - u0 >= EAVE_BREAK_WIDTH || corner)
         })
         .map(|hole| {
             let [u0, _, u1, _] = hole.bounds;
@@ -3763,6 +3810,10 @@ fn house_roof(
     }
     ridge_caps(parts, design, roof, &broken_ridge(roof, roof_holes));
     gutters(parts, w, d, roof);
+    let breaks = eave_breaks(design, roof, &parts.holes);
+    for section in &breaks {
+        eave_break_edges(parts, roof, section);
+    }
     shed_shingles(parts, design, roof, roof_holes);
 
     if !parts.split {

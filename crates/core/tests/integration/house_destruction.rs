@@ -738,7 +738,8 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
     let height = |p: DVec3| p.y;
     let out = |p: DVec3| p.x.abs().max(p.z.abs());
     // The roof caves down into the house where the walls' fall leaves it standing
-    // a moment longer, and the walls under it go out, not in.
+    // a moment longer, and the walls under it buckle in beneath it rather than
+    // being thrown out.
     assert!(
         mean(&roof, &roofs, &height) < mean(&wall, &roofs, &height) - 0.2,
         "roof slabs {} against {}",
@@ -746,7 +747,7 @@ fn a_cottage_shelled_through_its_roof_caves_in_and_a_wall_breach_falls_as_before
         mean(&wall, &roofs, &height)
     );
     assert!(
-        mean(&roof, &upper_walls, &out) > mean(&wall, &upper_walls, &out),
+        mean(&roof, &upper_walls, &out) <= mean(&wall, &upper_walls, &out) + 0.05,
         "upper walls {} against {}",
         mean(&roof, &upper_walls, &out),
         mean(&wall, &upper_walls, &out)

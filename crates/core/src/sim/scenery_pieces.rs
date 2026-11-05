@@ -595,12 +595,13 @@ const ROOF_DROP: (f64, f64) = (0.0, 0.4);
 /// A cottage brought down through its roof caves in at the holed ridge: its slabs
 /// let go at once, the ridge first, folding down into the house about their eaves
 /// (rad/s, on top of the roof's own fold), and drop (m/s, the ridge slabs this much
-/// more), while the walls the roof bore down on are pushed out evenly (m/s), none
-/// falling in under it.
+/// more), and the walls under it buckle in beneath the falling roof
+/// ([`CAVE_BUCKLE`]), carried by no blast.
 const CAVE_FOLD: f64 = 0.9;
 const CAVE_DROP: f64 = 1.2;
 const CAVE_RIDGE_DROP: f64 = 1.4;
-const CAVE_SPREAD: f64 = 0.6;
+/// How fast (m/s) the walls under a caving roof are drawn in beneath it.
+const CAVE_BUCKLE: f64 = 0.9;
 /// Damping that settles the heavy shards into the pile instead of tumbling; a
 /// roof slab's spin is held harder, so a knock from a wall does not flip it.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
@@ -807,7 +808,8 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             let inward = if lower {
                 !over_heap
             } else {
-                rng.next() < chance && !caved
+                // Under a roof caving in, every wall buckles in beneath it.
+                rng.next() < chance || caved
             };
             let toward = if inward { -out } else { out };
             // Falling out, an upper shard tips slower and slides down the stub
@@ -842,7 +844,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
                     + DVec3::Y * rng.range(-WALL_TWIST, WALL_TWIST)
                     + toward * rng.range(-0.3, 0.3);
                 let clear = if inward { UPPER_CLEAR.0 } else { UPPER_CLEAR.1 };
-                let clear = if caved { CAVE_SPREAD } else { clear };
+                let clear = if caved { CAVE_BUCKLE } else { clear };
                 (
                     angular.cross(shape.center - pivot)
                         + along * rng.range(-WALL_DRIFT, WALL_DRIFT)

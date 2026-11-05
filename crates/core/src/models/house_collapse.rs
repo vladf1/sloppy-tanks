@@ -22,6 +22,8 @@ const WALL_EDGE: f64 = 0.2;
 /// A roof's torn edge: the top of its covering over the deck (no higher than its
 /// sheet), and how far below the deck top it runs, through the deck and a lath.
 const COVER_TOP: f64 = 0.004;
+/// How far down the torn covering's colour runs into a roof's torn edge.
+const COVER_LIP: f64 = 0.05;
 const DECK_EDGE: f64 = 0.06;
 /// Splinters along a torn edge: one about every this many metres.
 const SPLINTER_SPACING: f64 = 0.38;
@@ -385,16 +387,28 @@ pub(super) fn roof_breaks(
         let n = outward(&shape.region, a, b);
         let facing = plane.s * n.x + plane.t * n.y;
         let depth = roof.thick + DECK_EDGE;
-        // The torn covering is its own colour, flush with it, and the deck under it
-        // dark, so a crack shows no seam across the roof before it opens.
+        // The torn covering is its own colour, flush with it and on down into the
+        // deck, and only below that dark, so a crack that has barely parted shows no
+        // black seam across the roof: the held slabs settle apart by millimetres
+        // before the roof gives.
         kit.quad(
             Surface::Roof,
-            [at(a, COVER_TOP), at(b, COVER_TOP), at(b, 0.0), at(a, 0.0)],
+            [
+                at(a, COVER_TOP),
+                at(b, COVER_TOP),
+                at(b, -COVER_LIP),
+                at(a, -COVER_LIP),
+            ],
             facing,
         );
         kit.quad(
             Surface::Dark,
-            [at(a, 0.0), at(b, 0.0), at(b, -depth), at(a, -depth)],
+            [
+                at(a, -COVER_LIP),
+                at(b, -COVER_LIP),
+                at(b, -depth),
+                at(a, -depth),
+            ],
             facing,
         );
         let length = (b - a).length();
