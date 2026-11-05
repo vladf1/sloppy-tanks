@@ -1112,9 +1112,9 @@ impl HouseStructure {
                                 links.push((i, j, share, 0.0));
                                 links.push((j, i, share, 0.0));
                             }
-                            // The stack stands on the roof it comes through.
+                            // The stack stands on the roof it comes through, and
+                            // carries none of it.
                             (PartKind::Chimney, _) if touching(a, b) => {
-                                links.push((i, j, LOOSE_TIE, 0.0));
                                 links.push((j, i, REST, 0.0));
                             }
                             _ => {}
@@ -1963,6 +1963,53 @@ mod tests {
             for (index, part) in structure.parts.iter().enumerate() {
                 if matches!(part.kind, PartKind::Ridge | PartKind::Gable) {
                     assert!(falling.contains(index), "{:?}: {:?} {index} stands", design.style.form, part.kind);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_slope_over_a_gone_eave_wall_and_gable_does_not_hang_from_the_chimney() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            for (side, slope) in [(2, HousePart::RightRoof), (3, HousePart::LeftRoof)] {
+                for gable in [0, 1] {
+                    // The eave wall gone but for one column in its middle, and one end wall
+                    // with its gable.
+                    let middle = (0..structure.parts.len())
+                        .filter(|&index| structure.parts[index].wall == Some(side))
+                        .min_by(|&a, &b| {
+                            let z = |index: usize| structure.parts[index].center().z.abs();
+                            z(a).total_cmp(&z(b))
+                        })
+                        .unwrap();
+                    let column = (structure.parts[middle].min.z, structure.parts[middle].max.z);
+                    let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                        let part = &structure.parts[index];
+                        let in_column = (part.min.z - column.0).abs() < 1e-6 && (part.max.z - column.1).abs() < 1e-6;
+                        (part.wall == Some(side) && !in_column) || part.wall == Some(gable)
+                    }));
+                    let down = gone.union(&structure.unsupported(&gone));
+                    // The chimney carries nothing of the roof round it.
+                    assert!(
+                        structure
+                            .supports
+                            .iter()
+                            .flatten()
+                            .all(|support| support.by as usize != CHIMNEY_PART),
+                        "the chimney holds a part up"
+                    );
+                    for (index, part) in structure.parts.iter().enumerate() {
+                        if part.slope.is_some_and(|(over, _)| over == slope) {
+                            assert!(
+                                down.contains(index),
+                                "{:?} side {side} gable {gable}: sheet {index} at {:?}..{:?} hangs",
+                                design.style.form,
+                                part.min,
+                                part.max
+                            );
+                        }
+                    }
                 }
             }
         }
