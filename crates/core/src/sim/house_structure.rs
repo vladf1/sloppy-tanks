@@ -826,11 +826,22 @@ impl HouseStructure {
                     continue;
                 }
                 let mut share = support_share(a.kind, b.kind, relation);
+                // A floor's joists run across the cottage (along x) and bear on the
+                // eave walls' plates; a gable wall's plate runs along a strip's side.
+                let joists = relation == Relation::Beside
+                    && (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate)
+                    && b.wall.is_some_and(|wall| wall >= 2);
+                if relation == Relation::Beside
+                    && (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate)
+                    && !joists
+                {
+                    share = LOOSE_TIE;
+                }
                 // What seats it: the plan it lies on, or the length a floor's
                 // joists sit along a plate.
                 let seat = match relation {
                     Relation::Below => plan_overlap(0) * plan_overlap(2),
-                    Relation::Beside if (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate) => plan_overlap(0).max(plan_overlap(2)),
+                    Relation::Beside if joists => plan_overlap(0).max(plan_overlap(2)),
                     _ => 0.0,
                 };
                 let end = match (a.kind, relation) {
@@ -850,7 +861,7 @@ impl HouseStructure {
                     }
                     // A floor strip's joists span from one eave wall's plate to the
                     // other's: off one, it does not cantilever off the other.
-                    (PartKind::Floor, Relation::Beside) if b.kind == PartKind::Plate => {
+                    (PartKind::Floor, Relation::Beside) if joists => {
                         if b.center().x < a.center().x {
                             End::A
                         } else {
@@ -1506,6 +1517,9 @@ enum Relation {
 fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
     use PartKind::*;
     match relation {
+        // A floor strip's joists bear on the inner wall in passing: they span from
+        // plate to plate, and do not stand on the partition alone like a table.
+        Relation::Below if (of, by) == (Floor, Partition) => LOOSE_TIE,
         Relation::Below => REST,
         // A beam carries what lies on it; it does not hang from it.
         Relation::Above => match of {
@@ -1942,6 +1956,22 @@ mod tests {
             for (index, part) in structure.parts.iter().enumerate() {
                 if matches!(part.kind, PartKind::Ridge | PartKind::Chimney) {
                     assert!(falling.contains(index), "{:?}: {:?} {index} stands bare", design.style.form, part.kind);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_attic_floor_off_one_eave_wall_does_not_stand_on_the_partition() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            let gone = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| structure.parts[index].wall == Some(2)),
+            );
+            let falling = structure.unsupported(&gone);
+            for (index, part) in structure.parts.iter().enumerate() {
+                if part.kind == PartKind::Floor && (part.max.y - structure.roof.wall).abs() < CONTACT {
+                    assert!(falling.contains(index), "{:?}: attic strip {index} stands", design.style.form);
                 }
             }
         }
