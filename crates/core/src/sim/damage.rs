@@ -12,7 +12,7 @@ use super::combat_rules::{COMBAT, MINE};
 use super::data::{group, weapon};
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
-use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed, is_roof_mark};
+use super::house_layout::{BREACH_REACH, HOUSE_HEAP, HouseDesign, heap_seed, is_roof_mark};
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
@@ -49,6 +49,9 @@ const ROOF_MARK_MERGE: f64 = 0.55;
 /// the largest a breach grows: by then it has torn out the wall between its openings.
 const HOUSE_MARK_GROWTH: f64 = 0.4;
 const HOUSE_MARK_LARGEST: f64 = 8.0;
+/// How much of a unit breach round its strike a shell beside a breach is sure to
+/// tear open as the breach grows over it.
+const HIT_COVER: f64 = 0.6;
 /// The most and least a single hit counts for, in standard shells.
 const HOUSE_MARK_SHELLS: (f64, f64) = (0.5, 2.0);
 
@@ -79,10 +82,52 @@ fn mark_house(cover: &mut Cover, amount: f64, impact: Option<Point3>) {
     match nearest {
         Some(index) if reach(&marks[index]) < 0.0 || marks.len() >= MAX_HOUSE_MARKS => {
             let mark = &mut marks[index];
-            mark.size = (mark.size + HOUSE_MARK_GROWTH * shells).min(HOUSE_MARK_LARGEST);
+            let grown = mark.size + HOUSE_MARK_GROWTH * shells;
+            if roof {
+                mark.size = grown.min(HOUSE_MARK_LARGEST);
+            } else {
+                grow_toward(mark, &hit, grown);
+            }
         }
         _ => marks.push(hit),
     }
+}
+
+/// Grow a wall breach to `grown` and on over the shell that struck beside it: its
+/// box ([`BREACH_REACH`] per unit of size about its centre) is stretched along the
+/// wall and up it to take in both what it was and [`HIT_COVER`] of a unit round the
+/// strike, and centred on the union. So the wall changes where each shell lands, and
+/// a breach only ever grows: a shell on its middle grows it in place, one at its edge
+/// tears it on toward the strike, never wider somewhere else.
+fn grow_toward(mark: &mut TimberHit, hit: &TimberHit, grown: f64) {
+    let (dx, dz) = (hit.x - mark.x, hit.z - mark.z);
+    let apart = dx.hypot(dz);
+    let (along, up) = BREACH_REACH;
+    // Along the wall (toward the strike) and up it: the union's middle (from the
+    // centre), its half length and how far off the breach's middle the strike is
+    // (0 on it, 1 at its edge or past it).
+    let span = |offset: f64, reach: f64| {
+        let low = (-reach * mark.size).min(offset - reach * HIT_COVER);
+        let high = (reach * mark.size).max(offset + reach * HIT_COVER);
+        let off = (offset.abs() / (reach * mark.size)).min(1.0) * offset.signum();
+        ((low + high) / 2.0, (high - low) / 2.0, off)
+    };
+    let (middle, half, off) = span(apart, along);
+    let (rise, high, lift) = span(hit.y - mark.y, up);
+    mark.size = grown
+        .max(half / along)
+        .max(high / up)
+        .min(HOUSE_MARK_LARGEST);
+    // What it grows beyond the union goes toward the strike as far as the strike is
+    // off its middle: a shell on its middle grows it evenly, one at its edge keeps
+    // its far side where it was and tears it on past the strike.
+    let shift = middle + off * (along * mark.size - half).max(0.0);
+    let lift = rise + lift * (up * mark.size - high).max(0.0);
+    if apart > 1e-9 {
+        mark.x += dx / apart * shift;
+        mark.z += dz / apart * shift;
+    }
+    mark.y += lift;
 }
 
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and

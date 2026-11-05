@@ -89,7 +89,7 @@ const DORMER_HALF: f64 = 0.62;
 /// Shell holes: how far a breach reaches either way from where it was struck per
 /// unit of its mark's size (wider than tall, as siding tears along its courses), the
 /// reveal depth of the torn edge and how far the dark interior sits behind the face.
-const HOLE_REACH: (f64, f64) = (0.58, 0.45);
+const HOLE_REACH: (f64, f64) = crate::sim::house_layout::BREACH_REACH;
 const HOLE_EDGE: f64 = 0.14;
 const HOLE_BACK: f64 = 0.16;
 /// The smallest breach worth cutting (each side, metres): a hit with no more room
@@ -2515,12 +2515,33 @@ fn wall_holes(
                 }
             }
         }
-        let Some(bounds) = bounds else {
+        let Some(mut bounds) = bounds else {
             if let Some((k, _)) = nearest.filter(|(k, _)| !blasted.contains(k)) {
                 blasted.push(k);
             }
             continue;
         };
+        // The boards run on to the studs either side before they snap: each side of
+        // the breach reaches out to the next stud, where that keeps clear of what it
+        // must, so a breach is as wide as the studs it lost.
+        let mut blocking = keepouts.clone();
+        blocking.extend(
+            standing
+                .iter()
+                .filter(|k| !swallowed.contains(k) && !taken.contains(k))
+                .map(|&k| window_keepout(&windows[k])),
+        );
+        let studs = [
+            ((bounds[0] - 0.03) / STUD_SPACING).floor() * STUD_SPACING + 0.03,
+            ((bounds[2] + 0.03) / STUD_SPACING).ceil() * STUD_SPACING - 0.03,
+        ];
+        for (side, stud) in [(0, studs[0].max(limits[0])), (2, studs[1].min(limits[2]))] {
+            let mut wider = bounds;
+            wider[side] = stud;
+            if blocking.iter().all(|&r| !overlaps(wider, r)) {
+                bounds = wider;
+            }
+        }
         let seed = f64::from(design.variant) * 7.0 + i as f64 * 131.0 + f64::from(index as u32);
         let mut rows = torn_courses(&mut Random::new(seed), bounds, course);
         // The courses across a torn-out window run past its casing on both sides, so

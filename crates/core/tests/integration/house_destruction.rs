@@ -11,8 +11,8 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::damage::MAX_HOUSE_MARKS;
 use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
-    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, RoofBreaks, WALL_DEPTH,
-    heap_house, heap_seed, is_house_heap,
+    BREACH_REACH, HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, RoofBreaks,
+    WALL_DEPTH, heap_house, heap_seed, is_house_heap,
 };
 use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
@@ -898,4 +898,56 @@ fn every_piece_a_cottage_breaks_into_reaches_room_clients_by_name() {
             "{piece:?}"
         );
     }
+}
+
+/// A breach's box along its wall (centre ± [`BREACH_REACH`] per unit of size), as
+/// the model tears it, as (from, to) along `along` in the cottage's frame.
+fn breach_span(s: &Simulation, house: usize, mark: &TimberHit, along: DVec3) -> (f64, f64) {
+    let local = design(s, house).to_local(DVec3::new(mark.x, mark.y, mark.z));
+    let u = local.dot(along);
+    let reach = BREACH_REACH.0 * mark.size;
+    (u - reach, u + reach)
+}
+
+#[test]
+fn a_shell_beside_a_breach_tears_it_on_over_where_it_landed() {
+    let (mut s, house) = lone_cottage();
+    let d = design(&s, house);
+    let along = DVec3::X;
+    let first = DVec3::new(-0.6, 1.0, d.d / 2.0);
+    for _ in 0..4 {
+        shell_at(&mut s, house, first);
+    }
+    let marks = s.covers[house].timber_hits.clone();
+    assert_eq!(marks.len(), 1);
+    let before = breach_span(&s, house, &marks[0], along);
+    // Beside the breach, close enough to join it rather than open its own.
+    let beside = DVec3::new(-0.6 + 1.1, 1.0, d.d / 2.0);
+    let rng = s.rng.state;
+    shell_at(&mut s, house, beside);
+    assert_eq!(s.rng.state, rng);
+    let marks = s.covers[house].timber_hits.clone();
+    assert_eq!(marks.len(), 1, "it joined the breach");
+    let after = breach_span(&s, house, &marks[0], along);
+    // The breach now reaches over the strike and still covers all it did.
+    assert!(
+        after.0 <= before.0 + 1e-9 && after.1 >= before.1 - 1e-9,
+        "{before:?} {after:?}"
+    );
+    let reach = BREACH_REACH.0 * 0.5;
+    assert!(after.1 >= beside.x + reach, "{after:?} over {}", beside.x);
+    // It grew toward the strike, hardly out the other way.
+    assert!(
+        before.0 - after.0 < 0.25 * (after.1 - before.1),
+        "{before:?} {after:?}"
+    );
+    // A shell on its middle still grows it in place.
+    let middle = (after.0 + after.1) / 2.0;
+    shell_at(&mut s, house, DVec3::new(middle, 1.0, d.d / 2.0));
+    let marks = &s.covers[house].timber_hits;
+    let again = breach_span(&s, house, &marks[0], along);
+    assert!(
+        ((again.0 + again.1) / 2.0 - middle).abs() < 1e-6,
+        "{again:?}"
+    );
 }

@@ -683,7 +683,7 @@ const LYING: f32 = 2.2;
 /// settle in which it is (s), how close to level its face's normal must come to
 /// count as standing, and how fast (rad/s, m/s) it is tipped over the way it
 /// leans, or away from the footprint's middle onto open ground.
-const TOPPLE_WINDOW: (f64, f64) = (1.0, 5.0);
+const TOPPLE_WINDOW: (f64, f64) = (1.0, 6.0);
 const STANDING: f32 = 0.66;
 /// How near level (its top's normal's rise, cos 45°) a propped eave slab must come
 /// to be left as it leans.
@@ -708,7 +708,7 @@ const TOPPLE_SHOVE: f32 = 0.7;
 /// How far a standing shard's top must lean (sine of the angle) to fall that way,
 /// and how many times one is tipped before it is left as it rests.
 const LEANING: f32 = 0.08;
-const TOPPLES: u8 = 8;
+const TOPPLES: u8 = 10;
 /// A little lift (m/s) with each tip, to clear what the shard's foot is caught on.
 const TOPPLE_LIFT: f32 = 0.6;
 const LOOSE_LIFE: f64 = 2.5;

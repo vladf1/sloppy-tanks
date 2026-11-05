@@ -37,6 +37,9 @@ const CHIMNEY_STRIKE: f64 = 1.4;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
+/// How far (m) a wall breach reaches from its mark's centre per unit of the mark's
+/// size, along the wall and up it (the model tears it to this box).
+pub const BREACH_REACH: (f64, f64) = (0.58, 0.45);
 /// Houses this tall to the ridge or taller have two floors, a second row of
 /// windows over the first and a belt course between them, and their eaves sit
 /// this far up the ridge height whatever their type's attic.
