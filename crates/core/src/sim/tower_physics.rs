@@ -30,7 +30,7 @@ use super::navigation::Footprint;
 use super::physics::{ContactForce, from_vector, interaction_groups, vector};
 use super::simulation::Simulation;
 use super::tower_structure::{
-    DECKS, FACES, PartShape, RAILINGS, TowerFall, TowerPartKind, tower_structure,
+    DECKS, FACES, LOWER_LEGS, PartShape, RAILINGS, TowerFall, TowerPartKind, tower_structure,
 };
 use super::types::{Cover, CoverKind, Fragment, SimEvent, SimEventType, Team};
 
@@ -257,6 +257,23 @@ pub fn tower_ground_footprints(cover: &Cover, out: &mut Vec<Footprint>) {
             });
         }
     }
+}
+
+/// Where to shoot watchtower `cover` from `from` to bring it down: its nearest leg still
+/// standing in its shoe, or `None` for other cover or a tower with none.
+pub fn tower_breach_point(cover: &Cover, from: Vec2) -> Option<Vec2> {
+    let state = cover.tower.as_ref()?;
+    LOWER_LEGS
+        .iter()
+        .filter(|&&leg| state.standing(leg))
+        .map(|&leg| {
+            let center = tower_structure().parts[leg].center;
+            Vec2::new(cover.x + center.x, cover.z + center.z)
+        })
+        .min_by(|a, b| {
+            let gap = |p: &Vec2| (p.x - from.x).hypot(p.z - from.z);
+            gap(a).total_cmp(&gap(b))
+        })
 }
 
 /// Whether `fragment` is a body of a tower's fallen parts.

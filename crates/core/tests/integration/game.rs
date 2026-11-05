@@ -506,6 +506,34 @@ fn bots_breach_timber_on_their_route_but_never_a_cottage() {
     assert!(!breach(CoverDef::house(0.0, 12.0, 5.0, 6.0, 4.6, 0xb87b4c)));
 }
 
+/// A bot breaching a watchtower on its route aims at its nearest leg, where a shell
+/// strikes, not between the legs, where one flies through.
+#[test]
+fn bots_breach_a_watchtower_at_its_nearest_leg() {
+    let mut s = game();
+    clear(&mut s);
+    let bot = place(&mut s, 2, 0.0, 0.0);
+    place(&mut s, 1, 40.0, 40.0);
+    let brain = &mut s.tanks[bot].brain;
+    brain.target = 1;
+    brain.memory = 0.0;
+    brain.decision = 10.0;
+    brain.fire_delay = 0.0;
+    brain.goal = Vec2::new(0.0, 20.0);
+    s.add_cover(&CoverDef::tower(0.0, 12.0));
+    // The nearer legs stand at z 10.95, x ±2.55: either is about 0.23 rad off +z.
+    let mut aim = 0.0;
+    for _ in 0..60 {
+        let command = bot_command(&mut s, bot, STEP);
+        aim = command.aim;
+        s.tanks[bot].aim = aim;
+    }
+    assert!(
+        (aim.abs() - 2.55f64.atan2(10.95)).abs() < 0.03,
+        "aims at a leg: {aim}"
+    );
+}
+
 #[test]
 fn breaching_checks_the_standard_shell_lane_even_when_spread_ammo_is_preferred() {
     let mut s = game();

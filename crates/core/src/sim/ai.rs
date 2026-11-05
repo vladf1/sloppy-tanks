@@ -12,6 +12,7 @@ use super::hitboxes::{HullAt, ShotProbe, tank_hit_time};
 use super::humvee_tactics::{humvee_can_fire, humvee_holding_position, steady_humvee_shot};
 use super::math::{Vec2, angle_delta, distance};
 use super::simulation::Simulation;
+use super::tower_physics::tower_breach_point;
 use super::types::{AmmoSelection, BotMode, CoverKind, VehicleCommand, VehicleKind, Weapon};
 
 const BREACH_RANGE: f64 = 14.0;
@@ -168,7 +169,8 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         }
         _ => command.aim = turn(mx.atan2(mz)),
     }
-    // Deliberately clear nearby weak timber and towers that obstruct a useful route;
+    // Deliberately clear nearby weak timber and towers that obstruct a useful route (a
+    // tower by its nearest leg);
     // a cottage only opens where its walls break, so bots drive round it (or through the
     // gaps navigation finds) instead.
     // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
@@ -189,10 +191,12 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
                     < BREACH_ROUTE_ANGLE
         });
         if let Some(weak) = weak {
-            let desired = (weak.x - position.x).atan2(weak.z - position.z);
+            // A watchtower falls when a leg goes: aim at its nearest, not between them.
+            let at = tower_breach_point(weak, position).unwrap_or(Vec2::new(weak.x, weak.z));
+            let desired = (at.x - position.x).atan2(at.z - position.z);
             command.aim = turn(desired);
             command.fire = angle_delta(command.aim, desired).abs() < BREACH_FIRE_ANGLE;
-            firing_range = distance(position, Vec2::new(weak.x, weak.z));
+            firing_range = distance(position, at);
             breaching = true;
         }
     }
