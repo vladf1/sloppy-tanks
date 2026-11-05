@@ -99,12 +99,14 @@ const CONCRETE_PAINT: u32 = 0x9a968c;
 const STEEL_PAINT: u32 = 0x5d6266;
 
 /// Where a falling tower body has got to: its velocity last tick (to tell a hard
-/// landing), whether it has landed (a landed body never breaks again), and since when
-/// it has lain still and whether it has come to rest for good.
+/// landing), whether it has landed (a landed body never breaks again) and when, and
+/// since when it has lain still and whether it has come to rest for good.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TowerLanding {
     pub velocity: Point3,
     pub landed: bool,
+    /// The match time (s) it landed at.
+    pub landed_at: f64,
     pub still_since: Option<f64>,
     pub rested: bool,
 }
@@ -765,6 +767,7 @@ impl Simulation {
             piece.tower_landing = Some(TowerLanding {
                 velocity: from_vector(self.world.bodies[body].linvel()),
                 landed: true,
+                landed_at: self.elapsed,
                 ..TowerLanding::default()
             });
             self.fragments.push(piece);
@@ -828,16 +831,24 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                 simulation.break_tower_fragment(index, split);
                 continue;
             }
-            simulation.fragments[index]
+            // A body that lands whole (a lone part, or a frame the budget has no room
+            // to break) settles from now, however long it has been falling.
+            let landing = simulation.fragments[index]
                 .tower_landing
-                .get_or_insert_default()
-                .landed = true;
+                .get_or_insert_default();
+            landing.landed = true;
+            landing.landed_at = simulation.elapsed;
         }
         let elapsed = simulation.elapsed;
         let fragment = &mut simulation.fragments[index];
         let body = &mut simulation.world.bodies[handle];
         let landing = fragment.tower_landing.get_or_insert_default();
         landing.velocity = now;
+        let since_landing = if landing.landed {
+            elapsed - landing.landed_at
+        } else {
+            0.0
+        };
         let can_rest = landing.landed || parts.len() == 1;
         if !landing.rested && (can_rest || age > REST_AFTER) {
             let still = body.linvel().length() < REST_SPEED && body.angvel().length() < REST_SPIN;
@@ -851,16 +862,12 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                 .is_some_and(|since| elapsed - since >= REST_HOLD);
             // A landed piece has done its rocking within a moment of the landing: it
             // rests then, still or not, and no longer turns.
-            if can_rest && (held || (landing.landed && age > LANDED_REST)) {
+            if can_rest && (held || since_landing > LANDED_REST) {
                 // It neither turns nor rises any more: shoved, it slides. The pile clears
                 // from the top, so nothing it lies on goes from under it first.
                 landing.rested = true;
                 body.lock_rotations(true, false);
-                body.set_enabled_translations(true, false, true, false);
                 body.set_angvel(rapier3d::prelude::Vector::ZERO, false);
-                let mut velocity = body.linvel();
-                velocity.y = 0.0;
-                body.set_linvel(velocity, false);
                 // The pile clears from the top down, so nothing fades through what
                 // lies over it.
                 let height = f64::from(body.center_of_mass().y).max(0.0);
@@ -868,7 +875,16 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
                     .max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
             }
         }
-        let settled = landing.rested || (landing.landed && age > LANDED_SETTLE);
+        // A resting piece loses any upward speed each tick rather than having its height
+        // locked: between two pieces locked in height, a contact whose normal is all but
+        // vertical has almost no give along it, and the solver's impulse there flung the
+        // pile sideways at hundreds of m/s.
+        if landing.rested && body.linvel().y > 0.0 {
+            let mut velocity = body.linvel();
+            velocity.y = 0.0;
+            body.set_linvel(velocity, false);
+        }
+        let settled = landing.rested || since_landing > LANDED_SETTLE;
         let (linear, angular) = house_debris_damping(if settled { f64::INFINITY } else { age });
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
