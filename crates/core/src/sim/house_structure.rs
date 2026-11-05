@@ -678,7 +678,8 @@ impl HouseStructure {
     }
 
     /// The wall across the rooms of the ground floor, with a doorway in the middle,
-    /// up to the floor over it.
+    /// from the ground floor's boards (laid on the ground inside the footing) up to the
+    /// floor over it.
     fn build_partition(&mut self) {
         let inside_x = self.design.w / 2.0 - WALL_DEPTH;
         let z = self.design.d * PARTITION_AT;
@@ -697,7 +698,7 @@ impl HouseStructure {
                 let (x0, x1) = (side * a, side * b);
                 self.parts.push(StructurePart::cuboid(
                     PartKind::Partition,
-                    DVec3::new(x0.min(x1), PLINTH, z - PARTITION_THICKNESS / 2.0),
+                    DVec3::new(x0.min(x1), 0.0, z - PARTITION_THICKNESS / 2.0),
                     DVec3::new(x0.max(x1), top, z + PARTITION_THICKNESS / 2.0),
                     Vec::new(),
                 ));

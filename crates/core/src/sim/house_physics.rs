@@ -127,7 +127,11 @@ pub fn part_collider(layout: &HouseStructure, index: usize, inset: f64) -> Colli
     let part = &layout.parts[index];
     let design = &layout.design;
     let builder = if part.cuboid {
-        let (a, b) = (design.to_world(part.min), design.to_world(part.max));
+        // A wall's lowest parts and the posts stand on their footing, which goes with
+        // them: their colliders reach the ground.
+        let footed = part.grounded && (part.wall.is_some() || part.kind == PartKind::Post);
+        let bottom = if footed { part.min.with_y(0.0) } else { part.min };
+        let (a, b) = (design.to_world(bottom), design.to_world(part.max));
         let (min, max) = (a.min(b), a.max(b));
         let half = ((max - min) / 2.0 - DVec3::splat(inset)).max(DVec3::splat(0.01));
         let center = (min + max) / 2.0;

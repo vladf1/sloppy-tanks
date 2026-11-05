@@ -818,16 +818,20 @@ fn door_steps(kit: &mut Kit<Surface>, design: &HouseDesign) {
 }
 
 /// The fieldstone plinth and the steps up to the door: a cottage's first section
-/// ([`PartsCut`]).
+/// ([`PartsCut`]). A structural cottage's plinth goes with the wall parts it carries
+/// (`house_parts_model::footings`), so a breach a tank fits through reaches the ground.
 fn house_base(parts: &mut Parts, design: &HouseDesign) {
     let (w, d) = (design.w, design.d);
+    let split = parts.split;
     let base = parts.ground();
-    base.chamfer_block(
-        Surface::Stone,
-        DVec3::new(w + 0.1, PLINTH, d + 0.1),
-        0.03,
-        DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
-    );
+    if !split {
+        base.chamfer_block(
+            Surface::Stone,
+            DVec3::new(w + 0.1, PLINTH, d + 0.1),
+            0.03,
+            DMat4::from_translation(DVec3::new(0.0, PLINTH / 2.0, 0.0)),
+        );
+    }
     door_steps(base, design);
 }
 

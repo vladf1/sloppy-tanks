@@ -28,8 +28,12 @@ use crate::sim::math::Random;
 const OUTER: f64 = 25.0;
 /// Two cell edges this close lie on one line.
 const ON_LINE: f64 = 1e-6;
-/// An attic floor's boards over its plastered ceiling (m).
+/// An attic floor's boards over its plastered ceiling (m), and the ground floor's.
 const FLOOR_BOARDS: f64 = 0.04;
+/// How far (m) the footing stands proud of the wall's face.
+const PLINTH_LIP: f64 = 0.05;
+/// A part's side this close (m) to the cottage's outline is on its face.
+const ON_FACE: f64 = 0.01;
 
 /// The standing cottage for a cottage cover box, drawn from its parts not in
 /// `broken`, with its plinth and yard.
@@ -41,19 +45,46 @@ pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64
         (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
     );
     let mut cottage = parts_node(&layout, &pieces, &standing);
-    // The ground floor's boards over the plinth, which a gutted cottage shows.
+    // The ground floor's boards laid on the ground inside the footing, which a gutted
+    // cottage shows and a tank driving in rolls over, and the footing under the parts
+    // still standing.
     let mut floor = Kit::new();
     floor.block(
         Surface::Wood,
         DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
-        DMat4::from_translation(DVec3::new(0.0, PLINTH + FLOOR_BOARDS / 2.0, 0.0)),
+        DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
     );
+    footings(&mut floor, &layout, &standing);
     paint_cottage(&mut cottage, floor.finish_scaled(cottage_scale(&design)), &design, &pieces.palette);
     flatten_into(&mut cottage, pieces.ground);
     // One draw per finish for the whole cottage, its plinth and yard with it.
     batch(&mut cottage);
     cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
     group.children.push(cottage);
+}
+
+/// The fieldstone footing under each of `standing`'s parts on the ground (the outer walls'
+/// lowest parts and the corner posts), from the ground to the plinth's top and a little
+/// proud of the wall's face: one course of the plinth that goes with its part.
+fn footings(kit: &mut Kit<Surface>, layout: &HouseStructure, standing: &PartSet) {
+    let half = DVec2::new(layout.design.w / 2.0, layout.design.d / 2.0);
+    for index in standing.iter() {
+        let part = &layout.parts[index];
+        if !part.grounded || !(part.wall.is_some() || part.kind == PartKind::Post) {
+            continue;
+        }
+        let (mut min, mut max) = (part.min, part.max);
+        for (axis, plan) in [(0, 0), (2, 1)] {
+            if max[axis] >= half[plan] - ON_FACE {
+                max[axis] += PLINTH_LIP;
+            }
+            if min[axis] <= -half[plan] + ON_FACE {
+                min[axis] -= PLINTH_LIP;
+            }
+        }
+        let (min, max) = (min.with_y(0.0), max.with_y(PLINTH));
+        kit.block(Surface::Stone, max - min, DMat4::from_translation((min + max) / 2.0));
+    }
 }
 
 /// The parts `parts` of the cottage for a cover box, fallen together: drawn about the
