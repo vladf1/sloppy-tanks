@@ -70,7 +70,9 @@ const BITE_FIBRES: usize = 9;
 /// How far (m) over the bite's middle a shot-out leg's stub stands, ragged and charred.
 const SHOT_STUB_OVER: f64 = 0.1;
 /// Lumps of torn wood in a bite's hollow and teeth on each side of its rim.
-const BITE_LUMPS: usize = 9;
+const BITE_LUMPS: usize = 5;
+/// Bundles of fibres across a bite, each torn to a depth of its own.
+const BITE_BUNDLES: usize = 7;
 const BITE_TEETH: usize = 5;
 /// Scorch fading out from a burst's mark, darkest first, and a stub charred through.
 const SCORCH_FADE: [u32; 3] = [0x231a14, 0x3e3024, 0x5f4b37];
@@ -82,7 +84,11 @@ const SPLINTERS: usize = 5;
 /// Where (a share of its length) each landed leg's upper length cracks through, and
 /// how far (rad) a cracked member kinks there.
 const LEG_CRACK: [f64; 4] = [0.45, 0.6, 0.35, 0.52];
-const CRACK_KINK: f64 = 0.22;
+const CRACK_KINK: f64 = 0.6;
+/// The length (m) a cracked member loses at its break, and the share of what lies
+/// beyond the break it keeps.
+const CRACK_GAP: f64 = 0.18;
+const CRACK_KEEP: f64 = 0.8;
 /// How far (m) a joined X-brace panel's bent diagonal bows out of it.
 const PANEL_BOW: f64 = 0.22;
 /// A deck plank snaps within this far (m) of the cut, and this share of planks is lost.
@@ -97,11 +103,22 @@ const EAVE_BEND_AT: f64 = 0.85;
 const EAVE_BEND: f64 = 0.55;
 /// The sheet torn back off the back slope: its span along x, its length down the slope
 /// (m) and the turns (rad) of its two halves curling back over it.
-const TORN_SHEET_X: (f64, f64) = (-2.0, -0.7);
-const TORN_SHEET_LENGTH: f64 = 1.3;
+const TORN_SHEET_X: (f64, f64) = (-2.3, -0.5);
+const TORN_SHEET_FRONT_X: (f64, f64) = (-1.3, 0.4);
+/// How deep (m) a landed roof's sheet is dented, and the facets its shell is cut into:
+/// columns along a long slope and rows up every slope.
+const ROOF_DENT: f64 = 0.16;
+const ROOF_COLUMNS: usize = 12;
+const ROOF_ROWS: usize = 5;
+/// How far (m) a torn cabin wall is racked at its top, and the height (m) and angle
+/// (rad) its top is bent out at.
+const WALL_RACK: f64 = 0.35;
+const WALL_BEND_Y: f64 = 6.55;
+const WALL_BEND: f64 = 0.4;
+const TORN_SHEET_LENGTH: f64 = 1.7;
 const TORN_SHEET_CURL: [f64; 2] = [2.3, 3.2];
 /// Scrapes through the paint on each long slope of a landed roof.
-const ROOF_SCRAPES: usize = 7;
+const ROOF_SCRAPES: usize = 10;
 /// A torn-off shutter's split: how far (rad) its half beyond the crack is bent back.
 const SHUTTER_SPLIT: f64 = 0.45;
 /// The bare timber of a landed roof's underside: its boards and its rafters.
@@ -340,6 +357,38 @@ fn bitten_leg(
         BITE_Y,
         z,
     );
+    // The hollow's outline: the post's fibres in bundles across it, each torn back to a
+    // depth and a height of its own, so no edge of it runs straight.
+    for k in 0..BITE_BUNDLES {
+        let across = -POST / 2.0 + POST * (k as f64 + 0.5) / BITE_BUNDLES as f64;
+        let depth = rng.range(0.15, 0.95) * bite;
+        let (from, to) = (bottom + rng.range(0.0, 0.1), top - rng.range(0.0, 0.1));
+        let at = DVec3::new(face + sx * depth / 2.0, (from + to) / 2.0, z + across);
+        put(
+            group,
+            timber_member(
+                DVec3::new(depth, to - from, POST / BITE_BUNDLES as f64 - 0.004),
+                next(),
+                if k % 2 == 0 { SCORCH } else { SCORCH_FADE[1] },
+            ),
+            at.x,
+            at.y,
+            at.z,
+        );
+        // Hanging from the rims: torn ends reaching into the hollow.
+        for (rim, down) in [(top, -1.0), (bottom, 1.0)] {
+            let reach = rng.range(0.02, 0.1);
+            let y = rim + down * reach / 2.0;
+            let out = rng.range(depth, bite);
+            put(
+                group,
+                timber_member(DVec3::new(out, reach, POST / BITE_BUNDLES as f64 - 0.01), next(), SCORCH_FADE[2]),
+                face + sx * out / 2.0,
+                y,
+                z + across,
+            );
+        }
+    }
     // The hollow's floor: torn wood in uneven lumps, charred in patches.
     for k in 0..BITE_LUMPS {
         let y = rng.range(bottom + 0.02, top - 0.02);
@@ -457,12 +506,15 @@ fn cracked(group: &mut Node, member: &Member, at: f64, broken: [bool; 2], seed: 
     let crack = member.from.lerp(member.to, at);
     let along = (member.to - member.from).normalize();
     let normal = (member.normal - along * member.normal.dot(along)).normalize();
-    let bent = crack + DQuat::from_axis_angle(normal.cross(along), CRACK_KINK) * (member.to - crack);
+    // A length is lost at the break, and what is left beyond it hangs off at an angle.
+    let beyond = crack + along * CRACK_GAP;
+    let turn = DQuat::from_axis_angle(normal.cross(along), CRACK_KINK);
+    let bent = beyond + turn * (member.to - beyond) * CRACK_KEEP;
     snapped(group, &Member { to: crack, ..*member }, [broken[0], true], seed, color);
     snapped(
         group,
         &Member {
-            from: crack,
+            from: beyond,
             to: bent,
             ..*member
         },
@@ -545,13 +597,34 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
             deck_piece(group, sign, from, to, Some(seed));
         }
         PieceLook::Wall { wall } => {
+            // Racked out of square, its top torn half off the corners and bent out.
             let mut own = Kit::new();
             cabin_wall(&mut own, wall, true);
+            let (frame, _) = cabin_frames()[wall];
+            let along = frame.transform_vector3(DVec3::X);
+            let face = frame.transform_point3(DVec3::ZERO);
+            let rack = if wall % 2 == 0 { WALL_RACK } else { -WALL_RACK };
+            let bend = Fold {
+                pivot: DVec3::new(face.x, WALL_BEND_Y, face.z),
+                axis: along,
+                side: DVec3::Y,
+                angle: -WALL_BEND,
+            };
             let mut meshes = own.finish_scaled(uv_per_metre);
             for (surface, mesh) in &mut meshes {
-                if *surface == Surface::Glass {
-                    *mesh = Arc::new(shattered(mesh, index as u32));
+                let mut bent: Mesh = if *surface == Surface::Glass {
+                    shattered(mesh, index as u32)
+                } else {
+                    (**mesh).clone()
+                };
+                for position in &mut bent.positions {
+                    let p = DVec3::from_array(position.map(f64::from));
+                    let lift = ((p.y - DECK_TOP) / (CABIN_TOP - DECK_TOP)).clamp(0.0, 1.0);
+                    let racked = p + along * rack * lift;
+                    *position = bend.point(racked).as_vec3().to_array();
                 }
+                flat_normals(&mut bent);
+                *mesh = Arc::new(bent);
             }
             add_building(group, meshes, &palette(color));
         }
@@ -578,10 +651,12 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
         PieceLook::Roof => {
             let mut own = Kit::new();
             hip_roof(&mut own, true);
-            torn_sheet(&mut own);
+            for (side, (x0, x1)) in [(-1.0, TORN_SHEET_X), (1.0, TORN_SHEET_FRONT_X)] {
+                torn_sheet(&mut own, side, x0, x1);
+            }
             scrapes(&mut own);
             let folds = roof_folds();
-            add_building(group, folded(own, &folds), &palette(color));
+            add_building(group, crumpled(own, &folds), &palette(color));
             roof_underside(group, seed, &folds);
         }
     }
@@ -673,6 +748,103 @@ fn folded(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surfa
     meshes
 }
 
+/// A kit's meshes dented ([`dent`]) and bent by `folds`, each triangle shaded flat so
+/// the creases and dents catch the light.
+fn crumpled(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surface> {
+    let mut meshes = kit.finish_scaled(uv_per_metre);
+    for (_, mesh) in &mut meshes {
+        let mut bent: Mesh = (**mesh).clone();
+        for position in &mut bent.positions {
+            let p = DVec3::from_array(position.map(f64::from));
+            let (p, _) = bend(folds, dent(p), DVec3::Y);
+            *position = p.as_vec3().to_array();
+        }
+        flat_normals(&mut bent);
+        *mesh = Arc::new(bent);
+    }
+    meshes
+}
+
+/// Each triangle's normal its face's, kept on the side it faced.
+fn flat_normals(mesh: &mut Mesh) {
+    let points = mesh.positions.clone();
+    for (corners, normals) in points
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(mesh.normals.as_chunks_mut::<3>().0)
+    {
+        let at = |i: usize| DVec3::from_array(corners[i].map(f64::from));
+        let face = (at(1) - at(0)).cross(at(2) - at(0));
+        if face.length_squared() < 1e-12 {
+            continue;
+        }
+        let was = DVec3::from_array(normals[0].map(f64::from));
+        let face = face.normalize() * if face.dot(was) < 0.0 { -1.0 } else { 1.0 };
+        *normals = [face.as_vec3().to_array(); 3];
+    }
+}
+
+/// Where a landed roof's sheet is dented in or bulged out where it struck: a smooth
+/// field over the plan, pushed along the slope's normal, none at the eave band.
+fn dent(p: DVec3) -> DVec3 {
+    let (ex, ez) = (CABIN_X + ROOF_OVERHANG, CABIN_Z + ROOF_OVERHANG);
+    let top = CABIN_TOP + ROOF_EDGE;
+    if p.y < top - 0.005 || p.x.abs() > ex + 0.1 || p.z.abs() > ez + 0.1 {
+        return p;
+    }
+    let ridge = ex - ez;
+    let normal = if p.z.abs() >= p.x.abs() - ridge {
+        DVec3::new(0.0, 1.0, p.z.signum() * ROOF_PITCH)
+    } else {
+        DVec3::new(p.x.signum() * ROOF_PITCH, 1.0, 0.0)
+    }
+    .normalize();
+    let field = (1.7 * p.x + 0.3).sin() * (2.3 * p.z + 1.1).cos()
+        + 0.6 * (3.1 * p.x - 2.0 * p.z + 0.7).sin()
+        - 0.5;
+    p + normal * ROOF_DENT * field
+}
+
+/// The landed roof's sheet as a fine shell: each slope a grid of facets from the eave
+/// to the ridge or hip, the fascia band round it and its underside.
+fn roof_shell(kit: &mut Kit<Surface>, ex: f64, ez: f64, ridge_x: f64, eave: f64, top: f64, apex: f64) {
+    let centre = DVec3::new(0.0, eave, 0.0);
+    let facet = |kit: &mut Kit<Surface>, corners: [DVec3; 4]| {
+        let middle = corners.iter().copied().sum::<DVec3>() / 4.0;
+        let face = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+        let facing = if face.dot(middle - centre) < 0.0 { -face } else { face };
+        kit.quad(Surface::Roof, corners, facing);
+    };
+    // A slope from its eave edge `a`-`b` up to its ridge edge `c`-`d`.
+    let slope = |kit: &mut Kit<Surface>, a: DVec3, b: DVec3, c: DVec3, d: DVec3, columns: usize| {
+        let at = |u: f64, v: f64| a.lerp(b, u).lerp(d.lerp(c, u), v);
+        for i in 0..columns {
+            for j in 0..ROOF_ROWS {
+                let (u0, u1) = (i as f64 / columns as f64, (i + 1) as f64 / columns as f64);
+                let (v0, v1) = (j as f64 / ROOF_ROWS as f64, (j + 1) as f64 / ROOF_ROWS as f64);
+                facet(kit, [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)]);
+            }
+        }
+    };
+    let p = |x: f64, y: f64, z: f64| DVec3::new(x, y, z);
+    slope(kit, p(-ex, top, ez), p(ex, top, ez), p(ridge_x, apex, 0.0), p(-ridge_x, apex, 0.0), ROOF_COLUMNS);
+    slope(kit, p(ex, top, -ez), p(-ex, top, -ez), p(-ridge_x, apex, 0.0), p(ridge_x, apex, 0.0), ROOF_COLUMNS);
+    slope(kit, p(ex, top, ez), p(ex, top, -ez), p(ridge_x, apex, 0.0), p(ridge_x, apex, 0.0), ROOF_ROWS);
+    slope(kit, p(-ex, top, -ez), p(-ex, top, ez), p(-ridge_x, apex, 0.0), p(-ridge_x, apex, 0.0), ROOF_ROWS);
+    // The fascia band and the underside under the boards.
+    let corners = [p(ex, 0.0, ez), p(ex, 0.0, -ez), p(-ex, 0.0, -ez), p(-ex, 0.0, ez)];
+    for i in 0..4 {
+        let (a, b) = (corners[i], corners[(i + 1) % 4]);
+        let outward = ((a + b) / 2.0).with_y(0.0);
+        kit.quad(
+            Surface::Roof,
+            [a.with_y(eave), b.with_y(eave), b.with_y(top), a.with_y(top)],
+            outward,
+        );
+    }
+}
+
 /// How a landed roof is crumpled: its east end folded down across the ridge where it
 /// struck, and its front eave bent under.
 fn roof_folds() -> [Fold; 2] {
@@ -694,33 +866,35 @@ fn roof_folds() -> [Fold; 2] {
     ]
 }
 
-/// A sheet torn back off the west end of the back slope, curled up over itself, and the
-/// darker boards bared under it.
-fn torn_sheet(kit: &mut Kit<Surface>) {
+/// A sheet torn back off a long slope (`side` -1 the back, +1 the front) between `x0`
+/// and `x1`, curled up over itself, and the darker boards bared under it.
+fn torn_sheet(kit: &mut Kit<Surface>, side: f64, x0: f64, x1: f64) {
     let ez = CABIN_Z + ROOF_OVERHANG;
     let slope = ROOF_PITCH.atan();
-    // Up the back slope toward the ridge, and out of it.
-    let up = DVec3::new(0.0, slope.sin(), slope.cos());
-    let out = DVec3::new(0.0, slope.cos(), -slope.sin());
-    let surface = |z: f64| DVec3::new(0.0, CABIN_TOP + ROOF_EDGE + ROOF_PITCH * (ez + z), z);
-    let (x0, x1) = TORN_SHEET_X;
+    // Up the slope toward the ridge, and out of it.
+    let up = DVec3::new(0.0, slope.sin(), -side * slope.cos());
+    let out = DVec3::new(0.0, slope.cos(), side * slope.sin());
+    let surface = |run: f64| {
+        DVec3::new(0.0, CABIN_TOP + ROOF_EDGE + ROOF_PITCH * run, side * (ez - run))
+    };
     let width = x1 - x0;
-    let hinge = surface(-ez + TORN_SHEET_LENGTH) + DVec3::X * (x0 + x1) / 2.0 + out * 0.02;
+    let middle = DVec3::X * (x0 + x1) / 2.0;
+    let hinge = surface(TORN_SHEET_LENGTH) + middle + out * 0.02;
     // The bared deck: dark boards across the gap.
     for k in 0..4 {
-        let along = TORN_SHEET_LENGTH * (f64::from(k) + 0.5) / 4.0;
-        let at = surface(-ez + along) + DVec3::X * (x0 + x1) / 2.0 + out * 0.012;
+        let run = TORN_SHEET_LENGTH * (f64::from(k) + 0.5) / 4.0;
+        let at = surface(run) + middle + out * 0.012;
         kit.block(
             Surface::Splinters,
-            DVec3::new(width - 0.04, TORN_SHEET_LENGTH / 4.0 - 0.03, 0.02),
-            DMat4::from_translation(at) * DMat4::from_rotation_x(-(PI / 2.0 - slope)),
+            DVec3::new(width - 0.04, 0.02, TORN_SHEET_LENGTH / 4.0 - 0.03),
+            DMat4::from_translation(at) * DMat4::from_rotation_x(side * slope),
         );
     }
     // The sheet: hinged at its top, peeled back over in two bends.
     let mut from = hinge;
     for (k, turn) in TORN_SHEET_CURL.into_iter().enumerate() {
         let length = TORN_SHEET_LENGTH / 2.0;
-        let direction = DQuat::from_axis_angle(DVec3::X, turn) * -up;
+        let direction = DQuat::from_axis_angle(DVec3::X, -side * turn) * -up;
         let to = from + direction * length;
         kit.block(
             Surface::Roof,
@@ -746,8 +920,8 @@ fn scrapes(kit: &mut Kit<Surface>) {
             let tilt = DMat4::from_rotation_x(side * slope);
             let turn = DMat4::from_rotation_y(rng.range(-0.5, 0.5));
             kit.block(
-                Surface::Iron,
-                DVec3::new(rng.range(0.4, 1.1), 0.01, rng.range(0.06, 0.16)),
+                Surface::Metal,
+                DVec3::new(rng.range(0.6, 1.5), 0.012, rng.range(0.08, 0.2)),
                 DMat4::from_translation(DVec3::new(x, y, z)) * tilt * turn,
             );
         }
@@ -1254,14 +1428,19 @@ fn hip_roof(kit: &mut Kit<Surface>, landed: bool) {
             .map(|(x, z)| DVec3::new(x, y, z))
             .to_vec()
     };
-    kit.solid(
-        Surface::Roof,
-        &[
-            rect(ex, ez, eave),
-            rect(ex, ez, top),
-            rect(ridge_x, 0.0, apex),
-        ],
-    );
+    if landed {
+        // A shell fine enough to crease and dent (`crumple`).
+        roof_shell(kit, ex, ez, ridge_x, eave, top, apex);
+    } else {
+        kit.solid(
+            Surface::Roof,
+            &[
+                rect(ex, ez, eave),
+                rect(ex, ez, top),
+                rect(ridge_x, 0.0, apex),
+            ],
+        );
+    }
     if !landed {
         kit.block(
             Surface::Trim,

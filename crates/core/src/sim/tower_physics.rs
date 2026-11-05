@@ -71,10 +71,13 @@ const PART_DEADLINE: f64 = 24.0;
 const REST_SPEED: f32 = 0.3;
 const REST_SPIN: f32 = 0.6;
 const REST_HOLD: f64 = 0.2;
-/// A landed piece is damped to rest this long (s) after the landing, and rests for good
-/// by this long after it, still or not: the rocking is over within about a second.
+/// A landed piece is damped toward rest this long (s) after the landing, so its rocking
+/// is over within about a second.
 const LANDED_SETTLE: f64 = 0.8;
-const LANDED_REST: f64 = 1.3;
+/// A resting piece's linear and angular damping: struck, it is barely knocked over.
+const RESTED_DAMPING: (f32, f32) = (2.0, 12.0);
+/// A resting piece's grip on what it lies on.
+const RESTED_FRICTION: f32 = 2.5;
 /// Seconds earlier a resting piece clears for every metre its middle lies up the pile.
 const CLEAR_TOP_FIRST: f64 = 1.2;
 /// A falling frame counts as at rest no sooner than this (s) after it came loose.
@@ -849,7 +852,9 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
         } else {
             0.0
         };
-        let can_rest = landing.landed || parts.len() == 1;
+        // A lone part (a ladder, a brace) rests once it has had time to fall, not while it
+        // is still starting to tip.
+        let can_rest = landing.landed || (parts.len() == 1 && age > REST_AFTER);
         if !landing.rested && (can_rest || age > REST_AFTER) {
             let still = body.linvel().length() < REST_SPEED && body.angvel().length() < REST_SPIN;
             match (still, landing.still_since) {
@@ -860,14 +865,22 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
             let held = landing
                 .still_since
                 .is_some_and(|since| elapsed - since >= REST_HOLD);
-            // A landed piece has done its rocking within a moment of the landing: it
-            // rests then, still or not, and no longer turns.
-            if can_rest && (held || since_landing > LANDED_REST) {
-                // It neither turns nor rises any more: shoved, it slides. The pile clears
-                // from the top, so nothing it lies on goes from under it first.
+            // A piece rests only once it has lain still a moment: rested by a deadline
+            // instead, a piece still falling froze where it was (a roof stood propped
+            // on its edge).
+            if can_rest && held {
+                // It stops, no longer turns, and grips what it lies on: the pile lies
+                // still. It clears from the top, so nothing it lies on goes from
+                // under it first.
                 landing.rested = true;
                 body.lock_rotations(true, false);
                 body.set_angvel(rapier3d::prelude::Vector::ZERO, false);
+                body.set_linvel(rapier3d::prelude::Vector::ZERO, false);
+                // Wedged among the rest of the pile, it no longer slides off it.
+                let colliders: Vec<ColliderHandle> = body.colliders().to_vec();
+                for collider in colliders {
+                    simulation.world.colliders[collider].set_friction(RESTED_FRICTION);
+                }
                 // The pile clears from the top down, so nothing fades through what
                 // lies over it.
                 let height = f64::from(body.center_of_mass().y).max(0.0);
@@ -885,7 +898,11 @@ pub fn settle_tower_debris(simulation: &mut Simulation) {
             body.set_linvel(velocity, false);
         }
         let settled = landing.rested || since_landing > LANDED_SETTLE;
-        let (linear, angular) = house_debris_damping(if settled { f64::INFINITY } else { age });
+        let (linear, angular) = if landing.rested {
+            RESTED_DAMPING
+        } else {
+            house_debris_damping(if settled { f64::INFINITY } else { age })
+        };
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
