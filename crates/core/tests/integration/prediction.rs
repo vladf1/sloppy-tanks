@@ -17,6 +17,7 @@ use sloppy_core::net::prediction::{HullContacts, HullState, MovingBody, TankPred
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
+use sloppy_core::sim::house_structure::{PartKind, PartSet};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
 use sloppy_core::sim::types::{
@@ -705,5 +706,38 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
     assert!(
         with < 0.1 && without > 0.2,
         "wreck {with} against {without}"
+    );
+}
+
+#[test]
+fn driving_into_a_cottages_fallen_parts_replays_with_their_bodies() {
+    // A cottage 9 m ahead whose walls are all shot out at once: its roof and floors
+    // come down inside its footprint, and alice drives into them.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    let house = sim.add_cover(&CoverDef::house(0.0, 9.0, 7.0, 5.0, 4.9, 0xb87b4c));
+    sim.world.step();
+    let layout = sim.covers[house].structure.as_ref().unwrap().layout.clone();
+    let walls = PartSet::from_indices(
+        (0..layout.parts.len())
+            .filter(|&index| layout.parts[index].kind != PartKind::Chimney)
+            .filter(|&index| layout.parts[index].grounded),
+    );
+    sim.break_house_parts(house, walls, None, None);
+    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 120);
+    assert!(
+        run.last()
+            .and_then(|tick| tick.scene.as_ref())
+            .is_none_or(|scene| scene.fragments.iter().any(|f| f.house_parts.is_some())),
+        "the roof lies in pieces"
+    );
+    for tick in 121..=330 {
+        let commands = BTreeMap::from([(viewer, command((0.0, 1.0)))]);
+        run.push(record(&mut sim, viewer, tick, &commands));
+    }
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 120);
+    eprintln!("cottage parts: {with:.4} m, {without:.4} m without them");
+    assert!(
+        with < 0.1 && without > 0.2,
+        "cottage parts {with} against {without}"
     );
 }

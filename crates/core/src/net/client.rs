@@ -74,6 +74,7 @@ use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, present_share};
 use crate::sim::types::{
     AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
 };
+use crate::sim::veterancy::rank_stats;
 use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
@@ -353,6 +354,8 @@ struct Gun {
     team: Team,
     /// Seconds between shots.
     interval: f64,
+    /// Each shell's damage, with the viewer's rank.
+    damage: f64,
 }
 
 pub struct NetworkClient {
@@ -1148,6 +1151,7 @@ impl NetworkClient {
             weapon,
             team: viewer.team,
             interval: fire_interval(weapon, viewer.rapid, viewer.human, viewer.xp),
+            damage: crate::sim::data::weapon(weapon).damage * rank_stats(viewer.xp).damage,
         })
     }
 
@@ -1516,6 +1520,7 @@ impl NetworkClient {
                     weapon: gun.weapon,
                     team: gun.team,
                     tank_id: control.tank_id,
+                    damage: gun.damage,
                 };
                 flashes.push((shot.tick, self.own_shots.fire(firing, &self.prediction)));
             }

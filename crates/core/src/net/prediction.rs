@@ -9,16 +9,17 @@
 //! absent; the client corrects for it when the next snapshot arrives.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use rapier3d::prelude::*;
 use serde_json::{Value, json};
 
-use super::own_shots::{CoverCast, CoverHit, Struck};
+use super::own_shots::{CoverCast, CoverHit, PartHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
-use crate::sim::house_physics::house_structure;
-use crate::sim::house_structure::PartSet;
+use crate::sim::house_physics::{house_debris_colliders, house_structure};
+use crate::sim::house_structure::{HouseStructure, PartSet};
 use crate::sim::simulation::house_parts;
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
@@ -212,11 +213,22 @@ impl MovingBody {
             return;
         }
         let at = simulation.body_translation(tank.body).planar();
-        let mut near = |kind: BodyKind, id: u32, handle: RigidBodyHandle| {
+        // A cottage's loose parts hang off the ground centre of the cottage they fell
+        // from: they are as far as their centre of mass.
+        let place = |handle: RigidBodyHandle, loose_parts: bool| {
+            let body = &simulation.world.bodies[handle];
+            from_vector(if loose_parts {
+                body.center_of_mass()
+            } else {
+                body.translation()
+            })
+            .planar()
+        };
+        let mut near = |kind: BodyKind, id: u32, handle: RigidBodyHandle, loose_parts: bool| {
             let Some(body) = simulation.world.bodies.get(handle) else {
                 return;
             };
-            let gap = crate::sim::math::distance(from_vector(body.translation()).planar(), at);
+            let gap = crate::sim::math::distance(place(handle, loose_parts), at);
             if body.is_sleeping() || gap > MOVING_BODY_REACH {
                 return;
             }
@@ -230,12 +242,13 @@ impl MovingBody {
         for &index in &simulation.movable_covers {
             let cover = &simulation.covers[index];
             if cover.alive {
-                near(BodyKind::Cover, cover.id, cover.body);
+                near(BodyKind::Cover, cover.id, cover.body, false);
             }
         }
         for fragment in &simulation.fragments {
-            if fragment.wreck.is_some() || fragment.dimensions.is_some() {
-                near(BodyKind::Fragment, fragment.id, fragment.body);
+            let loose_parts = fragment.house_parts.is_some();
+            if fragment.wreck.is_some() || fragment.dimensions.is_some() || loose_parts {
+                near(BodyKind::Fragment, fragment.id, fragment.body, loose_parts);
             }
         }
         let gap = |body: &MovingBody| {
@@ -244,15 +257,15 @@ impl MovingBody {
                     .covers
                     .iter()
                     .find(|cover| cover.id == body.id)
-                    .map(|cover| cover.body),
+                    .map(|cover| (cover.body, false)),
                 BodyKind::Fragment => simulation
                     .fragments
                     .iter()
                     .find(|fragment| fragment.id == body.id)
-                    .map(|fragment| fragment.body),
+                    .map(|fragment| (fragment.body, fragment.house_parts.is_some())),
             };
-            handle.map_or(f64::INFINITY, |handle| {
-                crate::sim::math::distance(simulation.body_translation(handle).planar(), at)
+            handle.map_or(f64::INFINITY, |(handle, loose_parts)| {
+                crate::sim::math::distance(place(handle, loose_parts), at)
             })
         };
         if out.len() > MAX_MOVING_BODIES {
@@ -334,6 +347,9 @@ struct CoverBody {
     movable: bool,
     /// What a shell striking it shows.
     struck: Struck,
+    /// A cottage's structure, and its standing parts that took damage.
+    house: Option<Arc<HouseStructure>>,
+    cracked: PartSet,
     /// The scene sync that last found its record.
     seen: u64,
 }
@@ -381,6 +397,10 @@ pub struct BodyPose {
 /// Debris this far from the viewer's hull (metres) joins the predicted world: farther
 /// than the hull can drive in a prediction window.
 const DEBRIS_REACH: f64 = 12.0;
+/// The farthest (m) a cottage's loose part reaches from the ground centre of the cottage
+/// it fell from, which its body is placed by: half the largest cottage's diagonal and its
+/// eaves.
+const HOUSE_DEBRIS_OFFSET: f64 = 6.0;
 /// A body slower than this (m/s and rad/s) counts as resting.
 const RESTING_SPEED: f64 = 0.05;
 
@@ -453,10 +473,19 @@ impl TankPredictor {
             };
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
             if current != Some(form) {
+                let mut house = None;
                 if let Some(old) = self.covers.remove(&cover.id) {
                     self.world.remove_body(old.body);
+                    house = old.house;
                 }
-                let body = self.insert_cover(cover, form);
+                // A cottage's structure is built once; a break only changes its parts.
+                let house = house.or_else(|| {
+                    (cover.kind == CoverKind::House).then(|| {
+                        let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
+                        Arc::new(house_structure(x, z, w, d, cover.h))
+                    })
+                });
+                let body = self.insert_cover(cover, form, house.as_deref());
                 let movable = cover.kind.movable();
                 self.covers.insert(
                     cover.id,
@@ -469,12 +498,15 @@ impl TankPredictor {
                             color: cover.color,
                             height: cover.h,
                         },
+                        house,
+                        cracked: PartSet::EMPTY,
                         seen: sync,
                     },
                 );
             }
             let existing = self.covers.get_mut(&cover.id).expect("inserted above");
             existing.seen = sync;
+            existing.cracked = cover.cracked;
             if existing.movable {
                 // Movable cover rests where the host last had it; contact wakes it.
                 let body = &mut self.world.bodies[self.covers[&cover.id].body];
@@ -522,17 +554,36 @@ impl TankPredictor {
             if !solid_debris(fragment)
                 || fragment.life < DEBRIS_CLEANUP_SECONDS
                 || crate::sim::math::distance(fragment.position.planar(), around.planar())
-                    > DEBRIS_REACH
+                    > DEBRIS_REACH + debris_offset(fragment)
             {
                 continue;
             }
             if !self.debris.contains_key(&fragment.id) {
-                let Some((body, collider)) = debris_parts(fragment) else {
-                    continue;
+                let colliders = match (fragment.house_id, fragment.house_parts) {
+                    // A cottage's loose parts: the replicated set gives their shapes,
+                    // from the cottage's structure.
+                    (Some(house), Some(parts)) => {
+                        let Some(layout) = self
+                            .covers
+                            .get(&house)
+                            .and_then(|cover| cover.house.as_deref())
+                        else {
+                            continue;
+                        };
+                        (house_debris_body(), house_debris_colliders(layout, &parts))
+                    }
+                    _ => {
+                        let Some((body, collider)) = debris_parts(fragment) else {
+                            continue;
+                        };
+                        (body, vec![collider])
+                    }
                 };
-                let body = self.world.insert_body(body);
+                let body = self.world.insert_body(colliders.0);
                 self.world.bodies[body].set_additional_solver_iterations(2);
-                self.world.insert_collider(collider, Some(body));
+                for collider in colliders.1 {
+                    self.world.insert_collider(collider, Some(body));
+                }
                 self.debris
                     .insert(fragment.id, DebrisBody { body, seen: sync });
             }
@@ -589,16 +640,19 @@ impl TankPredictor {
         }
     }
 
-    fn insert_cover(&mut self, cover: &RenderCover, form: CoverForm) -> RigidBodyHandle {
+    fn insert_cover(
+        &mut self,
+        cover: &RenderCover,
+        form: CoverForm,
+        house: Option<&HouseStructure>,
+    ) -> RigidBodyHandle {
         // Movable cover keeps its authored shape; its replicated footprint follows the nav.
         let (x, z, w, d) = match cover.motion {
             Some(motion) => (motion.origin_x, motion.origin_z, motion.w, motion.d),
             None => (cover.x, cover.z, cover.w, cover.d),
         };
-        let parts = match form {
-            CoverForm::Parts(broken) => {
-                house_parts(&house_structure(x, z, w, d, cover.h), x, z, &broken)
-            }
+        let parts = match (form, house) {
+            (CoverForm::Parts(broken), Some(layout)) => house_parts(layout, x, z, &broken),
             _ => cover_parts(cover.kind, x, z, w, d, cover.h),
         };
         let body = self.world.insert_body(parts.body);
@@ -848,23 +902,67 @@ impl TankPredictor {
 /// The cover as the host's shell query sees it.
 impl CoverCast for TankPredictor {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
+        self.cast_cover_past(origin, direction, distance, &[])
+    }
+
+    fn cast_cover_past(
+        &self,
+        origin: Point3,
+        direction: Vec2,
+        distance: f64,
+        past: &[u64],
+    ) -> Option<CoverHit> {
         let ray = Ray::new(to_vector(origin), vector(direction.x, 0.0, direction.z));
-        let (collider, hit) = self.world.cast_ray_and_get_normal(
-            &ray,
-            distance as f32,
-            true,
-            query_filter(group::COVER_QUERY),
-        )?;
+        let through = |collider: ColliderHandle, _: &Collider| !past.contains(&collider_key(collider));
+        let mut filter = query_filter(group::COVER_QUERY);
+        if !past.is_empty() {
+            filter.predicate = Some(&through);
+        }
+        let (collider, hit) =
+            self.world
+                .cast_ray_and_get_normal(&ray, distance as f32, true, filter)?;
         let body = self.world.colliders[collider].parent();
+        let cover = self.covers.values().find(|cover| Some(cover.body) == body);
+        let part = cover.and_then(|cover| {
+            let index = self.world.colliders[collider].user_data as usize;
+            let part = cover.house.as_ref()?.parts.get(index)?;
+            Some(PartHit {
+                key: collider_key(collider),
+                strength: part.strength,
+                cracked: cover.cracked.contains(index),
+            })
+        });
         Some(CoverHit {
             distance: f64::from(hit.time_of_impact),
             normal: Vec2::new(f64::from(hit.normal.x), f64::from(hit.normal.z)),
-            struck: self
-                .covers
-                .values()
-                .find(|cover| Some(cover.body) == body)
-                .map(|cover| cover.struck),
+            struck: cover.map(|cover| cover.struck),
+            part,
         })
+    }
+}
+
+/// A collider's handle as one number.
+fn collider_key(collider: ColliderHandle) -> u64 {
+    let (index, generation) = collider.into_raw_parts();
+    (u64::from(generation) << 32) | u64::from(index)
+}
+
+/// The host's body for a cottage's loose parts (`drop_house_cluster`): its origin is the
+/// cottage's ground centre the parts fell from.
+fn house_debris_body() -> RigidBodyBuilder {
+    RigidBodyBuilder::dynamic()
+        .linear_damping(0.1)
+        .angular_damping(0.3)
+        .can_sleep(true)
+}
+
+/// How far a fragment's solid parts may lie from its replicated position: a cottage's
+/// loose parts hang off the ground centre of the cottage they fell from.
+pub fn debris_offset(fragment: &RenderFragment) -> f64 {
+    if fragment.house_parts.is_some() {
+        HOUSE_DEBRIS_OFFSET
+    } else {
+        0.0
     }
 }
 
@@ -935,7 +1033,7 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
 /// pieces of broken scenery (timber, crate sections, tower and house pieces), which the
 /// predicted world leaves out. Small shards only touch the ground and cover.
 pub fn solid_debris(fragment: &RenderFragment) -> bool {
-    fragment.wreck.is_some() || fragment.dimensions.is_some()
+    fragment.wreck.is_some() || fragment.dimensions.is_some() || fragment.house_parts.is_some()
 }
 
 /// The host's per-tick drive: the speed pickup runs down before the drive impulse.

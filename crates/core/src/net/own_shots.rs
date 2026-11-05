@@ -19,7 +19,10 @@
 //! back over their first [`BLEND_VIEW_DELAYS`] view delays of flight, at four fifths of
 //! real time, so they reach distant tanks on the timeline the host judges them on. Until
 //! the host's path is known that far, a shell ends at the first cover the predicted world
-//! puts in its way, bouncing as the host's would with bounces left, and at an enemy hull
+//! puts in its way, bouncing as the host's would with bounces left (through a cottage's
+//! parts as the host flies it: an armour-piercing round through all, an HE round through
+//! one it breaks to burst a fuse length on, and no further than a part whose damage only
+//! the host knows), and at an enemy hull
 //! as drawn while the host favors the shooter, and shows the host's impact effect there
 //! itself; the host's own effect for it is dropped when it arrives, and a hull strike the
 //! host flew past instead lets the shell fly on. The host's effects of own shells the
@@ -30,6 +33,8 @@ use std::collections::VecDeque;
 use super::network_timeline::{STRIKE_CONFIRM_TICKS, hull_gap, hull_strike};
 use super::replication::TimedEvent;
 use super::shot_paths::{PathEntry, ShotLaunch, ShotPath};
+use crate::sim::house_physics::{FUSE_DISTANCE, HE_BLAST_RADIUS};
+use crate::sim::veterancy::RANKS;
 use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::{STEP, TEAM_COLORS, weapon};
 use crate::sim::hitboxes::HIT_HALF_HEIGHT;
@@ -58,6 +63,8 @@ const BLEND_VIEW_DELAYS: f64 = 4.0;
 /// ended or bounced belongs to that shell.
 const IMPACT_TICKS: f64 = 1.5;
 const IMPACT_DISTANCE: f64 = 1.0;
+/// The most cottage parts a forecast lets one leg of a shell break through.
+const MAX_PARTS_PAST: usize = 32;
 /// Bounds on the shells and fired ticks kept.
 const MAX_SHELLS: usize = 64;
 const MAX_FIRED: usize = 32;
@@ -76,6 +83,19 @@ const HANDOVER_DONE: f64 = 0.01;
 /// meets cover within a distance, as the host's shell query sees the cover.
 pub trait CoverCast {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit>;
+
+    /// [`Self::cast_cover`] through the cottage parts in `past`, which a shell broke on
+    /// its way: the host takes them out of the world as it does.
+    fn cast_cover_past(
+        &self,
+        origin: Point3,
+        direction: Vec2,
+        distance: f64,
+        past: &[u64],
+    ) -> Option<CoverHit> {
+        let _ = past;
+        self.cast_cover(origin, direction, distance)
+    }
 }
 
 /// A world without cover, for timelines kept without a predicted world.
@@ -87,12 +107,26 @@ impl CoverCast for NoCover {
     }
 }
 
-/// Where a shell meets cover: how far along, the face's planar normal and the cover.
+/// Where a shell meets cover: how far along, the face's planar normal, the cover and,
+/// for a cottage, the part.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoverHit {
     pub distance: f64,
     pub normal: Vec2,
     pub struck: Option<Struck>,
+    pub part: Option<PartHit>,
+}
+
+/// A cottage's standing part a shell meets: what the client knows of how it takes the
+/// shell (`strike_house_part`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PartHit {
+    /// Names the part to [`CoverCast::cast_cover_past`].
+    pub key: u64,
+    /// The damage it takes before it breaks, undamaged.
+    pub strength: f64,
+    /// It has taken damage already: how much more it takes is the host's to know.
+    pub cracked: bool,
 }
 
 /// The cover a shell struck, which colours its impact.
@@ -115,6 +149,8 @@ pub struct Firing {
     pub weapon: Weapon,
     pub team: Team,
     pub tank_id: u32,
+    /// Each shell's damage, with the viewer's rank.
+    pub damage: f64,
 }
 
 /// One leg of a shell's flight, drawn from its start until `until`.
@@ -140,6 +176,7 @@ struct OwnShell {
     /// The predicted launch leg until the host's arrives, then the host's legs.
     legs: Vec<Leg>,
     forecast: Forecast,
+    damage: f64,
     /// The host's shell id once its launch arrived.
     server_id: Option<u32>,
     bounces: u32,
@@ -284,13 +321,86 @@ fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> 
     }
 }
 
+/// An HE shell's burst inside a cottage where its fuse ran out or it struck a second part
+/// (`burst_in_house`).
+fn burst(path: &ShotPath, tick: f64) -> TimedEvent {
+    let at = path.at(tick);
+    let mut explosion = SimEvent::at(SimEventType::Explosion, at.x, at.z);
+    explosion.size = Some(HE_BLAST_RADIUS);
+    explosion.height = path.launch.y;
+    TimedEvent {
+        event_id: 0,
+        tick,
+        event: explosion,
+    }
+}
+
+/// The flash where a shell strikes a cottage's part, in its weapon's colour.
+fn impact_at(path: &ShotPath, tick: f64) -> TimedEvent {
+    let at = path.at(tick);
+    let mut impact = SimEvent::at(SimEventType::Impact, at.x, at.z);
+    impact.size = Some(0.6);
+    impact.color = Some(weapon(path.launch.weapon).color);
+    TimedEvent {
+        event_id: 0,
+        tick,
+        event: impact,
+    }
+}
+
+/// Ends the forecast's newest leg (or its open one) at `tick`.
+fn end_leg(result: &mut Forecast, tick: f64) {
+    match result.legs.last_mut() {
+        Some(last) => last.until = tick,
+        None => result.stop = Some(tick),
+    }
+}
+
+/// What a shell does at a cottage's part, as `strike_house_part` decides it.
+enum PartStrike {
+    /// It breaks the part and flies on (armour-piercing, or an HE round that breaks it
+    /// and lights its fuse).
+    Through,
+    /// It ends there (a rocket's blast, or an HE round bursting against it).
+    Ends,
+    /// Whether it breaks is the host's to know: the part took damage the client cannot
+    /// see, or the shell's damage is not known well enough.
+    Unknown,
+}
+
+fn part_strike(launch: &ShotLaunch, part: &PartHit, damage: (f64, f64), fused: bool) -> PartStrike {
+    match launch.weapon {
+        Weapon::Piercing => PartStrike::Through,
+        Weapon::Rocket => PartStrike::Ends,
+        _ if fused => PartStrike::Ends,
+        // Damage only adds up: a shell that breaks the part whole breaks it cracked.
+        _ if part.strength <= damage.0 => PartStrike::Through,
+        _ if !part.cracked && part.strength > damage.1 => PartStrike::Ends,
+        _ => PartStrike::Unknown,
+    }
+}
+
 /// Where `path`, an open leg, meets cover in the predicted world and how it flies on with
-/// `bounces` left: off the cover's face like the host's ricochet, or not at all.
-pub(super) fn forecast(path: &ShotPath, bounces: u32, cover: &impl CoverCast) -> Forecast {
+/// `bounces` left: off the cover's face like the host's ricochet, or not at all. Through a
+/// cottage it flies as the host's does: an armour-piercing round through every part, an HE
+/// round through a part it breaks and on [`FUSE_DISTANCE`] before it bursts. `damage` is
+/// the shell's damage when known (the viewer's own), or its weapon's at any rank.
+pub(super) fn forecast(
+    path: &ShotPath,
+    bounces: u32,
+    damage: Option<f64>,
+    cover: &impl CoverCast,
+) -> Forecast {
+    let base = weapon(path.launch.weapon).damage;
+    let damage = damage.map_or((base, base * RANKS[RANKS.len() - 1].damage), |damage| {
+        (damage, damage)
+    });
     let mut result = Forecast::default();
     let mut current = *path;
     let mut bounces_left = bounces;
-    while result.legs.len() < MAX_FORECAST_LEGS {
+    // Metres along the current leg where a fused HE shell bursts.
+    let mut fuse: Option<f64> = None;
+    'legs: while result.legs.len() < MAX_FORECAST_LEGS {
         let speed = current.vx.hypot(current.vz);
         if speed <= 0.0 {
             break;
@@ -301,16 +411,55 @@ pub(super) fn forecast(path: &ShotPath, bounces: u32, cover: &impl CoverCast) ->
             .thrust
             .map_or(speed, |thrust| thrust.top_speed.max(speed));
         let origin = Point3::new(current.x, current.launch.y.unwrap_or(1.0), current.z);
-        let Some(hit) = cover.cast_cover(origin, direction, top_speed * COMBAT.projectile_lifetime)
-        else {
+        let range = top_speed * COMBAT.projectile_lifetime;
+        let mut past: Vec<u64> = Vec::new();
+        let hit = loop {
+            let reach = fuse.map_or(range, |fuse| fuse.min(range));
+            let hit = cover.cast_cover_past(origin, direction, reach, &past);
+            let Some(part) = hit.and_then(|hit| hit.part) else {
+                break hit;
+            };
+            let hit = hit.expect("a part was hit");
+            let hit_tick = current.tick + flight_ticks(&current, hit.distance);
+            let impact = impact_at(&current, hit_tick);
+            match part_strike(&current.launch, &part, damage, fuse.is_some()) {
+                PartStrike::Through if !past.contains(&part.key) && past.len() < MAX_PARTS_PAST => {
+                    result.strikes.push(impact);
+                    past.push(part.key);
+                    if current.launch.weapon != Weapon::Piercing {
+                        fuse = Some(hit.distance + FUSE_DISTANCE);
+                    }
+                }
+                PartStrike::Ends if current.launch.weapon == Weapon::Rocket => {
+                    end_leg(&mut result, hit_tick);
+                    result.strikes.push(impact_at(&current, hit_tick));
+                    result.strikes.push(strike(&current, hit_tick, hit.struck, false));
+                    break 'legs;
+                }
+                PartStrike::Ends => {
+                    end_leg(&mut result, hit_tick);
+                    result.strikes.push(impact);
+                    result.strikes.push(burst(&current, hit_tick));
+                    break 'legs;
+                }
+                // The shell is drawn no further than the part; the host's effect shows.
+                _ => {
+                    end_leg(&mut result, hit_tick);
+                    break 'legs;
+                }
+            }
+        };
+        let Some(hit) = hit else {
+            if let Some(at) = fuse.filter(|&at| at < range) {
+                let burst_tick = current.tick + flight_ticks(&current, at);
+                end_leg(&mut result, burst_tick);
+                result.strikes.push(burst(&current, burst_tick));
+            }
             break;
         };
         let normal = hit.normal;
         let hit_tick = current.tick + flight_ticks(&current, hit.distance);
-        match result.legs.last_mut() {
-            Some(last) => last.until = hit_tick,
-            None => result.stop = Some(hit_tick),
-        }
+        end_leg(&mut result, hit_tick);
         result
             .strikes
             .push(strike(&current, hit_tick, hit.struck, bounces_left > 0));
@@ -318,6 +467,7 @@ pub(super) fn forecast(path: &ShotPath, bounces: u32, cover: &impl CoverCast) ->
             break;
         }
         bounces_left -= 1;
+        fuse = fuse.map(|fuse| fuse - hit.distance);
         let hit = current.at(hit_tick);
         let along = hit.vx * normal.x + hit.vz * normal.z;
         current = ShotPath {
@@ -389,6 +539,7 @@ impl OwnShots {
             weapon: fired,
             team,
             tank_id,
+            damage,
         } = firing;
         // As `fire_weapon`: a muzzle pulled back out of cover, rounds along the aim.
         let muzzle = tank_muzzle(kind);
@@ -450,7 +601,8 @@ impl OwnShots {
                     path,
                     until: f64::INFINITY,
                 }],
-                forecast: forecast(&path, stats.bounces, cover),
+                forecast: forecast(&path, stats.bounces, Some(damage), cover),
+                damage,
                 server_id: None,
                 bounces: stats.bounces,
                 ended: false,
@@ -536,7 +688,7 @@ impl OwnShots {
                     path,
                     until: f64::INFINITY,
                 }];
-                shell.forecast = forecast(&path, shell.bounces, cover);
+                shell.forecast = forecast(&path, shell.bounces, Some(shell.damage), cover);
                 true
             }
             PathEntry::Change(path) => {
@@ -551,7 +703,7 @@ impl OwnShots {
                     until: f64::INFINITY,
                 });
                 shell.bounces = shell.bounces.saturating_sub(1);
-                shell.forecast = forecast(&path, shell.bounces, cover);
+                shell.forecast = forecast(&path, shell.bounces, Some(shell.damage), cover);
                 true
             }
             PathEntry::End { id, tick } => {
@@ -712,7 +864,8 @@ impl OwnShots {
                 let foreseen = strike.tick <= tick
                     && strike.tick > newest
                     && !shell.shown.iter().any(|shown| {
-                        (shown.tick - strike.tick).abs() <= IMPACT_TICKS
+                        shown.event.kind == strike.event.kind
+                            && (shown.tick - strike.tick).abs() <= IMPACT_TICKS
                             && distance(
                                 Vec2::new(shown.event.x, shown.event.z),
                                 Vec2::new(strike.event.x, strike.event.z),

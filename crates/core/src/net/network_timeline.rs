@@ -334,10 +334,10 @@ impl NetworkTimeline {
             match (entry, shell) {
                 (PathEntry::Launch(path), _) => self.shells.push(Shell::new(
                     &path,
-                    forecast(&path, weapon(path.launch.weapon).bounces, cover),
+                    forecast(&path, weapon(path.launch.weapon).bounces, None, cover),
                 )),
                 (PathEntry::Change(path), Some(shell)) => {
-                    shell.forecast = forecast(&path, 0, cover)
+                    shell.forecast = forecast(&path, 0, None, cover)
                 }
                 (PathEntry::End { .. }, Some(shell)) => shell.forecast = Forecast::default(),
                 _ => {}

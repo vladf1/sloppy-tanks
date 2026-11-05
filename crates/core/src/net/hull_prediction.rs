@@ -19,7 +19,7 @@ use super::own_shots::{CoverCast, CoverHit};
 use super::player_controls::Ack;
 use super::prediction::{
     BodyPose, HullContacts, HullState, Moved, MovingBody, PredictedPose, TankPredictor,
-    solid_debris,
+    debris_offset, solid_debris,
 };
 use crate::sim::data::STEP;
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
@@ -760,7 +760,7 @@ fn near_solid_debris(scene: &RenderState, points: &[Point3]) -> bool {
             let extent = fragment
                 .dimensions
                 .map_or(fragment.size, |size| size.x.max(size.y).max(size.z));
-            let reach = DEBRIS_REACH + extent / 2.0;
+            let reach = DEBRIS_REACH + extent / 2.0 + debris_offset(fragment);
             points
                 .iter()
                 .any(|point| distance(point.planar(), fragment.position.planar()) < reach)
@@ -827,5 +827,16 @@ fn movers_near(scene: &RenderState, position: Point3) -> bool {
 impl CoverCast for HullPrediction {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
         CoverCast::cast_cover(&self.predictor, origin, direction, distance)
+    }
+
+    fn cast_cover_past(
+        &self,
+        origin: Point3,
+        direction: Vec2,
+        distance: f64,
+        past: &[u64],
+    ) -> Option<CoverHit> {
+        self.predictor
+            .cast_cover_past(origin, direction, distance, past)
     }
 }

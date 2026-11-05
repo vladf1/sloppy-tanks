@@ -130,6 +130,10 @@ pub struct RenderCover {
     /// A cottage's parts broken or fallen from it.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub broken: PartSet,
+    /// A cottage's standing parts that have taken damage, which a client's own-shot
+    /// prediction cannot tell the strength left of.
+    #[serde(default, skip_serializing_if = "PartSet::is_empty")]
+    pub cracked: PartSet,
     pub motion: Option<RenderCoverMotion>,
     /// Body pose; destroyed cover without a body stays at its footprint.
     pub position: Point3,
@@ -356,6 +360,10 @@ impl Simulation {
                 .structure
                 .as_ref()
                 .map_or(PartSet::EMPTY, |state| state.gone);
+            view.cracked = cover
+                .structure
+                .as_ref()
+                .map_or(PartSet::EMPTY, |state| state.cracked());
             view.motion = cover.motion.map(RenderCoverMotion::from);
             (view.position, view.rotation) = if self.world.bodies.contains(cover.body) {
                 (

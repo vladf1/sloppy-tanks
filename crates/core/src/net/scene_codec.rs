@@ -333,6 +333,7 @@ wire_fields!(
         MOTION_ORIGIN_Z = Field::new("motion.originZ", POSITION),
         MOTION_W = Field::new("motion.w", POSITION),
         MOTION_D = Field::new("motion.d", POSITION),
+        CRACKED = Field::new("cracked", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
     }
 );
 
@@ -809,6 +810,12 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
             record.set_blob(BROKEN, |out| write_part_set(out, &state.gone));
         }
         _ => record.clear(BROKEN),
+    }
+    match cover.structure.as_ref().map(|state| state.cracked()) {
+        Some(cracked) if !cracked.is_empty() => {
+            record.set_blob(CRACKED, |out| write_part_set(out, &cracked));
+        }
+        _ => record.clear(CRACKED),
     }
     if cover.timber_hits.is_empty() {
         record.clear(TIMBER_HITS);
@@ -1358,6 +1365,12 @@ pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
             .map(read_part_set)
             .transpose()
             .map_err(|e| format!("broken: {e}"))?
+            .unwrap_or_default(),
+        cracked: fields
+            .blob(CRACKED)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("cracked: {e}"))?
             .unwrap_or_default(),
         timber_hits: match fields.blob(TIMBER_HITS) {
             Some(bytes) => read_timber_hits(bytes).map_err(|e| format!("timberHits: {e}"))?,

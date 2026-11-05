@@ -102,6 +102,13 @@ impl StructureState {
         !self.gone.contains(part)
     }
 
+    /// The standing parts that have taken damage.
+    pub fn cracked(&self) -> PartSet {
+        PartSet::from_indices(
+            (0..self.layout.parts.len()).filter(|&index| self.standing(index) && self.damage[index] > 0.0),
+        )
+    }
+
     /// The share of the cottage's parts still standing.
     pub fn standing_share(&self) -> f64 {
         let count = self.layout.parts.len();
@@ -145,6 +152,27 @@ pub fn part_collider(layout: &HouseStructure, index: usize, inset: f64) -> Colli
         })
     };
     builder.user_data(index as u128)
+}
+
+/// The colliders of a body of a cottage's loose `parts`, relative to the cottage's ground
+/// centre where it fell from: the host's, and a client's for its predicted hull.
+pub fn house_debris_colliders(layout: &HouseStructure, parts: &PartSet) -> Vec<ColliderBuilder> {
+    let surface = debris_material(DebrisMaterial::Wood);
+    parts
+        .iter()
+        .map(|index| {
+            let density = if layout.parts[index].kind == PartKind::Chimney {
+                BRICK_DENSITY
+            } else {
+                TIMBER_DENSITY
+            };
+            part_collider(layout, index, SHRINK)
+                .collision_groups(interaction_groups(group::HOUSE_SHARD))
+                .density(density as f32)
+                .friction(surface.friction as f32)
+                .restitution(surface.restitution as f32)
+        })
+        .collect()
 }
 
 /// The colliders of a cottage's standing parts (those not in `gone`), in part order,
@@ -558,23 +586,9 @@ impl Simulation {
         parts: &PartSet,
         body: RigidBodyHandle,
     ) -> Vec<ColliderHandle> {
-        let surface = debris_material(DebrisMaterial::Wood);
-        parts
-            .iter()
-            .map(|index| {
-                let part = &layout.parts[index];
-                let density = if part.kind == PartKind::Chimney {
-                    BRICK_DENSITY
-                } else {
-                    TIMBER_DENSITY
-                };
-                let collider = part_collider(layout, index, SHRINK)
-                    .collision_groups(interaction_groups(group::HOUSE_SHARD))
-                    .density(density as f32)
-                    .friction(surface.friction as f32)
-                    .restitution(surface.restitution as f32);
-                self.world.insert_collider(collider, Some(body))
-            })
+        house_debris_colliders(layout, parts)
+            .into_iter()
+            .map(|collider| self.world.insert_collider(collider, Some(body)))
             .collect()
     }
 

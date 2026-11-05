@@ -1,6 +1,6 @@
 //! Own-shot prediction against the host's firing: a predicted shot launches the shells
 //! the host launches, from the same muzzle and with the same flash, and its shells end at
-//! the cover the host's would.
+//! the cover the host's would, flying through a cottage's parts as the host's do.
 
 use crate::support;
 
@@ -20,8 +20,8 @@ use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::render_state::{RenderShot, RenderTank};
 use sloppy_core::sim::types::{
-    AmmoInventory, CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
-    Weapon,
+    AmmoInventory, CoverKind, PlayerAssignment, SimEvent, SimEventType, Team, VehicleCommand,
+    VehicleKind, Weapon,
 };
 use support::{clear_arena, place_tank, tank_index};
 
@@ -109,6 +109,10 @@ fn host_fires(
     (launches, flash, position)
 }
 
+fn weapon_damage(weapon: Weapon) -> f64 {
+    sloppy_core::sim::data::weapon(weapon).damage
+}
+
 /// The own shells drawn with no view delay at `tick`.
 fn drawn_at(own: &mut OwnShots, tick: f64) -> Vec<RenderShot> {
     let mut shots = Vec::new();
@@ -139,6 +143,7 @@ fn a_predicted_shot_launches_the_hosts_shells_from_its_muzzle() {
                 weapon,
                 team: Team::Blue,
                 tank_id: viewer,
+                damage: weapon_damage(weapon),
             },
             &cover,
         );
@@ -194,6 +199,7 @@ fn a_predicted_shell_stops_at_cover_and_a_ricochet_bounces_off_it() {
                 weapon,
                 team: Team::Blue,
                 tank_id: viewer,
+                damage: weapon_damage(weapon),
             },
             &cover,
         );
@@ -251,6 +257,7 @@ fn a_shell_the_host_launched_a_tick_late_glides_onto_its_path() {
             weapon: Weapon::Standard,
             team: Team::Blue,
             tank_id: viewer,
+            damage: weapon_damage(Weapon::Standard),
         },
         &cover,
     );
@@ -324,6 +331,7 @@ fn strike_ahead(under: f64, launched: bool) -> (usize, bool, OwnShots) {
             weapon: Weapon::Standard,
             team: Team::Blue,
             tank_id: viewer,
+            damage: weapon_damage(Weapon::Standard),
         },
         &cover,
     );
@@ -403,4 +411,164 @@ fn an_own_shell_passes_over_a_hull_below_the_hit_box_as_on_the_host() {
     let (impacts, _, own) = strike_ahead(HIT_HALF_HEIGHT + 0.05, true);
     assert_eq!(impacts, 0, "over it");
     assert_eq!(own.stats.phantom_strikes, 0);
+}
+
+/// What the host's shell did: when its path ended (fractional tick) and the impacts and
+/// explosions it showed, with their ticks.
+struct HostFlight {
+    end: Option<f64>,
+    effects: Vec<(f64, SimEvent)>,
+}
+
+/// Alice at `x` on the near side of a cottage, firing `weapon` straight across it on
+/// tick 1, as the host flies it for two seconds and as her prediction draws it from the
+/// scene a client holds. `crack` damages every part a little first, as a fight would.
+fn through_cottage(weapon: Weapon, x: f64, crack: bool) -> (HostFlight, HostFlight) {
+    let (mut sim, viewer) = alone(VehicleKind::Balanced);
+    let house = sim.add_cover(&CoverDef::house(0.0, 9.0, 7.0, 5.0, 4.9, 0xb87b4c));
+    place_tank(&mut sim, 0, x, 0.0, Some(0.0));
+    if crack {
+        let state = sim.covers[house].structure.as_mut().unwrap();
+        state.damage.iter_mut().for_each(|damage| *damage += 0.5);
+    }
+    sim.world.step();
+    let cover = predictor(&sim, viewer);
+    let (launches, _, position) = host_fires(&mut sim, viewer, weapon, 0.0);
+    let id = launches[0].id;
+    let mut recorder = ShotPathRecorder::default();
+    let mut host = HostFlight {
+        end: None,
+        effects: effects(&sim, 1.0),
+    };
+    for tick in 2..=120u64 {
+        sim.events.clear();
+        sim.step_with(&BTreeMap::new());
+        recorder.follow(&mut sim, tick);
+        for entry in recorder.entries() {
+            if let PathEntry::End { id: ended, tick } = *entry
+                && ended == id
+            {
+                host.end = Some(tick);
+            }
+        }
+        recorder.clear_entries();
+        host.effects.extend(effects(&sim, tick as f64));
+    }
+    let mut own = OwnShots::default();
+    own.fire(
+        Firing {
+            tick: 1,
+            position,
+            aim: 0.0,
+            kind: VehicleKind::Balanced,
+            weapon,
+            team: Team::Blue,
+            tank_id: viewer,
+            damage: weapon_damage(weapon),
+        },
+        &cover,
+    );
+    // Drawn ahead of a host that never reports: what the forecast alone shows.
+    let mut predicted = HostFlight {
+        end: None,
+        effects: Vec::new(),
+    };
+    for quarter in 0..=480 {
+        let tick = f64::from(quarter) * 0.25;
+        let mut shots = Vec::new();
+        let due = own.draw(tick, tick, -1.0, &[], &mut shots);
+        if shots.is_empty() && tick > 2.0 && predicted.end.is_none() {
+            predicted.end = Some(tick);
+        }
+        predicted.effects.extend(
+            due.into_iter()
+                .filter(|event| {
+                    matches!(event.kind, SimEventType::Impact | SimEventType::Explosion)
+                })
+                .map(|event| (tick, event)),
+        );
+    }
+    (host, predicted)
+}
+
+fn effects(sim: &Simulation, tick: f64) -> Vec<(f64, SimEvent)> {
+    sim.events
+        .iter()
+        .filter(|event| matches!(event.kind, SimEventType::Impact | SimEventType::Explosion))
+        .map(|event| (tick, event.clone()))
+        .collect()
+}
+
+/// Whether `effect` shows in `among` within a tick and a half and a metre.
+fn shown(effect: &(f64, SimEvent), among: &[(f64, SimEvent)]) -> bool {
+    among.iter().any(|(tick, event)| {
+        event.kind == effect.1.kind
+            && (tick - effect.0).abs() <= 1.5
+            && (event.x - effect.1.x).hypot(event.z - effect.1.z) <= 1.0
+    })
+}
+
+#[test]
+fn a_predicted_shell_through_a_cottage_flies_and_bursts_as_the_hosts() {
+    for weapon in [
+        Weapon::Standard,
+        Weapon::Ricochet,
+        Weapon::Piercing,
+        Weapon::Rocket,
+    ] {
+        // Across the cottage's front: posts, panels, windows and the door.
+        for x in [-3.3, -2.4, -1.1, -0.3, 0.4, 1.6, 2.8] {
+            let (host, predicted) = through_cottage(weapon, x, false);
+            let case = format!("{weapon:?} at x {x}");
+            match (host.end, predicted.end) {
+                (Some(host_end), Some(end)) => assert!(
+                    (end - host_end).abs() <= 1.0,
+                    "{case}: drawn until {end}, the host's ended at {host_end}"
+                ),
+                (None, None) => {}
+                (host_end, end) => panic!("{case}: drawn until {end:?}, host {host_end:?}"),
+            }
+            for effect in &predicted.effects {
+                assert!(
+                    shown(effect, &host.effects),
+                    "{case}: {:?} at {} not the host's {:?}",
+                    effect.1.kind,
+                    effect.0,
+                    host.effects
+                );
+            }
+            for effect in &host.effects {
+                assert!(
+                    shown(effect, &predicted.effects),
+                    "{case}: the host's {:?} at {} unforeseen in {:?}",
+                    effect.1.kind,
+                    effect.0,
+                    predicted.effects
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_shell_at_a_cracked_part_is_drawn_no_further_than_the_host_flies_it() {
+    for weapon in [Weapon::Standard, Weapon::Ricochet] {
+        for x in [-3.3, -2.4, -1.1, -0.3, 0.4, 1.6, 2.8] {
+            let (host, predicted) = through_cottage(weapon, x, true);
+            let case = format!("{weapon:?} at x {x}");
+            let host_end = host.end.expect("the host's shell bursts");
+            let end = predicted.end.expect("the drawn shell ends");
+            assert!(
+                end <= host_end + 1.0,
+                "{case}: drawn until {end}, host {host_end}"
+            );
+            for effect in &predicted.effects {
+                assert!(
+                    shown(effect, &host.effects),
+                    "{case}: {:?} the host never showed",
+                    effect.1
+                );
+            }
+        }
+    }
 }
