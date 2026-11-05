@@ -224,6 +224,10 @@ const BLAST_LIGHT: f64 = 34.0;
 const ENCLOSED_LIGHT: f64 = 0.12;
 /// A blast's scale inside a cottage, its fireball no bigger than the room.
 const ENCLOSED_SCALE: f64 = 0.3;
+/// The height of a fireball's middle over its foot, at scale 1 (m).
+const ENCLOSED_FIRE_MIDDLE: f64 = 1.0;
+/// How far (m) a burst in a room is drawn back toward the hole it came in by.
+const ENCLOSED_SETBACK: f64 = 0.45;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
 /// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
 /// wall: the pile's loose dust goes up with it.
@@ -722,6 +726,16 @@ struct WallMark {
 }
 
 impl Blast {
+    /// How far (m) a burst in a room is drawn up off the ground: its fireball is
+    /// built about the ground at its small scale, which put it at the wall's foot.
+    fn enclosed_lift(&self) -> f64 {
+        if self.enclosed {
+            (self.y - ENCLOSED_FIRE_MIDDLE * self.scale).max(0.0)
+        } else {
+            0.0
+        }
+    }
+
     fn look(&self) -> Look {
         match self.kind {
             Kind::Tank | Kind::Burnout => TANK_BLASTS[self.variant],
@@ -1180,9 +1194,21 @@ impl ExplosionEffects {
         if barrel {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
         }
-        // A shell's burst in a room stays in the room.
+        // A shell's burst in a room stays in the room, at the height it went off, drawn
+        // a little back toward the hole it came in by, clear of a wall it struck from
+        // inside, whose face its fire would show through.
         if blast.enclosed {
             blast.scale = ENCLOSED_SCALE;
+            blast.y = event.height.unwrap_or(1.0);
+            if let Some(hole) = event.from {
+                let (dx, dz) = (hole.x - event.x, hole.z - event.z);
+                let length = dx.hypot(dz);
+                if length > 1e-6 {
+                    let back = (length * 0.5).min(ENCLOSED_SETBACK);
+                    blast.x += dx / length * back;
+                    blast.z += dz / length * back;
+                }
+            }
         }
         // Timber and a tower going down raise more dust than a shell's pop.
         if kind == Kind::Collapse {
@@ -1392,7 +1418,7 @@ impl ExplosionEffects {
                         * s
                         * blast.fire_light(t, &blast.look())
                         * if blast.enclosed { ENCLOSED_LIGHT } else { 1.0 },
-                    LIGHT_HEIGHT * s + LIGHT_LIFT,
+                    LIGHT_HEIGHT * s + LIGHT_LIFT + blast.enclosed_lift(),
                 ),
                 Kind::Burnout => (
                     BLAST_LIGHT * BURNOUT_FIRE_SCALE * s * blast.fire_light(t, &blast.look()),
@@ -1625,7 +1651,8 @@ impl ExplosionEffects {
                 let s = b.scale;
                 // Low in the hull's middle: the seams' glows carry the flash round
                 // it, and the hull stands dark against them.
-                let center = Vec3::new(b.x as f32, (0.9 * s) as f32, b.z as f32);
+                let center =
+                    Vec3::new(b.x as f32, (0.9 * s + b.enclosed_lift()) as f32, b.z as f32);
                 if t < BLOOM_SECONDS {
                     let k = t / BLOOM_SECONDS;
                     let [r, g, bl] = BLOOM_COLOR;
@@ -1646,8 +1673,11 @@ impl ExplosionEffects {
                         [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.7) as f32],
                     );
                 }
-                self.shock(b, t, b.scale);
-                self.ring(b, t, b.scale);
+                // The room's floor and walls hold the shock and the ring on the ground.
+                if !b.enclosed {
+                    self.shock(b, t, b.scale);
+                    self.ring(b, t, b.scale);
+                }
             }
         }
     }
@@ -1894,7 +1924,8 @@ impl ExplosionEffects {
             let soot_age = (age - look.fire_life * 0.5).max(0.0);
             let buoyancy = SOOT_BUOYANCY * (0.55 + 0.9 * r2);
             let climb = 0.5 * buoyancy * soot_age * soot_age;
-            let lift = (height + look.fire_rise * age * 0.6) * s + climb * s.sqrt();
+            let lift =
+                (height + look.fire_rise * age * 0.6) * s + climb * s.sqrt() + b.enclosed_lift();
             let reach = (reach + 0.35 * soot_age) * s;
             // The burning part shrinks back a little as it cools; the soot it
             // leaves keeps spreading.

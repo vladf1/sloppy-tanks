@@ -293,3 +293,66 @@ fn gather(
         gather(child, world, parts, slots);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn still(piles: &mut HousePiles<u32>, ids: &[u32], from: f64, to: f64) {
+        let mut now = from;
+        while now <= to {
+            for &id in ids {
+                piles.observe(
+                    id,
+                    (Vec3::new(id as f32, 0.1, 0.0), Quat::IDENTITY),
+                    false,
+                    now,
+                );
+            }
+            now += 0.05;
+        }
+    }
+
+    #[test]
+    fn a_piece_broken_out_of_a_merged_pile_frees_its_chunk_and_the_rest_merge_again() {
+        let mut piles: HousePiles<u32> = HousePiles::default();
+        let ids = [1, 2, 3];
+        for &id in &ids {
+            piles.track(id, 7, Arc::new(Node::group("")), 0.0);
+        }
+        still(&mut piles, &ids, 0.0, 1.0);
+        let plan = piles.plan(1.0);
+        let (chunk, _) = plan.build.expect("the resting pile merges");
+        piles.built(chunk, 40);
+        assert!(ids.iter().all(|&id| piles.merged(id)));
+        // A shell breaks body 2: its fragment is gone, replaced by two new pieces.
+        let live: HashSet<u32> = [1, 3, 4, 5].into_iter().collect();
+        assert_eq!(piles.retain(&live), vec![40], "the chunk is freed");
+        assert!(
+            !piles.merged(1) && !piles.merged(3),
+            "its other bodies show again"
+        );
+        for id in [4, 5] {
+            piles.track(id, 7, Arc::new(Node::group("")), 1.1);
+        }
+        // Once all have come to rest they merge again.
+        still(&mut piles, &[1, 3, 4, 5], 1.1, 2.0);
+        let plan = piles.plan(2.0);
+        let (_, _) = plan.build.expect("merged again");
+    }
+
+    #[test]
+    fn a_merged_body_thrown_by_a_blast_leaves_its_chunk() {
+        let mut piles: HousePiles<u32> = HousePiles::default();
+        for id in [1, 2] {
+            piles.track(id, 7, Arc::new(Node::group("")), 0.0);
+        }
+        still(&mut piles, &[1, 2], 0.0, 1.0);
+        let (chunk, _) = piles.plan(1.0).build.expect("merged");
+        piles.built(chunk, 9);
+        piles.observe(1, (Vec3::new(1.0, 0.8, 0.3), Quat::IDENTITY), false, 1.05);
+        let plan = piles.plan(1.05);
+        assert_eq!(plan.freed, vec![9]);
+        assert!(!piles.merged(1));
+    }
+}

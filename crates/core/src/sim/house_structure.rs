@@ -167,6 +167,9 @@ const FIRM: f32 = 0.5;
 /// The share of its seat a part needs still standing under it to rest fully: a roof
 /// sheet whose eave wall is shot out from under it except at a corner post comes down.
 const SEAT_NEEDED: f32 = 0.5;
+/// A floor strip's joists need this share of their length still seated on the plate:
+/// boards cantilevered half a strip out past the last plate read as a flat card.
+const FLOOR_SEAT_NEEDED: f32 = 0.8;
 
 /// The share of its support a part passes to one resting on it, hanging from it or
 /// tied beside it ([`support_share`]). Resting passes all of it; the rest are named
@@ -190,9 +193,10 @@ const JOIST_SEAT: f32 = 1.0;
 const SHEET_TIE: f32 = 0.3;
 /// Opposite rafters meeting across the ridge.
 const RIDGE_PAIR: f32 = 0.4;
-/// The ridge beam spanning on from its neighbour: one segment past a gone gable, not
-/// two (0.55² falls under [`FALL_BELOW`]).
-const RIDGE_TIE: f32 = 0.55;
+/// The ridge beam spanning on from its neighbour, held in by the rafter pairs meeting
+/// on it: two segments past a gone gable's peak, so the roof's end stands on its eave
+/// walls without it, but not three (0.65³ falls under [`FALL_BELOW`]).
+const RIDGE_TIE: f32 = 0.65;
 /// A hip's ridge held up by the hip end slopes.
 const HIP_TIE: f32 = 0.7;
 /// Whatever else touches.
@@ -212,6 +216,12 @@ const DOOR_RISE: f64 = 2.0;
 const BELT_OVER: f64 = 0.3;
 const UPPER_SILL: f64 = 0.35;
 const UPPER_WINDOW: f64 = 1.2;
+/// The course of wall under a window's lower panel (m over the plinth).
+const WINDOW_FOOT: f64 = 0.35;
+/// A window's trim reaches this far (m) past its opening: the head casing and drip cap
+/// over it and the sill and apron under it go with the window, not the wall round it.
+const WINDOW_HEAD_TRIM: f64 = 0.2;
+const WINDOW_SILL_TRIM: f64 = 0.12;
 /// Roof sheets: about this long along the ridge, and the share of a slope's run the
 /// upper row takes.
 const SHEET_LENGTH: f64 = 2.4;
@@ -232,6 +242,10 @@ const PARTITION_AT: f64 = -0.12;
 const PARTITION_DOOR: f64 = 0.45;
 /// How close (m) two parts' boxes are to count as touching.
 const CONTACT: f64 = 0.06;
+/// A gable end is braced by roof sheets this near (m) to it.
+const ROOF_BRACE: f64 = 0.15;
+/// An upper storey's wall part is held by a floor strip this near (m) in plan.
+const FLOOR_REACH: f64 = 0.3;
 /// A part reaching this near the plinth's top stands on the ground.
 const GROUND_REACH: f64 = 0.05;
 /// Cells of the model reach this far past a part's outer edges, so trims and
@@ -604,8 +618,12 @@ impl HouseStructure {
         let door_top = PLINTH + DOOR_RISE;
         let mut bands = match column {
             Column::Door => vec![(PLINTH, head.max(door_top), PartKind::Door)],
+            // Under a window, a low course of wall over the footing that a shell at
+            // hull height passes over: a shot under the sill leaves a ragged hole over
+            // it, not a doorway.
             Column::Window => vec![
-                (PLINTH, sill, PartKind::Panel),
+                (PLINTH, PLINTH + WINDOW_FOOT, PartKind::Panel),
+                (PLINTH + WINDOW_FOOT, sill, PartKind::Panel),
                 (sill, head, PartKind::Window),
             ],
             Column::Bay => vec![(PLINTH, sill, PartKind::Panel), (sill, head, PartKind::Panel)],
@@ -636,6 +654,22 @@ impl HouseStructure {
         for (from, to, column) in self.columns(index) {
             let bands = self.bands(column);
             let last_band = bands.len() - 1;
+            // Where each band's cell starts and ends up the wall: a window's takes its
+            // trim from the bands over and under it.
+            let trim = |b: usize, edge: f64, upward: bool| {
+                let window = |k: Option<usize>| k.and_then(|k| bands.get(k)).is_some_and(|band| band.2 == PartKind::Window);
+                match upward {
+                    // A band's top: under a window it stops short of the sill trim; a
+                    // window's reaches over its head trim.
+                    true if window(Some(b + 1)) => edge - WINDOW_SILL_TRIM,
+                    true if window(Some(b)) => edge + WINDOW_HEAD_TRIM,
+                    // A band's bottom: over a window it starts above the head trim; a
+                    // window's reaches under its sill trim.
+                    false if window(b.checked_sub(1)) => edge + WINDOW_HEAD_TRIM,
+                    false if window(Some(b)) => edge - WINDOW_SILL_TRIM,
+                    _ => edge,
+                }
+            };
             for (b, &(bottom, top, kind)) in bands.iter().enumerate() {
                 let corner =
                     |s: f64, t: f64, depth: f64| center + along * s + DVec3::Y * t - out * depth;
@@ -644,8 +678,11 @@ impl HouseStructure {
                 // and the top one up into the eaves (on a gable wall, up to the gable).
                 let cell = PartCell {
                     part,
-                    min: DVec2::new(from, if b == 0 { -FAR } else { bottom }),
-                    max: DVec2::new(to, if b < last_band || gable { top } else { FAR }),
+                    min: DVec2::new(from, if b == 0 { -FAR } else { trim(b, bottom, false) }),
+                    max: DVec2::new(
+                        to,
+                        if b < last_band || gable { trim(b, top, true) } else { FAR },
+                    ),
                 };
                 let mut part = StructurePart::cuboid(kind, p.min(q), p.max(q), vec![cell]);
                 part.wall = Some(index);
@@ -789,11 +826,22 @@ impl HouseStructure {
                     continue;
                 }
                 let mut share = support_share(a.kind, b.kind, relation);
+                // A floor's joists run across the cottage (along x) and bear on the
+                // eave walls' plates; a gable wall's plate runs along a strip's side.
+                let joists = relation == Relation::Beside
+                    && (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate)
+                    && b.wall.is_some_and(|wall| wall >= 2);
+                if relation == Relation::Beside
+                    && (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate)
+                    && !joists
+                {
+                    share = LOOSE_TIE;
+                }
                 // What seats it: the plan it lies on, or the length a floor's
                 // joists sit along a plate.
                 let seat = match relation {
                     Relation::Below => plan_overlap(0) * plan_overlap(2),
-                    Relation::Beside if (a.kind, b.kind) == (PartKind::Floor, PartKind::Plate) => plan_overlap(0).max(plan_overlap(2)),
+                    Relation::Beside if joists => plan_overlap(0).max(plan_overlap(2)),
                     _ => 0.0,
                 };
                 let end = match (a.kind, relation) {
@@ -813,7 +861,7 @@ impl HouseStructure {
                     }
                     // A floor strip's joists span from one eave wall's plate to the
                     // other's: off one, it does not cantilever off the other.
-                    (PartKind::Floor, Relation::Beside) if b.kind == PartKind::Plate => {
+                    (PartKind::Floor, Relation::Beside) if joists => {
                         if b.center().x < a.center().x {
                             End::A
                         } else {
@@ -1015,11 +1063,12 @@ impl HouseStructure {
                                     links.push((i, j, REST, seat));
                                 }
                             }
-                            // Rafters' tops on the ridge.
+                            // Rafters' tops on the ridge: rafter pairs bear on
+                            // each other there, so the ridge need not seat them firmly.
                             (PartKind::Ridge, Some(_)) if upper => {
                                 let seat = overlap(z(a), z(b));
                                 if seat > CONTACT {
-                                    links.push((i, j, REST, seat));
+                                    links.push((i, j, REST, 0.0));
                                     links.push((j, i, LOOSE_TIE, 0.0));
                                 }
                             }
@@ -1254,7 +1303,12 @@ impl HouseStructure {
                 // Short of the seat it needs a part loses its hold fast: a sheet seated
                 // on a corner post alone is not a sheet held at a sixth of its eave.
                 let seating = if seat > 0.0 {
-                    (seated / seat / SEAT_NEEDED).min(1.0).powi(2)
+                    let needed = if self.parts[index].kind == PartKind::Floor {
+                        FLOOR_SEAT_NEEDED
+                    } else {
+                        SEAT_NEEDED
+                    };
+                    (seated / seat / needed).min(1.0).powi(2)
                 } else {
                     1.0
                 };
@@ -1318,14 +1372,84 @@ impl HouseStructure {
         }
     }
 
-    /// Whether `index` is a wall part of an upper storey left without a neighbour beside
-    /// it in its wall: a sliver one bay wide and two storeys high, with nothing to brace
-    /// it, breaks off at the floor.
+    /// Whether standing part `index` is a sliver nothing braces, which topples however
+    /// well it is seated: a wall part above the bottom course with no neighbour left
+    /// beside it in its wall (a one-bay strip of wall standing alone breaks off over its
+    /// stub), a corner post with no wall part above the bottom course left on it (a bare
+    /// post), and an upper storey's wall part whose corner post or the floor behind it
+    /// is gone (the remains of a two-storey house stand one storey high).
     fn sliver(&self, index: usize, down: &PartSet) -> bool {
-        self.parts[index].upper_storey
-            && !self.beside[index]
-                .iter()
-                .any(|&other| !down.contains(other as usize))
+        let part = &self.parts[index];
+        let standing = |other: usize| !down.contains(other);
+        match part.kind {
+            PartKind::Post => !(0..self.parts.len()).any(|other| {
+                let wall = &self.parts[other];
+                standing(other)
+                    && wall.wall.is_some()
+                    && !wall.grounded
+                    && self.supports[other].iter().any(|support| support.by as usize == index)
+            }),
+            PartKind::Panel | PartKind::Window | PartKind::Door | PartKind::Plate
+                if part.wall.is_some() && !part.grounded =>
+            {
+                // Its neighbours in the wall, or the corner post it is framed into.
+                let braced = self.beside[index].iter().any(|&other| standing(other as usize))
+                    || self.supports[index].iter().any(|support| {
+                        let by = support.by as usize;
+                        self.parts[by].kind == PartKind::Post && standing(by)
+                    });
+                !braced || (part.upper_storey && !self.upper_storey_held(index, down))
+            }
+            // A gable end braced by no roof any more stands only on a whole wall: a
+            // gable triangle over a broken wall is a stage flat.
+            PartKind::Gable => {
+                let braced = (0..self.parts.len()).any(|other| {
+                    standing(other)
+                        && self.parts[other].kind == PartKind::Sheet
+                        && self.touch(index, other, ROOF_BRACE)
+                });
+                let wall_whole = (0..self.parts.len()).all(|other| {
+                    let below = &self.parts[other];
+                    below.wall != part.wall || below.kind == PartKind::Gable || standing(other)
+                });
+                !braced && !wall_whole
+            }
+            // The inner wall stands braced by the floor over it.
+            PartKind::Partition => !(0..self.parts.len()).any(|other| {
+                standing(other)
+                    && self.parts[other].kind == PartKind::Floor
+                    && self.touch(index, other, CONTACT)
+            }),
+            _ => false,
+        }
+    }
+
+    /// Whether parts `a` and `b`'s boxes come within `gap` (m) of each other.
+    fn touch(&self, a: usize, b: usize, gap: f64) -> bool {
+        let (a, b) = (&self.parts[a], &self.parts[b]);
+        (b.min - a.max).max(a.min - b.max).max_element() <= gap
+    }
+
+    /// Whether upper-storey wall part `index` still has its nearer corner post and the
+    /// upper floor behind it.
+    fn upper_storey_held(&self, index: usize, down: &PartSet) -> bool {
+        let part = &self.parts[index];
+        let middle = part.center().with_y(0.0);
+        let corner = (0..4).min_by(|&a, &b| {
+            let gap = |post: usize| (self.parts[post].center().with_y(0.0) - middle).length();
+            gap(a).total_cmp(&gap(b))
+        });
+        let Some(floor) = self.upper_floor() else {
+            return true;
+        };
+        let floor_behind = (0..self.parts.len()).any(|other| {
+            let strip = &self.parts[other];
+            strip.kind == PartKind::Floor
+                && (strip.max.y - floor).abs() < CONTACT
+                && !down.contains(other)
+                && (strip.min - part.max).max(part.min - strip.max).with_y(0.0).max_element() < FLOOR_REACH
+        });
+        corner.is_some_and(|post| !down.contains(post)) && floor_behind
     }
 
     /// `falling` in the groups that come down together: parts linked to each other
@@ -1386,6 +1510,9 @@ enum Relation {
 fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
     use PartKind::*;
     match relation {
+        // A floor strip's joists bear on the inner wall in passing: they span from
+        // plate to plate, and do not stand on the partition alone like a table.
+        Relation::Below if (of, by) == (Floor, Partition) => LOOSE_TIE,
         Relation::Below => REST,
         // A beam carries what lies on it; it does not hang from it.
         Relation::Above => match of {
@@ -1517,7 +1644,11 @@ mod tests {
         for design in village() {
             let structure = HouseStructure::new(&design);
             for (index, part) in structure.parts.iter().enumerate() {
-                if part.kind != PartKind::Panel || part.min.y > PLINTH + 0.1 {
+                // A low panel a shell at hull height strikes (over a window's foot).
+                if part.kind != PartKind::Panel
+                    || part.min.y > PLINTH + WINDOW_FOOT + 0.01
+                    || part.max.y < 1.0
+                {
                     continue;
                 }
                 let gone = PartSet::from_indices([index]);
@@ -1674,6 +1805,167 @@ mod tests {
             checked += 1;
         }
         assert!(checked > 0, "a two-storey cottage in the village");
+    }
+
+    #[test]
+    fn a_gable_end_shot_out_round_its_window_leaves_the_roof_on_its_eave_walls() {
+        let mut checked = 0;
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if structure.roof.form != RoofForm::Gable {
+                continue;
+            }
+            for wall in [0, 1] {
+                // The gable's peak pieces and a window's column with the bays beside it.
+                let Some(window) = (0..structure.parts.len()).find(|&index| {
+                    structure.parts[index].kind == PartKind::Window
+                        && structure.parts[index].wall == Some(wall)
+                        && !structure.parts[index].upper_storey
+                }) else {
+                    continue;
+                };
+                let (from, to) = (structure.parts[window].min.x - 1.0, structure.parts[window].max.x + 1.0);
+                let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                    let part = &structure.parts[index];
+                    part.wall == Some(wall)
+                        && (part.kind == PartKind::Gable
+                            || (part.max.x > from && part.min.x < to && part.kind != PartKind::Plate))
+                }));
+                let falling = structure.unsupported(&gone);
+                let sheets: Vec<usize> = falling
+                    .iter()
+                    .filter(|&index| structure.parts[index].kind == PartKind::Sheet)
+                    .collect();
+                assert!(sheets.is_empty(), "{:?} wall {wall}: sheets {sheets:?} fell", design.style.form);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn a_lone_strip_of_wall_and_a_bare_post_topple_over_their_stubs() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            // Wall 2 shot out but for one middle column, and its posts with it.
+            let middle = (0..structure.parts.len())
+                .filter(|&index| {
+                    let part = &structure.parts[index];
+                    part.wall == Some(2) && part.kind == PartKind::Panel && part.grounded
+                })
+                .min_by(|&a, &b| {
+                    let z = |index: usize| structure.parts[index].center().z.abs();
+                    z(a).total_cmp(&z(b))
+                })
+                .expect("a middle bay");
+            let span = (structure.parts[middle].min.z, structure.parts[middle].max.z);
+            let kept = |part: &StructurePart| {
+                part.wall == Some(2) && (part.min.z - span.0).abs() < 1e-6 && (part.max.z - span.1).abs() < 1e-6
+            };
+            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                (index == 0 || index == 2) || (part.wall == Some(2) && !kept(part))
+            }));
+            let down = gone.union(&structure.unsupported(&gone));
+            for (index, part) in structure.parts.iter().enumerate() {
+                if kept(part) {
+                    assert_eq!(down.contains(index), !part.grounded, "{:?} {index} {:?}", design.style.form, part.kind);
+                }
+            }
+            // A post with only stubs of wall left on it goes too.
+            let bare = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                matches!(part.wall, Some(0) | Some(2)) && !part.grounded
+            }));
+            assert!(structure.unsupported(&bare).contains(0), "{:?}: the bare corner post stands", design.style.form);
+        }
+    }
+
+    #[test]
+    fn an_upper_storey_stands_only_on_its_corner_and_floor() {
+        let mut checked = 0;
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if design.storeys() < 2 {
+                continue;
+            }
+            // A corner post shot out: the upper storey's wall nearest it comes down; the
+            // ground floor's parts there stand on.
+            let gone = PartSet::from_indices([0]);
+            let falling = structure.unsupported(&gone);
+            let corner = structure.parts[0].center().with_y(0.0);
+            let near = |part: &StructurePart| (part.center().with_y(0.0) - corner).length() < 1.0;
+            for (index, part) in structure.parts.iter().enumerate() {
+                if part.wall.is_some() && part.upper_storey && near(part) {
+                    assert!(falling.contains(index), "upper part {index} by the gone corner stands");
+                }
+                if part.wall.is_some() && part.grounded && near(part) {
+                    assert!(!falling.contains(index), "ground floor part {index} fell");
+                }
+            }
+            checked += 1;
+        }
+        assert!(checked > 0);
+    }
+
+    #[test]
+    fn a_gable_end_with_its_roof_gone_stands_only_on_its_whole_wall() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if structure.roof.form != RoofForm::Gable {
+                continue;
+            }
+            let roof = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| structure.parts[index].kind.roof()),
+            );
+            let parts = &structure.parts;
+            let gables = |wall: usize| {
+                (0..parts.len())
+                    .filter(|&index| parts[index].kind == PartKind::Gable && parts[index].wall == Some(wall))
+                    .collect::<Vec<_>>()
+            };
+            // Roof gone, walls whole: the gables stand.
+            let falling = structure.unsupported(&roof);
+            assert!(gables(0).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+            // And a bay of wall 0 shot out under them as well: wall 0's gable goes.
+            let bay = (0..structure.parts.len())
+                .find(|&index| structure.parts[index].wall == Some(0) && structure.parts[index].kind == PartKind::Panel)
+                .unwrap();
+            let gone = roof.union(&PartSet::from_indices([bay]));
+            let falling = structure.unsupported(&gone);
+            assert!(gables(0).iter().all(|&g| falling.contains(g)), "{:?}", design.style.form);
+            assert!(gables(1).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+        }
+    }
+
+    #[test]
+    fn bare_gable_ends_and_their_ridge_come_down_off_broken_walls() {
+        for design in village() {
+            let structure = HouseStructure::new(&design);
+            if structure.roof.form != RoofForm::Gable {
+                continue;
+            }
+            // The roof sheets gone, both long walls with them and a bay out of each gable
+            // wall: the gable ends stand on what is left of their walls, the ridge between.
+            let bays: Vec<usize> = [0, 1]
+                .into_iter()
+                .filter_map(|wall| {
+                    (0..structure.parts.len()).find(|&index| {
+                        structure.parts[index].wall == Some(wall) && structure.parts[index].kind == PartKind::Panel
+                    })
+                })
+                .collect();
+            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
+                let part = &structure.parts[index];
+                part.kind == PartKind::Sheet || matches!(part.wall, Some(2) | Some(3)) || bays.contains(&index)
+            }));
+            let falling = structure.unsupported(&gone);
+            for (index, part) in structure.parts.iter().enumerate() {
+                if matches!(part.kind, PartKind::Ridge | PartKind::Gable) {
+                    assert!(falling.contains(index), "{:?}: {:?} {index} stands", design.style.form, part.kind);
+                }
+            }
+        }
     }
 
     #[test]

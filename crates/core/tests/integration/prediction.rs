@@ -732,7 +732,7 @@ fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them(
         // Within a hull's reach of the debris it keeps, by their bodies' origins.
         .filter(|fragment| distance(fragment.position.planar(), hull.position.planar()) < 12.0)
         .collect();
-    assert!(loose.len() > 5, "the roof lies in pieces");
+    assert!(loose.len() > 5, "the roof lies in pieces: {}", loose.len());
     for fragment in loose {
         let pose = predictor
             .body_pose(Moved::Fragment(fragment.id))

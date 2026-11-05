@@ -15,16 +15,17 @@ use std::sync::Arc;
 
 use glam::DVec3;
 use rapier3d::prelude::{
-    ActiveEvents, ColliderBuilder, ColliderHandle, RigidBodyBuilder, RigidBodyHandle,
+    ActiveEvents, ColliderBuilder, ColliderHandle, Pose, RigidBodyBuilder, RigidBodyHandle,
+    Rotation, Vector,
 };
 
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{
-    DebrisMaterial, blast_debris, debris_material, track_debris_contacts,
+    DebrisMaterial, blast_loose_debris, debris_material, track_debris_contacts,
 };
 use super::house_layout::HouseDesign;
-use super::house_structure::{CHIMNEY_PART, HouseStructure, PartKind, PartSet, StructurePart};
+use super::house_structure::{CHIMNEY_PART, HouseStructure, PartKind, PartSet};
 use super::math::{Point3, Vec2};
 use super::navigation::Footprint;
 use super::data::STEP;
@@ -71,9 +72,10 @@ const BRICK_DENSITY: f64 = 0.8;
 /// tips at this rate (rad/s), so nothing hangs level in the air where it stood.
 const SLUMP_SPEED: f64 = 0.6;
 const SLUMP_TIP: f64 = 0.6;
-/// A loose part resting (slower than this, m/s) with its middle this high (m) up on its
-/// cottage's standing parts, this long (s) after it came loose, is wedged there.
-const WEDGE_SPEED: f64 = 0.2;
+/// A loose part lying (slower than this, m/s: sliding or still) with its middle this
+/// high (m) up on its cottage's standing parts, this long (s) after it came loose, is
+/// wedged there.
+const WEDGE_SPEED: f64 = 1.5;
 const WEDGE_HEIGHT: f64 = 1.0;
 const WEDGE_AFTER: f64 = 0.4;
 /// How fast (m/s) a wedged part is shoved off what it lies on, and how long (s) it is
@@ -82,26 +84,66 @@ const WEDGE_PUSH: f64 = 1.2;
 const WEDGE_GIVE_UP: f64 = 1.0;
 /// The damage each unit of impulse a falling part strikes a standing one with does.
 const CRUSH_DAMAGE: f64 = 6.0;
+/// A falling part strikes with at most its momentum times this (a bounce back).
+const CRUSH_BOUNCE: f64 = 1.5;
 /// Contact force per unit of a loose part's mass that counts as striking what it lands
 /// on rather than resting its weight there.
 const CRUSH_FORCE_PER_MASS: f64 = 40.0;
 /// How fast (m/s) a blast throws the parts it tears loose away from it.
 const BLAST_THROW: f64 = 2.5;
-/// Two sheets whose spans along the ridge overlap by this share of the first are one
-/// column of rafters.
-const COLUMN_OVERLAP: f64 = 0.5;
+/// A loose body broken by a shell or a blast near it throws its pieces this fast (m/s)
+/// out from the burst and up, for a standard shell's damage, less for a big piece.
+const LOOSE_THROW_OUT: f64 = 1.6;
+const LOOSE_THROW_UP: f64 = 2.4;
+/// A blast breaks the loose parts within this share of its reach (at least
+/// [`BLAST_CORE`], at most [`LOOSE_CORE_MAX`] m) and throws the others in reach.
+const LOOSE_CORE_SHARE: f64 = 0.35;
+const LOOSE_CORE_MAX: f64 = 1.0;
+/// A blast's damage that throws loose parts at [`LOOSE_THROW_OUT`]; more throws
+/// them harder, up to [`LOOSE_THROW_MOST`] times.
+const LOOSE_THROW_DAMAGE: f64 = 40.0;
+const LOOSE_THROW_MOST: f64 = 1.8;
 /// A falling body breaks up into its parts when its velocity changes by this much
 /// (m/s) in one tick: a hard landing.
-const SHATTER_SPEED: f64 = 2.5;
-/// Seconds a loose part lies before it sinks away (plus the cleanup fade), and its
-/// hard deadline.
-const PART_LIFE: f64 = 30.0;
-const PART_DEADLINE: f64 = 40.0;
+const SHATTER_SPEED: f64 = 1.5;
+/// A body that came down without a hard landing (slid off its stubs, laid itself
+/// down) breaks up all the same once it lies still this long (s) after it came loose:
+/// no slope lies on the ground as one clean slab.
+const BREAK_AT_REST: f64 = 1.5;
+const REST_SPEED: f32 = 0.3;
+/// The pieces of a body breaking where it lies tip at this rate (rad/s) about their
+/// break line, alternately, so the break shows as a crease, not a seam.
+const CREASE_SPIN: f64 = 1.2;
+/// Seconds a loose part lies before it sinks away (plus the cleanup fade): from
+/// [`PART_LIFE`] to [`PART_LIFE`] + [`PART_LIFE_SPREAD`] by its parts, so a pile sinks
+/// one piece after another, and a ruin is clear of them by its hard deadline.
+const PART_LIFE: f64 = 11.0;
+const PART_LIFE_SPREAD: f64 = 6.0;
+const PART_DEADLINE: f64 = 19.5;
+/// The pieces a body breaks into sink this much (s) apart, in turns of this many, and
+/// none sooner than this (s) unless the body itself was due to.
+const PIECE_LIFE_STEP: f64 = 0.7;
+const PIECE_LIFE_STEPS: usize = 6;
+const PIECE_LIFE_LEAST: f64 = 4.0;
 /// A loose part's linear and angular damping while it falls, and after this long (s)
 /// the damping toward rest that settles a pile rather than letting it creep.
 const FALLING_DAMPING: (f32, f32) = (0.1, 0.3);
 const SETTLE_AFTER: f64 = 2.0;
 const SETTLED_DAMPING: (f32, f32) = (2.0, 3.0);
+
+/// A loose piece come to rest this long (s) after it came loose, slower than this
+/// (m/s), on a thin edge (its face's normal's rise under [`LEANING`], about 45
+/// degrees; a post or the ridge on its end, its length's rise over [`ON_END`]) and not
+/// propped on the remains, is laid down: turned over the way it leans at [`LAY_RATE`]
+/// (rad/s) about its foot until its face's rise reaches [`LAID`] (or its length's
+/// falls under [`LAID_STICK`]).
+const LAY_AFTER: f64 = 1.0;
+const LAY_SLOWER: f32 = 0.5;
+const LEANING: f32 = 0.7;
+const ON_END: f32 = 0.7;
+const LAY_RATE: f32 = 2.5;
+const LAID: f32 = 0.93;
+const LAID_STICK: f32 = 0.35;
 
 /// The linear and angular damping of a loose part `age` seconds after it came loose.
 pub fn house_debris_damping(age: f64) -> (f32, f32) {
@@ -274,6 +316,7 @@ fn part_paint(layout: &HouseStructure, index: usize) -> u32 {
         PartKind::Sheet | PartKind::Ridge => style.roof,
         PartKind::Chimney => CHIMNEY_BRICK,
         PartKind::Floor | PartKind::Partition => 0xc9b48f,
+        PartKind::Window => style.trim,
         _ => style.siding,
     }
 }
@@ -320,7 +363,8 @@ impl Simulation {
     /// nothing at its edge and shielded by standing parts between, and throwing the
     /// loose debris round it.
     pub fn house_blast(&mut self, point: Point3, radius: f64, damage: f64, by: Option<(u32, Team)>) {
-        blast_debris(self, point.planar(), radius, damage);
+        blast_loose_debris(self, point.planar(), radius, damage);
+        blast_house_debris(self, point, radius, damage);
         for cover in 0..self.covers.len() {
             self.house_blast_on(cover, point, radius, damage, by);
         }
@@ -522,7 +566,7 @@ impl Simulation {
             return;
         };
         let layout = state.layout.clone();
-        let broken = PartSet::from_indices(broken.iter().filter(|&index| state.standing(index)));
+        let mut broken = PartSet::from_indices(broken.iter().filter(|&index| state.standing(index)));
         let loose = PartSet::from_indices(
             loose
                 .iter()
@@ -530,6 +574,14 @@ impl Simulation {
         );
         if broken.is_empty() && loose.is_empty() {
             return;
+        }
+        // A window the break leaves without its sill or frame does not drop out whole:
+        // its glass goes and its sash breaks up as it comes out.
+        let after = state.gone.union(&broken).union(&loose);
+        for index in layout.unsupported(&after).iter() {
+            if layout.parts[index].kind == PartKind::Window {
+                broken.insert(index);
+            }
         }
         // Splinters from the heaviest broken parts.
         let mut thrown: Vec<usize> = broken.iter().collect();
@@ -723,10 +775,12 @@ impl Simulation {
             track_debris_contacts(self, body, first, fragment_id, DebrisMaterial::Wood);
         }
         let _ = cover;
+        let first = parts.iter().next().unwrap_or(0);
+        let stagger = (first * 7 % 13) as f64 / 12.0;
         let mut fragment = Fragment::new(
             fragment_id,
             body,
-            PART_LIFE + DEBRIS_CLEANUP_SECONDS,
+            PART_LIFE + PART_LIFE_SPREAD * stagger + DEBRIS_CLEANUP_SECONDS,
             1.0,
             color,
         );
@@ -755,29 +809,29 @@ impl Simulation {
         self.remove_body(fragment.body);
     }
 
-    /// Break a landed body up into its parts, each a body of its own moving as it was.
-    fn shatter_house_fragment(&mut self, index: usize) {
+    /// Split loose body `index` into `sections`, each a body of its own moving as it
+    /// was, thrown out from `throw`'s point at its strength (a burst or a shell) if any.
+    /// The pieces land on without breaking up again.
+    fn split_house_fragment(
+        &mut self,
+        index: usize,
+        layout: &HouseStructure,
+        sections: Vec<PartSet>,
+        throw: Option<(Point3, f64)>,
+    ) {
         let fragment = self.fragments.remove(index);
-        let (Some(parts), Some(house)) = (fragment.house_parts, fragment.house_id) else {
-            self.fragments.insert(index, fragment);
-            return;
-        };
-        let Some(layout) = self
-            .covers
-            .iter()
-            .find(|cover| cover.id == house)
-            .and_then(|cover| cover.structure.as_ref())
-            .map(|state| state.layout.clone())
-        else {
-            self.fragments.insert(index, fragment);
-            return;
-        };
         let old = &self.world.bodies[fragment.body];
         let (position, rotation) = (old.translation(), *old.rotation());
         let (linvel, angvel) = (old.linvel(), old.angvel());
         let center = old.center_of_mass();
+        // A body dropping through the remains it lay on keeps doing so in pieces: put
+        // back among them, its pieces would be pushed out through the ground.
+        let groups = old
+            .colliders()
+            .first()
+            .map(|&handle| self.world.colliders[handle].collision_groups());
         self.remove_body(fragment.body);
-        for section in landing_sections(&layout, &parts) {
+        for (k, section) in sections.into_iter().enumerate() {
             let body = self.world.insert_body(
                 RigidBodyBuilder::dynamic()
                     .translation(position)
@@ -786,11 +840,32 @@ impl Simulation {
                     .angular_damping(FALLING_DAMPING.1)
                     .can_sleep(true),
             );
-            let colliders = self.insert_house_debris(&layout, &section, body);
+            let colliders = self.insert_house_debris(layout, &section, body);
+            if let Some(groups) = groups {
+                for &handle in &colliders {
+                    self.world.colliders[handle].set_collision_groups(groups);
+                }
+            }
             let rigid_body = &mut self.world.bodies[body];
-            let r = rigid_body.center_of_mass() - center;
-            rigid_body.set_linvel(linvel + angvel.cross(r), true);
-            rigid_body.set_angvel(angvel, true);
+            let middle = rigid_body.center_of_mass();
+            let mut velocity = linvel + angvel.cross(middle - center);
+            let mut spin = angvel;
+            match throw {
+                Some((from, strength)) => {
+                    velocity += throw_velocity(from_vector(middle), from, strength, section.len());
+                }
+                None => {
+                    // Broken where it fell: each piece tips about the line it broke
+                    // along, one way then the other.
+                    let out = (middle - center).with_y(0.0);
+                    if out.length() > 1e-3 {
+                        let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
+                        spin += Vector::Y.cross(out.normalize()) * (sign * CREASE_SPIN) as f32;
+                    }
+                }
+            }
+            rigid_body.set_linvel(velocity, true);
+            rigid_body.set_angvel(spin, true);
             self.reserve_fragments(1);
             let fragment_id = self.allocate_id();
             if let Some(&first) = colliders.first() {
@@ -801,35 +876,242 @@ impl Simulation {
             piece.body = body;
             piece.house_parts = Some(section);
             piece.house_wedged = None;
+            piece.house_broken = true;
+            // One after another, never past the body's own time.
+            let step = PIECE_LIFE_STEP * (k % PIECE_LIFE_STEPS) as f64;
+            piece.life = (fragment.life - step).max(fragment.life.min(PIECE_LIFE_LEAST));
+            if throw.is_some() {
+                // Thrown, it flies and lands before the rest damping takes it.
+                piece.created_at = Some(self.elapsed);
+            }
             piece.house_velocity = Some(from_vector(self.world.bodies[body].linvel()));
             self.fragments.push(piece);
         }
     }
+
+    /// Loose body `index` struck at `point` in its part `struck` (a shell's hit, or the
+    /// part nearest a burst): that part shatters where it lies, and the rest of the body
+    /// breaks into a few pieces ([`loose_sections`]) thrown out from the point at
+    /// `strength`. With no room for the pieces in the debris budget, all of it shatters.
+    /// No random draw.
+    pub fn break_loose_house_body(&mut self, index: usize, struck: usize, point: Point3, strength: f64) {
+        let fragment = &self.fragments[index];
+        let (Some(parts), Some(house)) = (fragment.house_parts, fragment.house_id) else {
+            return;
+        };
+        let Some(layout) = self
+            .covers
+            .iter()
+            .find(|cover| cover.id == house)
+            .and_then(|cover| cover.structure.as_ref())
+            .map(|state| state.layout.clone())
+        else {
+            return;
+        };
+        let struck = if parts.contains(struck) {
+            struck
+        } else {
+            parts.iter().next().expect("a loose body has parts")
+        };
+        let mut rest = parts;
+        rest.remove(struck);
+        let sections = if rest.is_empty() {
+            Vec::new()
+        } else {
+            loose_sections(&layout, &rest)
+        };
+        let room = self.fragments.len() - 1 + sections.len() <= self.max_fragments;
+        let shattered = if room { PartSet::from_indices([struck]) } else { parts };
+        // Each shattered part's splinters from where it lies now.
+        let body = &self.world.bodies[fragment.body];
+        let mut thrown: Vec<(f64, usize, DVec3)> = body
+            .colliders()
+            .iter()
+            .filter_map(|&handle| {
+                let collider = &self.world.colliders[handle];
+                let part = collider.user_data as usize;
+                shattered.contains(part).then(|| {
+                    let aabb = collider.compute_aabb();
+                    let middle = (aabb.mins + aabb.maxs) * 0.5;
+                    let size = (layout.parts[part].max - layout.parts[part].min).max_element();
+                    (size, part, DVec3::new(middle.x as f64, middle.y as f64, middle.z as f64))
+                })
+            })
+            .collect();
+        thrown.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+        for &(size, part, middle) in thrown.iter().take(SHATTER_EVENTS) {
+            let mut event = SimEvent::at(SimEventType::Shatter, middle.x, middle.z);
+            event.height = Some(middle.y);
+            event.size = Some(size);
+            event.color = Some(part_paint(&layout, part));
+            event.cover_kind = Some(CoverKind::House);
+            event.id = Some(house);
+            event.from = Some(point);
+            self.events.push(event);
+        }
+        if sections.is_empty() || !room {
+            let fragment = self.fragments.remove(index);
+            self.remove_body(fragment.body);
+            return;
+        }
+        self.split_house_fragment(index, &layout, sections, Some((point, strength)));
+    }
 }
 
-/// The sections a landing body breaks into: a roof slope's sheets column by column
-/// (its rafters split along their length: the sheet under the ridge with the one
-/// below it), every other part on its own, the chimney among them.
-fn landing_sections(layout: &HouseStructure, parts: &PartSet) -> Vec<PartSet> {
-    let mut sections: Vec<PartSet> = Vec::new();
+/// The velocity (m/s) a piece whose middle is at `at` is thrown with by a hit or burst
+/// at `from` of `strength`: out from it and up, a big piece less.
+fn throw_velocity(at: Point3, from: Point3, strength: f64, parts: usize) -> rapier3d::prelude::Vector {
+    let out = Vec2::new(at.x - from.x, at.z - from.z);
+    let length = out.x.hypot(out.z);
+    let out = if length > 1e-6 {
+        Vec2::new(out.x / length, out.z / length)
+    } else {
+        Vec2::new(0.0, 0.0)
+    };
+    let scale = strength / (parts as f64).sqrt();
+    vector(
+        out.x * LOOSE_THROW_OUT * scale,
+        LOOSE_THROW_UP * scale,
+        out.z * LOOSE_THROW_OUT * scale,
+    )
+}
+
+/// The pieces a loose body's `parts` break into: apart at its elements first (each roof
+/// slope, wall, gable end, floor, the ridge, posts and chimney on their own), then each
+/// still-joined group of an element cut across by a slanting break line into two to
+/// four runs of unequal size, so a roof slab breaks into a few pieces stepped across its
+/// rafters and rows, not into equal columns; a group of one or two parts falls apart
+/// into its parts. The cut follows from the cottage's design and the part indices: no
+/// random draw.
+fn loose_sections(layout: &HouseStructure, parts: &PartSet) -> Vec<PartSet> {
+    let mut elements: Vec<(ElementKey, PartSet)> = Vec::new();
     for index in parts.iter() {
-        let part = &layout.parts[index];
-        let column = |other: &StructurePart| {
-            part.kind == PartKind::Sheet
-                && other.kind == PartKind::Sheet
-                && other.slope.map(|(slope, _)| slope) == part.slope.map(|(slope, _)| slope)
-                && part.max.z.min(other.max.z) - part.min.z.max(other.min.z)
-                    > COLUMN_OVERLAP * (part.max.z - part.min.z)
-        };
-        match sections
-            .iter_mut()
-            .find(|section| section.iter().any(|other| column(&layout.parts[other])))
-        {
-            Some(section) => section.insert(index),
-            None => sections.push(PartSet::from_indices([index])),
+        let key = element(layout, index);
+        match elements.iter_mut().find(|(other, _)| *other == key) {
+            Some((_, set)) => set.insert(index),
+            None => elements.push((key, PartSet::from_indices([index]))),
+        }
+    }
+    let mut sections = Vec::new();
+    for group in elements.iter().flat_map(|(_, set)| layout.clusters(set)) {
+        let mut members: Vec<usize> = group.iter().collect();
+        let count = members.len();
+        if count <= 2 {
+            sections.extend(members.into_iter().map(|part| PartSet::from_indices([part])));
+            continue;
+        }
+        let seed = members[0] + layout.design.variant as usize;
+        let pieces = (2 + seed % 3).min(count);
+        // A break line slanting 20 to 65 degrees across the ridge.
+        let angle = 0.35 + (seed % 5) as f64 * 0.19;
+        let across = DVec3::new(angle.sin(), 0.0, angle.cos());
+        members.sort_by(|&a, &b| {
+            let at = |part: usize| layout.parts[part].center().dot(across);
+            at(a).total_cmp(&at(b)).then(a.cmp(&b))
+        });
+        // Unequal shares, the largest first or last as the seed has it.
+        let mut weights: Vec<f64> = [4.0, 2.5, 1.5, 1.0][..pieces].to_vec();
+        if seed % 2 == 1 {
+            weights.reverse();
+        }
+        let total: f64 = weights.iter().sum();
+        let mut start = 0;
+        for (k, weight) in weights.iter().enumerate() {
+            let left = pieces - k - 1;
+            let size = if left == 0 {
+                count - start
+            } else {
+                ((count as f64 * weight / total).round() as usize)
+                    .max(1)
+                    .min(count - start - left)
+            };
+            sections.push(PartSet::from_indices(members[start..start + size].iter().copied()));
+            start += size;
         }
     }
     sections
+}
+
+/// What element of a cottage a part is in, for how a fallen body breaks apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ElementKey {
+    Slope(super::house_layout::HousePart),
+    Wall(usize, bool),
+    Floor(i64),
+    Alone(usize),
+    Ridge,
+    Partition,
+}
+
+fn element(layout: &HouseStructure, index: usize) -> ElementKey {
+    let part = &layout.parts[index];
+    match (part.kind, part.slope, part.wall) {
+        (PartKind::Sheet, Some((slope, _)), _) => ElementKey::Slope(slope),
+        (PartKind::Ridge, ..) => ElementKey::Ridge,
+        (PartKind::Floor, ..) => ElementKey::Floor((part.max.y * 10.0).round() as i64),
+        (PartKind::Partition, ..) => ElementKey::Partition,
+        (PartKind::Gable, _, Some(wall)) => ElementKey::Wall(wall, true),
+        (_, _, Some(wall)) => ElementKey::Wall(wall, part.upper_storey),
+        _ => ElementKey::Alone(index),
+    }
+}
+
+/// The loose cottage parts a blast at `point` reaches within `radius`: those within its
+/// core break where they lie ([`Simulation::break_loose_house_body`]), the rest are
+/// thrown up and out from it, out of the rest damping, and land over the next moments.
+/// Each body is measured by its nearest part, not its middle. No random draw.
+pub fn blast_house_debris(simulation: &mut Simulation, point: Point3, radius: f64, damage: f64) {
+    if radius <= 0.0 || damage <= 0.0 {
+        return;
+    }
+    let core = (radius * LOOSE_CORE_SHARE).clamp(BLAST_CORE, LOOSE_CORE_MAX);
+    let strength = (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST);
+    let at = vector(point.x, point.y, point.z);
+    // The bodies there before the blast: the pieces it breaks off are thrown already.
+    let ids: Vec<u32> = simulation
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.house_parts.is_some() && fragment.life > DEBRIS_CLEANUP_SECONDS)
+        .map(|fragment| fragment.id)
+        .collect();
+    for id in ids {
+        let Some(index) = simulation.fragments.iter().position(|fragment| fragment.id == id) else {
+            continue;
+        };
+        let fragment = &simulation.fragments[index];
+        let body = &simulation.world.bodies[fragment.body];
+        let nearest = body
+            .colliders()
+            .iter()
+            .map(|&handle| {
+                let collider = &simulation.world.colliders[handle];
+                let gap = collider.shape().distance_to_point(collider.position(), at, true);
+                (f64::from(gap), collider.user_data as usize)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        let Some((gap, part)) = nearest else {
+            continue;
+        };
+        if gap >= radius {
+            continue;
+        }
+        if gap < core {
+            simulation.break_loose_house_body(index, part, point, strength);
+            continue;
+        }
+        let parts = fragment.house_parts.map_or(1, |parts| parts.len());
+        let middle = from_vector(body.center_of_mass());
+        let falloff = 1.0 - gap / radius;
+        let push = throw_velocity(middle, point, strength * falloff, parts);
+        let handle = fragment.body;
+        let rigid_body = &mut simulation.world.bodies[handle];
+        let velocity = rigid_body.linvel() + push;
+        rigid_body.set_linvel(velocity, true);
+        let elapsed = simulation.elapsed;
+        let fragment = &mut simulation.fragments[index];
+        fragment.created_at = Some(elapsed);
+        fragment.house_velocity = Some(from_vector(velocity));
+    }
 }
 
 /// Each tick: loose cottage parts that land hard break up, and those lying a while
@@ -858,14 +1140,34 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             simulation.chimney_to_bricks(index);
             continue;
         }
-        if parts.len() > 1 && change > SHATTER_SPEED && room && fragment.life > DEBRIS_CLEANUP_SECONDS {
-            simulation.shatter_house_fragment(index);
-            continue;
+        let at_rest = age > BREAK_AT_REST && body.linvel().length() < REST_SPEED;
+        if parts.len() > 1
+            && !fragment.house_broken
+            && (change > SHATTER_SPEED || at_rest)
+            && room
+            && fragment.life > DEBRIS_CLEANUP_SECONDS
+        {
+            // A hard landing breaks the body up into a few pieces.
+            let layout = simulation
+                .covers
+                .iter()
+                .find(|cover| Some(cover.id) == fragment.house_id)
+                .and_then(|cover| cover.structure.as_ref())
+                .map(|state| state.layout.clone());
+            if let Some(layout) = layout {
+                let sections = loose_sections(&layout, &parts);
+                simulation.split_house_fragment(index, &layout, sections, None);
+                continue;
+            }
         }
         let body_handle = fragment.body;
+        // Up on the remains it slides off them freely: the rest damping is for a
+        // body come down to the ground, which it would leave creeping on a gable.
+        let up_on_remains = f64::from(body.center_of_mass().y) >= WEDGE_HEIGHT
+            && on_remains(simulation, body_handle);
         simulation.fragments[index].house_velocity = Some(now);
         // A body being shoved off what it lies on keeps falling's damping.
-        let (linear, angular) = if simulation.fragments[index].house_wedged.is_some() {
+        let (linear, angular) = if simulation.fragments[index].house_wedged.is_some() || up_on_remains {
             FALLING_DAMPING
         } else {
             house_debris_damping(age)
@@ -875,8 +1177,122 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
         }
+        lay_down_on_edge(simulation, index, age);
         index += 1;
     }
+}
+
+/// How a loose piece lies: a plate's face normal or a stick's length, in its body's
+/// frame (the cottage's, world-aligned, where it fell from), from its biggest part.
+#[derive(Clone, Copy)]
+enum Lie {
+    Face(DVec3),
+    Length(DVec3),
+}
+
+fn lie(layout: &HouseStructure, parts: &PartSet) -> Option<Lie> {
+    let biggest = parts.iter().max_by(|&a, &b| {
+        let volume = |i: usize| (layout.parts[i].max - layout.parts[i].min).element_product();
+        volume(a).total_cmp(&volume(b)).then(b.cmp(&a))
+    })?;
+    let part = &layout.parts[biggest];
+    let pitch = layout.roof.pitch;
+    let build = match (part.kind, part.slope, part.wall) {
+        (PartKind::Chimney, ..) => return None,
+        (PartKind::Post, ..) => Lie::Length(DVec3::Y),
+        (PartKind::Ridge, ..) => Lie::Length(DVec3::Z),
+        (PartKind::Floor, ..) => Lie::Face(DVec3::Y),
+        (PartKind::Partition, ..) => Lie::Face(DVec3::Z),
+        (PartKind::Sheet, Some((slope, _)), _) => Lie::Face(
+            match slope {
+                super::house_layout::HousePart::RightRoof => DVec3::new(pitch, 1.0, 0.0),
+                super::house_layout::HousePart::LeftRoof => DVec3::new(-pitch, 1.0, 0.0),
+                super::house_layout::HousePart::FrontRoof => DVec3::new(0.0, 1.0, pitch),
+                _ => DVec3::new(0.0, 1.0, -pitch),
+            }
+            .normalize(),
+        ),
+        (_, _, Some(wall)) => {
+            let design = &layout.design;
+            Lie::Face(super::house_layout::wall_frames(design.w, design.d)[wall].1)
+        }
+        _ => return None,
+    };
+    let design = &layout.design;
+    Some(match build {
+        Lie::Face(v) => Lie::Face(design.to_world(v)),
+        Lie::Length(v) => Lie::Length(design.to_world(v)),
+    })
+}
+
+/// Loose body `index`, come to rest on a thin edge (a roof slope on its eave, a wall
+/// section on its foot, a post on its end) and not propped on what still stands, is
+/// laid down a step: nothing rests on an edge. No random draw.
+fn lay_down_on_edge(simulation: &mut Simulation, index: usize, age: f64) {
+    let fragment = &simulation.fragments[index];
+    let (Some(parts), Some(house)) = (fragment.house_parts, fragment.house_id) else {
+        return;
+    };
+    let handle = fragment.body;
+    let laying = fragment.house_laying;
+    let body = &simulation.world.bodies[handle];
+    if fragment.life <= DEBRIS_CLEANUP_SECONDS
+        || age < LAY_AFTER
+        || (!laying && body.linvel().length() > LAY_SLOWER)
+    {
+        return;
+    }
+    let Some(layout) = simulation
+        .covers
+        .iter()
+        .find(|cover| cover.id == house)
+        .and_then(|cover| cover.structure.as_ref())
+        .map(|state| state.layout.clone())
+    else {
+        return;
+    };
+    let Some(lie) = lie(&layout, &parts) else {
+        return;
+    };
+    let rotation = *body.rotation();
+    let (now, target, done, start) = match lie {
+        Lie::Face(normal) => {
+            let now = rotation * vector(normal.x, normal.y, normal.z);
+            let target = if now.y >= 0.0 { Vector::Y } else { -Vector::Y };
+            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+        }
+        Lie::Length(along) => {
+            let now = rotation * vector(along.x, along.y, along.z);
+            let flat = Vector::new(now.x, 0.0, now.z);
+            let target = if flat.length() > 1e-3 { flat.normalize() } else { Vector::X };
+            let rise = now.y.abs();
+            (now, target, rise <= LAID_STICK, rise > ON_END)
+        }
+    };
+    if done || !(laying || start) || on_remains(simulation, handle) {
+        simulation.fragments[index].house_laying = false;
+        return;
+    }
+    simulation.fragments[index].house_laying = true;
+    let low = body
+        .colliders()
+        .iter()
+        .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
+        .fold(f32::INFINITY, f32::min);
+    let middle = body.center_of_mass();
+    let axis = now.cross(target);
+    let off = axis.length();
+    if off < 1e-4 {
+        return;
+    }
+    let angle = now.angle_between(target).min(LAY_RATE * STEP as f32);
+    let step = Rotation::from_axis_angle(axis / off, angle);
+    let foot = Vector::new(middle.x, low, middle.z);
+    let at = foot + step * (body.translation() - foot);
+    let body = &mut simulation.world.bodies[handle];
+    body.set_position(Pose::from_parts(at, step * rotation), true);
+    body.set_linvel(Vector::ZERO, true);
+    body.set_angvel(Vector::ZERO, true);
 }
 
 /// Loose cottage parts landing hard on standing ones break them: a standing part takes
@@ -885,7 +1301,8 @@ pub fn settle_house_debris(simulation: &mut Simulation) {
 /// coming down on a wall stub, not one resting on it). Parts are taken in cottage, then
 /// part order: no random draw.
 pub fn crush_house_parts(simulation: &mut Simulation, contacts: &[ContactForce]) {
-    let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
+    // (standing part, falling body, impulse, the body's middle)
+    let mut blows: Vec<((usize, usize), RigidBodyHandle, f64, Point3)> = Vec::new();
     for contact in contacts {
         for (falling, standing) in [
             (contact.collider1, contact.collider2),
@@ -902,18 +1319,46 @@ pub fn crush_house_parts(simulation: &mut Simulation, contacts: &[ContactForce])
             else {
                 continue;
             };
+            // A body being shoved off the remains presses on them; it strikes nothing.
             if !simulation.fragments.iter().any(|fragment| {
                 fragment.body == body
-                    && (fragment.house_parts.is_some() || fragment.tower_parts.is_some())
+                    && ((fragment.house_parts.is_some() && fragment.house_wedged.is_none())
+                        || fragment.tower_parts.is_some())
             }) {
                 continue;
             }
             let impulse = f64::from(contact.total_force_magnitude) * STEP;
             let from = from_vector(simulation.world.bodies[body].center_of_mass());
-            match struck.iter_mut().find(|(key, _, _)| *key == part) {
-                Some((_, total, _)) => *total += impulse,
-                None => struck.push((part, impulse, from)),
+            blows.push((part, body, impulse, from));
+        }
+    }
+    // The solver's push out of a deep landing can report many times what a body
+    // carried: a body strikes with no more than its momentum (with a bounce), shared
+    // among the parts it lands on.
+    let mut bodies: Vec<RigidBodyHandle> = blows.iter().map(|blow| blow.1).collect();
+    bodies.sort_by_key(|body| body.into_raw_parts());
+    bodies.dedup();
+    for body in bodies {
+        let total: f64 = blows.iter().filter(|blow| blow.1 == body).map(|blow| blow.2).sum();
+        let speed = simulation
+            .fragments
+            .iter()
+            .find(|fragment| fragment.body == body)
+            .and_then(|fragment| fragment.house_velocity)
+            .map_or(0.0, |v| v.x.hypot(v.y).hypot(v.z));
+        let carried = f64::from(simulation.world.bodies[body].mass()) * speed * CRUSH_BOUNCE;
+        if total > carried && total > 0.0 {
+            let scale = carried / total;
+            for blow in blows.iter_mut().filter(|blow| blow.1 == body) {
+                blow.2 *= scale;
             }
+        }
+    }
+    let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
+    for (part, _, impulse, from) in blows {
+        match struck.iter_mut().find(|(key, _, _)| *key == part) {
+            Some((_, total, _)) => *total += impulse,
+            None => struck.push((part, impulse, from)),
         }
     }
     struck.sort_by_key(|((cover, part), _, _)| (*cover, *part));
@@ -946,17 +1391,7 @@ fn unwedge_house_debris(simulation: &mut Simulation) {
         let body = &simulation.world.bodies[fragment.body];
         let resting_up = f64::from(body.center_of_mass().y) >= WEDGE_HEIGHT
             && f64::from(body.linvel().length()) <= WEDGE_SPEED;
-        let on_remains = resting_up
-            && body.colliders().iter().any(|&collider| {
-                simulation.world.contact_pairs_with(collider).any(|pair| {
-                    let other = if pair.collider1 == collider {
-                        pair.collider2
-                    } else {
-                        pair.collider1
-                    };
-                    pair.has_any_active_contact() && simulation.house_part(other).is_some()
-                })
-            });
+        let on_remains = resting_up && on_remains(simulation, fragment.body);
         if !on_remains {
             if fragment.house_wedged.is_some() && !resting_up {
                 simulation.fragments[index].house_wedged = None;
@@ -990,6 +1425,20 @@ fn unwedge_house_debris(simulation: &mut Simulation) {
         );
         body.set_linvel(push, true);
     }
+}
+
+/// Whether loose body `body` touches a cottage's standing part.
+fn on_remains(simulation: &Simulation, body: RigidBodyHandle) -> bool {
+    simulation.world.bodies[body].colliders().iter().any(|&collider| {
+        simulation.world.contact_pairs_with(collider).any(|pair| {
+            let other = if pair.collider1 == collider {
+                pair.collider2
+            } else {
+                pair.collider1
+            };
+            pair.has_any_active_contact() && simulation.house_part(other).is_some()
+        })
+    })
 }
 
 /// Whether `fragment` is a loose piece of a cottage's structure.
