@@ -330,6 +330,9 @@ impl EffectSystems {
         visit(&mut self.particles.records);
         visit(&mut self.leaves.records);
         visit(&mut self.wood.wood_records);
+        visit(&mut self.wood.board_records);
+        visit(&mut self.wood.lump_records);
+        visit(&mut self.wood.scrap_records);
         visit(&mut self.wood.straw_records);
         visit(&mut self.particles.explosions.rings);
         visit(&mut self.particles.explosions.puffs);

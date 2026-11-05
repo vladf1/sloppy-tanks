@@ -104,6 +104,29 @@ const RUBBLE_DUST: u32 = 0x8e8476;
 /// the paint, and the shade the dust takes so it never glows over the wall.
 const SIDING_PLASTER: f64 = 0.7;
 const SIDING_DUST_SHADE: f64 = 0.92;
+/// A siding hit's dust: how long it lasts (s), its billows, how fast (m/s) they
+/// climb off the face and when they have thinned away (s), and the scale of the
+/// ring it sheds at the wall's foot. It is gone within about a second, so the
+/// breach reads between shells instead of behind a standing ball of dust.
+const SIDING_HIT_LIFETIME: f64 = 1.4;
+const SIDING_BILLOWS: usize = 4;
+const SIDING_RISE: [f64; 2] = [1.3, 0.9];
+const SIDING_THIN: [f64; 2] = [0.08, 1.0];
+const SIDING_RING: f64 = 0.3;
+/// A shell in a fallen cottage's pile: how long its dust lasts (s); the billows
+/// it blows out low over the pile and when they have thinned (s); and the column
+/// that boils up off it: its puffs, one born this long (s) after another, how
+/// high (m) the top one climbs, how fast (per s) they get there, how much taller
+/// than round they are and when they have thinned away (s).
+const RUBBLE_HIT_LIFETIME: f64 = 3.0;
+const RUBBLE_BURST: usize = 3;
+const RUBBLE_BURST_THIN: [f64; 2] = [0.1, 0.8];
+const RUBBLE_COLUMN: usize = 5;
+const RUBBLE_STAGGER: f64 = 0.04;
+const RUBBLE_RISE: f64 = 4.5;
+const RUBBLE_RISE_RATE: f64 = 2.5;
+const RUBBLE_STRETCH: f64 = 1.3;
+const RUBBLE_THIN: [f64; 2] = [0.35, 2.7];
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
 const STONE_HIT_LIFETIME: f64 = 3.0;
@@ -324,6 +347,13 @@ enum Struck {
     Stone,
     /// A container's sheet steel: a flash, a shower of sparks and a little soot.
     Sheet,
+    /// A cottage's siding: a flash and plaster dust that bursts out of the hole
+    /// and climbs off the face on the wind, so the breach shows again between
+    /// shells.
+    Siding,
+    /// A fallen cottage's pile: a flash and a column of plaster dust boiling up
+    /// off it and drifting away.
+    Rubble,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -689,6 +719,8 @@ impl Blast {
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
             Kind::Hit(Struck::Steel) => HIT_LIFETIME,
             Kind::Hit(Struck::Sheet) => SHEET_HIT_LIFETIME,
+            Kind::Hit(Struck::Siding) => SIDING_HIT_LIFETIME,
+            Kind::Hit(Struck::Rubble) => RUBBLE_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
@@ -1015,13 +1047,15 @@ impl ExplosionEffects {
         let rubble =
             event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::House);
         let struck = match event.kind {
-            SimEventType::Impact if rubble => Some(Struck::Stone),
+            SimEventType::Impact if rubble => Some(Struck::Rubble),
             SimEventType::Impact if event.cover_kind.is_none() => Some(if event.height.is_some() {
                 Struck::Steel
-            } else if strike.is_some_and(|strike| strike.material == WallMaterial::Steel) {
-                Struck::Sheet
             } else {
-                Struck::Stone
+                match strike.map(|strike| strike.material) {
+                    Some(WallMaterial::Steel) => Struck::Sheet,
+                    Some(WallMaterial::Siding) => Struck::Siding,
+                    _ => Struck::Stone,
+                }
             }),
             SimEventType::Ricochet => Some(Struck::Stone),
             _ => None,
@@ -2066,11 +2100,12 @@ impl ExplosionEffects {
         let wall = struck != Struck::Steel;
         let (flash_seconds, flare) = match struck {
             Struck::Sheet => (0.14, 2.3),
-            Struck::Stone => (0.12, 1.8),
+            Struck::Stone | Struck::Siding | Struck::Rubble => (0.12, 1.8),
             Struck::Steel => (0.09, 1.0),
         };
-        // Concrete flashes white and bursts into powder; only steel burns.
-        let (core, bloom) = if struck == Struck::Stone {
+        // Concrete and plaster flash white and burst into powder; only steel burns.
+        let powder = matches!(struck, Struck::Stone | Struck::Siding | Struck::Rubble);
+        let (core, bloom) = if powder {
             (STONE_FLASH, STONE_BLOOM)
         } else {
             (HIT_FLASH, HIT_BLOOM)
@@ -2096,10 +2131,10 @@ impl ExplosionEffects {
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
             Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
-            Struck::Stone => (b.dust, 0.85, 0.8),
+            Struck::Stone | Struck::Siding | Struck::Rubble => (b.dust, 0.85, 0.8),
         };
         let heat = fire_heat(t, 9.0);
-        if struck != Struck::Stone && burning(heat) > 0.0 {
+        if !powder && burning(heat) > 0.0 {
             // A wall's burst blows out of its face, not back into it.
             let [ox, oz] = if wall { b.direction } else { [0.0; 2] };
             let size = (0.4 + 0.8 * t.sqrt()) * if wall { 1.5 } else { 1.0 };
@@ -2118,6 +2153,19 @@ impl ExplosionEffects {
                 softness: 0.0,
                 underglow: 0.0,
             });
+        }
+        match struck {
+            Struck::Siding => {
+                self.ring(b, t, SIDING_RING);
+                self.siding_dust(b, t, y, color);
+                return;
+            }
+            // A ring on the ground under a pile read as a flat disc on its slabs.
+            Struck::Rubble => {
+                self.rubble_dust(b, t, y, color);
+                return;
+            }
+            _ => {}
         }
         let stone = struck == Struck::Stone;
         let life = if stone {
@@ -2152,7 +2200,7 @@ impl ExplosionEffects {
             let size = match struck {
                 Struck::Stone => (0.45 + 1.25 * age.sqrt()) * (0.75 + 0.5 * r),
                 Struck::Sheet => (0.4 + 0.95 * age.sqrt()) * (0.8 + 0.4 * r),
-                Struck::Steel => 0.4 + 0.9 * age.sqrt(),
+                Struck::Steel | Struck::Siding | Struck::Rubble => 0.4 + 0.9 * age.sqrt(),
             };
             // Held a little over its own radius out of the face, so the wall's
             // soft fade thins only the billow's far edge, never the whole of it.
@@ -2178,6 +2226,121 @@ impl ExplosionEffects {
                     0.0
                 },
             });
+        }
+    }
+
+    /// Plaster and paint dust out of a cottage's holed siding: billows burst out
+    /// of the hole, then climb off the face and drift away on the wind, thinning
+    /// as they go, gone within about a second. Nothing pools at the wall's foot,
+    /// where a standing ball of dust hid the breach's framing between shells.
+    fn siding_dust(&mut self, b: &Blast, t: f64, y: f64, color: [f64; 3]) {
+        let [bx, bz] = b.direction;
+        for j in 0..SIDING_BILLOWS {
+            let jf = j as f64;
+            let age = t - 0.02 - jf * 0.035;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 1.3 + jf * 0.77);
+            let r2 = hash(b.phase * 0.59 + jf * 1.41);
+            let size = (0.35 + 0.85 * age.sqrt()) * (0.8 + 0.4 * r);
+            // Blown out of the hole fast, held a little over its radius clear of
+            // the face, and spread along it.
+            let out = (0.25 + 0.8 * r) * settle(age, 7.0) + size * 0.5;
+            let along = (r2 - 0.5) * 1.1 * settle(age, 5.0);
+            let climb = (SIDING_RISE[0] + SIDING_RISE[1] * r2) * age + 0.4 * age * age;
+            let thin = 1.0 - smoothstep(age, SIDING_THIN[0], SIDING_THIN[1]);
+            self.puff(Puff {
+                position: [
+                    b.x + bx * out - bz * along + WIND[0] * age,
+                    y + climb,
+                    b.z + bz * out + bx * along + WIND[1] * age,
+                ],
+                size,
+                color: scaled(color, 0.95 + jf * 0.05),
+                opacity: (age / 0.04).min(1.0) * 0.62 * thin * thin.sqrt(),
+                seed: b.phase * 0.61 + jf * 0.23,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.1, SIDING_THIN[1] - 0.1) * 0.95,
+                softness: 0.85,
+                underglow: if j == 0 {
+                    0.5 * (-age * 8.0).exp()
+                } else {
+                    0.0
+                },
+            });
+        }
+    }
+
+    /// A shell bursting in a fallen cottage's pile: a few billows blown out low
+    /// across the pile, and a column of plaster dust boiling up off it, each puff
+    /// climbing to its own height and drifting off on the wind as it thins.
+    fn rubble_dust(&mut self, b: &Blast, t: f64, y: f64, color: [f64; 3]) {
+        for j in 0..RUBBLE_BURST {
+            let jf = j as f64;
+            let age = t - 0.02 - jf * 0.03;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 1.7 + jf * 0.61);
+            let angle = b.phase + jf * TAU / RUBBLE_BURST as f64 + (r - 0.5) * 0.9;
+            let reach = (0.5 + 1.0 * r) * settle(age, 4.0);
+            let size = (0.4 + 0.8 * age.sqrt()) * (0.8 + 0.4 * r);
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * reach + WIND[0] * age * 0.6,
+                    y + size * 0.3 + 0.3 * settle(age, 2.0),
+                    b.z + angle.sin() * reach + WIND[1] * age * 0.6,
+                ],
+                size,
+                color: scaled(color, 0.92),
+                opacity: (age / 0.04).min(1.0)
+                    * 0.4
+                    * (1.0 - smoothstep(age, RUBBLE_BURST_THIN[0], RUBBLE_BURST_THIN[1])),
+                seed: b.phase * 0.47 + jf * 0.31,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.1, RUBBLE_BURST_THIN[1]) * 0.9,
+                softness: 0.8,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..RUBBLE_COLUMN {
+            let jf = j as f64;
+            let age = t - 0.03 - jf * RUBBLE_STAGGER;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 2.3 + jf * 0.83);
+            let r2 = hash(b.phase * 0.71 + jf * 1.97);
+            // The first thrown climbs highest and leans furthest downwind; the
+            // rest fill the column below it.
+            let top = RUBBLE_RISE * (1.0 - 0.75 * (jf + r) / RUBBLE_COLUMN as f64);
+            let climb = top * settle(age, RUBBLE_RISE_RATE);
+            let size = (0.35 + 0.95 * age.sqrt()) * (0.75 + 0.35 * r2);
+            let wander = (r2 - 0.5) * 0.6;
+            let drift = age * (0.4 + 0.25 * climb);
+            push_stretched_puff(
+                &mut self.puffs,
+                Puff {
+                    position: [
+                        b.x + WIND[0] * drift + WIND[1] * wander,
+                        y + 0.2 + climb + size * 0.3,
+                        b.z + WIND[1] * drift - WIND[0] * wander,
+                    ],
+                    size,
+                    color: scaled(color, 0.9 + 0.04 * jf),
+                    opacity: (age / 0.06).min(1.0)
+                        * 0.5
+                        * (1.0 - 0.08 * jf)
+                        * (1.0 - smoothstep(age, RUBBLE_THIN[0], RUBBLE_THIN[1])),
+                    seed: b.phase * 0.83 + jf * 0.37,
+                    heat: 0.0,
+                    erosion: smoothstep(age, 0.2, RUBBLE_THIN[1]) * 0.9,
+                    softness: 0.8,
+                    underglow: 0.0,
+                },
+                RUBBLE_STRETCH,
+            );
         }
     }
 

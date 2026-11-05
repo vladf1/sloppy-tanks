@@ -27,7 +27,10 @@ use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
-use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
+use super::wood_chips::{
+    MAX_BOARDS, MAX_LUMPS, MAX_SCRAPS, MAX_STRAW, MAX_WOOD_CHIPS, board_mesh, lump_mesh,
+    scrap_mesh, splinter_mesh, straw_mesh,
+};
 
 /// Tread marks draw after the ground decals they lie on (`renderOrder = 1`),
 /// and blast decals with them; smoke draws over both, glows over the smoke.
@@ -215,6 +218,47 @@ pub fn pool_descs() -> Vec<PoolDesc> {
                 ..Material::standard(0xffffff, 0.0, 0.85)
             },
             MAX_WOOD_CHIPS,
+        )
+    });
+    // A cottage's boards, plaster and roofing: the board's vertex colors darken
+    // its back and edges under the paint's tint, and the bent scraps show both
+    // sides.
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "wood boards",
+            board_mesh(),
+            Material {
+                flat_shading: true,
+                vertex_colors: true,
+                ..Material::standard(0xffffff, 0.0, 0.85)
+            },
+            MAX_BOARDS,
+        )
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "plaster lumps",
+            lump_mesh(),
+            Material {
+                flat_shading: true,
+                ..Material::standard(0xffffff, 0.0, 0.95)
+            },
+            MAX_LUMPS,
+        )
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "roof scraps",
+            scrap_mesh(),
+            Material {
+                side: Side::Double,
+                flat_shading: true,
+                ..Material::standard(0xffffff, 0.1, 0.7)
+            },
+            MAX_SCRAPS,
         )
     });
     pools.push(PoolDesc {
