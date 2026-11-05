@@ -1353,17 +1353,28 @@ fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks
                     .clamp(-roof.rake_z + 0.4, roof.rake_z - 0.4);
                 let length = rng.range(0.7, 1.0);
                 let slip = rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
-                let x = roof.eave_x - length / 2.0 + slip;
-                let y = roof.top(side * x.min(roof.eave_x - 0.05), z) + 0.03;
-                let tilt = roof.pitch.atan() - rng.range(0.05, 0.12);
+                // Its head rests on the deck at the foot of the slot it slid out of;
+                // its foot lifts off the deck, so it shades apart from the roof.
+                let head = roof.eave_x - length + slip;
+                let tilt = roof.pitch.atan() - rng.range(0.16, 0.26);
+                let sheet = length / roof.pitch.atan().cos();
+                let down = DVec3::new(side * tilt.cos(), -tilt.sin(), 0.0);
+                let top = DVec3::new(side * head, roof.top(side * head, z) + 0.03, z);
+                let yaw = rng.range(0.14, 0.28) * if k == 0 { 1.0 } else { -1.0 };
+                let placed = DMat4::from_translation(top)
+                    * DMat4::from_rotation_y(yaw)
+                    * DMat4::from_translation(down * sheet / 2.0)
+                    * DMat4::from_rotation_z(-side * tilt);
+                kit.block(Surface::Roof, DVec3::new(sheet, 0.022, SHEET_WIDTH), placed);
+                // Its torn foot curled down over the gutter.
+                let curl = rng.range(0.15, 0.25);
                 kit.block(
                     Surface::Roof,
-                    DVec3::new(length, 0.022, SHEET_WIDTH),
-                    DMat4::from_translation(DVec3::new(side * x, y + 0.02, z))
-                        * DMat4::from_rotation_y(
-                            rng.range(0.15, 0.32) * if k == 0 { 1.0 } else { -1.0 },
-                        )
-                        * DMat4::from_rotation_z(-side * tilt),
+                    DVec3::new(curl, 0.02, SHEET_WIDTH * rng.range(0.6, 0.9)),
+                    placed
+                        * DMat4::from_translation(DVec3::new(side * sheet / 2.0, 0.0, 0.0))
+                        * DMat4::from_rotation_z(-side * SHEET_CURL)
+                        * DMat4::from_translation(DVec3::new(side * curl / 2.0, 0.0, 0.0)),
                 );
                 // Where it lay: the dark slot it left in the covering, and the
                 // battens across it.
@@ -1406,6 +1417,8 @@ const EAVE_CUE_SIZE: f64 = 2.0;
 const EAVE_CUE_REACH: f64 = 1.4;
 const SHEET_SLIP: (f64, f64) = (0.22, 0.38);
 const SHEET_WIDTH: f64 = 0.44;
+/// How far (rad) a slipped sheet's torn foot curls down.
+const SHEET_CURL: f64 = 0.7;
 /// How far (m) over the deck the slot a slipped sheet left is drawn: over the
 /// covering's seams, so they do not run on through it.
 const SLOT_LIFT: f64 = 0.035;
@@ -5272,6 +5285,66 @@ fn shingle_slope(out: &mut Courses, slope: &Slope, holes: &[&RoofHole]) {
 
 /// One slope of painted standing-seam steel: the sheet (cut by a hole) and ribs
 /// from the eave to the ridge or the hip.
+/// A shell's hole torn through a standing-seam roof (in the slope's plane, across
+/// and up it, clockwise): the sheets split along the seams either side of the
+/// burst, so its sides run straight up the seam lines, and tore across ragged
+/// above and below it, a sheet's end longer here and shorter there.
+fn seam_tear(hole: &RoofHole, slope: &Slope) -> Vec<DVec2> {
+    let mut rng = Random::new(hole.seed);
+    // The seams inside its reach, so it stays within the room the holes were given.
+    let (mut left, mut right) = (
+        ((hole.across - hole.half_across) / SEAM_SPACING).ceil() * SEAM_SPACING + 0.02,
+        ((hole.across + hole.half_across) / SEAM_SPACING).floor() * SEAM_SPACING - 0.02,
+    );
+    if right - left < SEAM_SPACING * 0.5 {
+        (left, right) = (
+            hole.across - hole.half_across * 0.8,
+            hole.across + hole.half_across * 0.8,
+        );
+    }
+    let sheets = (((right - left) / SEAM_SPACING).round() as usize).max(1);
+    let (low, high) = (
+        hole.along - hole.half_along * TEAR_REACH,
+        hole.along + hole.half_along * TEAR_REACH,
+    );
+    let ragged =
+        |rng: &mut Random, edge: f64| edge + hole.half_along * rng.range(-TEAR_RAG, TEAR_RAG);
+    let mut points = Vec::with_capacity(4 * sheets + 4);
+    // Down the right seam, back along the torn foot sheet by sheet, up the left
+    // seam and along the torn head.
+    points.push(DVec2::new(right, ragged(&mut rng, high)));
+    for k in (0..=sheets).rev() {
+        let a = left + (right - left) * k as f64 / sheets as f64;
+        points.push(DVec2::new(a, ragged(&mut rng, low)));
+        if k > 0 {
+            let mid = a - (right - left) / sheets as f64 * rng.range(0.3, 0.7);
+            points.push(DVec2::new(mid, ragged(&mut rng, low)));
+        }
+    }
+    for k in 0..=sheets {
+        let a = left + (right - left) * k as f64 / sheets as f64;
+        if k > 0 {
+            let mid = a - (right - left) / sheets as f64 * rng.range(0.3, 0.7);
+            points.push(DVec2::new(mid, ragged(&mut rng, high)));
+        }
+        if k < sheets {
+            points.push(DVec2::new(a, ragged(&mut rng, high)));
+        }
+    }
+    // Inside the slope, where it narrows to a hip too.
+    for p in &mut points {
+        p.y = p.y.clamp(0.08, slope.length - 0.08);
+        let half = slope.half(p.y) - 0.08;
+        p.x = p.x.clamp(-half, half);
+    }
+    points
+}
+
+/// How far up and down a seam roof's tear runs past its hole (shares of its
+/// half length), and how ragged its torn ends are.
+const TEAR_REACH: f64 = 0.85;
+const TEAR_RAG: f64 = 0.15;
+
 fn seam_slope(kit: &mut Kit<Surface>, slope: &Slope, holes: &[&RoofHole]) {
     const LIFT: f64 = 0.004;
     let frame = DMat4::from_cols(
@@ -5291,22 +5364,7 @@ fn seam_slope(kit: &mut Kit<Surface>, slope: &Slope, holes: &[&RoofHole]) {
     } else {
         outline.to_vec()
     };
-    let cuts: Vec<Vec<DVec2>> = holes
-        .iter()
-        .map(|hole| {
-            let mut rng = Random::new(hole.seed);
-            (0..10)
-                .map(|i| {
-                    let angle = -f64::from(i) / 10.0 * PI * 2.0;
-                    let r = rng.range(0.7, 1.0);
-                    DVec2::new(
-                        hole.across + angle.cos() * hole.half_across * r,
-                        hole.along + angle.sin() * hole.half_along * r,
-                    )
-                })
-                .collect()
-        })
-        .collect();
+    let cuts: Vec<Vec<DVec2>> = holes.iter().map(|hole| seam_tear(hole, slope)).collect();
     kit.face_with_holes(Surface::Roof, &outline, &cuts, frame);
     let count = (slope.half_eave * 2.0 / SEAM_SPACING).floor() as i32;
     for i in -count / 2..=count / 2 {
@@ -6539,6 +6597,11 @@ pub(super) fn house_heap(group: &mut Node, x: f64, z: f64, w: f64, d: f64, seed:
     group.children.push(node);
 }
 
+/// How many broken roof slabs and wall panels a heap keeps once the collapse's
+/// shards have sunk.
+const REMAINS_ROOF: usize = 6;
+const REMAINS_WALLS: usize = 6;
+
 /// What stays of the roof and chimney on a heap once the collapse's shards have
 /// sunk into it: broken slabs of roof with their rafters lying across the mound and
 /// the floor, the chimney's broken stack and bricks where it fell, splintered
@@ -6559,10 +6622,11 @@ fn heap_remains(
             rng.range(-lean, lean),
         )
     };
-    // Roof slabs: shingled tops over their decking and a rafter or two, one leaning
-    // off the mound, the others flat over the floor.
-    for k in 0..4 {
-        let on_mound = k < 2;
+    // Roof slabs broken small: shingled tops over their decking and a rafter or
+    // two, some leaning off the mound, the rest tipped every way over the floor and
+    // half sunk in the rubble on it, so no whole sheet lies flat like a floor.
+    for k in 0..REMAINS_ROOF {
+        let on_mound = k < 4;
         let (u, v) = (
             rng.range(-bw / 2.0 + 1.0, bw / 2.0 - 1.0),
             if on_mound {
@@ -6571,11 +6635,16 @@ fn heap_remains(
                 rng.range(floor_from + 0.5, floor_to - 0.6)
             },
         );
-        let size = DVec3::new(rng.range(1.2, 1.9), ROOF_SLAB, rng.range(0.8, 1.3));
+        let shrink = if on_mound { 1.0 } else { 0.7 };
+        let size = DVec3::new(
+            rng.range(0.6, 1.15) * shrink,
+            ROOF_SLAB,
+            rng.range(0.45, 0.85) * shrink,
+        );
         let (y, lean) = if on_mound {
-            (HOUSE_HEAP.height - 0.25, 0.45)
+            (HOUSE_HEAP.height - 0.3, 0.6)
         } else {
-            (0.16, 0.12)
+            (rng.range(-0.02, 0.2), 0.55)
         };
         let placement = pose(DVec3::new(u, y, v), tilt(rng, lean));
         let outline = jagged(rng, size.x, size.z);
@@ -6594,16 +6663,20 @@ fn heap_remains(
             );
         }
     }
-    // Wall panels flattened over the floor, siding up or plaster up, low enough to
-    // drive over, one propped against the mound.
-    for k in 0..4 {
+    // Wall panels broken up over the floor, siding up or plaster up, low enough to
+    // drive over and tipped every way, one propped against the mound.
+    for k in 0..REMAINS_WALLS {
         let (u, v) = (
             rng.range(-bw / 2.0 + 0.9, bw / 2.0 - 0.9),
             rng.range(floor_from - 0.3, floor_to - 0.5),
         );
-        let size = DVec3::new(rng.range(1.2, 2.0), WALL_SLAB, rng.range(0.8, 1.4));
+        let size = DVec3::new(rng.range(0.6, 1.2), WALL_SLAB, rng.range(0.5, 0.9));
         let propped = k == 0;
-        let (y, lean) = if propped { (0.5, 0.7) } else { (0.12, 0.14) };
+        let (y, lean) = if propped {
+            (0.5, 0.7)
+        } else {
+            (rng.range(0.08, 0.25), 0.35)
+        };
         let placement = pose(DVec3::new(u, y, v), tilt(rng, lean));
         let faces = if rng.next() < 0.7 {
             [Surface::Siding, Surface::Curtain, Surface::Splinters]

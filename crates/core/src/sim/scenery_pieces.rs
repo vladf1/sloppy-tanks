@@ -602,6 +602,8 @@ const CAVE_DROP: f64 = 1.2;
 const CAVE_RIDGE_DROP: f64 = 1.4;
 /// How fast (m/s) the walls under a caving roof are drawn in beneath it.
 const CAVE_BUCKLE: f64 = 1.3;
+/// How much faster a gable's upper shards tip in under a caving roof.
+const CAVE_GABLE_TIP: f64 = 2.2;
 /// Damping that settles the heavy shards into the pile instead of tumbling; a
 /// roof slab's spin is held harder, so a knock from a wall does not flip it.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
@@ -828,6 +830,9 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             // Falling out, an upper shard tips slower and slides down the stub
             // under it to lean on it rather than being flung out flat.
             let tip = rng.range(WALL_TIP.0, WALL_TIP.1) * if inward { 1.0 } else { OUT_TIP };
+            // Under a caving roof a gable has nothing left to hold it up: it folds
+            // in over the wreck rather than standing on, whole, round it.
+            let tip = if caved && gable { tip * CAVE_GABLE_TIP } else { tip };
             // It tips about the foot of the face it falls over.
             let bottom = shape.hull.iter().map(|p| p.y).fold(f64::INFINITY, f64::min);
             let foot = shape.center - out * shape.center.dot(out)
@@ -1100,15 +1105,17 @@ fn caved_in(cover: &Cover) -> bool {
 }
 
 /// Seconds after [`HOUSE_PIECE_LIFE`] a cottage's piece sinks into its heap: the
-/// roof's slabs first, as they lie on top of the pile, then the chimney, the walls'
-/// upper shards and the stubs last, each a little apart from the next, so the pile
-/// goes down a piece at a time and nothing is left resting on a piece that sank.
+/// roof's slabs first, as they lie on top of the pile, then the chimney, the stubs
+/// of wall left leaning round the footprint, and the walls' upper shards, lying
+/// low on the ground, last, each a little apart from the next, so the pile goes
+/// down a piece at a time. Stubs outlasting the rest stood round an empty floor
+/// like the flats of a stage set.
 /// The piece alone decides, so every peer agrees and the settling knows its age.
 fn sink_delay(piece: HousePiece) -> f64 {
     let shard = f64::from(piece.shard);
     match piece.part.wall_index() {
-        Some(wall) if lower_wall(piece) => 4.6 + wall as f64 * 0.25 + shard * 0.17,
-        Some(wall) => 2.4 + wall as f64 * 0.3 + shard * 0.21,
+        Some(wall) if lower_wall(piece) => 2.2 + wall as f64 * 0.25 + shard * 0.17,
+        Some(wall) => 3.8 + wall as f64 * 0.3 + shard * 0.21,
         None => match piece.part {
             HousePart::Chimney => 1.0 + shard * 0.5,
             HousePart::LeftRoof => 0.15 + shard * 0.29,
