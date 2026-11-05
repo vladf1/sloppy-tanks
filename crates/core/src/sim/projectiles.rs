@@ -29,7 +29,10 @@ use super::types::{
 /// A shell meets a cottage's loose part lying under its path when the part's top
 /// reaches within this far (m) below the shell's flight height, as a slightly plunging
 /// shot would: a level shell at one metre passes over a slab lying flat on the ground.
-const LOW_DEBRIS_REACH: f64 = 0.8;
+const LOW_DEBRIS_REACH: f64 = 0.7;
+/// A burst in a cottage's room tears this much (m) of its lath and plaster, this colour.
+const ROOM_BURST_SIZE: f64 = 1.2;
+const ROOM_PLASTER: u32 = 0xc9b48f;
 /// How hard an armour-piercing round throws the pieces of a loose part it breaks, as a
 /// share of a burst's.
 const PIERCING_THROW: f64 = 0.4;
@@ -830,7 +833,20 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
             point.z - along.z * flown,
         ));
     }
-    simulation.events.push(explosion);
+    // In a room, the burst tears the room's lath and plaster round it: splinters and
+    // dust fly from where it went off, inside, not only out of the hole.
+    if let (Some(CoverKind::House), Some(hole)) = (explosion.cover_kind, explosion.from) {
+        let mut torn = SimEvent::at(SimEventType::Shatter, point.x, point.z);
+        torn.height = Some(point.y);
+        torn.size = Some(ROOM_BURST_SIZE);
+        torn.color = Some(ROOM_PLASTER);
+        torn.cover_kind = Some(CoverKind::House);
+        torn.from = Some(hole);
+        simulation.events.push(explosion);
+        simulation.events.push(torn);
+    } else {
+        simulation.events.push(explosion);
+    }
     simulation.house_blast(
         point,
         HE_BLAST_RADIUS,
