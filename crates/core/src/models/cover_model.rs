@@ -81,9 +81,8 @@ impl From<&RenderCover> for CoverShape {
 }
 
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
-/// timber uses [`timber_damage_stage`]. A cottage's look follows its marks alone
-/// (where it was struck, not how much health it has left), and other kinds have one
-/// look.
+/// timber uses [`timber_damage_stage`]. A cottage's look follows its broken parts
+/// alone, and other kinds have one look.
 pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     match kind {
         CoverKind::Cargo => {
@@ -100,8 +99,8 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     }
 }
 
-/// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`] or
-/// the timber, crate or cottage marks change.
+/// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`], the
+/// timber or crate marks or a cottage's broken parts change.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
     if c.kind == CoverKind::Tree {
         return tree_model(
@@ -135,8 +134,8 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             },
         ),
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
-        // Every shell holes a cottage where it struck; an untouched one keeps its
-        // place in the static covers' draws.
+        // The parts of a cottage that still stand; an untouched one keeps its place
+        // in the static covers' draws.
         CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
         CoverKind::Timber => {
             let parts = timber_parts(

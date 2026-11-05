@@ -751,8 +751,8 @@ struct CoverView {
     joint: Option<usize>,
     key: String,
     stage: u32,
-    /// The marks it shows ([`marks_print`]): a shell that grows a cottage's breach
-    /// changes a mark without adding one.
+    /// What it shows ([`look_print`]): a cottage's broken parts, or its marks (a
+    /// shell that grows a mark changes it without adding one).
     marks: u64,
     /// Rebuilt towers reuse rubble identities but choose a new look on collapse.
     debris_seed: Option<f64>,
@@ -771,13 +771,13 @@ struct CoverLook {
 }
 
 /// Where a cover's new look has got to. Each phase is a step of its own: a model is
-/// uploaded in a separate step from building it (a cottage's also batched and
-/// prepared), so a slow device spreads the work over frames instead of taking it in one.
+/// uploaded in a separate step from building it, so a slow device spreads the work
+/// over frames instead of taking it in one.
 enum LookPhase {
-    /// A crate's or timber wall's look, its model still to build.
+    /// Its model still to build.
     Unbuilt,
-    /// Ready to upload and show (prepared for upload ahead for a cottage).
-    Ready(CoverModel, Option<PendingModel>),
+    /// Ready to upload and show.
+    Ready(CoverModel),
 }
 
 struct CoverModelEntry {
@@ -1042,8 +1042,8 @@ pub struct Presentation {
     /// uploaded (one per cover at most).
     cover_looks: Vec<CoverLook>,
     /// Whether this frame already rebuilt a cover's look or built a debris model:
-    /// work that can wait (debris looks built ahead, a cottage's collapse cut ahead)
-    /// then waits for a quieter frame instead of piling onto this one.
+    /// work that can wait (debris looks built ahead) then waits for a quieter frame
+    /// instead of piling onto this one.
     busy: bool,
     fragments: HashMap<u32, FragmentView>,
     /// Debris models built this round, shared by every fragment that looks the same:
@@ -1616,7 +1616,7 @@ impl Presentation {
         &mut self,
         cover: &RenderCover,
         stage: u32,
-        built_model: Option<(CoverModel, Option<PendingModel>)>,
+        built_model: Option<CoverModel>,
     ) -> (String, Mat4) {
         let movable = cover.motion.is_some();
         let built = Self::built_cover(cover);
@@ -1624,8 +1624,8 @@ impl Presentation {
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
-            let (CoverModel { mut root, tree }, pending) =
-                built_model.unwrap_or_else(|| (model_catalog::cover_model(&built, stage), None));
+            let CoverModel { mut root, tree } =
+                built_model.unwrap_or_else(|| model_catalog::cover_model(&built, stage));
             if movable {
                 // The body's centre is half the cover's height up; drop the parts.
                 let drop = cover.h / (2.0 * root.scale.y);
@@ -1634,12 +1634,7 @@ impl Presentation {
                 }
             }
             self.textures.request_scenery(&mut self.renderer, &root);
-            // A model prepared ahead was prepared from this root; only cottages, which
-            // never move, are.
-            let model = match pending.filter(|_| !movable) {
-                Some(pending) => self.renderer.add_pending_model(pending, Lifetime::Round),
-                None => self.renderer.add_model(&root, Lifetime::Round),
-            };
+            let model = self.renderer.add_model(&root, Lifetime::Round);
             self.cover_models.insert(
                 key.clone(),
                 CoverModelEntry {
@@ -1686,13 +1681,8 @@ impl Presentation {
         self.add_cover_with(cover, None);
     }
 
-    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead,
-    /// and prepared for upload when that was done ahead too.
-    fn add_cover_with(
-        &mut self,
-        cover: &RenderCover,
-        built_model: Option<(CoverModel, Option<PendingModel>)>,
-    ) {
+    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead.
+    fn add_cover_with(&mut self, cover: &RenderCover, built_model: Option<CoverModel>) {
         let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
         let (key, world) = self.cover_entry(cover, stage, built_model);
         let entry = &self.cover_models[&key];
@@ -2578,15 +2568,13 @@ impl Presentation {
                         .contains_key(&Self::cover_model_key(cover, stage)) =>
                 {
                     let model = model_catalog::cover_model(&Self::built_cover(cover), stage);
-                    *phase = LookPhase::Ready(model, None);
+                    *phase = LookPhase::Ready(model);
                     false
                 }
                 LookPhase::Unbuilt | LookPhase::Ready(..) => {
                     let look = self.cover_looks.swap_remove(index);
                     match look.phase {
-                        LookPhase::Ready(model, pending) => {
-                            self.add_cover_with(cover, Some((model, pending)));
-                        }
+                        LookPhase::Ready(model) => self.add_cover_with(cover, Some(model)),
                         _ => self.add_cover(cover),
                     }
                     true
@@ -2625,8 +2613,7 @@ impl Presentation {
             // over a few frames on a slow device: one step a frame at least, more while
             // this frame's rebuild time lasts. A cover keeps its last look meanwhile;
             // one without a view is always built. A hit cottage, crate or timber wall
-            // builds its new look in steps (a cottage's model in several), uploading
-            // it in a step of its own.
+            // builds its new look in a step, uploading it in a step of its own.
             let shown = shown.is_some();
             let wait = shown && rebuilt && now_ms() - start + longest >= COVER_REBUILD_MS;
             if rebuild && !wait {

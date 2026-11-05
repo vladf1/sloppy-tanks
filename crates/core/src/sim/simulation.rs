@@ -573,8 +573,8 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
-    /// The rubble cover a collapse left at `x, z` (a watchtower footing or a
-    /// cottage's heap), standing or cleared away.
+    /// The rubble cover a watchtower's collapse left at `x, z`, standing or cleared
+    /// away.
     pub fn rubble_at(&self, x: f64, z: f64, alive: bool) -> Option<usize> {
         self.covers
             .iter()
