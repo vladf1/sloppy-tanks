@@ -826,5 +826,36 @@ mod tests {
             "roof slabs {slabs}: worst slab {worst_slab:.3} ms, worst cottage {worst_house:.3} ms, mean cottage {:.3} ms; worst pressed wall shard {worst_pressed:.3} ms",
             total / 14.0
         );
+        // A resting pile's chunks, as `plan` merges them: [`CHUNK_SHARDS`] shards a
+        // frame, the cottage's biggest first (the worst frame).
+        let (mut worst_chunk, mut worst_vertices, mut chunks) = (0.0f64, 0usize, 0);
+        for cover in village.covers.iter().filter(|c| c.kind == CoverKind::House) {
+            let mut pieces =
+                sloppy_core::models::house_pieces(cover.x, cover.z, cover.w, cover.d, cover.h, &[]);
+            let size = |node: &Node| {
+                let mut count = 0;
+                fn walk(node: &Node, count: &mut usize) {
+                    if let Some(drawable) = &node.drawable {
+                        *count += drawable.mesh.positions.len();
+                    }
+                    node.children.iter().for_each(|child| walk(child, count));
+                }
+                walk(node, &mut count);
+                count
+            };
+            pieces.sort_by_key(|(_, node)| std::cmp::Reverse(size(node)));
+            for chunk in pieces.chunks(CHUNK_SHARDS) {
+                let start = std::time::Instant::now();
+                let parts = merged(chunk.iter().map(|(_, node)| (node, pose)), true, false);
+                worst_chunk = worst_chunk.max(start.elapsed().as_secs_f64() * 1000.0);
+                worst_vertices =
+                    worst_vertices.max(parts.iter().map(|p| p.data.vertices.len()).sum());
+                chunks += 1;
+            }
+        }
+        println!(
+            "chunks {chunks} of {CHUNK_SHARDS}: worst merge {worst_chunk:.3} ms, worst {worst_vertices} vertices ({:.2} MB)",
+            worst_vertices as f64 * std::mem::size_of::<Vertex>() as f64 / 1.0e6
+        );
     }
 }

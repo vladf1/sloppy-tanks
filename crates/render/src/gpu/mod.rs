@@ -602,6 +602,8 @@ struct ClassKey {
     /// The instance pool that owns this class, whose draws read the pool's own
     /// instance buffer; `None` for model parts.
     pool: Option<u32>,
+    /// Whether it draws into ambient occlusion's depth pass.
+    occludes: bool,
 }
 
 /// A mesh + material + pipeline combination that instances batch under.
@@ -991,6 +993,9 @@ pub struct Renderer {
     time: f32,
 
     builder: DrawListBuilder,
+    /// Whether the parts of the model being registered draw into ambient
+    /// occlusion's depth pass ([`Renderer::add_falling_debris_model`] clears it).
+    occluding: bool,
     views: [ViewDraws; VIEW_COUNT],
     joints: Vec<Mat4>,
     joint_visible: Vec<bool>,
@@ -1120,6 +1125,7 @@ impl Renderer {
             water: None,
             time: 0.0,
             builder: DrawListBuilder::default(),
+            occluding: true,
             views: Default::default(),
             joints: Vec::new(),
             joint_visible: Vec::new(),
@@ -1402,6 +1408,7 @@ impl Renderer {
             receive_shadow,
             faded,
             pool,
+            occludes: self.occluding,
         };
         let index = match self.class_index.get(&key) {
             Some(&index) => index,
@@ -1441,6 +1448,7 @@ impl Renderer {
                 // Without the shadow's dither, which only fades a caster's shadow.
                 let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
+                    && key.occludes
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
@@ -1717,6 +1725,25 @@ impl Renderer {
     pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_combined(root, &mut self.interner);
         self.register(prepared, lifetime, false, false)
+    }
+
+    /// A piece of debris falling for a few seconds (a collapsing cottage's shard),
+    /// fading as it is cleared away, [combined](Self::add_combined_model) when its
+    /// root has named children. It draws no ambient occlusion depth: a collapse
+    /// brings down dozens of pieces at once, each its own draw, and their depth
+    /// draws doubled that while they fell; once a pile rests its merged chunks
+    /// occlude again.
+    pub fn add_falling_debris_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let combined = root.children.iter().any(|child| !child.name.is_empty());
+        let prepared = if combined {
+            prepare_combined(root, &mut self.interner)
+        } else {
+            prepare_model(root, &mut self.interner)
+        };
+        self.occluding = false;
+        let model = self.register(prepared, lifetime, false, true);
+        self.occluding = true;
+        model
     }
 
     /// [`Self::add_combined_model`] for debris whose instances fade as they are
