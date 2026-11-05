@@ -1259,3 +1259,58 @@ fn no_roof_piece_rises_above_where_it_stood_in_a_wall_driven_fall() {
         }
     }
 }
+
+/// The sheets a cottage's breaches have knocked loose, as (slope, column).
+fn slipped(s: &Simulation, house: usize) -> Vec<(i32, i32)> {
+    let c = &s.covers[house];
+    sloppy_core::models::house_eave_slips(c.x, c.z, c.w, c.d, c.h, &c.timber_hits)
+        .iter()
+        .map(|slip| (slip.side as i32, slip.column))
+        .collect()
+}
+
+#[test]
+fn a_slipped_roof_sheet_stays_slipped_and_more_shells_only_add_to_them() {
+    let d = design(&lone_cottage().0, lone_cottage().1);
+    let patterns: [&[DVec3]; 3] = [
+        // One spot on an eave wall.
+        &[DVec3::new(d.w / 2.0, 1.0, 0.4)],
+        // Spread along the eave wall and round its corner.
+        &[
+            DVec3::new(d.w / 2.0, 1.0, 0.8),
+            DVec3::new(d.w / 2.0, 1.0, -1.3),
+            DVec3::new(d.w / 2.0 - 0.15, 1.0, d.d / 2.0 - 0.15),
+            DVec3::new(-1.2, 1.0, d.d / 2.0),
+        ],
+        // High on both eave walls, walking along them.
+        &[
+            DVec3::new(d.w / 2.0, 2.2, -1.5),
+            DVec3::new(-d.w / 2.0, 1.6, 1.0),
+            DVec3::new(d.w / 2.0, 2.0, -0.6),
+            DVec3::new(-d.w / 2.0, 1.2, 0.2),
+        ],
+    ];
+    let mut slipped_any = false;
+    for pattern in patterns {
+        let (mut s, house) = lone_cottage();
+        let mut before: Vec<(i32, i32)> = Vec::new();
+        let mut shot = 0;
+        while s.covers[house].alive {
+            shell_at(&mut s, house, pattern[shot % pattern.len()]);
+            shot += 1;
+            if !s.covers[house].alive {
+                break;
+            }
+            let now = slipped(&s, house);
+            for sheet in &before {
+                assert!(
+                    now.contains(sheet),
+                    "shell {shot}: {sheet:?} went back: {before:?} -> {now:?}"
+                );
+            }
+            before = now;
+        }
+        slipped_any |= !before.is_empty();
+    }
+    assert!(slipped_any, "no pattern slipped a sheet");
+}

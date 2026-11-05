@@ -283,6 +283,10 @@ struct Parts {
     /// frame has given (a collapse's heap draws them).
     lot: Kit<Surface>,
     lot_nodes: Vec<Node>,
+    /// The standing cottage's sheets slipped off each slope's eave (right, left) on
+    /// no broken eave section, drawn under a node of their own ([`HOUSE_SLIP`]) so
+    /// presentation slides them down into place.
+    slips: [Kit<Surface>; 2],
 }
 
 /// What a collapsing cottage leaves where it stood rather than on a falling piece,
@@ -314,6 +318,19 @@ pub const HOUSE_ROOM: &str = "house-room";
 /// for the `k`th of [`house_eave_swings`]: each drawn turned down to its angle,
 /// which presentation swings it to.
 pub const HOUSE_EAVE: &str = "house-eave-";
+/// The prefix of a standing cottage's slipped roof sheets' nodes, `house-slip-0` on
+/// the right slope and `house-slip-1` on the left, each drawn where its sheets came
+/// to rest ([`house_slip_slide`]).
+pub const HOUSE_SLIP: &str = "house-slip-";
+
+/// How far (build frame, m) a cottage's slipped sheets on the `side` slope slid down
+/// it to where its model draws them: presentation starts them that far back up.
+pub fn house_slip_slide(x: f64, z: f64, w: f64, d: f64, h: f64, side: f64) -> DVec3 {
+    let roof = HouseDesign::of(x, z, w, d, h).roof();
+    let tilt = roof.pitch.atan();
+    let slip = (SHEET_SLIP.0 + SHEET_SLIP.1) / 2.0;
+    DVec3::new(side * tilt.cos(), -tilt.sin(), 0.0) * slip
+}
 /// The name of the rubble on a collapse's mound piece, hidden until presentation
 /// swaps it for the room ([`HOUSE_ROOM`]): on the frame the cottage gives way its
 /// breaches still show the room, not the pile.
@@ -340,6 +357,7 @@ impl Parts {
             aside: (build == Build::Pieces).then(Aside::new),
             lot: Kit::new(),
             lot_nodes: Vec::new(),
+            slips: [Kit::new(), Kit::new()],
         }
     }
 
@@ -1049,6 +1067,8 @@ struct StandingKits {
     /// Each broken eave section's own meshes, taken out of the walls' and the roof's
     /// ([`Settle::meshes_sections`]), drawn under a node of its own.
     sections: Vec<KitMeshes<Surface>>,
+    /// The slipped sheets off each slope's eave ([`HOUSE_SLIP`]).
+    slips: Option<[Kit<Surface>; 2]>,
 }
 
 impl CottageBuild {
@@ -1077,6 +1097,7 @@ impl CottageBuild {
             roof_courses,
             nodes,
             sections,
+            slips,
         }) = &mut self.kits
         else {
             let cut = self
@@ -1094,6 +1115,7 @@ impl CottageBuild {
                 nodes,
                 lot,
                 lot_nodes,
+                slips,
                 ..
             } = parts;
             let mut kits = kits.into_iter();
@@ -1111,6 +1133,7 @@ impl CottageBuild {
                 roof_courses,
                 nodes,
                 sections,
+                slips: Some(slips),
             });
             return None;
         };
@@ -1193,6 +1216,15 @@ impl CottageBuild {
                 .into_iter()
                 .filter(|node| !node.children.is_empty()),
         );
+        for (k, kit) in slips.take().into_iter().flatten().enumerate() {
+            let meshes = kit.finish_scaled(&uv);
+            if meshes.is_empty() {
+                continue;
+            }
+            let mut node = Node::group(format!("{HOUSE_SLIP}{k}"));
+            add_weathered(&mut node, meshes, palette, walls, false);
+            cottage.children.push(node);
+        }
         cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
         Some(std::mem::take(cottage))
     }
@@ -1376,138 +1408,288 @@ fn eave_breaks(design: &HouseDesign, roof: &Roof, holes: &[Vec<Hole>; 4]) -> Vec
     breaks
 }
 
-/// A breach in an eave wall up under its eave that has not broken the eave (one
-/// of [`EAVE_CUE_SIZE`] shells or more, its top within [`EAVE_CUE_REACH`] of the
-/// wall's): the blast up the wall knocked the roof's sheets over it loose, one or
-/// two slipped askew down off the eave, their ends lifted, each leaving a dark
-/// slot with the battens showing where it lay. From the gameplay camera, which
-/// sees little of the wall under the eave, they break the eave's line over the
-/// breached side. (A soot stain up the siding to the eave read as a black hole.)
-fn breach_eave_cues(parts: &mut Parts, design: &HouseDesign, roof: &Roof, breaks: &[EaveBreak]) {
-    let frames = wall_frames(design.w, design.d);
-    for index in [2, 3] {
-        let (frame, _) = frames[index];
-        let side = frame.transform_vector3(DVec3::Z).x.signum();
+/// A sheet of a cottage's roof a breach up under its eave knocked loose
+/// ([`eave_slips`]): the slope (`side`), its column along the eave (between the
+/// seams `column` and `column + 1` sheet widths along build-frame z), its own
+/// variation, and whether it has slipped since one shell's growth ago (`fresh`),
+/// which presentation slides into place.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EaveSlip {
+    pub side: f64,
+    pub column: i32,
+    pub fresh: bool,
+    /// The most shells of any breach under it, which deepens its soot.
+    size: f64,
+}
+
+impl EaveSlip {
+    fn random(&self, design: &HouseDesign) -> Random {
+        Random::new(
+            f64::from(design.variant) * 13.0
+                + self.side * 7.0
+                + f64::from(self.column) * 31.0
+                + 503.0,
+        )
+    }
+
+    fn center(&self) -> f64 {
+        (f64::from(self.column) + 0.5) * SEAM_SPACING
+    }
+}
+
+/// The sheets over a cottage's eaves its marks have knocked loose. A breach in an
+/// eave wall up under its eave (one of [`EAVE_CUE_SIZE`] shells or more, its top
+/// within [`EAVE_CUE_REACH`] of the wall's) loosens the sheets over its span along
+/// the eave: each sheet column a share of the time ([`SLIP_SHARE`], fixed per
+/// column), once the breach has taken that column's own number of shells. A breach
+/// only ever grows and keeps covering what it covered ([`TimberHit`]s are grown
+/// that way), so a sheet once slipped stays slipped and more shells only add to
+/// them; picking sheets round the breach's middle moved the slipped sheet along the
+/// eave as the breach grew, putting the last one back.
+fn eave_slips(design: &HouseDesign, roof: &Roof, hits: &[TimberHit]) -> Vec<EaveSlip> {
+    let (reach_along, reach_up) = crate::sim::house_layout::BREACH_REACH;
+    let growth = SHELL_GROWTH;
+    let end = roof.rake_z - 0.4;
+    let mut slips: Vec<EaveSlip> = Vec::new();
+    for index in [2usize, 3] {
+        let side = if index == 2 { 1.0 } else { -1.0 };
+        let marks: Vec<(f64, f64, f64)> = hits
+            .iter()
+            .filter(|hit| design.struck_part(hit).wall_index() == Some(index))
+            .map(|hit| {
+                let local = design.to_local(DVec3::new(hit.x, hit.y, hit.z));
+                (local.z, hit.y, hit.size)
+            })
+            .collect();
+        // Whether a breach of `size` at (`z`, `y`) loosens column `column` needing
+        // `least` shells.
+        let loosens = |column: i32, least: f64, (z, y, size): (f64, f64, f64)| {
+            let center = (f64::from(column) + 0.5) * SEAM_SPACING;
+            size >= least
+                && (center - z).abs() <= reach_along * size - SLIP_INSET
+                && y + reach_up * size >= roof.wall - EAVE_CUE_REACH
+        };
+        let last = (end / SEAM_SPACING).floor() as i32;
+        for column in -last - 1..=last {
+            let center = (f64::from(column) + 0.5) * SEAM_SPACING;
+            if center.abs() > end {
+                continue;
+            }
+            let probe = EaveSlip {
+                side,
+                column,
+                fresh: false,
+                size: 0.0,
+            };
+            let mut rng = probe.random(design);
+            if rng.next() >= SLIP_SHARE {
+                continue;
+            }
+            let least = EAVE_CUE_SIZE + rng.range(0.0, SLIP_LATER);
+            let by: Vec<f64> = marks
+                .iter()
+                .filter(|&&mark| loosens(column, least, mark))
+                .map(|mark| mark.2)
+                .collect();
+            if by.is_empty() {
+                continue;
+            }
+            let before = marks
+                .iter()
+                .any(|&(z, y, size)| loosens(column, least, (z, y, size - growth)));
+            slips.push(EaveSlip {
+                fresh: !before,
+                size: by.iter().copied().fold(0.0, f64::max),
+                ..probe
+            });
+        }
+    }
+    slips
+}
+
+/// The share of the sheet columns over a breach that it knocks loose, and how many
+/// more shells than [`EAVE_CUE_SIZE`] a column may need; how far (m) inside a
+/// breach's span a column must lie; one standard shell's growth of a breach (the
+/// simulation's).
+const SLIP_SHARE: f64 = 0.3;
+const SLIP_LATER: f64 = 1.5;
+const SLIP_INSET: f64 = 0.15;
+const SHELL_GROWTH: f64 = 0.4;
+
+/// The slipped sheets of the cottage cover at `x, z` (`w` by `d`, `h` tall) with
+/// marks `hits` ([`eave_slips`]).
+pub fn house_eave_slips(
+    x: f64,
+    z: f64,
+    w: f64,
+    d: f64,
+    h: f64,
+    hits: &[TimberHit],
+) -> Vec<EaveSlip> {
+    let design = HouseDesign::of(x, z, w, d, h);
+    eave_slips(&design, &design.roof(), hits)
+}
+
+/// The roof sheets a breach up under the eave knocked loose ([`eave_slips`]), each
+/// slipped askew down off the eave, its end lifted, kinked and torn, leaving a dark
+/// slot with the battens showing where it lay, and the eave over the breach
+/// scorched. From the gameplay camera, which sees little of the wall under the
+/// eave, they break the eave's line over the breached side. On an eave section the
+/// breach has since broken they stay as they were and turn down with it; elsewhere
+/// a standing cottage draws the sheets that slipped with the latest shell under a
+/// node of their own ([`HOUSE_SLIP`]), which presentation slides into place.
+fn breach_eave_cues(
+    parts: &mut Parts,
+    design: &HouseDesign,
+    roof: &Roof,
+    breaks: &[EaveBreak],
+    hits: &[TimberHit],
+) {
+    for slip in eave_slips(design, roof, hits) {
+        let side = slip.side;
         let piece = if side > 0.0 {
             HousePart::RightRoof
         } else {
             HousePart::LeftRoof
         };
-        let along = |u: f64| frame.transform_point3(DVec3::new(u, 0.0, 0.0)).z;
-        let cues: Vec<([f64; 4], f64, f64)> = parts.holes[index]
-            .iter()
-            .filter(|hole| {
-                hole.bounds[3] >= roof.wall - EAVE_CUE_REACH && hole.size >= EAVE_CUE_SIZE
-            })
-            .map(|hole| (hole.bounds, hole.size, hole.seed))
-            .collect();
-        for ([u0, _, u1, _], size, seed) in cues {
-            let (a, b) = (along(u0), along(u1));
-            let (z0, z1) = (a.min(b), a.max(b));
-            if breaks
-                .iter()
-                .any(|section| section.side == side && section.to > z0 && section.from < z1)
-            {
-                continue;
-            }
-            let mut rng = Random::new(seed + 29.0);
-            let count = if size >= 1.5 * EAVE_CUE_SIZE { 2 } else { 1 };
-            let kit = parts.kit(piece);
-            for k in 0..count {
-                let z = (z0 + (z1 - z0) * (0.35 + 0.3 * f64::from(k)) + rng.range(-0.12, 0.12))
-                    .clamp(-roof.rake_z + 0.4, roof.rake_z - 0.4);
-                let length = rng.range(0.7, 1.0);
-                let slip = rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
-                // Its head rests on the deck at the foot of the slot it slid out of;
-                // its foot lifts off the deck, so it shades apart from the roof.
-                let head = roof.eave_x - length + slip;
-                let tilt = roof.pitch.atan() - rng.range(0.16, 0.26);
-                let sheet = length / roof.pitch.atan().cos();
-                let down = DVec3::new(side * tilt.cos(), -tilt.sin(), 0.0);
-                let top = DVec3::new(side * head, roof.top(side * head, z) + 0.03, z);
-                let yaw = rng.range(0.14, 0.28) * if k == 0 { 1.0 } else { -1.0 };
-                let placed = DMat4::from_translation(top)
-                    * DMat4::from_rotation_y(yaw)
-                    * DMat4::from_translation(down * sheet / 2.0)
-                    * DMat4::from_rotation_z(-side * tilt);
-                // Kinked where it slid over the eave's edge: its free end bent down
-                // further, and torn into two tongues curled down over the gutter at
-                // their own angles, not cut square.
-                let main = sheet * rng.range(0.62, 0.78);
-                let tail = sheet - main;
-                kit.block(
-                    Surface::Roof,
-                    DVec3::new(main, 0.022, SHEET_WIDTH),
-                    placed
-                        * DMat4::from_translation(DVec3::new(
-                            side * (main - sheet) / 2.0,
-                            0.0,
-                            0.0,
-                        )),
-                );
-                let kinked = placed
-                    * DMat4::from_translation(DVec3::new(side * (main - sheet / 2.0), 0.0, 0.0))
-                    * DMat4::from_rotation_z(-side * rng.range(SHEET_KINK.0, SHEET_KINK.1))
-                    * DMat4::from_rotation_x(rng.range(-0.12, 0.12));
-                kit.block(
-                    Surface::Roof,
-                    DVec3::new(tail, 0.022, SHEET_WIDTH * rng.range(0.9, 1.0)),
-                    kinked * DMat4::from_translation(DVec3::new(side * tail / 2.0, 0.0, 0.0)),
-                );
-                let split = rng.range(0.35, 0.65);
-                for (width, across) in [(split, -(1.0 - split) / 2.0), (1.0 - split, split / 2.0)] {
-                    let curl = rng.range(0.08, 0.25);
-                    kit.block(
-                        Surface::Roof,
-                        DVec3::new(curl, 0.02, SHEET_WIDTH * width * 0.92),
-                        kinked
-                            * DMat4::from_translation(DVec3::new(
-                                side * tail,
-                                0.0,
-                                SHEET_WIDTH * across,
-                            ))
-                            * DMat4::from_rotation_z(-side * SHEET_CURL * rng.range(0.6, 1.5))
-                            * DMat4::from_translation(DVec3::new(side * curl / 2.0, 0.0, 0.0)),
-                    );
-                }
-                // Where it lay: the dark slot it left in the covering, and the
-                // battens across it.
-                let half = SHEET_WIDTH / 2.0;
-                let at = |run: f64, along: f64| {
-                    DVec3::new(side * run, roof.top(side * run, along) + SLOT_LIFT, along)
-                };
-                // Only the strip it slid down off shows; the sheet still covers
-                // the rest, askew.
-                let (low, high) = (roof.eave_x - length - 0.02, roof.eave_x - length + slip);
-                // Its outline torn, not cut: the nails tore the sheet's head out
-                // of the deck at its own depth across its width.
-                let strips = SLOT_STRIPS as f64;
-                for k in 0..SLOT_STRIPS {
-                    let (z0, z1) = (
-                        z - half + 2.0 * half * k as f64 / strips,
-                        z - half + 2.0 * half * (k + 1) as f64 / strips,
-                    );
-                    let (a, b) = (rng.range(0.0, 0.09), rng.range(0.0, 0.09));
-                    kit.quad(
-                        Surface::Dark,
-                        [at(low - a, z0), at(high, z0), at(high, z1), at(low - b, z1)],
-                        DVec3::new(side * roof.pitch, 1.0, 0.0).normalize(),
-                    );
-                }
-                let mut run = low + 0.08;
-                while run < high - 0.03 {
-                    kit.block(
-                        Surface::Wood,
-                        DVec3::new(0.05, 0.025, SHEET_WIDTH * 0.96),
-                        DMat4::from_translation(at(run, z) + DVec3::Y * 0.012)
-                            * DMat4::from_rotation_z(-side * roof.pitch.atan()),
-                    );
-                    run += BATTEN_SPACING;
-                }
-            }
+        let z = slip.center();
+        let on_section = breaks.iter().any(|section| {
+            section.side == side && section.to > z - SEAM_SPACING && section.from < z + SEAM_SPACING
+        });
+        let slides = !parts.split && !on_section && slip.fresh;
+        let slot = usize::from(side < 0.0);
+        let mut rng = slip.random(design);
+        // The draws that chose it.
+        rng.next();
+        rng.next();
+        eave_soot(parts.kit(piece), roof, side, z, slip.size, &mut rng);
+        let kit = if slides {
+            &mut parts.slips[slot]
+        } else {
+            parts.kit(piece)
+        };
+        let length = rng.range(0.7, 1.0);
+        let slid = rng.range(SHEET_SLIP.0, SHEET_SLIP.1);
+        // Its head rests on the deck at the foot of the slot it slid out of;
+        // its foot lifts off the deck, so it shades apart from the roof.
+        let head = roof.eave_x - length + slid;
+        let tilt = roof.pitch.atan() - rng.range(0.16, 0.26);
+        let sheet = length / roof.pitch.atan().cos();
+        let down = DVec3::new(side * tilt.cos(), -tilt.sin(), 0.0);
+        let top = DVec3::new(side * head, roof.top(side * head, z) + 0.03, z);
+        let yaw = rng.range(0.14, 0.28) * if slip.column % 2 == 0 { 1.0 } else { -1.0 };
+        let placed = DMat4::from_translation(top)
+            * DMat4::from_rotation_y(yaw)
+            * DMat4::from_translation(down * sheet / 2.0)
+            * DMat4::from_rotation_z(-side * tilt);
+        // Kinked where it slid over the eave's edge: its free end bent down
+        // further, and torn into two tongues curled down over the gutter at
+        // their own angles, not cut square.
+        let main = sheet * rng.range(0.62, 0.78);
+        let tail = sheet - main;
+        kit.block(
+            Surface::Roof,
+            DVec3::new(main, 0.022, SHEET_WIDTH),
+            placed * DMat4::from_translation(DVec3::new(side * (main - sheet) / 2.0, 0.0, 0.0)),
+        );
+        let kinked = placed
+            * DMat4::from_translation(DVec3::new(side * (main - sheet / 2.0), 0.0, 0.0))
+            * DMat4::from_rotation_z(-side * rng.range(SHEET_KINK.0, SHEET_KINK.1))
+            * DMat4::from_rotation_x(rng.range(-0.12, 0.12));
+        kit.block(
+            Surface::Roof,
+            DVec3::new(tail, 0.022, SHEET_WIDTH * rng.range(0.9, 1.0)),
+            kinked * DMat4::from_translation(DVec3::new(side * tail / 2.0, 0.0, 0.0)),
+        );
+        // Its torn end curled down over the gutter: what is left of its width once
+        // a tongue tore away to one side.
+        let split = rng.range(0.35, 0.65);
+        let width = 1.0 - split * 0.5;
+        let across = if slip.column % 2 == 0 { 1.0 } else { -1.0 } * (1.0 - width) / 2.0;
+        let curl = rng.range(0.08, 0.25);
+        kit.block(
+            Surface::Roof,
+            DVec3::new(curl, 0.02, SHEET_WIDTH * width * 0.92),
+            kinked
+                * DMat4::from_translation(DVec3::new(side * tail, 0.0, SHEET_WIDTH * across))
+                * DMat4::from_rotation_z(-side * SHEET_CURL * rng.range(0.6, 1.5))
+                * DMat4::from_translation(DVec3::new(side * curl / 2.0, 0.0, 0.0)),
+        );
+        // Where it lay: the dark slot it left in the covering, and the
+        // battens across it.
+        let kit = parts.kit(piece);
+        let half = SHEET_WIDTH / 2.0;
+        let at = |run: f64, along: f64| {
+            DVec3::new(side * run, roof.top(side * run, along) + SLOT_LIFT, along)
+        };
+        // Only the strip it slid down off shows; the sheet still covers
+        // the rest, askew.
+        let (low, high) = (roof.eave_x - length - 0.02, roof.eave_x - length + slid);
+        // Its outline torn, not cut: the nails tore the sheet's head out
+        // of the deck at its own depth across its width.
+        let strips = SLOT_STRIPS as f64;
+        for k in 0..SLOT_STRIPS {
+            let (z0, z1) = (
+                z - half + 2.0 * half * k as f64 / strips,
+                z - half + 2.0 * half * (k + 1) as f64 / strips,
+            );
+            let (a, b) = (rng.range(0.0, 0.09), rng.range(0.0, 0.09));
+            kit.quad(
+                Surface::Dark,
+                [at(low - a, z0), at(high, z0), at(high, z1), at(low - b, z1)],
+                DVec3::new(side * roof.pitch, 1.0, 0.0).normalize(),
+            );
+        }
+        let mut run = low + 0.08;
+        while run < high - 0.03 {
+            kit.block(
+                Surface::Wood,
+                DVec3::new(0.05, 0.025, SHEET_WIDTH * 0.96),
+                DMat4::from_translation(at(run, z) + DVec3::Y * 0.012)
+                    * DMat4::from_rotation_z(-side * roof.pitch.atan()),
+            );
+            run += BATTEN_SPACING;
         }
     }
 }
+
+/// The blast's soot along the eave over a loosened sheet's column, seen from
+/// above: the roof's edge scorched where the blast vented up the wall, as deep up
+/// the slope as the column's own share of [`EAVE_SOOT`], deeper the more shells the
+/// breach under it took (so it only ever spreads), its top torn across. On the
+/// covering, not through it: no hole.
+fn eave_soot(kit: &mut Kit<Surface>, roof: &Roof, side: f64, z: f64, size: f64, rng: &mut Random) {
+    let at = |run: f64, along: f64| {
+        DVec3::new(
+            side * run,
+            roof.top(side * run, along) + SOOT_ROOF_LIFT,
+            along,
+        )
+    };
+    let facing = DVec3::new(side * roof.pitch, 1.0, 0.0).normalize();
+    let grown = ((size - EAVE_CUE_SIZE) / 3.0).clamp(0.0, 1.0);
+    let reach = EAVE_SOOT.0 + EAVE_SOOT.1 * grown;
+    let edge = roof.eave_x - 0.02;
+    // A little wider than the column, so neighbouring columns' soot runs together.
+    let (z0, z1) = (z - SEAM_SPACING * 0.62, z + SEAM_SPACING * 0.62);
+    let (left, right) = (reach * rng.range(0.45, 1.0), reach * rng.range(0.45, 1.0));
+    kit.quad(
+        Surface::Soot,
+        [
+            at(edge, z0),
+            at(edge, z1),
+            at(edge - right, z1),
+            at(edge - (left + right) * rng.range(0.3, 0.6), z),
+        ],
+        facing,
+    );
+}
+
+/// How far (m) up the slope a breach's eave soot reaches at least, and further at
+/// most with the shells it took, and how far over the covering it lies (over the
+/// standing seams).
+const EAVE_SOOT: (f64, f64) = (0.25, 0.45);
+const SOOT_ROOF_LIFT: f64 = 0.045;
 
 /// How many shells a breach under the eave must have taken, and how near the wall's
 /// top it must reach (m), to knock sheets loose; how
@@ -1524,7 +1706,7 @@ const SHEET_KINK: (f64, f64) = (0.12, 0.3);
 /// covering's seams, so they do not run on through it.
 const SLOT_LIFT: f64 = 0.035;
 /// Strips across a slipped sheet's slot, each torn to its own depth.
-const SLOT_STRIPS: usize = 3;
+const SLOT_STRIPS: usize = 2;
 
 /// The torn edges of a broken eave section ([`EaveBreak`]), hidden inside the deck
 /// while it lies flush: along each of its lines from ridge to eave the cut through
@@ -1567,7 +1749,7 @@ fn eave_break_edges(parts: &mut Parts, roof: &Roof, section: &EaveBreak) {
         ];
         for facing in [into, -into] {
             kit.quad(
-                Surface::Wood,
+                Surface::Dark,
                 [wedge[0], wedge[1], wedge[2], wedge[2]],
                 DVec3::Z * facing,
             );
@@ -3364,7 +3546,8 @@ fn line_hole(
         // Every shell on the breach spilled more, further out: broken siding,
         // charred and weathered boards, plaster and studs heaped at its foot,
         // within the wall's length.
-        let fan = 0.9 + 0.2 * hole.size;
+        // Out far enough to read from overhead as the breach's fan of wreckage.
+        let fan = (1.0 + 0.25 * hole.size).min(3.0);
         let width = (half.x + 0.2 * hole.size).min(room.reach - center.x.abs() + 0.2);
         let spill = (5.0 + hole.size * 2.5) as usize;
         for k in 0..spill.min(MAX_SPILL) {
@@ -3673,7 +3856,43 @@ fn room_behind(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, reach: f64, de
                 ),
         );
     }
+    // Every shell through the breach after the first struck the room behind it: a
+    // hole knocked through the far wall's plaster to its lath, and its plaster and
+    // splinters on the floor. Each shell's comes from its own draws after the last
+    // one's, so those already there stay as they were.
+    let mut struck = Random::new(hole.seed + 91.0);
+    let shells = ((hole.size - 1.0) / SHELL_GROWTH)
+        .floor()
+        .clamp(0.0, ROOM_HITS as f64) as usize;
+    let back = |u: f64, y: f64| at(u, y, far + 0.012);
+    for _ in 0..shells {
+        let u = struck.range(l + 0.25, (r - 0.25).max(l + 0.3));
+        let y = struck.range(floor + 0.5, (ceiling - 0.35).max(floor + 0.6));
+        let (a, b) = (struck.range(0.14, 0.3), struck.range(0.12, 0.26));
+        let tilt = struck.range(-0.6, 0.6);
+        let corner = |angle: f64, r: f64| {
+            let (sin, cos) = (angle + tilt).sin_cos();
+            back(u + cos * r * a / 0.2, y + sin * r * b / 0.2)
+        };
+        let ragged: [f64; 5] = std::array::from_fn(|_| struck.range(0.14, 0.24));
+        let p: [DVec3; 5] = std::array::from_fn(|k| corner(k as f64 * 0.4 * PI, ragged[k]));
+        // A ragged five-cornered hole to the lath (three triangles).
+        kit.quad(
+            Surface::Wood,
+            [p[0], p[1], p[2], p[3]],
+            facing(0.0, 0.0, 1.0),
+        );
+        kit.quad(
+            Surface::Wood,
+            [p[0], p[3], p[4], p[4]],
+            facing(0.0, 0.0, 1.0),
+        );
+    }
 }
+
+/// The most shells after a breach's first that each leave their own mark in the
+/// room behind it.
+const ROOM_HITS: usize = 5;
 
 /// A pair of plank shutters hung open beside a window: boards under two battens
 /// and a Z brace, with a strap hinge's shadow line.
@@ -4912,7 +5131,7 @@ fn house_roof(
     for section in &breaks {
         eave_break_edges(parts, roof, section);
     }
-    breach_eave_cues(parts, design, roof, &breaks);
+    breach_eave_cues(parts, design, roof, &breaks, hits);
     shed_shingles(parts, design, roof, roof_holes);
 
     if !parts.split {

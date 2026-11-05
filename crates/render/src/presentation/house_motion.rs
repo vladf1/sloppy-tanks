@@ -5,7 +5,9 @@
 //! it; presentation keeps the angle each section is shown at and eases the
 //! section's node from there, so it falls like a member let go (gathering speed,
 //! landing with a small bounce) and a later shell that deepens the drop moves it
-//! on from where it hung.
+//! on from where it hung. The roof sheets a breach under the eave knocked loose
+//! ([`HOUSE_SLIP`](sloppy_core::models::HOUSE_SLIP)) slide down off the eave into
+//! place the same way.
 //!
 //! The simulation never sees any of this: a collapse's pieces are cut at the
 //! sections' full angle, which they reach a few hundred milliseconds after a shell
@@ -34,6 +36,38 @@ const SWING_STEP: f64 = 1.0 / 30.0;
 /// where it was rather than landing unseen.
 #[cfg_attr(not(any(target_arch = "wasm32", feature = "native")), allow(dead_code))]
 const SWING_FRAME: f64 = 0.1;
+
+/// How fast (m/s²) a slipped sheet gathers speed sliding down off the eave: its
+/// slide of a few decimetres takes about a quarter of a second.
+const SLIDE_ACCEL: f64 = 8.0;
+
+/// A slipped sheet's slide down off the eave: the share of its slide still to go
+/// (1 where it lay, 0 where it came to rest) and how fast it is going.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slide {
+    pub left: f64,
+    pub speed: f64,
+}
+
+impl Slide {
+    pub fn moving(&self) -> bool {
+        self.left > 0.0
+    }
+
+    /// Advance by `dt` seconds over a slide `length` metres long.
+    pub fn step(&mut self, dt: f64, length: f64) {
+        if !self.moving() {
+            return;
+        }
+        let dt = dt.clamp(0.0, SWING_STEP * 3.0);
+        self.speed += SLIDE_ACCEL * dt;
+        self.left -= self.speed * dt / length.max(1e-3);
+        if self.left <= 0.0 {
+            self.left = 0.0;
+            self.speed = 0.0;
+        }
+    }
+}
 
 /// One section's swing: the angle it is shown at and how fast it is turning, toward
 /// the angle its model draws it at.
@@ -100,11 +134,13 @@ fn same_section(a: &EaveSwing, b: &EaveSwing) -> bool {
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod live {
     use glam::Mat4;
-    use sloppy_core::models::{EaveSwing, HOUSE_EAVE, house_eave_swings};
+    use sloppy_core::models::{
+        EaveSwing, HOUSE_EAVE, HOUSE_SLIP, house_eave_swings, house_slip_slide,
+    };
     use sloppy_core::sim::CoverKind;
     use sloppy_core::sim::render_state::RenderCover;
 
-    use super::{SWING_FRAME, Swing, same_section, section_pose};
+    use super::{SWING_FRAME, Slide, Swing, same_section, section_pose};
     use crate::gpu::{InstanceId, ModelId, Renderer};
 
     /// A section's node of the cottage's model and where it turns.
@@ -123,6 +159,19 @@ mod live {
         cover: u32,
         instance: InstanceId,
         sections: Vec<Section>,
+        /// The sheets slipped off each slope's eave (right, left), if any.
+        slips: [Option<Slipped>; 2],
+    }
+
+    /// A slope's slipped sheets' node and how far they have still to slide down to
+    /// where it draws them.
+    #[derive(Clone, Copy, Debug)]
+    struct Slipped {
+        joint: usize,
+        rest: Mat4,
+        /// The whole slide, down the slope (build frame).
+        slide: glam::Vec3,
+        motion: Slide,
     }
 
     /// The cottages' moving parts: one entry for each cottage shown this round (a
@@ -154,14 +203,13 @@ mod live {
             let index = match self.cottages.iter().position(|c| c.cover == cover.id) {
                 Some(index) => index,
                 None => {
+                    // First shown: as built, nothing to swing from.
                     self.cottages.push(Cottage {
                         cover: cover.id,
                         instance,
-                        sections: Vec::new(),
+                        sections: sections(renderer, cover, model, &[], false),
+                        slips: slips(renderer, cover, model, &[None, None], false),
                     });
-                    // First shown: as built, nothing to swing from.
-                    let cottage = self.cottages.last_mut().expect("pushed");
-                    cottage.sections = sections(renderer, cover, model, &[], false);
                     return;
                 }
             };
@@ -170,6 +218,7 @@ mod live {
             let previous = std::mem::take(&mut cottage.sections);
             cottage.instance = instance;
             cottage.sections = sections(renderer, cover, model, &previous, true);
+            cottage.slips = slips(renderer, cover, model, &cottage.slips, true);
         }
 
         /// Swing every moving section on by `dt` seconds.
@@ -186,8 +235,57 @@ mod live {
                         .then(|| section_pose(section.rest, &section.shape, section.swing.angle));
                     renderer.set_node_transform(cottage.instance, section.joint, pose);
                 }
+                for slipped in cottage.slips.iter_mut().flatten() {
+                    if !slipped.motion.moving() {
+                        continue;
+                    }
+                    slipped
+                        .motion
+                        .step(dt.min(SWING_FRAME), slipped.slide.length() as f64);
+                    let back = -slipped.slide * slipped.motion.left as f32;
+                    let pose = slipped
+                        .motion
+                        .moving()
+                        .then(|| slipped.rest * Mat4::from_translation(back));
+                    renderer.set_node_transform(cottage.instance, slipped.joint, pose);
+                }
             }
         }
+    }
+
+    /// Each slope's slipped sheets in a cottage's look: still sliding as the last
+    /// look had them, starting back up where they lay when new to a cottage already
+    /// shown (`slides`), or at rest.
+    fn slips(
+        renderer: &Renderer,
+        cover: &RenderCover,
+        model: ModelId,
+        previous: &[Option<Slipped>; 2],
+        slides: bool,
+    ) -> [Option<Slipped>; 2] {
+        let nodes = renderer.model_nodes(model);
+        std::array::from_fn(|k| {
+            let joint = renderer.model_node(model, &format!("{HOUSE_SLIP}{k}"))?;
+            let side = if k == 0 { 1.0 } else { -1.0 };
+            let slide = house_slip_slide(cover.x, cover.z, cover.w, cover.d, cover.h, side);
+            let motion = match previous[k] {
+                Some(old) => old.motion,
+                None if slides => Slide {
+                    left: 1.0,
+                    speed: 0.0,
+                },
+                None => Slide {
+                    left: 0.0,
+                    speed: 0.0,
+                },
+            };
+            Some(Slipped {
+                joint,
+                rest: nodes[joint].rest,
+                slide: slide.as_vec3(),
+                motion,
+            })
+        })
     }
 
     /// The sections of a cottage's look, each starting from the matching one of the
@@ -278,6 +376,20 @@ mod tests {
             swing.step(1.0 / 60.0);
         }
         assert_eq!(swing.angle, 0.2);
+    }
+
+    #[test]
+    fn a_slipped_sheet_slides_down_in_a_quarter_second() {
+        let mut slide = Slide {
+            left: 1.0,
+            speed: 0.0,
+        };
+        let mut frames = 0;
+        while slide.moving() {
+            slide.step(1.0 / 60.0, 0.3);
+            frames += 1;
+        }
+        assert!((10..=25).contains(&frames), "{frames}");
     }
 
     #[test]
