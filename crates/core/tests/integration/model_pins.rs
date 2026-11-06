@@ -98,7 +98,7 @@ fn village_covers_are_pinned() {
         platform_pin(&[
             (MAC_DEBUG, 0xc206_1e09_2ca1_cfbc),
             (MAC_RELEASE, 0x5a04_70ff_8171_1287),
-            (LINUX_DEBUG, 0x8eaf_994c_2b7d_0d09),
+            (LINUX_DEBUG, 0x3e2f_44b6_ebd8_1d83),
         ]),
     );
 }
