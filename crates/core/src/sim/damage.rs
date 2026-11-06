@@ -4,14 +4,12 @@
 use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
-use super::arena::CoverDef;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
-use super::combat_rules::{COMBAT, MINE};
+use super::combat_rules::{BlastFalloff, COMBAT, MINE, StructureBlast};
 use super::data::group;
-use super::debris_physics::blast_debris;
+use super::debris_physics::{blast_debris, blast_loose_debris};
 use super::difficulty::difficulty_tuning;
-use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed};
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
@@ -19,25 +17,39 @@ use super::physics::{from_rotation, from_vector, interaction_groups, vector};
 use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
+use super::structure_physics::{
+    BLAST_CORE, BLAST_HEIGHT, HE_BLAST_RADIUS, STRUCTURE_BLAST_REACH, loose_throw,
+    throw_structure_debris,
+};
 use super::tank_destruction::tank_burnout;
-use super::timber_layout::TimberHit;
-use super::tower_layout::TOWER_BASE;
 use super::tree_proportions::tree_proportions;
 use super::types::{
-    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent, SimEventType,
-    Team, VehicleKind,
+    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
+    SimEventType, Team, VehicleKind,
 };
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
-
-/// Remembered impact marks per timber wall, cargo crate or cottage.
-const MAX_TIMBER_MARKS: usize = 6;
 
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and
 /// its offset from the body origin (the trunk's mid-height).
 pub struct TreeStump {
     pub shape: SharedShape,
     pub offset: Vector,
+}
+
+/// How a blast from outside (a drum, a rocket, a mine) meets a structure's standing parts:
+/// a drum's over its whole radius, the others' over [`STRUCTURE_BLAST_REACH`] of theirs.
+fn outside_structure_blast(cause: DamageCause, radius: f64, damage: f64) -> StructureBlast {
+    if cause == DamageCause::Drum {
+        return COMBAT.drum_structure_blast;
+    }
+    StructureBlast {
+        pressure: damage,
+        falloff: BlastFalloff::Even,
+        reach: radius * STRUCTURE_BLAST_REACH,
+        shatter: BLAST_CORE,
+        throw: loose_throw(damage),
+    }
 }
 
 pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
@@ -165,6 +177,15 @@ impl Simulation {
         let burnout = tank_burnout(self.seed, victim_id, life);
         if !burnout {
             blast_debris(self, position.planar(), 3.0, 60.0);
+            let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
+            for cover in 0..self.covers.len() {
+                self.structure_blast_with(
+                    cover,
+                    point,
+                    COMBAT.death_structure_blast,
+                    Some((owner, team)),
+                );
+            }
         }
         break_tank(self, tank_index, burnout);
         let mut death = SimEvent::at(SimEventType::Death, position.x, position.z);
@@ -192,33 +213,26 @@ impl Simulation {
         owner_life: Option<u32>,
         impact: Option<Point3>,
     ) {
+        if let Some(cover) = self.covers.get(cover_index)
+            && cover.structure.is_some()
+        {
+            // A structure takes damage where it lands, a burst on its parts there; with no
+            // point every part takes it.
+            let by = Some((owner, team));
+            match impact {
+                Some(point) => {
+                    self.structure_blast_on(cover_index, point, HE_BLAST_RADIUS, amount, by)
+                }
+                None => self.damage_every_part(cover_index, amount, by),
+            }
+            return;
+        }
         let cover = &mut self.covers[cover_index];
         if !cover.alive || !cover.destructible {
             return;
         }
-        let previous_hp = cover.hp;
         cover.hp -= amount;
         if cover.hp > 0.0 {
-            if matches!(
-                cover.kind,
-                CoverKind::Timber | CoverKind::Cargo | CoverKind::House
-            ) && amount > 0.0
-            {
-                let marks = &mut cover.timber_hits;
-                if marks.len() < MAX_TIMBER_MARKS {
-                    let size = if marks.is_empty() {
-                        1.0
-                    } else {
-                        1.8f64.min(1.5 + (marks.len() as f64 - 1.0) * 0.15)
-                    };
-                    marks.push(TimberHit {
-                        x: impact.map_or(0.0, |point| point.x - cover.x),
-                        y: impact.map_or_else(|| 1f64.min(cover.h * 0.5), |point| point.y),
-                        z: impact.map_or(-cover.d / 2.0, |point| point.z - cover.z),
-                        size,
-                    });
-                }
-            }
             return;
         }
         let body = cover.body;
@@ -275,88 +289,16 @@ impl Simulation {
         destroy.cover_kind = Some(kind);
         destroy.height = Some(h);
         destroy.id = Some(id);
-        destroy.size = Some(if matches!(kind, CoverKind::Tower | CoverKind::House) {
-            7.0
-        } else {
-            2.0
-        });
+        destroy.size = Some(2.0);
         destroy.color = Some(color);
-        if kind == CoverKind::Cargo {
-            destroy.from = self.covers[cover_index]
-                .kick
-                .map(|kick| Point3::new(x - kick.x, h * 0.5, z - kick.z));
-        }
         self.events.push(destroy);
-        if !break_scenery(self, cover_index, pose, previous_hp) {
+        if !break_scenery(self, cover_index, pose) {
             for _ in 0..3 {
                 let fx = x + self.rng.range(-w / 2.0, w / 2.0);
                 let fz = z + self.rng.range(-d / 2.0, d / 2.0);
                 let size = self.rng.range(0.3, 0.7);
-                let shape = if kind == CoverKind::House {
-                    FragmentShape::Track
-                } else {
-                    FragmentShape::Shard
-                };
-                self.fragment(fx, fz, color, size, shape, 1.0);
+                self.fragment(fx, fz, color, size, FragmentShape::Shard, 1.0);
             }
-        }
-        if kind == CoverKind::Tower {
-            // One authored support object; its destruction leaves two flank foundations and an
-            // open middle.
-            for side in [-1.0, 1.0] {
-                let rubble_x = x + side * TOWER_BASE.offset;
-                let seed = Some((self.rng.next() * 4_294_967_296.0).floor());
-                // A tower that rebuilt in place reuses the rubble its last collapse left, so
-                // repeated collapses never grow the cover list.
-                if let Some(index) = self.rubble_at(rubble_x, z, false) {
-                    self.covers[index].debris_seed = seed;
-                    self.restore_cover(index);
-                    continue;
-                }
-                let mut rubble = CoverDef::new(
-                    CoverKind::Rubble,
-                    rubble_x,
-                    z,
-                    TOWER_BASE.width,
-                    TOWER_BASE.depth,
-                    TOWER_BASE.rubble_height,
-                    f64::INFINITY,
-                    color,
-                );
-                rubble.debris_seed = seed;
-                self.add_cover(&rubble);
-            }
-            let region = moved_cover_region(&self.covers[cover_index]);
-            self.nav.rebuild(&self.covers, Some(region));
-        }
-        if kind == CoverKind::House {
-            // The back wall and the chimney breast come down in a heap that stays as low
-            // cover; the rest of the footprint opens.
-            let design = HouseDesign::of(x, z, w, d, h);
-            let (offset, size) = design.heap_box();
-            let seed = heap_seed(self.rng.next(), &design);
-            let (heap_x, heap_z) = (x + offset.x, z + offset.y);
-            // A cottage that rebuilt in place reuses its last heap, so repeated
-            // collapses never grow the cover list.
-            if let Some(index) = self.rubble_at(heap_x, heap_z, false) {
-                self.covers[index].debris_seed = Some(seed);
-                self.restore_cover(index);
-            } else {
-                let mut heap = CoverDef::new(
-                    CoverKind::Rubble,
-                    heap_x,
-                    heap_z,
-                    size.x,
-                    size.y,
-                    HOUSE_HEAP.height,
-                    f64::INFINITY,
-                    color,
-                );
-                heap.debris_seed = Some(seed);
-                self.add_cover(&heap);
-            }
-            let region = moved_cover_region(&self.covers[cover_index]);
-            self.nav.rebuild(&self.covers, Some(region));
         }
         if kind == CoverKind::Drum {
             self.explode(
@@ -387,7 +329,9 @@ impl Simulation {
         explosion.size = Some(radius);
         explosion.cover_kind = (cause == DamageCause::Drum).then_some(CoverKind::Drum);
         self.events.push(explosion);
-        blast_debris(self, position, radius, damage);
+        blast_loose_debris(self, position, radius, damage);
+        let throw = outside_structure_blast(cause, radius, damage).throw;
+        throw_structure_debris(self, Point3::new(position.x, BLAST_HEIGHT, position.z), radius, throw);
         // Blast-triggered mines retain the initiator of this chain, like drums.
         let (chained, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.mines)
             .into_iter()
@@ -431,24 +375,21 @@ impl Simulation {
             }
         }
         // alive is cleared before recursion, so drums and chains are exactly-once and keep the
-        // original owner. Rubble added during the loop is not part of this blast.
+        // original owner.
+        let structure_blast = outside_structure_blast(cause, radius, damage);
+        let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
         let count = self.covers.len();
         for i in 0..count {
+            if self.covers[i].structure.is_some() {
+                self.structure_blast_with(i, point, structure_blast, Some((owner, team)));
+                continue;
+            }
             let cover = &mut self.covers[i];
             if cover.alive
                 && cover.destructible
                 && distance(position, Vec2::new(cover.x, cover.z))
                     < radius + cover.w.max(cover.d) * COMBAT.cover_blast_allowance
             {
-                if matches!(
-                    cover.kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower | CoverKind::House
-                ) {
-                    let dx = cover.x - position.x;
-                    let dz = cover.z - position.z;
-                    let length = dx.hypot(dz);
-                    cover.kick = (length > 0.001).then(|| Vec2::new(dx / length, dz / length));
-                }
                 self.damage_cover(
                     i,
                     damage,

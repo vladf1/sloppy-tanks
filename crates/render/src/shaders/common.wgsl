@@ -9,7 +9,8 @@ const RECIPROCAL_PI: f32 = 0.3183098861837907;
 struct PointLight {
     // xyz position, w cutoff distance (Three `distance`; 0 = infinite)
     position: vec4f,
-    // rgb color × intensity, w decay exponent
+    // rgb color × intensity, w decay exponent (negative: a point flash whose light
+    // does not wrap past the terminator)
     color: vec4f,
 }
 
@@ -103,6 +104,9 @@ struct Frame {
     // The cloud shadows' tiles (`cloud_shadow`): xy the ground's shift per metre of
     // height along the sun's ray, zw the drift's offset in tiles (wrapped).
     cloud_tiles: vec4f,
+    // Each point light's blocking wall box (`walls::LightBlocker`), one light per
+    // lane: its west, south, east and north sides, then its top, zero for none.
+    light_blocks: array<vec4f, 5>,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is

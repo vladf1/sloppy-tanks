@@ -5,8 +5,8 @@
 use glam::{DMat4, DQuat, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
-    CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_damage_stage,
-    cover_model, tank_model_variant, wreck_model,
+    CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_model,
+    tank_model_variant, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::map_options::MapId;
@@ -160,7 +160,7 @@ pub fn vehicles_pin() -> u64 {
     pin.0
 }
 
-/// Every cover of a map at each damage stage it can show, batched like
+/// Every cover of a map as it stands, batched like
 /// presentation's `model_catalog::cover_model`.
 pub fn covers_pin(map: MapId) -> u64 {
     let mut simulation = Simulation::with_seed(417.0);
@@ -171,16 +171,10 @@ pub fn covers_pin(map: MapId) -> u64 {
     let mut pin = Pin::new();
     for cover in &view.covers {
         let shape = CoverShape::from(cover);
-        let mut stages: Vec<u32> = [1.0, 0.9, 0.6, 0.3, 0.1]
-            .map(|fraction| cover_damage_stage(cover.kind, cover.max_hp * fraction, cover.max_hp))
-            .to_vec();
-        stages.dedup();
-        for stage in stages {
-            let mut root = cover_model(&shape, TreeDetail::Full, stage);
-            batch(&mut root);
-            pin.word(stage);
-            pin.node(&root);
-        }
+        let mut root = cover_model(&shape, TreeDetail::Full);
+        batch(&mut root);
+        pin.word(0);
+        pin.node(&root);
     }
     pin.0
 }

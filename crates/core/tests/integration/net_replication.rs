@@ -24,6 +24,7 @@ use sloppy_core::sim::debris_cleanup::{
     DEBRIS_CLEANUP_SECONDS, WRECK_FIRE_DIE_DOWN_SECONDS, replicated_life,
 };
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{
     CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
@@ -721,6 +722,10 @@ fn reference_scene(sim: &Simulation) -> Value {
             fragment.get("wreck").is_some_and(|wreck| !wreck.is_null()),
         );
         fragment.insert("life".into(), json!(life));
+        // A piece passing through what stands is flagged; the rest carry no flag.
+        if fragment.get("passesThrough") == Some(&Value::Bool(false)) {
+            fragment.remove("passesThrough");
+        }
     });
     entities.insert("fragments".into(), fragments);
     entities.insert("mines".into(), kind_records(3, &[], &|_| {}));
@@ -842,8 +847,7 @@ fn find_fields(scene: &Value, missing: &mut BTreeSet<&str>) {
 }
 
 const EXPECTED_FIELDS: [&str; 16] = [
-    "covers.debrisSeed",
-    "covers.timberHits",
+    "covers.broken",
     "covers.timberJoin",
     "covers.motion",
     "covers.hp=null",
@@ -851,7 +855,8 @@ const EXPECTED_FIELDS: [&str; 16] = [
     "fragments.dimensions",
     "fragments.material",
     "fragments.sourceKind",
-    "fragments.timberPart",
+    "fragments.structureParts",
+    "fragments.damping",
     "fragments.createdAt",
     "fragments.wreck",
     "fragments.part",
@@ -883,7 +888,8 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
         let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
         for tick in 1..=ticks {
             if tick == 30 {
-                // Collapsed towers leave seeded rubble; the rest leave debris and removals.
+                // Collapsed towers and cottages leave their parts falling as bodies; the
+                // rest leave debris and removals.
                 let destructible: Vec<usize> = (0..sim.covers.len())
                     .filter(|&i| sim.covers[i].alive && sim.covers[i].destructible)
                     .collect();
@@ -898,6 +904,17 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                     if sim.covers[cover].alive {
                         sim.damage_cover(cover, 10000.0, 0, Team::Blue, None, None);
                     }
+                }
+                // A cottage brought down from its footing drops its upper parts as
+                // bodies, and a bot's wreck lies with them.
+                if let Some(house) = (0..sim.covers.len())
+                    .find(|&i| sim.covers[i].kind == CoverKind::House && sim.covers[i].alive)
+                {
+                    crate::support::fell_cottage(&mut sim, house);
+                }
+                if let Some(bot) = sim.tanks.iter().position(|tank| !tank.human && tank.alive) {
+                    let team = sim.tanks[bot].team.opponent();
+                    sim.damage_tank(bot, 1.0e6, 0, team, None, None);
                 }
             }
             if tick == 240 && !sim.mines.is_empty() {
@@ -961,18 +978,20 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
 #[test]
 fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
     let mut sim = room(MapId::Village, &one_player());
-    sim.covers[0].debris_seed = None;
-    let cover_id = sim.covers[0].id.to_string();
+    let tower = (0..sim.covers.len())
+        .find(|&i| sim.covers[i].kind == CoverKind::Tower)
+        .expect("a watchtower");
+    let cover_id = sim.covers[tower].id.to_string();
     let mut stream = StateStream::new("room", 1);
     let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
-    for (index, seed) in [Some(12.0), None, Some(34.0)].into_iter().enumerate() {
-        sim.covers[0].debris_seed = seed;
+    for (index, broken) in [Some(12), None, Some(31)].into_iter().enumerate() {
+        sim.covers[tower].structure.as_mut().unwrap().gone = PartSet::from_indices(broken);
         let mut scene = Scene::capture(&sim);
         let message = frame(&mut stream, &mut scene, index as u64 + 1);
         let frame = frame_json(&mut view, &message);
         assert_same(
             &frame["updates"],
-            &json!({"covers": {&cover_id: {"debrisSeed": seed}}}),
+            &json!({"covers": {&cover_id: {"broken": broken.map(|part| vec![part])}}}),
             "only the optional field changes",
         );
     }

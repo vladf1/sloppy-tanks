@@ -96,6 +96,7 @@ export interface PilotReport {
     playerHits: number;
     playerHitsTaken: number;
     triggerPulls: number;
+    quarryPulls: number;
     teamChanges: number;
   };
   feel: {

@@ -13,17 +13,18 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::prediction::{HullContacts, HullState, MovingBody, TankPredictor};
+use sloppy_core::net::prediction::{HullContacts, HullState, Moved, MovingBody, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{
     CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
 };
 use sloppy_core::sim::{RenderState, Simulation};
-use support::{clear_arena, place_tank, tank_index};
+use support::{clear_arena, fire_at, place_tank, tank_index};
 
 /// Prediction windows start every third tick: a sample of the snapshots, which arrive
 /// every tick.
@@ -339,7 +340,6 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
-        debris_seed: None,
     });
     sim.world.step();
     let script = |tick: u64| match tick {
@@ -538,8 +538,9 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         color: 0x8b5a2b,
         timber_join: None,
         timber_bays: None,
-        debris_seed: Some(1.0),
     };
+    // A wall's beams falling against the hull cost the windows of their fall as well; after
+    // it the hull shoves them along, held to the host's loose-piece speed.
     for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.05)]
     {
         let (mut sim, viewer) = open_field(VehicleKind::Balanced);
@@ -642,7 +643,6 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
         color: 0xaa3322,
         timber_join: None,
         timber_bays: None,
-        debris_seed: None,
     });
     sim.world.step();
     let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 180);
@@ -705,5 +705,121 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
     assert!(
         with < 0.1 && without > 0.2,
         "wreck {with} against {without}"
+    );
+}
+
+#[test]
+fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them() {
+    // A cottage 9 m ahead whose walls are all shot out at once: its roof and floors
+    // come down inside its footprint, and alice drives into them.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    let house = sim.add_cover(&CoverDef::house(0.0, 9.0, 7.0, 5.0, 4.9, 0xb87b4c));
+    sim.world.step();
+    let layout = sim.covers[house].structure.as_ref().unwrap().layout.clone();
+    let walls = PartSet::from_indices(
+        (0..layout.parts.len()).filter(|&index| layout.parts[index].grounded),
+    );
+    sim.break_structure(house, walls, PartSet::EMPTY, None, None);
+    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 240);
+    let settled = run.len() - 1;
+    let scene = run[settled].scene.clone().expect("a snapshot");
+    let hull = run[settled].hull.expect("alice's hull");
+    let mut predictor = TankPredictor::default();
+    predictor.sync_scene(&scene);
+    predictor.sync_bodies(&scene, &run[settled].bodies, hull.position);
+    let loose: Vec<_> = scene
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.structure_parts.is_some())
+        // Within a hull's reach of the debris it keeps, by their bodies' origins.
+        .filter(|fragment| distance(fragment.position.planar(), hull.position.planar()) < 12.0)
+        .collect();
+    assert!(loose.len() > 5, "the roof lies in pieces: {}", loose.len());
+    for fragment in loose {
+        let pose = predictor
+            .body_pose(Moved::Fragment(fragment.id))
+            .expect("a body for each loose part");
+        assert!(distance(pose.position.planar(), fragment.position.planar()) < 1e-3);
+    }
+    // Driving into the pile, its pieces shoved about, the prediction stays close.
+    for tick in 241..=450 {
+        let commands = BTreeMap::from([(viewer, command((0.0, 1.0)))]);
+        run.push(record(&mut sim, viewer, tick, &commands));
+    }
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 240);
+    eprintln!("cottage parts: {with:.4} m, {without:.4} m without them");
+    assert!(with < 0.4, "cottage parts {with} against {without}");
+}
+
+#[test]
+fn a_knocked_out_timber_passes_through_the_wall_in_the_predicted_world_as_on_the_host() {
+    use sloppy_core::sim::structure_physics::passes_through;
+    use sloppy_core::sim::timber_layout::TIMBER_HEALTH;
+    // A timber wall 6 m ahead of alice; a shell knocks a beam out of its posts.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    let wall = sim.add_cover(&CoverDef::new(
+        CoverKind::Timber,
+        0.0,
+        6.0,
+        3.7,
+        0.9,
+        2.8,
+        TIMBER_HEALTH,
+        0xb47a49,
+    ));
+    sim.world.step();
+    fire_at(
+        &mut sim,
+        Vec2::new(0.3, 3.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        sloppy_core::sim::Weapon::Standard,
+    );
+    let mut predictor = TankPredictor::default();
+    let hull = Point3::new(0.0, 0.0, 0.0);
+    // Each of the wall's fallen pieces: whether it passes through on the host, as the
+    // wire carries it and in the predicted world.
+    let predicted = |sim: &Simulation, predictor: &mut TankPredictor| {
+        let scene = client_scene(sim, viewer);
+        predictor.sync_scene(&scene);
+        predictor.sync_bodies(&scene, &[], hull);
+        sim.fragments
+            .iter()
+            .filter(|fragment| fragment.of_structure(wall))
+            .map(|fragment| {
+                let seen = scene
+                    .fragments
+                    .iter()
+                    .find(|seen| seen.id == fragment.id)
+                    .expect("replicated");
+                let pose = predictor
+                    .body_pose(Moved::Fragment(fragment.id))
+                    .expect("in the predicted world");
+                (
+                    passes_through(&sim.world, fragment.body),
+                    seen.passes_through,
+                    pose.passes_through,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut through = false;
+    for _ in 0..60 {
+        sim.step_with(&BTreeMap::from([(viewer, VehicleCommand::idle())]));
+        let pieces = predicted(&sim, &mut predictor);
+        for &(host, wire, client) in &pieces {
+            assert_eq!((host, host), (wire, client), "replicated and predicted");
+        }
+        through |= pieces.iter().any(|&(host, ..)| host);
+        if through && pieces.iter().all(|&(host, ..)| !host) {
+            break;
+        }
+    }
+    assert!(through, "the knocked-out beam passed through the wall");
+    assert!(
+        predicted(&sim, &mut predictor)
+            .iter()
+            .all(|&(.., client)| !client),
+        "and meets it again, on the host and in the predicted world"
     );
 }

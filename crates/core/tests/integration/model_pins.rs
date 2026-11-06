@@ -1,6 +1,6 @@
 //! Pins every value the model builders produce: the three themes' scenery, the
-//! vehicles and their wrecks, and each map's covers at every damage stage, batched
-//! as presentation draws them. A hash covers each node's name, transform and
+//! vehicles and their wrecks, and each map's covers as they stand, batched as
+//! presentation draws them. A hash covers each node's name, transform and
 //! visibility, and each drawable's material, flags, instances and mesh (positions,
 //! normals, UVs, colours, indices and custom attributes, bit for bit), so a
 //! construction speed-up that moves one vertex, reorders one triangle or drops one
@@ -52,9 +52,9 @@ fn village_scenery_is_pinned() {
         "village scenery",
         scenery_pin(MapTheme::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0x0c52_66a4_1d6d_b740),
-            (MAC_RELEASE, 0x7901_2edf_0bc1_2087),
-            (LINUX_DEBUG, 0x6d2c_f9f2_ced0_803d),
+            (MAC_DEBUG, 0x0334_8941_bbef_7cab),
+            (MAC_RELEASE, 0x2b03_15a7_54c9_8b60),
+            (LINUX_DEBUG, 0x7d7d_5148_c5d1_dffa),
         ]),
     );
 }
@@ -96,9 +96,9 @@ fn village_covers_are_pinned() {
         "village covers",
         covers_pin(MapId::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0xdf29_d15a_f4a0_ae39),
-            (MAC_RELEASE, 0x9511_c809_8f19_b1e4),
-            (LINUX_DEBUG, 0xdbe1_f1ac_5041_349e),
+            (MAC_DEBUG, 0xacd6_d30a_7238_94b4),
+            (MAC_RELEASE, 0x9b4a_ece5_ec80_379f),
+            (LINUX_DEBUG, 0xa26e_34ee_de92_136b),
         ]),
     );
 }
@@ -108,7 +108,7 @@ fn harbor_covers_are_pinned() {
     assert_pin(
         "harbor covers",
         covers_pin(MapId::Harbor),
-        0xb197_b799_92b0_3f77,
+        0x1ff0_772c_04b3_9139,
     );
 }
 
@@ -117,6 +117,6 @@ fn quarry_covers_are_pinned() {
     assert_pin(
         "quarry covers",
         covers_pin(MapId::Quarry),
-        0x5e0f_0aa7_0303_a172,
+        0x73c0_51c3_3360_a09e,
     );
 }

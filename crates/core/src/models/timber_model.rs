@@ -10,16 +10,16 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::{DVec2, DVec3};
+use glam::DVec3;
 
 use super::batching::batch;
 use super::building_kit::{textured, tint_over};
-use super::model_primitives::{box_part, cylinder_part, material, put, shadowed};
+use super::model_primitives::{box_part, cylinder_part, put, shadowed};
 use crate::geometry::math::{compose, quat_from_euler, smoothstep};
-use crate::geometry::{Mesh, Shape, shape_geometry};
+use crate::geometry::Mesh;
 use crate::scene::{Material, Node, TextureSource};
-use crate::sim::math::{Random, clamp};
-use crate::sim::timber_layout::{TimberFace, TimberMark, TimberPart, TimberPartKind};
+use crate::sim::math::Random;
+use crate::sim::timber_layout::{TimberPart, TimberPartKind};
 
 const STRAP_COLOR: u32 = 0x3d3934;
 const BOLT_COLOR: u32 = 0x5b554c;
@@ -28,10 +28,20 @@ const STRAP_HEIGHT: f64 = 0.085;
 const BOLT_RADIUS: f64 = 0.032;
 /// How much paler a member's worn chamfers are than its faces.
 const EDGE_WEAR: f64 = 1.32;
-const CHIP_COLOR: u32 = 0xc59b65;
-const CHIP_CORE_COLOR: u32 = 0x805334;
-const CRACK_LIP_COLOR: u32 = 0xb98a55;
-const CRACK_COLOR: u32 = 0x503421;
+/// A post's iron bands, as shares of the height of its top over the ground.
+const BAND_HEIGHTS: [f64; 2] = [0.22, 0.78];
+/// Where a post snapped: its fibres torn in bundles about [`TORN_BUNDLE`] across, the
+/// break running from [`TORN_LOW`] out of the member's end on one face up to
+/// [`TORN_HIGH`] on the other (the face that was pulled apart), ragged by
+/// [`TORN_RAGGED`]; the end is cut back [`TORN_BACK`] under them. Long splinters stand
+/// out of the high side. Fresh-broken wood inside is paler than the weathered faces.
+const TORN_BUNDLE: f64 = 0.075;
+const TORN_LOW: f64 = 0.02;
+const TORN_HIGH: f64 = 0.17;
+const TORN_RAGGED: f64 = 0.05;
+const TORN_BACK: f64 = 0.05;
+const TORN_SPLINTERS: usize = 5;
+const FRESH_WOOD: u32 = 0xb98a5a;
 
 /// The timber atlas (`scripts/generate-wood-texture.ts`): [`GRAIN_ROWS`] rows of
 /// flat-sawn plank faces, each tileable along the grain, over a row of
@@ -280,17 +290,32 @@ pub(super) fn timber_member_face(size: DVec3, seed: i32, color: u32) -> Node {
 /// a hex-headed through bolt.
 pub fn timber_part_model(p: &TimberPart) -> Node {
     let mut group = Node::default();
-    group.children.push(timber_member(
-        DVec3::new(p.w, p.h, p.d),
-        p.damage_seed,
-        p.color,
-    ));
-    for (mark_index, mark) in p.marks.iter().enumerate() {
-        add_mark(&mut group, p, mark_index, mark);
-    }
+    // A stump's top and a post's foot off the ground are where the post snapped.
+    let torn = match p.kind {
+        TimberPartKind::Stump => Some(1.0),
+        TimberPartKind::Post if p.y - p.h / 2.0 > 1e-6 => Some(-1.0),
+        _ => None,
+    };
+    let body = match torn {
+        Some(end) => {
+            let body = p.h - TORN_BACK;
+            put(
+                &mut group,
+                timber_member(DVec3::new(p.w, body, p.d), p.seed, p.color),
+                0.0,
+                -end * TORN_BACK / 2.0,
+                0.0,
+            );
+            torn_end(&mut group, p, end);
+            None
+        }
+        None => Some(timber_member(DVec3::new(p.w, p.h, p.d), p.seed, p.color)),
+    };
+    group.children.extend(body);
     if p.kind == TimberPartKind::Post {
-        for fraction in [-0.28, 0.28] {
-            let bent = p.damage == 3 && fraction > 0.0;
+        // The bands stay where they were on the whole post, however it snapped.
+        let top = p.y + p.h / 2.0;
+        for height in BAND_HEIGHTS {
             let mut band = Node::group("");
             band.children.push(box_part(
                 p.w + 0.024,
@@ -304,10 +329,7 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
                 head.set_rotation_euler(PI / 2.0, 0.0, 0.0);
                 put(&mut band, head, 0.0, 0.0, side * (p.d / 2.0 + 0.0125));
             }
-            if bent {
-                band.set_rotation_euler(0.0, 0.0, 0.13);
-            }
-            band.position = DVec3::new(0.0, p.h * fraction, if bent { 0.025 } else { 0.0 });
+            band.position = DVec3::new(0.0, top * height - p.y, 0.0);
             // Flatten the band into the member's frame so it batches with it.
             let transform = compose(band.position, band.rotation, band.scale);
             for mut part in band.children {
@@ -322,89 +344,61 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
         }
     }
     batch(&mut group);
-    weather_wood(&mut group, p.y, p.damage_seed);
+    weather_wood(&mut group, p.y, p.seed);
     group
 }
 
-/// A member torn out of a collapsing wall: the standing member's model with
-/// both ends snapped into a fringe of pale splinters where it tore off its posts
-/// and neighbours. The splinters are the member's own textured wood, so they
-/// batch into its draw.
-pub fn timber_debris_model(p: &TimberPart) -> Node {
-    let mut rng = Random::new(f64::from(p.damage_seed) * 2.71 + 5.0);
-    let mut group = timber_part_model(p);
-    // The member's long axis: x for boards, y for posts.
-    let along = if p.h > p.w && p.h > p.d { 1 } else { 0 };
-    let size = [p.w, p.h, p.d];
-    let (across_a, across_b) = if along == 1 { (0, 2) } else { (1, 2) };
-    for end in [-1.0, 1.0] {
-        // Each cell's fibre: four slivers of two windings, three corners each.
-        let mut positions = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 3);
-        let mut uvs = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 2);
-        // The break runs through the whole section: a grid of fibres covers the
-        // end face, most snapped short and a few torn out long, each leaning its
-        // own way, so the end reads as torn wood rather than a sawn cut with
-        // points stuck on it.
-        let long = [
-            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
-            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
-        ];
-        let face = end * (size[along] / 2.0 - 0.01);
-        let point = |a: f64, b: f64, out: f64| {
-            let mut v = [0.0; 3];
-            v[along] = face + end * out;
-            v[across_a] = a;
-            v[across_b] = b;
-            v
-        };
-        for cell in 0..SPLINTER_CELLS {
-            let (ia, ib) = (cell % SPLINTER_GRID[0], cell / SPLINTER_GRID[0]);
-            let cell_a = size[across_a] / SPLINTER_GRID[0] as f64;
-            let cell_b = size[across_b] / SPLINTER_GRID[1] as f64;
-            let a0 = -size[across_a] / 2.0 + cell_a * ia as f64;
-            let b0 = -size[across_b] / 2.0 + cell_b * ib as f64;
-            let reach = if long.contains(&cell) {
-                rng.range(0.32, 0.55) + size[along] * 0.03
-            } else {
-                rng.range(0.04, 0.2)
-            };
-            let base = [
-                point(a0, b0, 0.0),
-                point(a0 + cell_a, b0, 0.0),
-                point(a0 + cell_a, b0 + cell_b, 0.0),
-                point(a0, b0 + cell_b, 0.0),
-            ];
-            let tip = point(
-                a0 + cell_a * rng.range(-0.2, 1.2),
-                b0 + cell_b * rng.range(-0.2, 1.2),
-                reach,
+/// The end of upright member `p` where it snapped, at its top (`end` 1) or foot (-1):
+/// its fibres in bundles torn off along a slanting, ragged break, the inner ones fresh,
+/// and long splinters leaning out of the high side.
+fn torn_end(group: &mut Node, p: &TimberPart, end: f64) {
+    let mut rng = Random::new(f64::from(p.seed) * 0.73 + 5.0);
+    let base = end * (p.h / 2.0 - TORN_BACK);
+    // The break slants across the member's depth, its high side either way.
+    let rise = if rng.next() < 0.5 { 1.0 } else { -1.0 };
+    let across = ((p.w / TORN_BUNDLE).round() as usize).max(3);
+    let through = ((p.d / TORN_BUNDLE).round() as usize).max(3);
+    let (cell_w, cell_d) = (p.w / across as f64, p.d / through as f64);
+    let height = |z: f64, rng: &mut Random| {
+        let t = 0.5 + rise * z / p.d;
+        (TORN_BACK + TORN_LOW + (TORN_HIGH - TORN_LOW) * t + rng.range(-TORN_RAGGED, TORN_RAGGED)).max(0.01)
+    };
+    for i in 0..across {
+        for k in 0..through {
+            let x = -p.w / 2.0 + cell_w * (i as f64 + 0.5);
+            let z = -p.d / 2.0 + cell_d * (k as f64 + 0.5);
+            let reach = height(z, &mut rng);
+            let inner = i > 0 && i + 1 < across && k > 0 && k + 1 < through;
+            put(
+                group,
+                timber_member(
+                    DVec3::new(cell_w - 0.003, reach, cell_d - 0.003),
+                    p.seed ^ (i * through + k + 1) as i32,
+                    if inner { FRESH_WOOD } else { p.color },
+                ),
+                x,
+                base + end * reach / 2.0,
+                z,
             );
-            // Both windings, so every sliver shows whichever way it faces.
-            for i in 0..4 {
-                let (a, b) = (base[i], base[(i + 1) % 4]);
-                positions.extend(a.into_iter().chain(b).chain(tip));
-                positions.extend(b.into_iter().chain(a).chain(tip));
-                // A sliver of plank face, grain running out to the tip.
-                for _ in 0..2 {
-                    uvs.extend([0.1, 0.3, 0.14, 0.3, 0.12, 0.42]);
-                }
-            }
         }
-        let mut mesh = Mesh::from_f64(&positions, &[], &uvs, None);
-        mesh.compute_vertex_normals();
-        group
-            .children
-            .push(Node::mesh(Arc::new(mesh), wood(SPLINTER_COLOR)));
     }
-    batch(&mut group);
-    group
+    for n in 0..TORN_SPLINTERS {
+        let length = rng.range(0.14, 0.3);
+        // On the high side of the break, out of its top.
+        let z = rise * p.d * rng.range(0.15, 0.45);
+        let x = rng.range(-0.4, 0.4) * p.w;
+        let root = height(z, &mut rng) - 0.03;
+        let mut splinter = timber_member(
+            DVec3::new(rng.range(0.025, 0.045), length, rng.range(0.012, 0.02)),
+            p.seed ^ (40 + n as i32),
+            FRESH_WOOD,
+        );
+        // Leaning out over the high face, and a little to one side.
+        let lean = rng.range(0.12, 0.45);
+        splinter.set_rotation_euler(rise * lean * end, 0.0, rng.range(-0.25, 0.25));
+        put(group, splinter, x, base + end * (root + length * 0.45), z);
+    }
 }
-
-/// The fibres each snapped end of a fallen member breaks into (a grid across
-/// its section), and their fresh, pale wood.
-const SPLINTER_GRID: [usize; 2] = [3, 3];
-const SPLINTER_CELLS: usize = SPLINTER_GRID[0] * SPLINTER_GRID[1];
-const SPLINTER_COLOR: u32 = 0xd2ad78;
 
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers
 /// catch the light along every edge, and the wood darkens toward the ground
@@ -453,140 +447,13 @@ fn weather_wood(group: &mut Node, centre: f64, seed: i32) {
     }
 }
 
-/// One impact scar: a two-tone chip and a forked crack, clipped to the face.
-/// Front and back faces carry `x` along the width and `y` up the height, ends `x`
-/// across the depth, and the top and bottom (loose boards lying on the ground)
-/// `x` along the width and `y` across the depth.
-fn add_mark(group: &mut Node, p: &TimberPart, mark_index: usize, mark: &TimberMark) {
-    let mut rng = Random::new(f64::from(mark.seed));
-    let end = matches!(mark.face, TimberFace::Left | TimberFace::Right);
-    let cap = matches!(mark.face, TimberFace::Top | TimberFace::Bottom);
-    let sign = if matches!(
-        mark.face,
-        TimberFace::Left | TimberFace::Back | TimberFace::Bottom
-    ) {
-        -1.0
-    } else {
-        1.0
-    };
-    // Scars stay on the flat of the face, inside the edge chamfers.
-    let bevel = member_bevel(DVec3::new(p.w, p.h, p.d));
-    let span = if end { p.d } else { p.w } - bevel * 2.0;
-    let rise = if cap { p.d } else { p.h } - bevel * 2.0;
-    let x = clamp(mark.x, -span / 2.0 + 0.01, span / 2.0 - 0.01);
-    // Keep the scar close to impact while avoiding a half-mark clipped along a seam.
-    let margin = (rise * 0.3).min(0.13 * mark.size);
-    let y = clamp(mark.y, -rise / 2.0 + margin, rise / 2.0 - margin);
-    let mut plane = |points: &[[f64; 2]], color: u32, layer: f64| {
-        // Clip scars at the piece edges; no cracks floating beyond the wood.
-        let outline: Vec<DVec2> = points
-            .iter()
-            .map(|point| {
-                let u = clamp(x + point[0], -span / 2.0 + 0.005, span / 2.0 - 0.005);
-                let v = clamp(y + point[1], -rise / 2.0 + 0.005, rise / 2.0 - 0.005);
-                if cap {
-                    // Turning the plane onto the top maps its v to -z, onto the bottom to +z.
-                    DVec2::new(u, -sign * v)
-                } else {
-                    DVec2::new((if end { -sign } else { sign }) * u, v)
-                }
-            })
-            .collect();
-        let mut mesh = shape_geometry(&[Shape::from_points(&outline)]);
-        if cap {
-            mesh.rotate_x(-sign * PI / 2.0);
-        } else {
-            mesh.rotate_y(if end {
-                (sign * PI) / 2.0
-            } else if sign < 0.0 {
-                PI
-            } else {
-                0.0
-            });
-        }
-        let offset = 0.003 + mark_index as f64 * 0.001 + layer * 0.001;
-        let lift = |half: f64| sign * (half + offset);
-        let (px, py, pz) = if end {
-            (lift(p.w / 2.0), 0.0, 0.0)
-        } else if cap {
-            (0.0, lift(p.h / 2.0), 0.0)
-        } else {
-            (0.0, 0.0, lift(p.d / 2.0))
-        };
-        put(
-            group,
-            Node::mesh(Arc::new(mesh), material(color, 0.05, 0.65)),
-            px,
-            py,
-            pz,
-        );
-    };
-    let width = 0.19 * mark.size * rng.range(0.85, 1.15);
-    let height = 0.075 * mark.size * rng.range(0.85, 1.15);
-    let chip: Vec<[f64; 2]> = (0..10)
-        .map(|i| {
-            let angle = (f64::from(i) * PI) / 5.0;
-            let radius = rng.range(0.65, 1.0);
-            [angle.cos() * width * radius, angle.sin() * height * radius]
-        })
-        .collect();
-    plane(&chip, CHIP_COLOR, 0.0);
-    let core: Vec<[f64; 2]> = chip
-        .iter()
-        .map(|&[u, v]| [u * 0.65 + 0.02, v * 0.65 + 0.012])
-        .collect();
-    plane(&core, CHIP_CORE_COLOR, 1.0);
-    // Every impact owns its random path and fixed size, independent of later stages.
-    let reach = 0.38 * mark.size * rng.range(0.85, 1.15);
-    let slope = rng.range(-0.12, 0.12);
-    let count = 5 + (rng.next() * 3.0).floor() as usize;
-    let points: Vec<[f64; 2]> = (0..=count)
-        .map(|i| {
-            let u = -reach + (2.0 * reach * i as f64) / count as f64;
-            [u, u * slope + rng.range(-0.045, 0.045)]
-        })
-        .collect();
-    let mut split = |path: &[[f64; 2]], thickness: f64| {
-        for lip in [true, false] {
-            let mut outline = Vec::with_capacity(path.len() * 2);
-            for side in [1.0, -1.0] {
-                for j in 0..path.len() {
-                    let i = if side > 0.0 { j } else { path.len() - 1 - j };
-                    let taper = ((PI * i as f64) / (path.len() - 1) as f64).sin();
-                    outline.push([
-                        path[i][0],
-                        path[i][1] + side * (thickness + if lip { 0.004 } else { 0.0 }) * taper
-                            - if lip { 0.006 } else { 0.0 },
-                    ]);
-                }
-            }
-            plane(
-                &outline,
-                if lip { CRACK_LIP_COLOR } else { CRACK_COLOR },
-                if lip { 2.0 } else { 3.0 },
-            );
-        }
-    };
-    split(&points, 0.012 * mark.size);
-    let root = points[2 + (rng.next() * (count - 2) as f64).floor() as usize];
-    let direction = if rng.next() < 0.5 { -1.0 } else { 1.0 };
-    let branch = [
-        root,
-        [root[0] + reach * 0.2, root[1] + direction * 0.08],
-        [
-            root[0] + reach * rng.range(0.35, 0.6),
-            root[1] + direction * 0.16 * mark.size,
-        ],
-    ];
-    split(&branch, 0.008 * mark.size);
-}
-
 /// `addTimberParts(group, parts)`: every member's batched meshes, placed in the
 /// cover's frame. Beams are lengthened to hide their debris clearance inside the
 /// posts while the wall stands.
-pub fn add_timber_parts(group: &mut Node, parts: &[TimberPart]) {
+pub fn add_timber_parts<'a>(group: &mut Node, parts: impl IntoIterator<Item = &'a TimberPart> + Clone) {
     let wall_height = parts
-        .iter()
+        .clone()
+        .into_iter()
         .map(|part| part.h)
         .fold(f64::NEG_INFINITY, f64::max);
     let end_overlap = 0.04 + wall_height * 0.02 + 0.01;
@@ -594,55 +461,17 @@ pub fn add_timber_parts(group: &mut Node, parts: &[TimberPart]) {
         let assembly = if part.kind == TimberPartKind::Beam {
             timber_part_model(&TimberPart {
                 w: part.w + end_overlap * 2.0,
-                ..part.clone()
+                ..*part
             })
         } else {
             timber_part_model(part)
         };
         // Batched meshes have identity transforms, so each takes the assembly's.
-        let rotation = quat_from_euler(0.0, part.yaw, part.lean);
+        let rotation = quat_from_euler(0.0, part.yaw, 0.0);
         for mut child in assembly.children {
             child.position = DVec3::new(part.x, part.y, part.z);
             child.rotation = rotation;
             group.children.push(child);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sim::timber_layout::{TimberWall, timber_parts};
-
-    fn drawables(node: &Node) -> usize {
-        let mut count = 0;
-        node.traverse(glam::DMat4::IDENTITY, &mut |child, _| {
-            count += usize::from(child.drawable.is_some());
-        });
-        count
-    }
-
-    #[test]
-    fn snapped_members_draw_their_splinters_with_their_wood() {
-        let wall = TimberWall {
-            x: 0.0,
-            z: 0.0,
-            w: 6.0,
-            h: 2.2,
-            d: 0.5,
-            color: 0x8a5a36,
-            hits: &[],
-            join: None,
-        };
-        let parts = timber_parts(&wall, 0);
-        assert!(!parts.is_empty());
-        for part in &parts {
-            assert_eq!(
-                drawables(&timber_debris_model(part)),
-                drawables(&timber_part_model(part)),
-                "a torn {:?} costs no extra draw",
-                part.kind
-            );
         }
     }
 }

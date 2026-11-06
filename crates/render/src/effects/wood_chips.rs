@@ -1,9 +1,11 @@
 //! Wood a shell tears out of a cargo crate: splinters, board shards and chips that
 //! burst from the struck face or from the bursting crate, tumble, bounce, tip over
 //! flat on the ground, lie a few seconds and shrink away, plus the pale excelsior
-//! packing a burst crate spills, which flutters down slowly. Lit by the sun like the
-//! falling leaves. Two bounded instanced draws, wood and straw; a full pool drops its
-//! oldest piece. The crate's big panels, lid halves and skid are simulation
+//! packing a burst crate spills, which flutters down slowly; and what a shell knocks
+//! out of a cottage: lengths of painted board, broken studs, plaster lumps and bent
+//! scraps of roofing. Lit by the sun like the falling leaves. One bounded instanced
+//! draw per shape (splinters, boards, lumps, scraps) and one for straw; a full pool
+//! drops its oldest piece. The crate's big panels, lid halves and skid are simulation
 //! fragments; everything here is cosmetic and draws from `CosmeticRandom`.
 
 use std::collections::VecDeque;
@@ -16,10 +18,13 @@ use sloppy_core::sim::{CoverKind, SimEvent, SimEventType};
 
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
-use super::walls::HouseBox;
 use crate::color::hex_to_linear;
+use crate::draw_list::InstanceRecord;
 
 pub const MAX_WOOD_CHIPS: usize = 512;
+pub const MAX_BOARDS: usize = 192;
+pub const MAX_LUMPS: usize = 128;
+pub const MAX_SCRAPS: usize = 96;
 pub const MAX_STRAW: usize = 256;
 const GRAVITY: f64 = 9.8;
 /// The share of its fall speed a piece keeps bouncing off the ground, and of its
@@ -66,6 +71,12 @@ const BURST_BOARDS: usize = 10;
 /// within [fewest, most].
 const SHATTER_PIECES_PER_METRE: f64 = 7.0;
 const SHATTER_PIECES: [usize; 2] = [8, 22];
+/// A cottage's broken part throws this many pieces per metre of its size, within
+/// [fewest, most], out (m/s) and up (m/s) as [`between`] spans.
+const PART_PIECES_PER_METRE: f64 = 3.0;
+const PART_PIECES: [usize; 2] = [4, 9];
+const PART_SPEED: [f64; 2] = [0.6, 2.2];
+const PART_LIFT: [f64; 2] = [0.4, 1.8];
 /// A destroyed crate without its height stood about this tall.
 pub(super) const CRATE_HEIGHT: f64 = 2.4;
 /// Of a burst, this share only tumbles out around the crate's foot, this share is
@@ -78,100 +89,170 @@ const HIGH_ARC: f64 = 0.2;
 const STRAW_TUFTS: usize = 6;
 const STRAW_FIBRES: [usize; 2] = [7, 4];
 
-/// Wood colors: split-open fresh wood, its darker heart and end grain, and a crate's
-/// weathered boards when the event names none.
+/// Wood colors: split-open fresh wood, and a crate's weathered boards when the event
+/// names none.
 const FRESH_WOOD: [u32; 2] = [0xe2c596, 0xd2ad78];
-const INNER_WOOD: u32 = 0x8a6440;
 const CRATE_WOOD: u32 = 0xb47a49;
+/// Sawn and split wood's bare grain, and how far a piece's bare wood (its end grain,
+/// split sides and a board's back) turns from its own wood's color toward it: a piece
+/// keeps its wood's hue with pale ends, never a grey shard.
+const END_GRAIN: u32 = 0xead6ae;
+const END_GRAIN_SHARE: f32 = 0.6;
+/// How much darker a piece's broken heart is than its faces.
+const HEART_SHADE: f64 = 0.8;
 const STRAW_COLORS: [u32; 2] = [0xd8b45a, 0xe6c97a];
 
+/// What a piece is shaped like, which picks the pool that draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shape {
+    /// A splinter tapering to a point (`splinter_mesh`): slivers, shards, chips.
+    Splinter,
+    /// A length of board, sawn square at one end and broken jagged at the other,
+    /// its face lighter than its back and edges (`board_mesh`): siding, trim,
+    /// studs and chunks of wall.
+    Board,
+    /// A rough lump (`lump_mesh`): plaster and mortar.
+    Lump,
+    /// A bent, torn scrap of sheet (`scrap_mesh`): roofing and shingles.
+    Scrap,
+}
+
 /// A piece's size in metres, each [minimum, random span]: length along the grain,
-/// width and thickness.
+/// width and thickness (a scrap's bend follows its width instead), and its shape.
 #[derive(Clone, Copy, Debug)]
 struct Cut {
     length: [f64; 2],
     width: [f64; 2],
     thickness: [f64; 2],
+    shape: Shape,
 }
+
+/// How deep a scrap's bend is against its width.
+const SCRAP_BEND: f32 = 0.45;
 
 const LONG_SLIVER: Cut = Cut {
     length: [0.45, 0.3],
     width: [0.045, 0.03],
     thickness: [0.022, 0.012],
+    shape: Shape::Splinter,
 };
 const SLIVER: Cut = Cut {
     length: [0.22, 0.3],
     width: [0.035, 0.035],
     thickness: [0.018, 0.012],
+    shape: Shape::Splinter,
 };
+/// Wood splits along its grain: a shard is a short, broad splinter, never a lump
+/// as wide as it is long (those read as stone).
 const SHARD: Cut = Cut {
-    length: [0.14, 0.16],
-    width: [0.08, 0.1],
-    thickness: [0.028, 0.02],
+    length: [0.2, 0.25],
+    width: [0.05, 0.06],
+    thickness: [0.02, 0.015],
+    shape: Shape::Splinter,
 };
 const BOARD: Cut = Cut {
     length: [0.5, 0.5],
     width: [0.1, 0.06],
     thickness: [0.035, 0.015],
+    shape: Shape::Splinter,
 };
 const CHIP: Cut = Cut {
-    length: [0.06, 0.06],
-    width: [0.05, 0.05],
-    thickness: [0.02, 0.014],
+    length: [0.08, 0.08],
+    width: [0.03, 0.03],
+    thickness: [0.012, 0.01],
+    shape: Shape::Splinter,
+};
+/// A sawn-off length of plank: the struck wood's face, bare back and edges, and
+/// end grain at its sawn and broken ends.
+const OFFCUT: Cut = Cut {
+    length: [0.25, 0.45],
+    width: [0.08, 0.06],
+    thickness: [0.025, 0.012],
+    shape: Shape::Board,
 };
 
 /// A shell through a cottage's wall tears out [minimum, random span] pieces: the
 /// first few lengths of painted siding, then painted shards, splinters of its
 /// framing, lumps of plaster and a trim board or two, thrown out of the face in a
 /// cone this wide (radians), fast enough that a few clear the yard.
-const SIDING_PIECES: [usize; 2] = [11, 5];
-const SIDING_BOARDS: usize = 3;
+const SIDING_PIECES: [usize; 2] = [15, 6];
+const SIDING_BOARDS: usize = 5;
+/// After the siding and a trim board, this many broken studs of the framing.
+const SIDING_STUDS: usize = 2;
+/// Plaster lumps fall out of the wall at this share of the boards' speed, so they
+/// pile at its foot.
+const PLASTER_DROP: f64 = 0.45;
 const SIDING_CONE: f64 = 1.4;
 const SIDING_SPEED: [f64; 2] = [1.2, 4.5];
-/// Seconds after a cottage gives way when its walls burst: once they have begun
-/// to buckle, not while it still stands whole. Cottages collapsing at once that
-/// wait for theirs at most.
-const HOUSE_BURST_DELAY: f64 = 0.3;
-const MAX_COLLAPSING: usize = 4;
-/// A collapsing cottage blows this many pieces out of its walls, this fast (m/s).
-const HOUSE_BURST_PIECES: usize = 40;
-/// The first of them are shingles shed off the eaves as the roof breaks up, the
-/// next heavy chunks of wall: siding still nailed to a scrap of sheathing.
-const HOUSE_BURST_SHINGLES: usize = 10;
-const HOUSE_BURST_CHUNKS: usize = 6;
+/// A heavy chunk of wall: siding still nailed to a scrap of sheathing.
 const WALL_CHUNK: Cut = Cut {
     length: [0.6, 0.5],
     width: [0.3, 0.2],
     thickness: [0.06, 0.03],
+    shape: Shape::Board,
 };
-/// How far a collapse's flying pieces are dulled toward its dust, so they read
-/// as dusty wood and plaster in the cloud rather than bright paint chips.
-const HOUSE_BURST_DUST: (u32, f32) = (0x7d7366, 0.5);
-/// Plaster and lath out of a collapsing cottage's walls, dulled by the fall.
+/// A fallen cottage's dust, and how far a pile hit's pieces are dulled toward it:
+/// they come off the pile already dusty, but still in their own paint.
+const RUBBLE_DUST: u32 = 0x7d7366;
+const RUBBLE_DUST_BLEND: f32 = 0.25;
+/// A shell in a fallen cottage's pile throws this many pieces and up to this many
+/// more, the first few lengths of board, out (m/s) and up (m/s) as
+/// [`between`] spans.
+const RUBBLE_PIECES: [usize; 2] = [22, 8];
+const RUBBLE_BOARDS: usize = 8;
+const RUBBLE_SPEED: [f64; 2] = [1.2, 2.2];
+const RUBBLE_LIFT: [f64; 2] = [3.2, 3.0];
+/// Plaster and lath out of a fallen cottage's walls, dulled by the fall.
 const HOUSE_PLASTER: [u32; 2] = [0xa99d89, 0x857a69];
-const SHINGLE: Cut = Cut {
-    length: [0.26, 0.12],
-    width: [0.16, 0.08],
-    thickness: [0.018, 0.01],
+/// A torn-off scrap of roofing sheet, bent where it tore.
+const SHEET_SCRAP: Cut = Cut {
+    length: [0.35, 0.45],
+    width: [0.2, 0.2],
+    thickness: [0.01, 0.0],
+    shape: Shape::Scrap,
 };
-const HOUSE_BURST_SPEED: [f64; 2] = [1.0, 4.0];
-/// Plaster and lath from inside the wall: pale lumps, thicker than wood chips.
+/// Plaster and lath from inside the wall: lumps thicker than wood chips, grey with
+/// the lath's dirt in them, so the spill under a wall is not paper-white.
 const PLASTER_LUMP: Cut = Cut {
-    length: [0.1, 0.12],
-    width: [0.08, 0.1],
-    thickness: [0.05, 0.04],
+    length: [0.06, 0.18],
+    width: [0.05, 0.14],
+    thickness: [0.04, 0.08],
+    shape: Shape::Lump,
 };
-const PLASTER: [u32; 2] = [0xcfc4b0, 0xb7aa94];
+const PLASTER: [u32; 2] = [0x9d968a, 0x7a7266];
+/// A cottage hit's pieces are mostly its painted boards and their dark weathered
+/// backs, and few freshly split pale ones.
+const SIDING_MIX: Mix = Mix {
+    slivers: 0.3,
+    shards: 0.6,
+    fresh: 0.2,
+    boards: 0.75,
+};
+/// How a cottage hit's pieces are shaded: [darkest, range].
+const SIDING_SHADE: (f64, f64) = (0.62, 0.26);
 /// A torn length of painted clapboard, wider and longer than a crate's board.
 const SIDING_BOARD: Cut = Cut {
-    length: [0.45, 0.5],
-    width: [0.14, 0.05],
-    thickness: [0.03, 0.012],
+    length: [0.3, 0.75],
+    width: [0.12, 0.07],
+    thickness: [0.024, 0.012],
+    shape: Shape::Board,
+};
+/// A length of trim board.
+const TRIM_BOARD: Cut = Cut {
+    shape: Shape::Board,
+    ..BOARD
+};
+/// A broken length of a wall's framing stud.
+const STUD: Cut = Cut {
+    length: [0.3, 0.45],
+    width: [0.085, 0.015],
+    thickness: [0.04, 0.01],
+    shape: Shape::Board,
 };
 
 /// Which pieces a hit or burst is made of: slivers below `slivers`, shards below
 /// `shards`, chips above; and its colors: fresh wood below `fresh`, the crate's
-/// boards below `boards`, inner wood above.
+/// boards below `boards`, their darker heart above.
 #[derive(Clone, Copy, Debug)]
 struct Mix {
     slivers: f64,
@@ -180,18 +261,20 @@ struct Mix {
     boards: f64,
 }
 
-/// A struck face mostly shows freshly split wood.
+/// A struck face's pieces mostly keep the boards' own wood on their faces, their split
+/// sides and ends pale; a few split right through show fresh wood all over (with most
+/// fresh, splinters in shade read as grey stone).
 const HIT_MIX: Mix = Mix {
     slivers: 0.35,
     shards: 0.6,
-    fresh: 0.6,
+    fresh: 0.15,
     boards: 0.9,
 };
 const BURST_MIX: Mix = Mix {
     slivers: 0.45,
     shards: 0.8,
-    fresh: 0.4,
-    boards: 0.8,
+    fresh: 0.12,
+    boards: 0.85,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -233,8 +316,10 @@ pub struct Piece {
     /// The tilt it lands with.
     lean: f32,
     stage: Stage,
-    /// Linear RGB.
+    /// Linear RGB: its faces (paint or the struck wood) and its bare wood.
     color: [f32; 3],
+    bare: [f32; 3],
+    shape: Shape,
 }
 
 impl Piece {
@@ -318,8 +403,19 @@ fn shade(color: [f32; 3], light: f64) -> [f32; 3] {
     color.map(|channel| channel * light as f32)
 }
 
+/// The vertex colors of sawn wood under the chip effect (`debris_chip.wgsl`): red
+/// shades the face, green is how much of its bare wood shows instead of its tint.
+/// A splinter's broad faces keep the wood's skin; its split sides and the broken
+/// taper show the fibres; its two ends are bare end grain.
+const SKIN: [f32; 3] = [1.0, 0.0, 0.0];
+const SPLIT: [f32; 3] = [0.92, 0.65, 0.0];
+const TAPER: [f32; 3] = [0.97, 0.4, 0.0];
+const END: [f32; 3] = [1.0, 1.0, 0.0];
+
 /// A splinter along local X, inside the unit cube: a full board section that
 /// breaks off at a slant at one end and tapers to an off-centre point at the other.
+/// Its vertex colors mark its broad faces (local ±Y) skin, its sides and taper split
+/// and its ends end grain.
 pub fn splinter_mesh() -> Mesh {
     // Rings around the grain, counter-clockwise seen from +X: (y-, z-), (y+, z-),
     // (y+, z+), (y-, z+).
@@ -337,22 +433,164 @@ pub fn splinter_mesh() -> Mesh {
         ring([0.5, 0.4], 0.28, [-0.36, 0.02]),
     ];
     let mut positions = Vec::new();
-    let mut triangle = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| {
+    let mut colors = Vec::new();
+    let mut triangle = |a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [f32; 3]| {
         positions.extend(a.into_iter().chain(b).chain(c));
+        colors.extend([color; 3]);
     };
-    for pair in rings.windows(2) {
+    for (section, pair) in rings.windows(2).enumerate() {
         let (back, front) = (pair[0], pair[1]);
         for i in 0..4 {
             let j = (i + 1) % 4;
-            triangle(back[i], back[j], front[j]);
-            triangle(back[i], front[j], front[i]);
+            // Sides 1 and 3 run across the width (the broad faces), 0 and 2 across
+            // the thickness.
+            let color = match (section, i % 2) {
+                (0, 1) => SKIN,
+                (_, 1) => TAPER,
+                _ => SPLIT,
+            };
+            triangle(back[i], back[j], front[j], color);
+            triangle(back[i], front[j], front[i], color);
         }
     }
     let [back, _, tip] = rings;
-    triangle(back[3], back[2], back[1]);
-    triangle(back[3], back[1], back[0]);
-    triangle(tip[0], tip[1], tip[2]);
-    triangle(tip[0], tip[2], tip[3]);
+    triangle(back[3], back[2], back[1], END);
+    triangle(back[3], back[1], back[0], END);
+    triangle(tip[0], tip[1], tip[2], END);
+    triangle(tip[0], tip[2], tip[3], END);
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
+    mesh.colors = colors;
+    mesh.compute_vertex_normals();
+    mesh
+}
+
+/// A board's outline seen from above (x along the grain, z across): sawn square at
+/// -x, broken off in a jagged step at +x. Every edge faces away from the origin, so
+/// the faces fan from it.
+const BOARD_OUTLINE: [[f64; 2]; 6] = [
+    [-0.5, -0.5],
+    [0.5, -0.5],
+    [0.3, -0.2],
+    [0.45, 0.05],
+    [0.2, 0.5],
+    [-0.5, 0.5],
+];
+/// A board's back and long edges, bare weathered wood darker than its ends.
+const BOARD_BACK: [f32; 3] = [0.72, 1.0, 0.0];
+const BOARD_EDGE: [f32; 3] = [0.86, 1.0, 0.0];
+/// Which edges of [`BOARD_OUTLINE`] (from point `i` to `i + 1`) run along the grain;
+/// the rest are its sawn and broken ends.
+const BOARD_SIDES: [usize; 2] = [0, 4];
+
+/// A length of board along local X inside the unit cube, its face up (+Y): square
+/// at one end, broken jagged at the other. Vertex colors (`SKIN`) mark its face
+/// painted or weathered, its back and long edges bare wood, its ends end grain.
+pub fn board_mesh() -> Mesh {
+    let mut positions = Vec::new();
+    let mut colors = Vec::new();
+    let mut triangle = |points: [[f64; 3]; 3], color: [f32; 3]| {
+        positions.extend(points.into_iter().flatten());
+        colors.extend([color; 3]);
+    };
+    let at = |[x, z]: [f64; 2], y: f64| [x, y, z];
+    let n = BOARD_OUTLINE.len();
+    for i in 0..n {
+        let (a, b) = (BOARD_OUTLINE[i], BOARD_OUTLINE[(i + 1) % n]);
+        let edge = if BOARD_SIDES.contains(&i) {
+            BOARD_EDGE
+        } else {
+            END
+        };
+        triangle([[0.0, 0.5, 0.0], at(b, 0.5), at(a, 0.5)], SKIN);
+        triangle([[0.0, -0.5, 0.0], at(a, -0.5), at(b, -0.5)], BOARD_BACK);
+        triangle([at(a, -0.5), at(b, 0.5), at(b, -0.5)], edge);
+        triangle([at(a, -0.5), at(a, 0.5), at(b, 0.5)], edge);
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
+    mesh.colors = colors;
+    mesh.compute_vertex_normals();
+    mesh
+}
+
+/// An icosahedron's corners and faces, and how far in (as a share of its radius)
+/// each corner of a lump is knocked, so it reads as a broken lump, not a gem.
+const LUMP_CORNERS: [[f64; 3]; 12] = [
+    [-1.0, 1.618, 0.0],
+    [1.0, 1.618, 0.0],
+    [-1.0, -1.618, 0.0],
+    [1.0, -1.618, 0.0],
+    [0.0, -1.0, 1.618],
+    [0.0, 1.0, 1.618],
+    [0.0, -1.0, -1.618],
+    [0.0, 1.0, -1.618],
+    [1.618, 0.0, -1.0],
+    [1.618, 0.0, 1.0],
+    [-1.618, 0.0, -1.0],
+    [-1.618, 0.0, 1.0],
+];
+const LUMP_FACES: [[usize; 3]; 20] = [
+    [0, 11, 5],
+    [0, 5, 1],
+    [0, 1, 7],
+    [0, 7, 10],
+    [0, 10, 11],
+    [1, 5, 9],
+    [5, 11, 4],
+    [11, 10, 2],
+    [10, 7, 6],
+    [7, 1, 8],
+    [3, 9, 4],
+    [3, 4, 2],
+    [3, 2, 6],
+    [3, 6, 8],
+    [3, 8, 9],
+    [4, 9, 5],
+    [2, 4, 11],
+    [6, 2, 10],
+    [8, 6, 7],
+    [9, 8, 1],
+];
+const LUMP_DENTS: [f64; 12] = [
+    0.0, 0.22, 0.1, 0.3, 0.05, 0.18, 0.28, 0.0, 0.12, 0.25, 0.08, 0.2,
+];
+
+/// A rough lump of plaster inside the unit cube.
+pub fn lump_mesh() -> Mesh {
+    let corners = std::array::from_fn::<_, 12, _>(|i| {
+        let [x, y, z] = LUMP_CORNERS[i];
+        let length = (x * x + y * y + z * z).sqrt();
+        let reach = 0.5 * (1.0 - LUMP_DENTS[i]) / length;
+        [x * reach, y * reach, z * reach]
+    });
+    let mut positions = Vec::with_capacity(LUMP_FACES.len() * 9);
+    for face in LUMP_FACES {
+        positions.extend(face.into_iter().flat_map(|i| corners[i]));
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
+    mesh.compute_vertex_normals();
+    mesh
+}
+
+/// A torn scrap of sheet along local X in the unit cube, bent along its length:
+/// each cross-section's x, its height (local Y), and how far it reaches either side
+/// (local Z), ragged where it tore.
+const SCRAP_SECTIONS: [(f64, f64, [f64; 2]); 4] = [
+    (-0.5, 0.5, [-0.42, 0.5]),
+    (-0.12, -0.3, [-0.5, 0.38]),
+    (0.18, -0.5, [-0.35, 0.5]),
+    (0.5, 0.05, [-0.5, 0.3]),
+];
+
+/// A bent, torn scrap of roofing sheet, two-sided.
+pub fn scrap_mesh() -> Mesh {
+    let mut positions = Vec::new();
+    for pair in SCRAP_SECTIONS.windows(2) {
+        let [(x0, y0, [a0, b0]), (x1, y1, [a1, b1])] = [pair[0], pair[1]];
+        let quad = [[x0, y0, a0], [x0, y0, b0], [x1, y1, b1], [x1, y1, a1]];
+        for i in [0, 1, 2, 0, 2, 3] {
+            positions.extend(quad[i]);
+        }
+    }
     let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
     mesh.compute_vertex_normals();
     mesh
@@ -388,70 +626,137 @@ pub fn straw_mesh() -> Mesh {
     mesh
 }
 
-/// Shells chipping and bursting cargo crates; `wood_records` and `straw_records`
-/// are rebuilt whenever a piece moves.
+/// Shells chipping and bursting cargo crates; each pool's records are rewritten
+/// whole when its pieces were added or removed, and otherwise only where a piece
+/// moved, so a fresh burst in one pool leaves the others' resting pieces unsent.
 #[derive(Clone, Debug)]
 pub struct WoodChips {
+    /// Splinters, boards, lumps and scraps, each its own pool.
     wood: VecDeque<Piece>,
+    boards: VecDeque<Piece>,
+    lumps: VecDeque<Piece>,
+    scraps: VecDeque<Piece>,
     straw: VecDeque<Piece>,
     pub wood_records: PoolBuffer,
+    pub board_records: PoolBuffer,
+    pub lump_records: PoolBuffer,
+    pub scrap_records: PoolBuffer,
     pub straw_records: PoolBuffer,
-    /// Pieces were added or removed since the records were written.
-    changed: bool,
-    /// Collapsing cottages whose walls have yet to burst, and the seconds until
-    /// they do.
-    collapsing: Vec<(HouseBox, f64)>,
+    /// Per pool (in [`Self::pools`] order), pieces were added or removed since its
+    /// records were written.
+    changed: [bool; POOLS],
 }
+
+/// The splinter, board, lump, scrap and straw pools.
+const POOLS: usize = 5;
 
 impl Default for WoodChips {
     fn default() -> Self {
         Self {
             wood: VecDeque::with_capacity(MAX_WOOD_CHIPS),
+            boards: VecDeque::with_capacity(MAX_BOARDS),
+            lumps: VecDeque::with_capacity(MAX_LUMPS),
+            scraps: VecDeque::with_capacity(MAX_SCRAPS),
             straw: VecDeque::with_capacity(MAX_STRAW),
             wood_records: PoolBuffer::new(MAX_WOOD_CHIPS),
+            board_records: PoolBuffer::new(MAX_BOARDS),
+            lump_records: PoolBuffer::new(MAX_LUMPS),
+            scrap_records: PoolBuffer::new(MAX_SCRAPS),
             straw_records: PoolBuffer::new(MAX_STRAW),
-            changed: false,
-            collapsing: Vec::with_capacity(MAX_COLLAPSING),
+            changed: [false; POOLS],
         }
     }
 }
 
 impl WoodChips {
     pub fn reset(&mut self) {
-        self.wood.clear();
-        self.straw.clear();
-        self.wood_records.clear();
-        self.straw_records.clear();
-        self.changed = false;
-        self.collapsing.clear();
+        for pieces in [
+            &mut self.wood,
+            &mut self.boards,
+            &mut self.lumps,
+            &mut self.scraps,
+            &mut self.straw,
+        ] {
+            pieces.clear();
+        }
+        for records in [
+            &mut self.wood_records,
+            &mut self.board_records,
+            &mut self.lump_records,
+            &mut self.scrap_records,
+            &mut self.straw_records,
+        ] {
+            records.clear();
+        }
+        self.changed = [false; POOLS];
     }
 
-    /// Live wood pieces and straw fibres.
+    /// Live wood pieces (of every shape) and straw fibres.
     pub fn len(&self) -> usize {
-        self.wood.len() + self.straw.len()
+        self.wood.len()
+            + self.boards.len()
+            + self.lumps.len()
+            + self.scraps.len()
+            + self.straw.len()
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Every piece but the straw, splinters first.
     pub fn wood(&self) -> impl Iterator<Item = &Piece> {
-        self.wood.iter()
+        self.wood
+            .iter()
+            .chain(&self.boards)
+            .chain(&self.lumps)
+            .chain(&self.scraps)
+    }
+
+    /// Drop every piece over the box `half_w` × `half_d` about `(x, z)`, flying or
+    /// lying: a rebuilt cottage's footprint and yard.
+    pub fn clear_round(&mut self, x: f64, z: f64, half_w: f64, half_d: f64) {
+        let outside = |piece: &Piece| {
+            (piece.position.x - x).abs() > half_w || (piece.position.z - z).abs() > half_d
+        };
+        for (pieces, _, changed) in self.pools() {
+            let before = pieces.len();
+            pieces.retain(outside);
+            *changed |= pieces.len() != before;
+        }
+    }
+
+    /// Put a new piece in its shape's pool, dropping that pool's oldest when full.
+    fn add(&mut self, piece: Piece) {
+        let (pieces, capacity, pool) = match piece.shape {
+            Shape::Splinter => (&mut self.wood, MAX_WOOD_CHIPS, 0),
+            Shape::Board => (&mut self.boards, MAX_BOARDS, 1),
+            Shape::Lump => (&mut self.lumps, MAX_LUMPS, 2),
+            Shape::Scrap => (&mut self.scraps, MAX_SCRAPS, 3),
+        };
+        push(pieces, capacity, piece);
+        self.changed[pool] = true;
     }
 
     pub fn straw(&self) -> impl Iterator<Item = &Piece> {
         self.straw.iter()
     }
 
-    /// Splinter a crate's struck face, burst a destroyed crate, or shatter a loose
-    /// crate or watchtower board a shell flew through; other events throw nothing.
+    /// Splinter a crate's or a fallen timber's struck face, burst a destroyed crate, or shatter a loose
+    /// crate board a shell flew through or a watchtower part that broke; other events
+    /// throw nothing.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         match (event.kind, event.cover_kind) {
-            (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
-            (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
-            (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
-                self.shatter(event, random)
+            (SimEventType::Impact, Some(CoverKind::Cargo | CoverKind::Timber)) => {
+                self.splinter_face(event, random)
             }
+            (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
+            (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
+            (SimEventType::Shatter, Some(CoverKind::House)) => self.house_shatter(event, random),
+            (
+                SimEventType::Shatter,
+                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::Timber),
+            ) => self.shatter(event, random),
             _ => {}
         }
     }
@@ -475,13 +780,15 @@ impl WoodChips {
             let (cut, color) = if i < SIDING_BOARDS {
                 (SIDING_BOARD, hex_to_linear(paint))
             } else if i == SIDING_BOARDS {
-                (BOARD, hex_to_linear(trim))
-            } else if roll < 0.35 {
+                (TRIM_BOARD, hex_to_linear(trim))
+            } else if i <= SIDING_BOARDS + SIDING_STUDS {
+                (STUD, fresh_wood(random))
+            } else if roll < 0.3 {
                 (SHARD, hex_to_linear(paint))
-            } else if roll < 0.6 {
+            } else if roll < 0.5 {
                 (
-                    pick_cut(random, HIT_MIX),
-                    wood_color(random, HIT_MIX, paint),
+                    pick_cut(random, SIDING_MIX),
+                    wood_color(random, SIDING_MIX, paint),
                 )
             } else {
                 let [pale, dark] = PLASTER.map(hex_to_linear);
@@ -491,11 +798,18 @@ impl WoodChips {
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let color = shade(color, 0.82 + random.next_f64() * 0.22);
+            let color = shade(color, SIDING_SHADE.0 + random.next_f64() * SIDING_SHADE.1);
             let direction = turned(out, (random.next_f64() - 0.5) * SIDING_CONE);
             let elevation = 0.1 + random.next_f64() * 0.8;
-            // Most drop at the wall's foot; a few fly out across the yard.
-            let speed = between(random, SIDING_SPEED) * (0.4 + 0.6 * random.next_f64().powi(2));
+            // Most drop at the wall's foot, plaster most of all; a few boards fly
+            // out across the yard.
+            let drop = if cut.shape == Shape::Lump {
+                PLASTER_DROP
+            } else {
+                1.0
+            };
+            let speed =
+                between(random, SIDING_SPEED) * (0.4 + 0.6 * random.next_f64().powi(2)) * drop;
             let offset = (random.next_f64() - 0.5) * 0.6;
             let position = DVec3::new(
                 f64::from(point.x) + out[0] * 0.1 + along[0] * offset,
@@ -507,55 +821,32 @@ impl WoodChips {
                 speed * elevation.sin(),
                 direction[1] * speed * elevation.cos(),
             );
-            let piece = wood_piece(random, cut, position, velocity, color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
-        }
-        self.changed = true;
-    }
-
-    /// A cottage giving way: once its walls have started to buckle
-    /// ([`HOUSE_BURST_DELAY`]), they burst outward.
-    pub fn house_burst(&mut self, house: HouseBox) {
-        if self.collapsing.len() < MAX_COLLAPSING {
-            self.collapsing.push((house, HOUSE_BURST_DELAY));
+            let piece = wood_piece(random, cut, position, velocity, color, under_paint());
+            self.add(piece);
         }
     }
 
-    /// A buckling cottage's walls bursting: lengths of painted siding and trim,
-    /// chunks of wall, splinters of framing, lumps of plaster and a scatter of
-    /// roofing off the eaves thrown out round its footprint.
-    fn burst_house(&mut self, house: HouseBox, random: &mut CosmeticRandom) {
-        let [paint, trim, roof] = house.paints;
-        let center = house.center.as_dvec3();
-        let (half_w, half_d) = (f64::from(house.half_w), f64::from(house.half_d));
-        let wall_top = f64::from(house.height) * 0.6;
-        for i in 0..HOUSE_BURST_PIECES {
-            // Round the four walls in turn, each piece from its own place along one.
-            let side = i % 4;
-            let (out, half, reach) = match side {
-                0 => ([1.0, 0.0], half_d, half_w),
-                1 => ([-1.0, 0.0], half_d, half_w),
-                2 => ([0.0, 1.0], half_w, half_d),
-                _ => ([0.0, -1.0], half_w, half_d),
-            };
-            let along = turned(out, FRAC_PI_2);
-            let offset = (random.next_f64() * 2.0 - 1.0) * half * 0.9;
+    /// A shell bursting in a fallen cottage's pile: lengths of its painted boards
+    /// (`event.color`), splinters, plaster and scraps of roofing thrown up and out
+    /// all round the burst, most dropping back within a couple of metres, while
+    /// the simulation throws the pile's own pieces near it.
+    fn rubble_hit(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let paint = event.color.unwrap_or(CRATE_WOOD);
+        let height = event.height.unwrap_or(HIT_HEIGHT);
+        let count = RUBBLE_PIECES[0] + (random.next_f64() * RUBBLE_PIECES[1] as f64) as usize;
+        for i in 0..count {
             let roll = random.next_f64();
-            let eave = i < HOUSE_BURST_SHINGLES;
-            let chunk = !eave && i < HOUSE_BURST_SHINGLES + HOUSE_BURST_CHUNKS;
-            let (cut, color) = if eave {
-                (SHINGLE, hex_to_linear(roof))
-            } else if chunk {
-                (WALL_CHUNK, hex_to_linear(paint))
-            } else if roll < 0.35 {
+            let (cut, color) = if i < RUBBLE_BOARDS {
                 (SIDING_BOARD, hex_to_linear(paint))
-            } else if roll < 0.45 {
-                (BOARD, hex_to_linear(trim))
-            } else if roll < 0.75 {
+            } else if roll < 0.3 {
                 (
                     pick_cut(random, BURST_MIX),
                     wood_color(random, BURST_MIX, paint),
                 )
+            } else if roll < 0.45 {
+                (STUD, fresh_wood(random))
+            } else if roll < 0.7 {
+                (SHEET_SCRAP, hex_to_linear(paint))
             } else {
                 let [pale, dark] = HOUSE_PLASTER.map(hex_to_linear);
                 let k = random.next_f64() as f32;
@@ -564,32 +855,73 @@ impl WoodChips {
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let dust = hex_to_linear(HOUSE_BURST_DUST.0);
-            let shaded = shade(color, 0.66 + random.next_f64() * 0.2);
-            let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * HOUSE_BURST_DUST.1);
-            // Shingles slide off the eaves, over the walls; the rest burst out
-            // of the walls themselves.
-            let (height, beyond) = if eave {
-                (wall_top + 0.1 + random.next_f64() * 0.3, 0.45)
-            } else {
-                (0.5 + random.next_f64() * (wall_top - 0.5), 0.15)
-            };
+            let color = dusted(shade(color, 0.66 + random.next_f64() * 0.22));
+            let out = heading(random);
+            // Burst up out of the pile round the hit, so they are already in the
+            // air in the frames after it.
+            let reach = random.next_f64() * 0.6;
             let position = DVec3::new(
-                center.x + out[0] * (reach + beyond) + along[0] * offset,
-                height,
-                center.z + out[1] * (reach + beyond) + along[1] * offset,
+                event.x + out[0] * reach,
+                (height + random.next_f64() * 0.7).max(0.15),
+                event.z + out[1] * reach,
             );
-            let direction = turned(out, (random.next_f64() - 0.5) * 1.2);
-            let speed = between(random, HOUSE_BURST_SPEED);
-            let velocity = DVec3::new(
-                direction[0] * speed,
-                0.5 + random.next_f64() * 2.5,
-                direction[1] * speed,
-            );
-            let piece = wood_piece(random, cut, position, velocity, color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+            // Up more than out, so most land within a couple of metres.
+            let speed = between(random, RUBBLE_SPEED);
+            let velocity = DVec3::new(out[0] * speed, between(random, RUBBLE_LIFT), out[1] * speed);
+            let bare = dusted(under_paint());
+            let piece = wood_piece(random, cut, position, velocity, color, bare);
+            self.add(piece);
         }
-        self.changed = true;
+    }
+
+    /// A cottage's part broken out where it stood: a few pieces sized to what broke
+    /// (lengths of its painted boards, a chunk of wall still nailed together, a
+    /// broken stud, a lump of plaster), thrown on the way the shell went and mostly
+    /// falling within a few metres of it.
+    fn house_shatter(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let size = event.size.unwrap_or(1.0);
+        let height = event.height.unwrap_or(HIT_HEIGHT);
+        let along = event
+            .from
+            .and_then(|from| horizontal(event.x - from.x, event.z - from.z));
+        let paint = event.color.unwrap_or(CRATE_WOOD);
+        let count =
+            ((size * PART_PIECES_PER_METRE).round() as usize).clamp(PART_PIECES[0], PART_PIECES[1]);
+        for i in 0..count {
+            let offset = heading(random).map(|v| v * size * 0.4 * random.next_f64());
+            let position = DVec3::new(
+                event.x + offset[0],
+                (height + (random.next_f64() - 0.5) * size * 0.4).max(0.1),
+                event.z + offset[1],
+            );
+            let speed = between(random, PART_SPEED);
+            let spread = turned(
+                along.unwrap_or_else(|| heading(random)),
+                (random.next_f64() - 0.5) * 2.0,
+            );
+            let velocity = DVec3::new(
+                spread[0] * speed,
+                between(random, PART_LIFT),
+                spread[1] * speed,
+            );
+            let painted = |random: &mut CosmeticRandom| {
+                shade(
+                    hex_to_linear(paint),
+                    between(random, [SIDING_SHADE.0, SIDING_SHADE.1]),
+                )
+            };
+            let (cut, color) = match i % 4 {
+                0 if i == 0 => (WALL_CHUNK, painted(random)),
+                0 | 2 => (SIDING_BOARD, painted(random)),
+                1 => (STUD, wood_color(random, SIDING_MIX, FRESH_WOOD[1])),
+                _ => (
+                    PLASTER_LUMP,
+                    shade(hex_to_linear(PLASTER[(i / 4) % PLASTER.len()]), 1.0),
+                ),
+            };
+            let piece = wood_piece(random, cut, position, velocity, color, under_paint());
+            self.add(piece);
+        }
     }
 
     /// A loose board a shell flew through bursts into splinters and chips across its
@@ -621,16 +953,22 @@ impl WoodChips {
                 0.8 + random.next_f64() * 3.2,
                 spread[1] * speed,
             );
-            let cut = if i < 2 {
-                BOARD
-            } else {
-                pick_cut(random, BURST_MIX)
+            let cut = match i {
+                0 => OFFCUT,
+                1 => BOARD,
+                _ => pick_cut(random, BURST_MIX),
             };
             let color = wood_color(random, BURST_MIX, boards);
-            let piece = wood_piece(random, cut, position, velocity, color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                velocity,
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
+            self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A shell hit: pieces burst out of the face back toward the gun, `from`.
@@ -647,6 +985,8 @@ impl WoodChips {
         for i in 0..count {
             let cut = if i < HIT_LONG_SLIVERS {
                 LONG_SLIVER
+            } else if i == HIT_LONG_SLIVERS {
+                OFFCUT
             } else {
                 pick_cut(random, HIT_MIX)
             };
@@ -672,10 +1012,16 @@ impl WoodChips {
                 direction[1] * speed * elevation.cos(),
             );
             let color = wood_color(random, HIT_MIX, boards);
-            let piece = wood_piece(random, cut, position, velocity, color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                velocity,
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
+            self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A destroyed crate: its boards splinter throughout and fly on along the
@@ -726,17 +1072,26 @@ impl WoodChips {
             };
             let position = DVec3::new(event.x + dx, y, event.z + dz);
             let (cut, color) = if i < BURST_BOARDS {
-                // Weathered outside, a board's faces show the crate's color.
+                // Weathered outside, a board's faces show the crate's color: long
+                // splinters of it and sawn-off lengths.
                 let light = 0.85 + random.next_f64() * 0.25;
-                (BOARD, shade(hex_to_linear(boards), light))
+                let cut = if i % 2 == 0 { BOARD } else { OFFCUT };
+                (cut, shade(hex_to_linear(boards), light))
             } else {
                 (
                     pick_cut(random, BURST_MIX),
                     wood_color(random, BURST_MIX, boards),
                 )
             };
-            let piece = wood_piece(random, cut, position, DVec3::new(vx, vy, vz), color);
-            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                DVec3::new(vx, vy, vz),
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
+            self.add(piece);
         }
         for _ in 0..STRAW_TUFTS {
             let dx = (random.next_f64() * 2.0 - 1.0) * BURST_HALF_WIDTH * 0.8;
@@ -766,39 +1121,49 @@ impl WoodChips {
                 let velocity = DVec3::new(vx + jitter(), vy + jitter() * 0.8, vz + jitter());
                 let piece = straw_piece(random, position, velocity);
                 push(&mut self.straw, MAX_STRAW, piece);
+                self.changed[4] = true;
             }
         }
-        self.changed = true;
     }
 
-    /// Advance every piece and rewrite the records when anything moved.
+    /// Each pool's pieces beside its records and whether it changed size.
+    fn pools(&mut self) -> [(&mut VecDeque<Piece>, &mut PoolBuffer, &mut bool); POOLS] {
+        let [wood, boards, lumps, scraps, straw] = &mut self.changed;
+        [
+            (&mut self.wood, &mut self.wood_records, wood),
+            (&mut self.boards, &mut self.board_records, boards),
+            (&mut self.lumps, &mut self.lump_records, lumps),
+            (&mut self.scraps, &mut self.scrap_records, scraps),
+            (&mut self.straw, &mut self.straw_records, straw),
+        ]
+    }
+
+    /// Advance every piece and bring each pool's records up to date: rewritten
+    /// whole when the pool gained or lost pieces, otherwise only the slots of the
+    /// pieces that moved (most of a pool lies still after the first seconds).
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
-        let mut k = 0;
-        while k < self.collapsing.len() {
-            self.collapsing[k].1 -= dt;
-            if self.collapsing[k].1 <= 0.0 {
-                let (house, _) = self.collapsing.swap_remove(k);
-                self.burst_house(house, random);
-            } else {
-                k += 1;
-            }
-        }
         let step = dt.min(MAX_STEP);
-        let mut moved = self.changed;
-        for pieces in [&mut self.wood, &mut self.straw] {
-            let before = pieces.len();
+        for (pieces, records, changed) in self.pools() {
+            // Slots match pieces only while the pool kept every piece in order.
+            let mut in_place = !*changed;
+            let mut slot = 0;
             pieces.retain_mut(|piece| {
                 let (live, moving) = advance(piece, dt, step, random);
-                moved |= moving;
+                if !live {
+                    in_place = false;
+                } else {
+                    if in_place && moving {
+                        records.set(slot, piece_record(piece));
+                    }
+                    slot += 1;
+                }
                 live
             });
-            moved |= pieces.len() != before;
+            if !in_place {
+                write(records, pieces);
+            }
+            *changed = false;
         }
-        if moved {
-            write(&mut self.wood_records, &self.wood);
-            write(&mut self.straw_records, &self.straw);
-        }
-        self.changed = false;
     }
 }
 
@@ -812,9 +1177,15 @@ fn push(pieces: &mut VecDeque<Piece>, capacity: usize, piece: Piece) {
 fn write(records: &mut PoolBuffer, pieces: &VecDeque<Piece>) {
     records.clear();
     for piece in pieces {
-        let [r, g, b] = piece.color;
-        records.push(record(piece.world(), [r, g, b, 1.0], [0.0; 4]));
+        records.push(piece_record(piece));
     }
+}
+
+fn piece_record(piece: &Piece) -> InstanceRecord {
+    let [r, g, b] = piece.color;
+    let [br, bg, bb] = piece.bare;
+    // The chip effect's sawn wood (`debris_chip.wgsl`); straw draws plain.
+    record(piece.world(), [r, g, b, 1.0], [br, bg, bb, 1.0])
 }
 
 fn pick_cut(random: &mut CosmeticRandom, mix: Mix) -> Cut {
@@ -838,22 +1209,51 @@ fn wood_color(random: &mut CosmeticRandom, mix: Mix, boards: u32) -> [f32; 3] {
     } else if roll < mix.boards {
         hex_to_linear(boards)
     } else {
-        hex_to_linear(INNER_WOOD)
+        shade(hex_to_linear(boards), HEART_SHADE)
     };
     shade(base, light)
 }
 
+/// Freshly split framing timber, between pale and warm.
+fn fresh_wood(random: &mut CosmeticRandom) -> [f32; 3] {
+    let [pale, warm] = FRESH_WOOD.map(hex_to_linear);
+    let k = random.next_f64() as f32;
+    [0, 1, 2].map(|i| pale[i] + (warm[i] - pale[i]) * k)
+}
+
+/// The pale end grain of wood this color.
+fn end_grain(wood: [f32; 3]) -> [f32; 3] {
+    let pale = hex_to_linear(END_GRAIN);
+    [0, 1, 2].map(|c| wood[c] + (pale[c] - wood[c]) * END_GRAIN_SHARE)
+}
+
+/// The bare wood under a cottage's paint: its framing's end grain.
+fn under_paint() -> [f32; 3] {
+    end_grain(hex_to_linear(FRESH_WOOD[1]))
+}
+
+/// `color` dulled by a fallen cottage's dust.
+fn dusted(color: [f32; 3]) -> [f32; 3] {
+    let dust = hex_to_linear(RUBBLE_DUST);
+    [0, 1, 2].map(|c| color[c] + (dust[c] - color[c]) * RUBBLE_DUST_BLEND)
+}
+
+/// A piece of `cut` with faces `color` and bare wood `bare` (linear RGB).
 fn wood_piece(
     random: &mut CosmeticRandom,
     cut: Cut,
     position: DVec3,
     velocity: DVec3,
     color: [f32; 3],
+    bare: [f32; 3],
 ) -> Piece {
     let length = between(random, cut.length) as f32;
     let width = between(random, cut.width) as f32;
     let thickness = between(random, cut.thickness) as f32;
-    let scale = Vec3::new(length, thickness, width);
+    let scale = match cut.shape {
+        Shape::Scrap => Vec3::new(length, width * SCRAP_BEND, width),
+        _ => Vec3::new(length, thickness, width),
+    };
     Piece {
         position,
         velocity,
@@ -871,6 +1271,8 @@ fn wood_piece(
         lean: ((random.next_f64() - 0.5) * 2.0 * MAX_LEAN) as f32,
         stage: Stage::Flying { bounces: 0 },
         color,
+        bare,
+        shape: cut.shape,
     }
 }
 
@@ -903,6 +1305,8 @@ fn straw_piece(random: &mut CosmeticRandom, position: DVec3, velocity: DVec3) ->
         lean: 0.0,
         stage: Stage::Flying { bounces: 0 },
         color,
+        bare: color,
+        shape: Shape::Splinter,
     }
 }
 
@@ -1025,6 +1429,48 @@ mod tests {
     }
 
     #[test]
+    fn a_timber_hit_throws_its_own_wood_with_pale_ends() {
+        let mut random = CosmeticRandom::seeded(7);
+        let mut chips = WoodChips::default();
+        // A shell into a fallen timber post, painted darker than a crate.
+        let post = 0x6e4a30;
+        chips.event(
+            &SimEvent {
+                cover_kind: Some(CoverKind::Timber),
+                color: Some(post),
+                height: Some(0.6),
+                from: Some(Point3::new(2.0, 1.0, 9.0)),
+                ..SimEvent::at(SimEventType::Impact, 2.0, -1.0)
+            },
+            &mut random,
+        );
+        assert!(chips.wood().count() >= HIT_PIECES[0]);
+        assert!(
+            chips.boards.len() == 1,
+            "a sawn-off length among the splinters"
+        );
+        let wood = hex_to_linear(post);
+        let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        for piece in chips.wood() {
+            assert!(luma(piece.bare) > luma(wood), "pale end grain");
+            // Its hue is the post's: redder than green, greener than blue.
+            assert!(piece.bare[0] > piece.bare[1] && piece.bare[1] > piece.bare[2]);
+        }
+        chips.update(DT, &mut random);
+        for records in [&chips.wood_records, &chips.board_records] {
+            assert!(
+                records.records().iter().all(|r| r.data[3] == 1.0),
+                "sawn wood"
+            );
+        }
+        // Both meshes mark their skin, bare sides and end grain.
+        for mesh in [splinter_mesh(), board_mesh()] {
+            assert_eq!(mesh.colors.len(), mesh.positions.len());
+            assert!(mesh.colors.contains(&SKIN) && mesh.colors.contains(&END));
+        }
+    }
+
+    #[test]
     fn meshes_face_outward_and_fit_their_extents() {
         let mesh = splinter_mesh();
         let centroid = mesh
@@ -1041,7 +1487,24 @@ mod tests {
                 "inward face"
             );
         }
-        for mesh in [splinter_mesh(), straw_mesh()] {
+        // The board and the lump fan out from the origin.
+        for mesh in [board_mesh(), lump_mesh()] {
+            for triangle in mesh.positions.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|i| Vec3::from(triangle[i]));
+                let normal = (b - a).cross(c - a);
+                assert!(normal.length() > 1e-4, "degenerate triangle");
+                assert!(normal.dot(a + b + c) > 0.0, "inward face");
+            }
+        }
+        let board = board_mesh();
+        assert_eq!(board.colors.len(), board.positions.len());
+        for mesh in [
+            splinter_mesh(),
+            board,
+            lump_mesh(),
+            scrap_mesh(),
+            straw_mesh(),
+        ] {
             assert!(mesh.positions.iter().flatten().all(|v| v.abs() <= 0.5));
         }
         let reach = (STRAW_CURL + STRAW_HALF_WIDTH) as f32 + 1e-6;
@@ -1086,26 +1549,55 @@ mod tests {
         assert!((SIDING_PIECES[0]..SIDING_PIECES[0] + SIDING_PIECES[1]).contains(&hit));
         // The first lengths are the wall's siding, the next its trim.
         let siding = hex_to_linear(paints[0]);
-        let wood: Vec<&Piece> = chips.wood().collect();
-        for piece in &wood[..SIDING_BOARDS] {
+        for piece in chips.boards.iter().take(SIDING_BOARDS) {
             assert!((0..3).all(|c| piece.color[c] <= siding[c] * 1.05));
         }
+        // Boards (siding, trim, studs) and plaster lumps, not only splinters.
+        assert_eq!(chips.boards.len() - SIDING_STUDS - 1, SIDING_BOARDS);
+        assert!(!chips.lumps.is_empty());
         // They burst out of the face, not back into the wall.
+        let wood: Vec<&Piece> = chips.wood().collect();
         assert!(wood.iter().all(|piece| piece.velocity.x > -1e-9));
         run(&mut chips, &mut random, 3.0);
         assert!(chips.wood().all(Piece::landed));
-        let house = HouseBox {
-            center: Vec3::ZERO,
-            half_w: 2.5,
-            half_d: 3.0,
-            height: 4.6,
-            paints: [0xe8dcc0, 0xe6e0d4, 0x82996a],
+        // Over many hits the plaster drops at the wall's foot, nearer it than the
+        // boards fly.
+        let mut many = WoodChips::default();
+        for _ in 0..12 {
+            many.siding_hit(Vec3::new(3.0, 1.0, 0.0), Vec3::X, paints, &mut random);
+        }
+        run(&mut many, &mut random, 3.0);
+        let mean_reach = |pieces: &VecDeque<Piece>| {
+            pieces
+                .iter()
+                .map(|piece| piece.position.x - 3.0)
+                .sum::<f64>()
+                / pieces.len() as f64
         };
-        let before = chips.len();
-        chips.house_burst(house);
-        assert_eq!(chips.len(), before);
-        chips.update(HOUSE_BURST_DELAY + 0.01, &mut random);
-        assert_eq!(chips.len(), before + HOUSE_BURST_PIECES);
+        assert!(mean_reach(&many.lumps) < mean_reach(&many.boards));
+    }
+
+    #[test]
+    fn a_shell_in_a_pile_throws_boards_and_scraps_out_round_it() {
+        let mut random = CosmeticRandom::seeded(29);
+        let mut chips = WoodChips::default();
+        let event = SimEvent {
+            cover_kind: Some(CoverKind::House),
+            color: Some(0xe8dcc0),
+            height: Some(0.8),
+            ..SimEvent::at(SimEventType::Impact, 0.0, 0.0)
+        };
+        chips.event(&event, &mut random);
+        assert!(chips.len() >= RUBBLE_PIECES[0]);
+        assert!(chips.boards.len() >= RUBBLE_BOARDS && !chips.scraps.is_empty());
+        run(&mut chips, &mut random, 3.0);
+        assert!(chips.wood().all(Piece::landed));
+        // Every board lands clear of the burst, round it on every side.
+        let reach = |piece: &Piece| piece.position.x.hypot(piece.position.z);
+        let boards: Vec<&Piece> = chips.boards.iter().collect();
+        assert!(boards.iter().all(|piece| reach(piece) > 0.8));
+        assert!(boards.iter().any(|piece| piece.position.x > 0.0));
+        assert!(boards.iter().any(|piece| piece.position.x < 0.0));
     }
 
     #[test]
@@ -1172,7 +1664,10 @@ mod tests {
             assert!((piece.position.y - rest).abs() < 1e-6);
             assert!(piece.position.y < 0.2);
         }
-        assert_eq!(chips.wood_records.len(), chips.wood().count());
+        assert_eq!(
+            chips.wood_records.len() + chips.board_records.len(),
+            chips.wood().count()
+        );
         assert_eq!(chips.straw_records.len(), chips.straw().count());
         run(
             &mut chips,
@@ -1198,9 +1693,38 @@ mod tests {
                 .all(|piece| piece.landed() && piece.velocity == DVec3::ZERO)
         );
         chips.wood_records.take_dirty(|_, _| {});
+        chips.board_records.take_dirty(|_, _| {});
         chips.update(DT, &mut random);
-        assert!(chips.wood_records.dirty().is_empty());
-        assert_eq!(chips.wood_records.len(), chips.len());
+        assert!(chips.wood_records.dirty().is_empty() && chips.board_records.dirty().is_empty());
+        assert_eq!(
+            chips.wood_records.len() + chips.board_records.len(),
+            chips.len()
+        );
+    }
+
+    #[test]
+    fn a_new_burst_leaves_other_pools_resting_pieces_unsent() {
+        let mut random = CosmeticRandom::seeded(29);
+        let mut chips = WoodChips::default();
+        chips.event(&crate_event(SimEventType::Destroy, None), &mut random);
+        run(&mut chips, &mut random, 2.6);
+        assert!(chips.straw().count() > 0);
+        assert!(
+            chips
+                .straw()
+                .all(|piece| piece.landed() && piece.velocity == DVec3::ZERO)
+        );
+        chips.straw_records.take_dirty(|_, _| {});
+        let from = Point3::new(1.0, 1.1, -1.0);
+        chips.event(&crate_event(SimEventType::Impact, Some(from)), &mut random);
+        for _ in 0..30 {
+            chips.update(DT, &mut random);
+            assert!(chips.straw_records.dirty().is_empty());
+            for (pieces, records, _) in chips.pools() {
+                let expected: Vec<_> = pieces.iter().map(piece_record).collect();
+                assert_eq!(records.records(), expected.as_slice());
+            }
+        }
     }
 
     #[test]
@@ -1216,7 +1740,8 @@ mod tests {
             chips.event(&crate_event(kind, None), &mut random);
             chips.update(DT, &mut random);
         }
-        assert_eq!(chips.wood().count(), MAX_WOOD_CHIPS);
+        assert_eq!(chips.wood.len(), MAX_WOOD_CHIPS);
+        assert!(chips.boards.len() <= MAX_BOARDS);
         assert_eq!(chips.straw().count(), MAX_STRAW);
         assert_eq!(chips.wood_records.len(), MAX_WOOD_CHIPS);
         assert!(chips.wood_records.records().iter().all(|r| {

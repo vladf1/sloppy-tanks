@@ -38,7 +38,7 @@ use super::protocol::{FULL_MESSAGE, SNAPSHOT_MESSAGE};
 use super::scene_codec::{
     COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS,
     MATCH_FIELDS, MINES, MirrorScene, Scene, Stored, TANKS, read_cover, read_event, read_fragment,
-    read_match, read_mine, read_pickup, read_tank, write_event, write_record,
+    read_match, read_mine, read_pickup, read_tank_reusing, write_event, write_record,
 };
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::shot_paths::{LivePaths, PathEntry, ShotPath};
@@ -90,6 +90,8 @@ pub struct StateStream {
 struct SnapshotScratch {
     updates: Vec<u8>,
     removed: Vec<u8>,
+    /// One kind's updated records, written before their count.
+    changes: Vec<u8>,
     entries: Vec<u32>,
     record: WireRecord,
 }
@@ -170,29 +172,47 @@ impl StateStream {
         events: &[TimedEvent],
         paths: &[PathEntry],
     ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(256);
+        self.snapshot_into(scene, tick, events, paths, &mut out);
+        out
+    }
+
+    /// [`snapshot`](Self::snapshot), appending the body to `out`.
+    pub fn snapshot_into(
+        &mut self,
+        scene: &mut Scene,
+        tick: u64,
+        events: &[TimedEvent],
+        paths: &[PathEntry],
+        out: &mut Vec<u8>,
+    ) {
         self.seq += 1;
         index_scene(&mut self.current, scene);
         let previous = self.previous.as_ref();
         let SnapshotScratch {
             updates,
             removed,
+            changes,
             entries,
             record,
         } = &mut self.scratch;
         let (held_motion, next_motion) = (&mut self.motion, &mut self.next_motion);
-        let mut out = Vec::with_capacity(256);
         let mut sections = 0;
         let elapsed = thousandths(scene.elapsed);
         put_signed(
-            &mut out,
+            out,
             elapsed - previous.map_or(0, |scene| thousandths(scene.elapsed)),
         );
-        let mut body = Vec::new();
+        // The section mask goes before the sections; with five sections it is always one
+        // varint byte, its own value, so the sections are written after a placeholder.
+        let mask_at = out.len();
+        out.push(0);
+        let body = out;
         if write_changes(
             MATCH_FIELDS,
             previous.map(|scene| &scene.match_record),
             &scene.match_record,
-            &mut body,
+            body,
         ) {
             sections |= MATCH_SECTION;
         }
@@ -212,7 +232,7 @@ impl StateStream {
             entries.sort_unstable();
             let mut count = 0u64;
             let mut last = 0u32;
-            let mut changes = Vec::new();
+            changes.clear();
             let next_motion = &mut next_motion[kind];
             next_motion.clear();
             next_motion.resize_with(records.len(), Motion::new);
@@ -226,8 +246,8 @@ impl StateStream {
                     .map(std::mem::take)
                     .unwrap_or_default();
                 let start = changes.len();
-                put_varint(&mut changes, u64::from(id - last));
-                if write_moving_changes(fields, old(id), next, Some(&mut motion), &mut changes) {
+                put_varint(changes, u64::from(id - last));
+                if write_moving_changes(fields, old(id), next, Some(&mut motion), changes) {
                     last = id;
                     count += 1;
                 } else {
@@ -238,7 +258,7 @@ impl StateStream {
             if count > 0 {
                 updated_kinds |= 1 << kind;
                 put_varint(updates, count);
-                updates.extend_from_slice(&changes);
+                updates.extend_from_slice(changes);
             }
             if let Some(before) = before {
                 entries.clear();
@@ -262,43 +282,42 @@ impl StateStream {
         }
         if updated_kinds != 0 {
             sections |= UPDATES_SECTION;
-            put_varint(&mut body, updated_kinds);
+            put_varint(body, updated_kinds);
             body.extend_from_slice(updates);
         }
         if removed_kinds != 0 {
             sections |= REMOVED_SECTION;
-            put_varint(&mut body, removed_kinds);
+            put_varint(body, removed_kinds);
             body.extend_from_slice(removed);
         }
         let frame_tick = thousandths(tick as f64);
         if !events.is_empty() {
             sections |= EVENTS_SECTION;
-            put_varint(&mut body, events.len() as u64);
+            put_varint(body, events.len() as u64);
             let mut last = 0;
             for event in events {
-                put_varint(&mut body, event.event_id - last);
+                put_varint(body, event.event_id - last);
                 last = event.event_id;
-                put_signed(&mut body, frame_tick - thousandths(event.tick));
+                put_signed(body, frame_tick - thousandths(event.tick));
                 write_event(record, &event.event);
-                write_record(EVENT_FIELDS, record, &mut body);
+                write_record(EVENT_FIELDS, record, body);
             }
         }
         if !paths.is_empty() {
             sections |= PATHS_SECTION;
-            put_varint(&mut body, paths.len() as u64);
+            put_varint(body, paths.len() as u64);
             for entry in paths {
-                entry.write_binary(&mut body, tick);
+                entry.write_binary(body, tick);
             }
         }
-        put_varint(&mut out, sections);
-        out.extend_from_slice(&body);
+        debug_assert!(sections < 0x80, "the section mask fits its byte");
+        body[mask_at] = sections as u8;
         let current = std::mem::take(scene);
         std::mem::swap(&mut self.index, &mut self.current);
         std::mem::swap(&mut self.motion, &mut self.next_motion);
         if let Some(old) = self.previous.replace(current) {
             *scene = old;
         }
-        out
     }
 }
 
@@ -533,6 +552,8 @@ pub struct StateMirror {
     pub tick: u64,
     pub event_cursor: u64,
     pub needs_full: bool,
+    /// The frame every snapshot decodes into, keeping its buffers between frames.
+    scratch: DecodedFrame,
 }
 
 impl Default for StateMirror {
@@ -546,14 +567,22 @@ impl Default for StateMirror {
             tick: 0,
             event_cursor: 0,
             needs_full: true,
+            scratch: DecodedFrame::default(),
         }
     }
 }
 
+/// Entries a kind keeps from the records its store replaced or removed, for the next
+/// frames' updates to copy into: a record's wire slots, motion and value buffers.
+const MAX_SPARE_RECORDS: usize = 256;
+
 /// Validated changes for one kind, applied only once the whole frame is valid.
+#[derive(Clone, Debug)]
 struct KindChanges<T> {
     updates: Vec<Stored<T>>,
     removals: Vec<u32>,
+    /// Entries the store gave back, refilled by later updates instead of allocating.
+    spare: Vec<Stored<T>>,
 }
 
 impl<T> Default for KindChanges<T> {
@@ -561,11 +590,44 @@ impl<T> Default for KindChanges<T> {
         Self {
             updates: Vec::new(),
             removals: Vec::new(),
+            spare: Vec::new(),
         }
     }
 }
 
+fn keep_spare<T>(spare: &mut Vec<Stored<T>>, stored: Stored<T>) {
+    if spare.len() < MAX_SPARE_RECORDS {
+        spare.push(stored);
+    }
+}
+
 impl<T> KindChanges<T> {
+    /// Starts a frame, keeping what a failed one left as spares.
+    fn clear(&mut self) {
+        let Self {
+            updates,
+            removals,
+            spare,
+        } = self;
+        for stored in updates.drain(..) {
+            keep_spare(spare, stored);
+        }
+        removals.clear();
+    }
+
+    /// The buffers for one more update: a spare entry's (its contents stale) and its
+    /// value, or new ones.
+    fn entry(&mut self) -> (WireRecord, Motion, Option<T>) {
+        match self.spare.pop() {
+            Some(Stored {
+                wire,
+                value,
+                motion,
+            }) => (wire, motion, Some(value)),
+            None => (WireRecord::default(), Motion::new(), None),
+        }
+    }
+
     fn resulting_len(&self, store: &EntityStore<T>) -> usize {
         let added = self
             .updates
@@ -575,21 +637,65 @@ impl<T> KindChanges<T> {
         store.len() + added - self.removals.len()
     }
 
-    fn apply(self, store: &mut EntityStore<T>) {
-        for stored in self.updates {
-            store.upsert(stored);
+    fn apply(&mut self, store: &mut EntityStore<T>) {
+        let Self {
+            updates,
+            removals,
+            spare,
+        } = self;
+        for stored in updates.drain(..) {
+            if let Some(old) = store.upsert(stored) {
+                keep_spare(spare, old);
+            }
         }
-        store.remove_all(&self.removals);
+        store.remove_all(removals, |old| keep_spare(spare, old));
+        removals.clear();
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 struct FrameChanges {
     tanks: KindChanges<RenderTank>,
     covers: KindChanges<RenderCover>,
     fragments: KindChanges<RenderFragment>,
     mines: KindChanges<Mine>,
     pickups: KindChanges<Pickup>,
+}
+
+impl FrameChanges {
+    fn clear(&mut self) {
+        self.tanks.clear();
+        self.covers.clear();
+        self.fragments.clear();
+        self.mines.clear();
+        self.pickups.clear();
+    }
+}
+
+/// Projects a record's value, given a value of its kind the mirror no longer needs.
+type ReadValue<T> = fn(&WireRecord, Option<T>) -> ReadResult<T>;
+
+fn read_tank_value(record: &WireRecord, spare: Option<RenderTank>) -> ReadResult<RenderTank> {
+    read_tank_reusing(record, spare)
+}
+
+fn read_cover_value(record: &WireRecord, _: Option<RenderCover>) -> ReadResult<RenderCover> {
+    read_cover(record)
+}
+
+fn read_fragment_value(
+    record: &WireRecord,
+    _: Option<RenderFragment>,
+) -> ReadResult<RenderFragment> {
+    read_fragment(record)
+}
+
+fn read_mine_value(record: &WireRecord, _: Option<Mine>) -> ReadResult<Mine> {
+    read_mine(record)
+}
+
+fn read_pickup_value(record: &WireRecord, _: Option<Pickup>) -> ReadResult<Pickup> {
+    read_pickup(record)
 }
 
 /// Reads record `id`'s changes into `changes`, returning the fields it changed, whether
@@ -600,19 +706,23 @@ fn update<'a, T>(
     kind: usize,
     id: u32,
     reader: &mut WireReader<'_>,
-    read: fn(&WireRecord) -> ReadResult<T>,
+    read: ReadValue<T>,
 ) -> ReadResult<(ChangedFields, bool, &'a WireRecord)> {
     let held = store.get(id);
-    let mut wire = held.map_or_else(
-        || WireRecord {
-            id,
-            slots: Vec::new(),
-        },
-        |stored| stored.wire.clone(),
-    );
-    let mut motion = held.map(|stored| stored.motion.clone()).unwrap_or_default();
+    let (mut wire, mut motion, spare) = changes.entry();
+    match held {
+        Some(stored) => {
+            wire.clone_from(&stored.wire);
+            motion.clone_from(&stored.motion);
+        }
+        None => {
+            wire.id = id;
+            wire.slots.clear();
+            motion.clear();
+        }
+    }
     let changed = read_moving_changes(ENTITY_FIELDS[kind], &mut wire, Some(&mut motion), reader)?;
-    let value = read(&wire)?;
+    let value = read(&wire, spare)?;
     changes.updates.push(Stored {
         wire,
         value,
@@ -629,7 +739,7 @@ fn move_held<T>(
     changes: &mut KindChanges<T>,
     removed: &[u32],
     kind: usize,
-    read: fn(&WireRecord) -> ReadResult<T>,
+    read: ReadValue<T>,
     mut view: Option<&mut Vec<ChangedRecord>>,
 ) -> ReadResult<()> {
     let sent = changes.updates.len();
@@ -646,8 +756,10 @@ fn move_held<T>(
         {
             continue;
         }
-        let mut wire = stored.wire.clone();
-        let changed = move_on(ENTITY_FIELDS[kind], &mut wire, &stored.motion);
+        let (mut wire, mut motion, spare) = changes.entry();
+        wire.clone_from(&stored.wire);
+        motion.clone_from(&stored.motion);
+        let changed = move_on(ENTITY_FIELDS[kind], &mut wire, &motion);
         if let Some(view) = view.as_deref_mut() {
             view.push(ChangedRecord {
                 kind,
@@ -657,11 +769,11 @@ fn move_held<T>(
                 record: wire.clone(),
             });
         }
-        let value = read(&wire)?;
+        let value = read(&wire, spare)?;
         changes.updates.push(Stored {
             wire,
             value,
-            motion: stored.motion.clone(),
+            motion,
         });
     }
     Ok(())
@@ -691,13 +803,17 @@ pub struct ChangedRecord {
     pub record: WireRecord,
 }
 
-/// A decoded, validated frame, applied by [`StateMirror::commit`].
+/// A decoded, validated frame, applied by [`StateMirror::commit`]. The mirror keeps one to
+/// decode every frame into, so its buffers (and the records' it copies) are reused.
+#[derive(Clone, Debug, Default)]
 pub struct DecodedFrame {
     pub seq: u64,
     pub tick: u64,
     pub elapsed: f64,
     changes: FrameChanges,
-    match_wire: Option<(WireRecord, Match, ChangedFields)>,
+    /// The match record after this frame, meaningful with `match_change`.
+    match_wire: WireRecord,
+    match_change: Option<(Match, ChangedFields)>,
     pub removed: [Vec<u32>; 5],
     pub events: Vec<TimedEvent>,
     pub paths: Vec<PathEntry>,
@@ -706,14 +822,28 @@ pub struct DecodedFrame {
     event_cursor: u64,
     /// Filled only when decoding for the JSON view.
     pub changed: Vec<ChangedRecord>,
+    /// Storage for reading each event's record.
+    event_record: WireRecord,
 }
 
 impl DecodedFrame {
     /// The match record after this frame and the fields it changed, if any.
     pub fn match_change(&self) -> Option<(&WireRecord, ChangedFields)> {
-        self.match_wire
+        self.match_change
             .as_ref()
-            .map(|(record, _, changed)| (record, *changed))
+            .map(|(_, changed)| (&self.match_wire, *changed))
+    }
+
+    /// Empties the frame for the next decode, keeping its buffers.
+    fn clear(&mut self) {
+        self.changes.clear();
+        self.match_change = None;
+        for removed in &mut self.removed {
+            removed.clear();
+        }
+        self.events.clear();
+        self.paths.clear();
+        self.changed.clear();
     }
 }
 
@@ -755,18 +885,34 @@ impl StateMirror {
         if self.state.is_none() || self.needs_full {
             return None;
         }
-        match self.decode(batch, false) {
-            Ok(frame) => Some(self.commit(frame)),
+        let mut frame = std::mem::take(&mut self.scratch);
+        let extras = match self.decode_into(batch, false, &mut frame) {
+            Ok(()) => Some(self.commit_frame(&mut frame)),
             Err(_) => {
                 self.needs_full = true;
                 None
             }
-        }
+        };
+        self.scratch = frame;
+        extras
     }
 
     /// Reads and validates the batch's next frame without changing the mirror. With
     /// `view`, the frame also lists every record it changed.
     pub fn decode(&self, batch: &mut SnapshotBatch<'_>, view: bool) -> ReadResult<DecodedFrame> {
+        let mut frame = DecodedFrame::default();
+        self.decode_into(batch, view, &mut frame)?;
+        Ok(frame)
+    }
+
+    /// [`decode`](Self::decode) into `frame`, overwriting what it held and reusing its
+    /// buffers.
+    fn decode_into(
+        &self,
+        batch: &mut SnapshotBatch<'_>,
+        view: bool,
+        frame: &mut DecodedFrame,
+    ) -> ReadResult<()> {
         let state = self
             .state
             .as_ref()
@@ -798,25 +944,18 @@ impl StateMirror {
         if sections >> 5 != 0 {
             return Err("Invalid sections".into());
         }
-        let mut frame = DecodedFrame {
-            seq,
-            tick,
-            elapsed,
-            changes: FrameChanges::default(),
-            match_wire: None,
-            removed: Default::default(),
-            events: Vec::new(),
-            paths: Vec::new(),
-            shots: LivePaths::default(),
-            event_cursor: self.event_cursor,
-            changed: Vec::new(),
-        };
+        frame.clear();
+        frame.seq = seq;
+        frame.tick = tick;
+        frame.elapsed = elapsed;
+        frame.event_cursor = self.event_cursor;
         if sections & MATCH_SECTION != 0 {
-            let mut wire = state.match_wire.clone();
-            let changed = read_changes(MATCH_FIELDS, &mut wire, reader)
+            let wire = &mut frame.match_wire;
+            wire.clone_from(&state.match_wire);
+            let changed = read_changes(MATCH_FIELDS, wire, reader)
                 .map_err(|error| format!("match: {error}"))?;
-            let value = read_match(&wire).map_err(|error| format!("match: {error}"))?;
-            frame.match_wire = Some((wire, value, changed));
+            let value = read_match(wire).map_err(|error| format!("match: {error}"))?;
+            frame.match_change = Some((value, changed));
         }
         let mut count = 0;
         let mut claim = |items: u64| -> ReadResult<()> {
@@ -858,7 +997,7 @@ impl StateMirror {
                         kind,
                         id,
                         reader,
-                        read_tank,
+                        read_tank_value,
                     ),
                     COVERS => update(
                         &state.covers,
@@ -866,7 +1005,7 @@ impl StateMirror {
                         kind,
                         id,
                         reader,
-                        read_cover,
+                        read_cover_value,
                     ),
                     FRAGMENTS => update(
                         &state.fragments,
@@ -874,7 +1013,7 @@ impl StateMirror {
                         kind,
                         id,
                         reader,
-                        read_fragment,
+                        read_fragment_value,
                     ),
                     MINES => update(
                         &state.mines,
@@ -882,7 +1021,7 @@ impl StateMirror {
                         kind,
                         id,
                         reader,
-                        read_mine,
+                        read_mine_value,
                     ),
                     _ => update(
                         &state.pickups,
@@ -890,7 +1029,7 @@ impl StateMirror {
                         kind,
                         id,
                         reader,
-                        read_pickup,
+                        read_pickup_value,
                     ),
                 }
                 .map_err(label)?;
@@ -940,7 +1079,7 @@ impl StateMirror {
                     &mut changes.tanks,
                     removed,
                     kind,
-                    read_tank,
+                    read_tank_value,
                     view,
                 ),
                 COVERS => move_held(
@@ -948,7 +1087,7 @@ impl StateMirror {
                     &mut changes.covers,
                     removed,
                     kind,
-                    read_cover,
+                    read_cover_value,
                     view,
                 ),
                 FRAGMENTS => move_held(
@@ -956,7 +1095,7 @@ impl StateMirror {
                     &mut changes.fragments,
                     removed,
                     kind,
-                    read_fragment,
+                    read_fragment_value,
                     view,
                 ),
                 MINES => move_held(
@@ -964,7 +1103,7 @@ impl StateMirror {
                     &mut changes.mines,
                     removed,
                     kind,
-                    read_mine,
+                    read_mine_value,
                     view,
                 ),
                 _ => move_held(
@@ -972,7 +1111,7 @@ impl StateMirror {
                     &mut changes.pickups,
                     removed,
                     kind,
-                    read_pickup,
+                    read_pickup_value,
                     view,
                 ),
             }
@@ -1004,7 +1143,7 @@ impl StateMirror {
                 _ => Err("Invalid list".into()),
             }
         };
-        let mut record = WireRecord::default();
+        let record = &mut frame.event_record;
         let mut event_id = 0u64;
         for _ in 0..items(reader, sections & EVENTS_SECTION != 0)? {
             event_id = event_id
@@ -1012,9 +1151,9 @@ impl StateMirror {
                 .ok_or_else(|| "Invalid number".to_string())?;
             let back = reader.signed()?;
             record.slots.clear();
-            read_changes(EVENT_FIELDS, &mut record, reader)
+            read_changes(EVENT_FIELDS, record, reader)
                 .map_err(|error| format!("event: {error}"))?;
-            let event = read_event(&record).map_err(|error| format!("event: {error}"))?;
+            let event = read_event(record).map_err(|error| format!("event: {error}"))?;
             let event_tick = frame_tick
                 .checked_sub(back)
                 .ok_or_else(|| "Invalid number".to_string())?;
@@ -1032,7 +1171,8 @@ impl StateMirror {
                 event,
             });
         }
-        frame.shots = self.shots.clone();
+        // Path entries apply to a copy of the shells, kept only if the whole frame reads.
+        frame.shots.paths.clone_from(&self.shots.paths);
         let paths = items(reader, sections & PATHS_SECTION != 0)?;
         frame.paths = frame
             .shots
@@ -1041,48 +1181,52 @@ impl StateMirror {
         if batch.read == batch.count && !batch.frames.is_empty() {
             return Err("Trailing data".into());
         }
-        Ok(frame)
+        Ok(())
     }
 
     /// Applies a frame [`decode`](Self::decode) validated against this mirror.
-    pub fn commit(&mut self, frame: DecodedFrame) -> FrameExtras {
+    pub fn commit(&mut self, mut frame: DecodedFrame) -> FrameExtras {
+        self.commit_frame(&mut frame)
+    }
+
+    /// [`commit`](Self::commit), leaving `frame` the mirror's replaced buffers to decode
+    /// the next frame into.
+    fn commit_frame(&mut self, frame: &mut DecodedFrame) -> FrameExtras {
         let state = self.state.as_mut().expect("decoded against a baseline");
-        let FrameChanges {
-            tanks,
-            covers,
-            fragments,
-            mines,
-            pickups,
-        } = frame.changes;
-        tanks.apply(&mut state.tanks);
-        covers.apply(&mut state.covers);
-        fragments.apply(&mut state.fragments);
-        mines.apply(&mut state.mines);
-        pickups.apply(&mut state.pickups);
+        let changes = &mut frame.changes;
+        changes.tanks.apply(&mut state.tanks);
+        changes.covers.apply(&mut state.covers);
+        changes.fragments.apply(&mut state.fragments);
+        changes.mines.apply(&mut state.mines);
+        changes.pickups.apply(&mut state.pickups);
         state.elapsed = frame.elapsed;
-        if let Some((wire, value, _)) = frame.match_wire {
-            state.match_wire = wire;
+        if let Some((value, _)) = frame.match_change.take() {
+            std::mem::swap(&mut state.match_wire, &mut frame.match_wire);
             state.match_state = value;
         }
-        self.shots = frame.shots;
+        std::mem::swap(&mut self.shots, &mut frame.shots);
         self.tick = frame.tick;
         self.seq = frame.seq;
         self.event_cursor = frame.event_cursor;
         FrameExtras {
-            events: frame.events,
-            paths: frame.paths,
+            events: std::mem::take(&mut frame.events),
+            paths: std::mem::take(&mut frame.paths),
         }
     }
 
     /// The render state for `viewer`, its shells where their paths put them at `tick`.
     pub fn render(&self, viewer: u32) -> ReadResult<RenderState> {
-        let mut state = self
-            .state
-            .as_ref()
-            .ok_or_else(|| "No baseline".to_string())?
-            .render(viewer)?;
-        self.shots.fill(&mut state.shots, self.tick as f64);
+        let mut state = RenderState::default();
+        self.fill_render(&mut state, viewer)?;
         Ok(state)
+    }
+
+    /// Overwrites all of `state` with [`render`](Self::render)'s result, reusing its
+    /// allocations.
+    pub fn fill_render(&self, state: &mut RenderState, viewer: u32) -> ReadResult<()> {
+        self.fill_render_state(state, viewer)?;
+        self.shots.fill(&mut state.shots, self.tick as f64);
+        Ok(())
     }
 
     /// Fills `state` for `viewer`, reusing its allocations.

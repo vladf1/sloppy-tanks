@@ -1644,13 +1644,7 @@ impl TouchPanel {
         }
         // A narrow or short screen tightens the panel to fit beside the stick.
         if size.x <= 760.0 || size.y <= 600.0 {
-            panel.padding = [5.0; 4];
-            panel.label = false;
-            panel.min_rack = 0.0;
-            panel.rack.gap = 2.0;
-            panel.rack.key_height = 48.0;
-            panel.rack.name_size = 11.0;
-            panel.rack.name_spacing = 0.0;
+            panel.tighten();
         }
         if size.y >= size.x && size.x >= 700.0 {
             panel.padding = [6.0; 4];
@@ -1658,6 +1652,18 @@ impl TouchPanel {
             panel.rack.gap = 3.0;
         }
         panel
+    }
+
+    /// The panel without the tank's name and rank, its padding and keys closer: what fits
+    /// beside the drive stick on a narrow or short screen.
+    fn tighten(&mut self) {
+        self.padding = [5.0; 4];
+        self.label = false;
+        self.min_rack = 0.0;
+        self.rack.gap = 2.0;
+        self.rack.key_height = 48.0;
+        self.rack.name_size = 11.0;
+        self.rack.name_spacing = 0.0;
     }
 
     /// How the status line shares the panel's width. The readout keeps a full hull's
@@ -1734,9 +1740,24 @@ fn tank_panel(
     let human = &hud.human;
     let id = Id::unique("tank panel");
     let layer = LayerId::new(Order::Middle, id);
+    // The gap a touch screen's panel sits in, between the drive stick and the mine
+    // button, and whether a panel `width` wide sits in it.
+    let gap = crate::touch::screen().then(|| {
+        let (from, to) = crate::touch::TouchLayout::of(context).panel_span(screen.right() - EDGE);
+        to - from
+    });
+    let fits = |width: f32| gap.is_some_and(|gap| gap >= width * MIN_PANEL_GAP_SHARE);
     let touch = crate::touch::screen().then(|| {
-        let panel = TouchPanel::on(context.viewport_rect().size());
-        let line = panel.line(&context.layer_painter(layer), human);
+        let painter = context.layer_painter(layer);
+        let mut panel = TouchPanel::on(context.viewport_rect().size());
+        let mut line = panel.line(&painter, human);
+        // Where the full panel would not sit in the gap (a car's browser window, a little
+        // wider than the narrow rule), it tightens rather than standing over the stick in
+        // the middle of the arena.
+        if !fits(panel.plate_size(&line).x) {
+            panel.tighten();
+            line = panel.line(&painter, human);
+        }
         (panel, line)
     });
     let strip_width = desktop_rack_width(human);
@@ -1753,7 +1774,12 @@ fn tank_panel(
             inner.y + padding[1] + padding[3],
         ),
     };
-    let compass = state.cockpit;
+    // On a touch screen the compass joins the panel only where the panel still sits in
+    // the gap between the drive stick and the mine button with it: a squarish window
+    // (a car's browser) had room for the panel alone, and the compass pushed it up over
+    // the stick into the middle of the first-person view.
+    let compass = state.cockpit
+        && (touch.is_none() || fits(plate_size.x + COMPASS_WIDTH) || !fits(plate_size.x));
     let size = plate_size + vec2(if compass { COMPASS_WIDTH } else { 0.0 }, 0.0);
     // Where its bottom-left corner sits, the width it has and, on a touch screen, the
     // column the ammunition notice keeps to (its left end and width). There it sits

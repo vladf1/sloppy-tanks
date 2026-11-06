@@ -11,8 +11,7 @@ use glam::DMat4;
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     CoverShape, MapTheme, Scenery, TreeDetail, WreckPart, batch, build_scenery, built_tank_models,
-    cover_damage_stage, cover_model, offer_tank_models, tank_dimensions, tank_model_variant,
-    wreck_model,
+    cover_model, offer_tank_models, tank_dimensions, tank_model_variant, wreck_model,
 };
 use sloppy_core::scene::{Material, Node};
 use sloppy_core::scene_codec::{DecodeError, decode_bytes, encode};
@@ -116,12 +115,9 @@ fn census(dir: &Path, read: bool) -> (usize, usize) {
     simulation.fill_render_state(&mut view, None);
     for cover in &view.covers {
         let shape = CoverShape::from(cover);
-        for fraction in [1.0, 0.6, 0.3, 0.1] {
-            let stage = cover_damage_stage(cover.kind, cover.max_hp * fraction, cover.max_hp);
-            let mut root = cover_model(&shape, TreeDetail::Full, stage);
-            batch(&mut root);
-            add(&root);
-        }
+        let mut root = cover_model(&shape, TreeDetail::Full);
+        batch(&mut root);
+        add(&root);
     }
     for kind in VehicleKind::ALL {
         for team in [Team::Blue, Team::Red] {

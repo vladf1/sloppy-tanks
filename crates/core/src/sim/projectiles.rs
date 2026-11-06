@@ -3,27 +3,39 @@
 //! decides which contact happens first.
 
 use rapier3d::parry::query::ShapeCastOptions;
-use rapier3d::parry::shape::Ball;
-use rapier3d::prelude::{ColliderHandle, Pose, Ray};
+use rapier3d::parry::shape::{Ball, Capsule};
+use rapier3d::prelude::{ColliderHandle, Pose, Ray, RigidBodyHandle};
 
 use super::combat_rules::COMBAT;
 use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
 };
-use super::debris_physics::{
-    blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
-};
+use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debris};
 use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
 use super::shooter_rewind::{ShooterRewind, target_ticks};
 use super::simulation::{ProjectileMove, Simulation};
+use super::structure_physics::{
+    FUSE_DISTANCE, HE_BLAST_RADIUS, fragment_with_collider, structure_debris,
+};
 use super::tank_dimensions::tank_muzzle;
 use super::types::{
     CoverKind, DamageCause, DamageSource, Mine, PickupKind, Shot, SimEvent, SimEventType, Weapon,
 };
+
+/// A shell meets a structure's fallen part lying under its path when the part's top
+/// reaches within this far (m) below the shell's flight height, as a slightly plunging
+/// shot would: a level shell at one metre passes over a slab lying flat on the ground.
+const LOW_DEBRIS_REACH: f64 = 0.7;
+/// A burst in a cottage's room tears this much (m) of its lath and plaster, this colour.
+const ROOM_BURST_SIZE: f64 = 1.2;
+const ROOM_PLASTER: u32 = 0xc9b48f;
+/// How hard an armour-piercing round throws the pieces of a loose part it breaks, as a
+/// share of a burst's.
+const PIERCING_THROW: f64 = 0.4;
 
 /// Impact flash colour for a shell striking a friendly hull.
 const FRIENDLY_IMPACT_COLOR: u32 = 0xb9d7e5;
@@ -195,11 +207,13 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     let budget = simulation.shots.len() * (COMBAT.contacts_per_shot + defenses) + 1;
     let mut event = 0;
     let mut tank_positions = std::mem::take(&mut simulation.projectile_tank_positions);
+    let mut structure_bodies = std::mem::take(&mut simulation.projectile_structure_bodies);
     while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget
     {
         let (next, time) = find_next_contact(
             simulation,
             &mut tank_positions,
+            &mut structure_bodies,
             remaining,
             dt - remaining,
             if sweep_tank_motion { dt } else { 0.0 },
@@ -210,6 +224,9 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
             shot.x += shot.vx * time;
             shot.z += shot.vz * time;
             shot.life -= time;
+            if let Some(fuse) = &mut shot.fuse {
+                *fuse -= shot.vx.hypot(shot.vz) * time;
+            }
         }
         if let Some(moves) = &mut simulation.projectile_moves {
             moves.extend(simulation.shots.iter().map(|shot| ProjectileMove {
@@ -234,6 +251,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         event += 1;
     }
     simulation.projectile_tank_positions = tank_positions;
+    simulation.projectile_structure_bodies = structure_bodies;
 }
 
 /// The earliest contact found for one shell, returned beside that shell's index; indices
@@ -246,6 +264,7 @@ enum Contact {
     },
     Debris {
         fragment: usize,
+        collider: ColliderHandle,
     },
     Tank {
         tank: usize,
@@ -259,14 +278,18 @@ enum Contact {
     Laser {
         tank: usize,
     },
+    /// An HE shell's fuse after striking a cottage has run out.
+    Fuse,
     Expiry,
 }
 
 /// Query without moving entities; equal-time contacts preserve the original priority order.
-/// `tank_positions` is scratch space reused across the queries of one tick.
+/// `tank_positions` and `structure_bodies` are scratch space reused across the queries of
+/// a tick.
 fn find_next_contact(
     simulation: &Simulation,
     tank_positions: &mut Vec<Option<Point3>>,
+    structure_bodies: &mut Vec<RigidBodyHandle>,
     limit: f64,
     elapsed: f64,
     tank_frame_delta: f64,
@@ -284,12 +307,42 @@ fn find_next_contact(
             .map(|tank| tank.alive.then(|| simulation.body_translation(tank.body))),
     );
     let shell_shape = Ball::new(SHELL_HIT_RADIUS as f32);
+    // The low reach under a shell for a cottage's loose parts: a capsule from the shell
+    // down to [`LOW_DEBRIS_REACH`] under it.
+    let low_half = ((LOW_DEBRIS_REACH - SHELL_HIT_RADIUS) / 2.0) as f32;
+    let low_shape = Capsule::new_y(low_half, SHELL_HIT_RADIUS as f32);
+    // A resolved contact can split or remove a fallen body, so these are read again for
+    // every query too; sorted, the cast's predicate finds a body by halving.
+    structure_bodies.clear();
+    structure_bodies.extend(
+        simulation
+            .fragments
+            .iter()
+            .filter(|fragment| structure_debris(fragment))
+            .map(|fragment| fragment.body),
+    );
+    structure_bodies.sort_unstable_by_key(|body| body.into_raw_parts());
+    let structure_bodies = &*structure_bodies;
+    let in_structure_debris = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+        collider.parent().is_some_and(|body| {
+            structure_bodies
+                .binary_search_by_key(&body.into_raw_parts(), |body| body.into_raw_parts())
+                .is_ok()
+        })
+    };
     for (si, shot) in simulation.shots.iter().enumerate() {
         if shot.life <= time {
             time = shot.life;
             next = Some((si, Contact::Expiry));
         }
         let speed = shot.vx.hypot(shot.vz);
+        if let Some(fuse) = shot.fuse
+            && speed > 0.0
+            && (fuse / speed).max(0.0) <= time
+        {
+            time = (fuse / speed).max(0.0);
+            next = Some((si, Contact::Fuse));
+        }
         if speed > 0.0 {
             let ray = Ray::new(
                 vector(shot.x, shot.combat_y(), shot.z),
@@ -312,6 +365,20 @@ fn find_next_contact(
                 stop_at_penetration: true,
                 compute_impact_geometry_on_penetration: true,
             };
+            // The bodies its own strike knocked loose it flew on through.
+            let not_loosened = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+                collider
+                    .parent()
+                    .is_none_or(|body| !shot.loosened.contains(&body))
+            };
+            let in_reach = |handle: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+                in_structure_debris(handle, collider) && not_loosened(handle, collider)
+            };
+            let debris_filter = if shot.loosened.is_empty() {
+                query_filter(group::DEBRIS_QUERY)
+            } else {
+                query_filter(group::DEBRIS_QUERY).predicate(&not_loosened)
+            };
             // Only a fragment's collider counts as a debris contact, so without fragments the
             // cast cannot change the result.
             if !simulation.fragments.is_empty()
@@ -320,15 +387,32 @@ fn find_next_contact(
                     vector(shot.vx, 0.0, shot.vz),
                     &shell_shape,
                     options,
-                    query_filter(group::DEBRIS_QUERY),
+                    debris_filter,
                 )
                 && hit.time_of_impact as f64 <= time
-                && let Some(fragment) = simulation.fragments.iter().position(|fragment| {
-                    simulation.world.bodies[fragment.body].colliders().first() == Some(&collider)
-                })
+                && let Some(fragment) = fragment_with_collider(simulation, collider)
             {
                 time = hit.time_of_impact as f64;
-                next = Some((si, Contact::Debris { fragment }));
+                next = Some((si, Contact::Debris { fragment, collider }));
+            }
+            // The capsule's top is the shell's own ball; its foot the low reach.
+            let low = shot.combat_y() - f64::from(low_half);
+            if !structure_bodies.is_empty()
+                && let Some((collider, hit)) = simulation.world.cast_shape(
+                    &Pose::from_translation(vector(shot.x, low, shot.z)),
+                    vector(shot.vx, 0.0, shot.vz),
+                    &low_shape,
+                    ShapeCastOptions {
+                        max_time_of_impact: time as f32,
+                        ..options
+                    },
+                    query_filter(group::DEBRIS_QUERY).predicate(&in_reach),
+                )
+                && (hit.time_of_impact as f64) < time
+                && let Some(fragment) = fragment_with_collider(simulation, collider)
+            {
+                time = hit.time_of_impact as f64;
+                next = Some((si, Contact::Debris { fragment, collider }));
             }
         }
         let probe = ShotProbe::from(shot);
@@ -442,6 +526,16 @@ fn impact_event(x: f64, z: f64, size: f64, color: u32) -> SimEvent {
     impact
 }
 
+/// The way a shell flies, as a unit vector on the ground (+z when it stands still).
+fn shell_heading(shot: &Shot) -> Vec2 {
+    let speed = shot.vx.hypot(shot.vz);
+    if speed > 0.0 {
+        Vec2::new(shot.vx / speed, shot.vz / speed)
+    } else {
+        Vec2::new(0.0, 1.0)
+    }
+}
+
 fn remove_shot(simulation: &mut Simulation, id: u32) {
     if let Some(index) = simulation.shots.iter().position(|shot| shot.id == id) {
         simulation.shots.remove(index);
@@ -533,19 +627,42 @@ fn resolve_contact(
             let mine = simulation.mines.remove(mi);
             simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
         }
-        Contact::Debris { fragment: fi } if shatters(&simulation.fragments[fi]) => {
-            // The board bursts; a shell flies on to what lies behind, a rocket goes off.
-            shatter_debris(simulation, fi, &shot);
-            if shot.weapon == Weapon::Rocket {
-                rocket_blast(simulation, &shot);
-            } else {
-                remove = false;
+        Contact::Debris {
+            fragment: fi,
+            collider,
+        } if structure_debris(&simulation.fragments[fi]) => {
+            // A structure's fallen part breaks where the shell meets it: an HE round
+            // bursts on it, an armour-piercing round breaks the part it strikes and
+            // flies on, a rocket goes off.
+            let color = simulation.fragments[fi].color;
+            let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
+            let (point, part) = simulation.world.colliders.get(collider).map_or(
+                (shell_point, usize::MAX),
+                |struck| {
+                    let on = struck.shape().project_point(
+                        struck.position(),
+                        vector(shell_point.x, shell_point.y, shell_point.z),
+                        true,
+                    );
+                    (from_vector(on.point), struck.user_data as usize)
+                },
+            );
+            let kind = simulation.fragments[fi].source_kind;
+            let mut impact = impact_event(point.x, point.z, 0.6, color);
+            impact.height = Some(point.y);
+            impact.cover_kind = kind;
+            simulation.events.push(impact);
+            match shot.weapon {
+                Weapon::Rocket => rocket_blast(simulation, &shot),
+                Weapon::Piercing => {
+                    simulation.break_loose_body(fi, part, point, PIERCING_THROW);
+                    remove = false;
+                }
+                _ => burst_at(simulation, &shot, point),
             }
         }
-        Contact::Debris { fragment: fi } => {
+        Contact::Debris { fragment: fi, .. } => {
             let fragment = &simulation.fragments[fi];
-            let timber = fragment.timber_part.is_some();
-            let fragment_color = fragment.color;
             let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
             let body = &simulation.world.bodies[fragment.body];
             let point = body
@@ -570,14 +687,8 @@ fn resolve_contact(
             } else {
                 hit_projectile_debris(simulation, fi, &shot, point);
             }
-            let mut impact = impact_event(
-                point.x,
-                point.z,
-                0.6,
-                if timber { fragment_color } else { shot_color },
-            );
+            let mut impact = impact_event(point.x, point.z, 0.6, shot_color);
             impact.height = Some(point.y);
-            impact.cover_kind = timber.then_some(CoverKind::Timber);
             simulation.events.push(impact);
         }
         Contact::Tank { tank: ti } => {
@@ -631,19 +742,25 @@ fn resolve_contact(
             impact.height = Some(1.0);
             simulation.events.push(impact);
         }
+        // A structure's breakable part; a watchtower's concrete footings take a shell
+        // like other concrete.
+        Contact::World { collider, .. }
+            if simulation
+                .structure_part(collider, Point3::new(shot.x, shot.combat_y(), shot.z))
+                .is_some_and(|(cover, part)| {
+                    simulation.covers[cover].structure.as_ref().is_some_and(|state| {
+                        state.layout.parts[part].strength.is_finite()
+                    })
+                }) =>
+        {
+            let (cover, part) = simulation
+                .structure_part(collider, Point3::new(shot.x, shot.combat_y(), shot.z))
+                .expect("checked by the guard");
+            remove = strike_structure_part(simulation, si, cover, part);
+        }
         Contact::World { collider, normal } => {
             let cover = simulation.cover_by_collider.get(&collider).copied();
             if let Some(ci) = cover {
-                if matches!(
-                    simulation.covers[ci].kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower | CoverKind::House
-                ) {
-                    let speed = shot.vx.hypot(shot.vz);
-                    if speed > 0.0 {
-                        simulation.covers[ci].kick =
-                            Some(Vec2::new(shot.vx / speed, shot.vz / speed));
-                    }
-                }
                 hit_movable_cover(simulation, ci, &shot);
             }
             if shot.weapon == Weapon::Rocket {
@@ -678,13 +795,9 @@ fn resolve_contact(
                 }
             }
             let shot = &simulation.shots[si];
-            let chipped = cover.map(|ci| &simulation.covers[ci]).filter(|cover| {
-                cover.alive
-                    && matches!(
-                        cover.kind,
-                        CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo
-                    )
-            });
+            let chipped = cover
+                .map(|ci| &simulation.covers[ci])
+                .filter(|cover| cover.alive && cover.kind == CoverKind::Tree);
             let mut impact = impact_event(
                 shot.x,
                 shot.z,
@@ -693,17 +806,120 @@ fn resolve_contact(
             );
             impact.cover_kind = chipped.map(|cover| cover.kind);
             impact.height = chipped.map(|cover| cover.h);
-            // A crate's splinters burst from the struck face, back along the shell.
-            if let Some(cover) = chipped.filter(|cover| cover.kind == CoverKind::Cargo) {
-                let y = shot.combat_y();
-                impact.height = Some(y);
-                impact.from = cover
-                    .kick
-                    .map(|kick| Point3::new(shot.x - kick.x, y, shot.z - kick.z));
-            }
             simulation.events.push(impact);
         }
+        Contact::Fuse => burst(simulation, &shot),
         Contact::Expiry => {}
     }
     remove
+}
+
+/// An HE shell bursting where its fuse ran out (or where it struck again): the parts
+/// round it take the blast; tanks are hit only by what strikes them. A burst inside a
+/// cottage names the hole the shell came in by, which its flash and dust escape through.
+fn burst(simulation: &mut Simulation, shot: &Shot) {
+    burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z));
+}
+
+/// [`burst`] at `point`: on a structure's fallen part, where the shell met it.
+fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
+    let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
+    explosion.size = Some(HE_BLAST_RADIUS);
+    explosion.height = Some(point.y);
+    // A shell fused in a cottage bursts in a room; one fused by a watchtower's member, a
+    // timber wall or a crate bursts in the open.
+    let in_cottage = simulation.covers.iter().any(|cover| {
+        cover.kind == CoverKind::House
+            && cover.structure.is_some()
+            && (point.x - cover.x).abs() < cover.w / 2.0
+            && (point.z - cover.z).abs() < cover.d / 2.0
+    });
+    if let Some(fuse) = shot.fuse.filter(|_| in_cottage) {
+        let along = shell_heading(shot);
+        let flown = (FUSE_DISTANCE - fuse.max(0.0)).max(0.0);
+        explosion.cover_kind = Some(CoverKind::House);
+        explosion.from = Some(Point3::new(
+            point.x - along.x * flown,
+            point.y,
+            point.z - along.z * flown,
+        ));
+    }
+    // In a room, the burst tears the room's lath and plaster round it: splinters and
+    // dust fly from where it went off, inside, not only out of the hole.
+    if let (Some(CoverKind::House), Some(hole)) = (explosion.cover_kind, explosion.from) {
+        let mut torn = SimEvent::at(SimEventType::Shatter, point.x, point.z);
+        torn.height = Some(point.y);
+        torn.size = Some(ROOM_BURST_SIZE);
+        torn.color = Some(ROOM_PLASTER);
+        torn.cover_kind = Some(CoverKind::House);
+        torn.from = Some(hole);
+        simulation.events.push(explosion);
+        simulation.events.push(torn);
+    } else {
+        simulation.events.push(explosion);
+    }
+    simulation.structure_blast(
+        point,
+        HE_BLAST_RADIUS,
+        shot.damage,
+        Some((shot.owner, shot.team)),
+    );
+}
+
+/// A shell striking a standing part of a structure. A rocket breaks it and bursts; an
+/// armour-piercing round breaks it and flies on; an HE round breaks a part it can and
+/// flies on [`FUSE_DISTANCE`] (bursting at once against one it cannot, such as a
+/// watchtower's leg, or on a second strike). A shell that ends there flashes on the part;
+/// one that flies on through shows only the part breaking, and a fused round striking a
+/// wall from inside shows no hit on its outer face. Returns whether the shell is spent.
+fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
+    let shot = simulation.shots[si].clone();
+    let point = Point3::new(shot.x, shot.combat_y(), shot.z);
+    let along = shell_heading(&shot);
+    let by = Some((shot.owner, shot.team));
+    let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
+    impact.id = Some(simulation.covers[cover].id);
+    impact.height = Some(point.y);
+    match shot.weapon {
+        Weapon::Rocket => {
+            simulation.events.push(impact);
+            simulation.strike_structure(cover, part, shot.damage, true, point, along, by);
+            rocket_blast(simulation, &shot);
+            true
+        }
+        Weapon::Piercing => {
+            let first = simulation.next_id;
+            simulation.strike_structure(cover, part, shot.damage, true, point, along, by);
+            fly_past_loosened(simulation, si, first);
+            false
+        }
+        _ => {
+            let first = simulation.next_id;
+            let broke = simulation.strike_structure(cover, part, shot.damage, false, point, along, by);
+            if broke && shot.fuse.is_none() {
+                simulation.shots[si].fuse = Some(FUSE_DISTANCE);
+                fly_past_loosened(simulation, si, first);
+                false
+            } else {
+                if shot.fuse.is_none() {
+                    simulation.events.push(impact);
+                }
+                burst(simulation, &shot);
+                true
+            }
+        }
+    }
+}
+
+/// Shell `si` flies on through the part it broke: the bodies that came down from the
+/// strike (the structure debris given ids from `first` on) start round it, and it never
+/// meets them, as the shooter's own forecast has it.
+fn fly_past_loosened(simulation: &mut Simulation, si: usize, first: u32) {
+    let Simulation { fragments, shots, .. } = simulation;
+    shots[si].loosened.extend(
+        fragments
+            .iter()
+            .filter(|fragment| fragment.id >= first && structure_debris(fragment))
+            .map(|fragment| fragment.body),
+    );
 }

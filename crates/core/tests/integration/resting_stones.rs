@@ -247,12 +247,12 @@ fn world(map: MapId, theme: MapTheme, stones: impl Fn(&Node, &str) -> bool) -> W
             d: cover.d,
             h: cover.h,
             color: cover.color,
-            debris_seed: cover.debris_seed,
-            timber_hits: Vec::new(),
             timber_join: None,
+            broken: Default::default(),
+            cracked: Default::default(),
         };
         world.add(
-            &cover_model(&shape, TreeDetail::Full, 0),
+            &cover_model(&shape, TreeDetail::Full),
             DMat4::IDENTITY,
             &stones,
             "",

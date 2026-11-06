@@ -1,8 +1,10 @@
-//! The Stress Grid: an intentional workload of 30 tanks and 75 destructibles for finding
-//! body, navigation, destruction and resource-growth regressions. Do not weaken it.
+//! The Stress Grid: an intentional workload of 30 tanks and 83 destructibles (eight
+//! cottages that collapse like the village's among them) for finding body, navigation,
+//! destruction and resource-growth regressions. Do not weaken it.
 
 use super::arena::{CoverDef, boundary_walls};
 use super::data::ARENA;
+use super::house_layout::HOUSE_HEALTH;
 use super::map_options::MapId;
 use super::maps::{ArenaMap, GroundKind};
 use super::simulation::SimulationSetup;
@@ -68,19 +70,20 @@ fn stress_test_layout() -> Vec<CoverDef> {
         }
     }
 
-    // Permanent buildings create hard sight-line breaks without sealing the broad central lanes.
+    // Cottages break sight lines without sealing the broad central lanes until they are
+    // levelled, part by part, as the village's are.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
             for (x, z, w, d, color) in [
                 (offset, side * 35.0, 5.5, 6.5, 0xb87b4c),
                 (side * 35.0, offset, 6.5, 5.5, 0xc78b50),
             ] {
-                add(CoverKind::House, x, z, w, d, 5.0, infinite, color);
+                add(CoverKind::House, x, z, w, d, 5.0, HOUSE_HEALTH, color);
             }
         }
     }
 
-    // Tree groves sit between the permanent houses, outer obstacle grid and spawn approaches.
+    // Tree groves sit between the cottages, outer obstacle grid and spawn approaches.
     for side in [-1.0, 1.0] {
         for offset in [-10.0, 10.0] {
             for (x, z, size, h, color) in [

@@ -17,9 +17,8 @@
 //!   beacons, [`CHIMNEY_SMOKE_NODE`] fed by [`VillageScenery::set_covers`]). Extra
 //!   levels use [`create_arena_floor`] and [`create_spawn_pads`].
 //! - Cover: [`cover_model`] from a [`CoverShape`] (convertible from
-//!   [`RenderCover`](crate::sim::render_state::RenderCover)); rebuild when
-//!   [`cover_damage_stage`] or the timber hit count changes. Trees:
-//!   [`tree_model`], whose boughs drop by [`tree_branch_stage`] /
+//!   [`RenderCover`](crate::sim::render_state::RenderCover)); rebuild when a
+//!   structure's broken parts change. Trees: [`tree_model`], whose boughs drop by [`tree_branch_stage`] /
 //!   [`branch_drop_stage`] (node names in [`tree_part`]). Detached timber members:
 //!   [`timber_part_model`].
 //! - Props: [`pickup_cube`], [`flags_model`] (cloth node [`FLAG_CLOTH_NODE`]),
@@ -55,6 +54,7 @@ beyond_geometry! {
     mod barrel_debris;
     mod barrel_surfaces;
     mod cover_model;
+    mod house_parts_model;
     mod crate_model;
     pub mod effects_props;
     mod flags;
@@ -130,20 +130,20 @@ beyond_geometry! {
 // Cover, trees and props.
 beyond_geometry! {
     pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
-    pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
+    pub use cover_model::{CoverShape, cover_model, structure_debris};
+    pub use house_parts_model::{HouseBuild, HouseDebris, house_debris, structural_house};
     pub use crate_model::crate_piece_model;
     pub use effects_props::{aged_wreck_material, wreck_brightness};
     pub use flags::{FLAG_CLOTH_NODE, flags_model};
 }
-pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
 beyond_geometry! {
     pub use pickup_visuals::{
         LOAD_SCALE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,
         SUPPLY_SCALE, atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint,
         pickup_pallet, pickup_parcel, pickup_signal, pickup_tile_offset,
     };
-    pub use timber_model::{timber_debris_model, timber_part_model};
-    pub use tower_model::tower_piece_model;
+    pub use timber_model::timber_part_model;
+    pub use tower_model::tower_debris;
 }
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,

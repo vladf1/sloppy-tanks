@@ -22,11 +22,10 @@ use super::wire::{
     Field, FieldKind, Motion, Slot, WireReader, WireRecord, names, put_signed, put_varint,
     read_changes, thousandths, wire_fields, write_changes,
 };
-use crate::sim::crate_layout::CratePiece;
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
-use crate::sim::house_layout::{HousePart, HousePiece};
+use crate::sim::structure_physics::{Damping, passes_through};
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -35,10 +34,9 @@ use crate::sim::render_state::{
 };
 use crate::sim::simulation::Simulation;
 use crate::sim::simulation_rules::FRAGMENT_CAPACITY;
-use crate::sim::timber_layout::{
-    TimberFace, TimberHit, TimberJoin, TimberMark, TimberPart, TimberPartKind,
-};
-use crate::sim::tower_layout::TowerPiece;
+use crate::sim::structure::PartSet;
+use crate::sim::timber_layout::TimberJoin;
+
 use crate::sim::types::{
     AmmoInventory, Cover, CoverKind, DamageCause, DamageSource, DeathStyle, Fragment,
     FragmentShape, Match, MatchPhase, Mine, Pickup, PickupKind, SimEvent, SimEventType, Tank, Team,
@@ -72,7 +70,7 @@ pub const WEAPONS: [(&str, Weapon); 6] = [
     ("piercing", Weapon::Piercing),
     ("tow", Weapon::Tow),
 ];
-pub const COVER_KINDS: [(&str, CoverKind); 13] = [
+pub const COVER_KINDS: [(&str, CoverKind); 12] = [
     ("rock", CoverKind::Rock),
     ("teeth", CoverKind::Teeth),
     ("hedgehog", CoverKind::Hedgehog),
@@ -84,7 +82,6 @@ pub const COVER_KINDS: [(&str, CoverKind); 13] = [
     ("concrete", CoverKind::Concrete),
     ("drum", CoverKind::Drum),
     ("tower", CoverKind::Tower),
-    ("rubble", CoverKind::Rubble),
     ("boundary", CoverKind::Boundary),
 ];
 pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
@@ -92,85 +89,13 @@ pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
     ("metal", DebrisMaterial::Metal),
     ("concrete", DebrisMaterial::Concrete),
 ];
-pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
-    ("west-bent", TowerPiece::WestBent),
-    ("east-bent", TowerPiece::EastBent),
-    ("back-bracing", TowerPiece::BackBracing),
-    ("front-bracing", TowerPiece::FrontBracing),
-    ("west-deck", TowerPiece::WestDeck),
-    ("east-deck", TowerPiece::EastDeck),
-    ("front-wall", TowerPiece::FrontWall),
-    ("back-wall", TowerPiece::BackWall),
-    ("west-wall", TowerPiece::WestWall),
-    ("east-wall", TowerPiece::EastWall),
-    ("roof", TowerPiece::Roof),
-    ("ladder", TowerPiece::Ladder),
-];
-/// Every shard a cottage breaks into, part by part (as [`HousePiece::ALL`]).
-pub const HOUSE_PIECES: [(&str, HousePiece); 51] = [
-    ("front-wall-0", HousePiece::new(HousePart::FrontWall, 0)),
-    ("front-wall-1", HousePiece::new(HousePart::FrontWall, 1)),
-    ("front-wall-2", HousePiece::new(HousePart::FrontWall, 2)),
-    ("front-wall-3", HousePiece::new(HousePart::FrontWall, 3)),
-    ("front-wall-4", HousePiece::new(HousePart::FrontWall, 4)),
-    ("front-wall-5", HousePiece::new(HousePart::FrontWall, 5)),
-    ("front-wall-6", HousePiece::new(HousePart::FrontWall, 6)),
-    ("front-wall-7", HousePiece::new(HousePart::FrontWall, 7)),
-    ("back-wall-0", HousePiece::new(HousePart::BackWall, 0)),
-    ("back-wall-1", HousePiece::new(HousePart::BackWall, 1)),
-    ("back-wall-2", HousePiece::new(HousePart::BackWall, 2)),
-    ("back-wall-3", HousePiece::new(HousePart::BackWall, 3)),
-    ("back-wall-4", HousePiece::new(HousePart::BackWall, 4)),
-    ("back-wall-5", HousePiece::new(HousePart::BackWall, 5)),
-    ("back-wall-6", HousePiece::new(HousePart::BackWall, 6)),
-    ("back-wall-7", HousePiece::new(HousePart::BackWall, 7)),
-    ("right-wall-0", HousePiece::new(HousePart::RightWall, 0)),
-    ("right-wall-1", HousePiece::new(HousePart::RightWall, 1)),
-    ("right-wall-2", HousePiece::new(HousePart::RightWall, 2)),
-    ("right-wall-3", HousePiece::new(HousePart::RightWall, 3)),
-    ("right-wall-4", HousePiece::new(HousePart::RightWall, 4)),
-    ("right-wall-5", HousePiece::new(HousePart::RightWall, 5)),
-    ("right-wall-6", HousePiece::new(HousePart::RightWall, 6)),
-    ("right-wall-7", HousePiece::new(HousePart::RightWall, 7)),
-    ("left-wall-0", HousePiece::new(HousePart::LeftWall, 0)),
-    ("left-wall-1", HousePiece::new(HousePart::LeftWall, 1)),
-    ("left-wall-2", HousePiece::new(HousePart::LeftWall, 2)),
-    ("left-wall-3", HousePiece::new(HousePart::LeftWall, 3)),
-    ("left-wall-4", HousePiece::new(HousePart::LeftWall, 4)),
-    ("left-wall-5", HousePiece::new(HousePart::LeftWall, 5)),
-    ("left-wall-6", HousePiece::new(HousePart::LeftWall, 6)),
-    ("left-wall-7", HousePiece::new(HousePart::LeftWall, 7)),
-    ("right-roof-0", HousePiece::new(HousePart::RightRoof, 0)),
-    ("right-roof-1", HousePiece::new(HousePart::RightRoof, 1)),
-    ("right-roof-2", HousePiece::new(HousePart::RightRoof, 2)),
-    ("right-roof-3", HousePiece::new(HousePart::RightRoof, 3)),
-    ("left-roof-0", HousePiece::new(HousePart::LeftRoof, 0)),
-    ("left-roof-1", HousePiece::new(HousePart::LeftRoof, 1)),
-    ("left-roof-2", HousePiece::new(HousePart::LeftRoof, 2)),
-    ("left-roof-3", HousePiece::new(HousePart::LeftRoof, 3)),
-    ("front-roof-0", HousePiece::new(HousePart::FrontRoof, 0)),
-    ("front-roof-1", HousePiece::new(HousePart::FrontRoof, 1)),
-    ("front-roof-2", HousePiece::new(HousePart::FrontRoof, 2)),
-    ("front-roof-3", HousePiece::new(HousePart::FrontRoof, 3)),
-    ("back-roof-0", HousePiece::new(HousePart::BackRoof, 0)),
-    ("back-roof-1", HousePiece::new(HousePart::BackRoof, 1)),
-    ("back-roof-2", HousePiece::new(HousePart::BackRoof, 2)),
-    ("back-roof-3", HousePiece::new(HousePart::BackRoof, 3)),
-    ("chimney-0", HousePiece::new(HousePart::Chimney, 0)),
-    ("chimney-1", HousePiece::new(HousePart::Chimney, 1)),
-    ("mound", HousePiece::new(HousePart::Mound, 0)),
-];
-pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
-    ("wall", CratePiece::Wall),
-    ("wall-left", CratePiece::WallLeft),
-    ("wall-middle", CratePiece::WallMiddle),
-    ("wall-right", CratePiece::WallRight),
-    ("lid", CratePiece::Lid),
-    ("lid-front", CratePiece::LidFront),
-    ("lid-middle", CratePiece::LidMiddle),
-    ("lid-back", CratePiece::LidBack),
-    ("skid", CratePiece::Skid),
-    ("plank", CratePiece::Plank),
+
+pub const DAMPINGS: [(&str, Damping); 5] = [
+    ("falling", Damping::Falling),
+    ("sliding", Damping::Sliding),
+    ("settled", Damping::Settled),
+    ("creeping", Damping::Creeping),
+    ("rested", Damping::Rested),
 ];
 
 pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
@@ -212,18 +137,6 @@ pub const MATCH_PHASES: [(&str, MatchPhase); 4] = [
 pub const GROUNDS: [(&str, GroundKind); 2] = [
     ("dry-grass", GroundKind::DryGrass),
     ("packed-dirt", GroundKind::PackedDirt),
-];
-pub const TIMBER_FACES: [(&str, TimberFace); 6] = [
-    ("front", TimberFace::Front),
-    ("back", TimberFace::Back),
-    ("left", TimberFace::Left),
-    ("right", TimberFace::Right),
-    ("top", TimberFace::Top),
-    ("bottom", TimberFace::Bottom),
-];
-pub const TIMBER_PART_KINDS: [(&str, TimberPartKind); 2] = [
-    ("beam", TimberPartKind::Beam),
-    ("post", TimberPartKind::Post),
 ];
 pub const EVENT_TYPES: [(&str, SimEventType); 14] = [
     ("debris-impact", SimEventType::DebrisImpact),
@@ -286,19 +199,15 @@ const FLAG: FieldKind = FieldKind::Flag;
 const NAME_BYTES: usize = 256;
 /// Event labels (kill-feed notices) are at most 160 UTF-16 units.
 const LABEL_BYTES: usize = 640;
-const MAX_TIMBER_HITS: usize = 32;
-const MAX_TIMBER_MARKS: usize = 32;
-const TIMBER_HITS_BYTES: usize = MAX_TIMBER_HITS * 4 * 10 + 10;
-const TIMBER_PART_BYTES: usize = 256 + MAX_TIMBER_MARKS * 50;
+/// A structure's part set: its words as varints.
+const PART_SET_BYTES: usize = 4 * 10;
 const SCORES_BYTES: usize = 20;
 
 const VEHICLE_NAMES: [&str; 4] = names(&VEHICLE_KINDS);
 const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
-const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
+const COVER_NAMES: [&str; 12] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
-const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
-const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
-const HOUSE_NAMES: [&str; 51] = names(&HOUSE_PIECES);
+const DAMPING_NAMES: [&str; 5] = names(&DAMPINGS);
 
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
@@ -366,10 +275,7 @@ wire_fields!(
         ROTATION_W = Field::new("rotation.w", ROTATION),
         HP = Field::nullable("hp", VALUE),
         ALIVE = Field::new("alive", FLAG),
-        TIMBER_HITS = Field::new(
-            "timberHits",
-            FieldKind::Blob(TIMBER_HITS_BYTES, timber_hits_json)
-        ),
+        BROKEN = Field::new("broken", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
         MAX_HP = Field::nullable("maxHp", VALUE),
         X = Field::new("x", POSITION),
         Z = Field::new("z", POSITION),
@@ -379,12 +285,12 @@ wire_fields!(
         KIND = Field::new("kind", FieldKind::Choice(&COVER_NAMES)),
         DESTRUCTIBLE = Field::new("destructible", FLAG),
         COLOR = Field::new("color", COUNT),
-        DEBRIS_SEED = Field::new("debrisSeed", COUNT),
         TIMBER_JOIN = Field::new("timberJoin", FieldKind::Blob(1, timber_join_json)),
         MOTION_ORIGIN_X = Field::new("motion.originX", POSITION),
         MOTION_ORIGIN_Z = Field::new("motion.originZ", POSITION),
         MOTION_W = Field::new("motion.w", POSITION),
         MOTION_D = Field::new("motion.d", POSITION),
+        CRACKED = Field::new("cracked", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
     }
 );
 
@@ -407,11 +313,10 @@ wire_fields!(
         DIMENSIONS_Z = Field::new("dimensions.z", POSITION),
         MATERIAL = Field::new("material", FieldKind::Choice(&MATERIAL_NAMES)),
         SOURCE_KIND = Field::new("sourceKind", FieldKind::Choice(&COVER_NAMES)),
-        TIMBER_PART = Field::new(
-            "timberPart",
-            FieldKind::Blob(TIMBER_PART_BYTES, timber_part_json)
+        STRUCTURE_PARTS = Field::new(
+            "structureParts",
+            FieldKind::Blob(PART_SET_BYTES, part_set_json)
         ),
-        TOWER_PIECE = Field::new("towerPiece", FieldKind::Choice(&TOWER_NAMES)),
         TREE_COVER_ID = Field::new("treeCoverId", COUNT),
         TREE_CENTER_Y = Field::new("treeCenterY", POSITION),
         CREATED_AT = Field::new("createdAt", VALUE),
@@ -419,9 +324,9 @@ wire_fields!(
         WRECK = Field::new("wreck", FieldKind::Choice(&VEHICLE_NAMES)),
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
-        CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
-        HOUSE_PIECE = Field::new("housePiece", FieldKind::Choice(&HOUSE_NAMES)),
-        HOUSE_ID = Field::new("houseId", COUNT),
+        STRUCTURE_ID = Field::new("structureId", COUNT),
+        DAMPING = Field::new("damping", FieldKind::Choice(&DAMPING_NAMES)),
+        PASSES_THROUGH = Field::new("passesThrough", FLAG),
     }
 );
 
@@ -516,26 +421,6 @@ pub const ENTITY_FIELDS: [&[Field]; 5] = [
 // Nested structures, sent whole as blobs.
 // ---------------------------------------------------------------------------------------
 
-fn put_position(out: &mut Vec<u8>, value: f64) {
-    put_signed(out, super::wire::units(value, POSITION_SCALE));
-}
-
-fn put_rotation(out: &mut Vec<u8>, value: f64) {
-    put_signed(out, super::wire::units(value, ROTATION_SCALE));
-}
-
-fn read_position(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    Ok(reader.signed()? as f64 / POSITION_SCALE)
-}
-
-fn read_rotation(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    Ok(reader.signed()? as f64 / ROTATION_SCALE)
-}
-
-fn read_seed(reader: &mut WireReader<'_>) -> ReadResult<i32> {
-    i32::try_from(reader.signed()?).map_err(|_| "Invalid number".into())
-}
-
 /// A name table's value at the index read from `reader`.
 pub(crate) fn read_index<T: Copy>(
     reader: &mut WireReader<'_>,
@@ -555,46 +440,24 @@ fn finished<T>(reader: &WireReader<'_>, value: T) -> ReadResult<T> {
     }
 }
 
-fn write_timber_hits(out: &mut Vec<u8>, hits: &[TimberHit]) {
-    put_varint(out, hits.len() as u64);
-    for hit in hits {
-        put_position(out, hit.x);
-        put_position(out, hit.y);
-        put_position(out, hit.z);
-        put_position(out, hit.size);
+fn write_part_set(out: &mut Vec<u8>, set: &PartSet) {
+    for word in set.0 {
+        put_varint(out, word);
     }
 }
 
-fn read_timber_hits(bytes: &[u8]) -> ReadResult<Vec<TimberHit>> {
+fn read_part_set(bytes: &[u8]) -> ReadResult<PartSet> {
     let mut reader = WireReader::new(bytes);
-    let count = reader.varint()?;
-    if count > MAX_TIMBER_HITS as u64 {
-        return Err("Invalid list".into());
+    let mut set = PartSet::EMPTY;
+    for word in &mut set.0 {
+        *word = reader.varint()?;
     }
-    let mut hits = Vec::with_capacity(count as usize);
-    for _ in 0..count {
-        hits.push(TimberHit {
-            x: read_position(&mut reader)?,
-            y: read_position(&mut reader)?,
-            z: read_position(&mut reader)?,
-            size: read_position(&mut reader)?,
-        });
-    }
-    finished(&reader, hits)
+    finished(&reader, set)
 }
 
-fn timber_hits_json(bytes: &[u8]) -> ReadResult<Value> {
-    Ok(Value::Array(
-        read_timber_hits(bytes)?
-            .iter()
-            .map(|hit| {
-                json!({
-                    "x": json_number(hit.x), "y": json_number(hit.y),
-                    "z": json_number(hit.z), "size": json_number(hit.size),
-                })
-            })
-            .collect(),
-    ))
+fn part_set_json(bytes: &[u8]) -> ReadResult<Value> {
+    let set = read_part_set(bytes)?;
+    Ok(Value::Array(set.iter().map(|index| json!(index)).collect()))
 }
 
 const OPEN_MIN: u8 = 1;
@@ -628,82 +491,6 @@ fn timber_join_json(bytes: &[u8]) -> ReadResult<Value> {
     Ok(Value::Object(object))
 }
 
-fn write_timber_part(out: &mut Vec<u8>, part: &TimberPart) {
-    put_varint(out, index_of(&TIMBER_PART_KINDS, part.kind) as u64);
-    put_varint(out, part.index as u64);
-    for value in [part.x, part.y, part.z, part.w, part.h, part.d] {
-        put_position(out, value);
-    }
-    put_rotation(out, part.yaw);
-    put_rotation(out, part.lean);
-    put_varint(out, u64::from(part.color));
-    put_varint(out, u64::from(part.damage));
-    put_signed(out, i64::from(part.damage_seed));
-    put_varint(out, part.marks.len() as u64);
-    for mark in &part.marks {
-        put_position(out, mark.x);
-        put_position(out, mark.y);
-        put_varint(out, index_of(&TIMBER_FACES, mark.face) as u64);
-        put_position(out, mark.size);
-        put_signed(out, i64::from(mark.seed));
-    }
-}
-
-fn read_timber_part(bytes: &[u8]) -> ReadResult<TimberPart> {
-    let mut reader = WireReader::new(bytes);
-    let reader = &mut reader;
-    let kind = read_index(reader, &TIMBER_PART_KINDS)?;
-    let index = reader.varint()? as usize;
-    let mut part = TimberPart {
-        kind,
-        index,
-        x: read_position(reader)?,
-        y: read_position(reader)?,
-        z: read_position(reader)?,
-        w: read_position(reader)?,
-        h: read_position(reader)?,
-        d: read_position(reader)?,
-        yaw: read_rotation(reader)?,
-        lean: read_rotation(reader)?,
-        color: reader.varint32()?,
-        damage: reader.varint32()?,
-        damage_seed: read_seed(reader)?,
-        marks: Vec::new(),
-    };
-    let count = reader.varint()?;
-    if count > MAX_TIMBER_MARKS as u64 {
-        return Err("Invalid list".into());
-    }
-    for _ in 0..count {
-        part.marks.push(TimberMark {
-            x: read_position(reader)?,
-            y: read_position(reader)?,
-            face: read_index(reader, &TIMBER_FACES)?,
-            size: read_position(reader)?,
-            seed: read_seed(reader)?,
-        });
-    }
-    finished(reader, part)
-}
-
-fn timber_part_json(bytes: &[u8]) -> ReadResult<Value> {
-    let part = read_timber_part(bytes)?;
-    Ok(json!({
-        "kind": name(&TIMBER_PART_KINDS, part.kind),
-        "index": part.index,
-        "x": json_number(part.x), "y": json_number(part.y), "z": json_number(part.z),
-        "w": json_number(part.w), "h": json_number(part.h), "d": json_number(part.d),
-        "yaw": json_number(part.yaw), "lean": json_number(part.lean),
-        "color": part.color,
-        "damage": part.damage,
-        "damageSeed": part.damage_seed,
-        "marks": part.marks.iter().map(|mark| json!({
-            "x": json_number(mark.x), "y": json_number(mark.y),
-            "face": name(&TIMBER_FACES, mark.face),
-            "size": json_number(mark.size), "seed": mark.seed,
-        })).collect::<Vec<_>>(),
-    }))
-}
 
 fn read_scores(bytes: &[u8]) -> ReadResult<[u32; 2]> {
     let mut reader = WireReader::new(bytes);
@@ -836,12 +623,19 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
         VALUE_SCALE,
     );
     record.set_flag(ALIVE, cover.alive);
-    if cover.timber_hits.is_empty() {
-        record.clear(TIMBER_HITS);
-    } else {
-        record.set_blob(TIMBER_HITS, |out| {
-            write_timber_hits(out, &cover.timber_hits)
-        });
+    let gone = cover.structure.as_ref().map(|state| state.gone);
+    match gone {
+        Some(gone) if !gone.is_empty() => {
+            record.set_blob(BROKEN, |out| write_part_set(out, &gone));
+        }
+        _ => record.clear(BROKEN),
+    }
+    let cracked = cover.structure.as_ref().map(|state| state.cracked());
+    match cracked {
+        Some(cracked) if !cracked.is_empty() => {
+            record.set_blob(CRACKED, |out| write_part_set(out, &cracked));
+        }
+        _ => record.clear(CRACKED),
     }
     for (field, value) in [
         (X, cover.x),
@@ -855,10 +649,6 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
     set_choice(record, KIND, &COVER_KINDS, Some(cover.kind));
     record.set_flag(DESTRUCTIBLE, cover.destructible);
     record.set_count(COLOR, u64::from(cover.color));
-    // Debris seeds are whole numbers.
-    if let Some(seed) = cover.debris_seed {
-        record.set_count(DEBRIS_SEED, seed as u64);
-    }
     match cover.timber_join {
         Some(join) => record.set_blob(TIMBER_JOIN, |out| {
             out.push(
@@ -899,15 +689,17 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     }
     set_choice(record, MATERIAL, &MATERIALS, fragment.material);
     set_choice(record, SOURCE_KIND, &COVER_KINDS, fragment.source_kind);
-    match &fragment.timber_part {
-        Some(part) => record.set_blob(TIMBER_PART, |out| write_timber_part(out, part)),
-        None => record.clear(TIMBER_PART),
+    match &fragment.structure {
+        Some(debris) => {
+            record.set_blob(STRUCTURE_PARTS, |out| write_part_set(out, &debris.parts));
+            record.set_count(STRUCTURE_ID, u64::from(simulation.covers[debris.cover].id));
+        }
+        None => record.clear(STRUCTURE_PARTS),
     }
-    set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
-    set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
-    set_choice(record, HOUSE_PIECE, &HOUSE_PIECES, fragment.house_piece);
-    if let Some(house) = fragment.house_id {
-        record.set_count(HOUSE_ID, u64::from(house));
+    set_choice(record, DAMPING, &DAMPINGS, fragment.structure.map(|debris| debris.damping));
+    // Sent only while it passes through: absent is the usual case.
+    if fragment.structure.is_some() && passes_through(&simulation.world, fragment.body) {
+        record.set_flag(PASSES_THROUGH, true);
     }
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
@@ -1238,6 +1030,18 @@ impl<'a> Fields<'a> {
         }
     }
 
+    /// Required text of at most `max` UTF-16 units, copied into `buffer`.
+    fn text_into(&self, field: usize, max: usize, mut buffer: String) -> ReadResult<String> {
+        match self.record.slots.get(field) {
+            Some(Slot::Text(text)) if text_length(text) <= max => {
+                buffer.clear();
+                buffer.push_str(text);
+                Ok(buffer)
+            }
+            _ => self.error(field, "Invalid text"),
+        }
+    }
+
     fn blob(&self, field: usize) -> Option<&'a [u8]> {
         match self.record.slots.get(field) {
             Some(Slot::Blob(bytes)) => Some(bytes),
@@ -1286,6 +1090,14 @@ impl<'a> Fields<'a> {
 
 /// `tankReader`, projected with `previous` at its position.
 pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
+    read_tank_reusing(record, None)
+}
+
+/// [`read_tank`], keeping the name buffer of `spare`, a value the mirror no longer needs.
+pub(crate) fn read_tank_reusing(
+    record: &WireRecord,
+    spare: Option<RenderTank>,
+) -> ReadResult<RenderTank> {
     use tank::*;
     let fields = Fields::new(TANK_FIELDS, record);
     // The tank table splits position across non-adjacent fields.
@@ -1297,9 +1109,7 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
     Ok(RenderTank {
         id: record.id,
         life: fields.count32(LIFE)?,
-        name: fields
-            .opt_text(NAME, 64)?
-            .ok_or_else(|| "name: Invalid text".to_string())?,
+        name: fields.text_into(NAME, 64, spare.map(|tank| tank.name).unwrap_or_default())?,
         kind: fields.choice(KIND, &VEHICLE_KINDS)?,
         team: fields.team(TEAM)?,
         human: fields.flag(HUMAN)?,
@@ -1373,13 +1183,20 @@ pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
         alive: fields.flag(ALIVE)?,
         destructible: fields.flag(DESTRUCTIBLE)?,
         color: fields.count32(COLOR)?,
-        debris_seed: fields.number(DEBRIS_SEED).map(|seed| seed as f64),
         position: fields.point(POSITION_X)?,
         rotation: fields.rotation(ROTATION_X)?,
-        timber_hits: match fields.blob(TIMBER_HITS) {
-            Some(bytes) => read_timber_hits(bytes).map_err(|e| format!("timberHits: {e}"))?,
-            None => Vec::new(),
-        },
+        broken: fields
+            .blob(BROKEN)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("broken: {e}"))?
+            .unwrap_or_default(),
+        cracked: fields
+            .blob(CRACKED)
+            .map(read_part_set)
+            .transpose()
+            .map_err(|e| format!("cracked: {e}"))?
+            .unwrap_or_default(),
         timber_join: fields
             .blob(TIMBER_JOIN)
             .map(read_timber_join)
@@ -1404,15 +1221,15 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
         dimensions: fields.opt_point(DIMENSIONS_X)?,
         material: fields.opt_choice(MATERIAL, &MATERIALS)?,
         source_kind: fields.opt_choice(SOURCE_KIND, &COVER_KINDS)?,
-        timber_part: fields
-            .blob(TIMBER_PART)
-            .map(read_timber_part)
+        structure_id: fields.opt_count32(STRUCTURE_ID)?,
+        structure_parts: fields
+            .blob(STRUCTURE_PARTS)
+            .map(read_part_set)
             .transpose()
-            .map_err(|e| format!("timberPart: {e}"))?,
-        tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
-        crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
-        house_piece: fields.opt_choice(HOUSE_PIECE, &HOUSE_PIECES)?,
-        house_id: fields.opt_count32(HOUSE_ID)?,
+            .map_err(|e| format!("structureParts: {e}"))?,
+        rested: fields.opt_choice(DAMPING, &DAMPINGS)? == Some(Damping::Rested),
+        damping: fields.opt_choice(DAMPING, &DAMPINGS)?,
+        passes_through: fields.opt_flag(PASSES_THROUGH).unwrap_or(false),
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,
@@ -1602,23 +1419,26 @@ impl<T> EntityStore<T> {
         Ok(())
     }
 
-    /// Replaces a record in place, or appends a new one.
-    pub(crate) fn upsert(&mut self, stored: Stored<T>) {
+    /// Replaces a record in place, returning the one it replaced, or appends a new one.
+    pub(crate) fn upsert(&mut self, stored: Stored<T>) -> Option<Stored<T>> {
         match self.index.get(&stored.wire.id) {
-            Some(&index) => self.records[index] = stored,
+            Some(&index) => Some(std::mem::replace(&mut self.records[index], stored)),
             None => {
                 self.index.insert(stored.wire.id, self.records.len());
                 self.records.push(stored);
+                None
             }
         }
     }
 
-    /// Removes records, keeping the order of the rest.
-    pub(crate) fn remove_all(&mut self, ids: &[u32]) {
+    /// Removes records, keeping the order of the rest, and hands each to `removed`.
+    pub(crate) fn remove_all(&mut self, ids: &[u32], removed: impl FnMut(Stored<T>)) {
         if ids.is_empty() {
             return;
         }
-        self.records.retain(|stored| !ids.contains(&stored.wire.id));
+        self.records
+            .extract_if(.., |stored| ids.contains(&stored.wire.id))
+            .for_each(removed);
         self.index.clear();
         for (index, stored) in self.records.iter().enumerate() {
             self.index.insert(stored.wire.id, index);

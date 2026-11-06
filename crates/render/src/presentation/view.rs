@@ -9,24 +9,23 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, HouseCoverBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
-    cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
-    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
-    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
+    CoverShape, FLAG_CLOTH_NODE, HouseBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
+    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, pickup_signal,
+    pickup_tile_offset, release_tank_models, structure_debris, tank_model, tree_branch_stage,
     tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
-use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
+use sloppy_core::sim::crate_structure::crate_structure;
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
-use sloppy_core::sim::house_layout::HousePiece;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
+use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure_physics::structural;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
-use sloppy_core::sim::timber_layout::TimberPart;
-use sloppy_core::sim::tower_layout::TowerPiece;
+use sloppy_core::sim::tower_structure::LOWER_LEGS;
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
@@ -38,12 +37,10 @@ use super::PRESENTATION_EFFECTS;
 use super::aim_assist::AimAssist;
 use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
+use super::cottage_layouts::{CottageLayouts, DebrisSource};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
-use super::house_prep::{
-    HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared, release_spent_houses,
-};
-use super::house_rest::SettledShards;
+use super::house_rest::HousePiles;
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
@@ -166,13 +163,13 @@ const BRANCH_REST: f32 = 0.03;
 const TREE_SHUDDER: [f64; 4] = [0.04, 0.5, 9.0, 2.5];
 /// How far from a tree's trunk a shell impact still counts as hitting it.
 const TREE_HIT_REACH: f64 = 2.5;
-/// A timber impact this close to a loose member's surface scars it, up to this
-/// many scars per member (each one rebuilds the member's small model).
-const DEBRIS_HIT_REACH: f32 = 0.15;
-const MAX_DEBRIS_MARKS: usize = 8;
-const DEBRIS_MARK_SIZE: f64 = 0.8;
 /// Debris sinks by its height plus this margin while it fades.
 const SINK_MARGIN: f32 = 0.03;
+/// Seconds a collapsing cottage's loose boards, rafters and bricks take to grow to
+/// their size from where the simulation starts them: they start beside the wall and
+/// round the stack, and shown whole on the frame the cottage gave way, a board hung
+/// across a window and the chimney burst into bricks before anything had moved.
+const LOOSE_EMERGE: f64 = 0.25;
 /// Milliseconds of a frame that marked covers may spend rebuilding their looks
 /// before the rest wait for the next frame (one is always rebuilt).
 const COVER_REBUILD_MS: f64 = 3.0;
@@ -718,16 +715,32 @@ struct TreeView {
     shudder: Option<(Vec3, f64)>,
 }
 
+/// A fingerprint of what a structure shows: its broken parts, and a watchtower's struck
+/// legs.
+fn look_print(cover: &RenderCover) -> u64 {
+    let print = cover
+        .broken
+        .0
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325, |print, &word| {
+            (print ^ word).wrapping_mul(0x0100_0000_01b3)
+        });
+    let struck = LOWER_LEGS
+        .into_iter()
+        .enumerate()
+        .filter(|&(_, leg)| cover.kind == CoverKind::Tower && cover.cracked.contains(leg))
+        .fold(0u64, |bits, (corner, _)| bits | 1 << corner);
+    (print ^ struck).wrapping_mul(0x0100_0000_01b3)
+}
+
 struct CoverView {
     instance: InstanceId,
     /// The cover's joint when it lives in the round's combined static-cover
     /// model (hidden instead of removed); `None` for its own instance.
     joint: Option<usize>,
     key: String,
-    stage: u32,
-    hits: usize,
-    /// Rebuilt towers reuse rubble identities but choose a new look on collapse.
-    debris_seed: Option<f64>,
+    /// What a structure shows ([`look_print`]).
+    marks: u64,
     movable: bool,
     scale: Vec3,
     world: Mat4,
@@ -737,23 +750,22 @@ struct CoverView {
 /// A hit cover's new look being built over a few frames while its last one shows.
 struct CoverLook {
     cover: u32,
-    /// The look being built (`cover_key`).
-    key: String,
+    /// The look being built ([`look_print`]; the rest of a cover's look is fixed for
+    /// the round).
+    print: u64,
     phase: LookPhase,
 }
 
 /// Where a cover's new look has got to. Each phase is a step of its own: a model is
-/// uploaded in a separate step from building it (a cottage's also batched and
-/// prepared), so a slow device spreads the work over frames instead of taking it in one.
+/// uploaded in a separate step from building it, so a slow device spreads the work
+/// over frames instead of taking it in one.
 enum LookPhase {
-    /// A cottage's model, built a step at a time (its kits in progress are large).
-    Building(Box<HouseCoverBuild>),
-    /// A cottage's model, built, to batch and prepare for upload.
-    Built(Node),
-    /// A crate's or timber wall's look, its model still to build.
+    /// Its model still to build.
     Unbuilt,
-    /// Ready to upload and show (prepared for upload ahead for a cottage).
-    Ready(CoverModel, Option<PendingModel>),
+    /// A cottage's model, built a wall or roof slope a step.
+    Building(Box<HouseBuild>),
+    /// Ready to upload and show.
+    Ready(CoverModel),
 }
 
 struct CoverModelEntry {
@@ -771,31 +783,53 @@ enum FragmentLook {
     Piece,
     Wreck(VehicleKind, Team, WreckPart),
     Owned(ModelId, Aabb),
-    /// A [`SharedDebris`] model, which every fragment of its look shares this round.
-    Shared(Aabb),
+    /// A shared structure debris model ([`shared_debris_key`]), which every fragment
+    /// of its look shares while any shows it.
+    Shared(Aabb, SharedDebrisKey),
 }
 
-/// Looks each crate section comes in, so a crate's matching sections differ.
-const CRATE_SECTION_LOOKS: u32 = 3;
-
-/// A crate section's look: the section, its size in whole millimetres (as
-/// replication rounds it), the crate's paint and which of [`CRATE_SECTION_LOOKS`]
-/// it wears.
-type SectionKey = (CratePiece, [i64; 3], u32, u32);
-
-fn section_key(piece: CratePiece, size: DVec3, color: u32, look: u32) -> SectionKey {
-    let millimetres = (size * 1000.0).round().as_i64vec3().to_array();
-    (piece, millimetres, color, look)
+/// A structure debris look shared by every fragment that looks the same
+/// ([`shared_debris_key`]), with the parts' model tree the piles merge while
+/// fragments show it. A look built ahead, or one no fragment shows any more, keeps no
+/// tree (a harbor's crate looks held 3 MB of meshes on the CPU for the round): the
+/// piles draw its parts again when they merge them.
+struct SharedDebris {
+    look: BoundedModel,
+    node: Option<Node>,
+    /// The fragments showing it.
+    users: usize,
+    /// Built ahead (a crate's walls, lid and landing pieces): kept for the round.
+    ahead: bool,
 }
 
-/// A debris look that depends only on what broke, so one model serves every fragment
-/// wearing it this round and is built ahead, a look a frame, before anything breaks:
-/// a crate section, or a piece of a toppled watchtower in its paint. Building a
-/// collapse's pieces on the frame it fell cost a weak device tens of milliseconds.
+/// How many shared debris looks no fragment shows any more are kept for the next
+/// fragment that looks the same; older ones are released. A Scrap Yard that keeps
+/// felling and rebuilding towers otherwise kept a model for every way one came down.
+const IDLE_SHARED_DEBRIS: usize = 12;
+
+/// The key a structure's fallen parts' look is shared under for the round: a crate's
+/// (by its size and paint) or a watchtower's (by its cabin's paint) parts look alike on
+/// every one of its kind, so one model serves every fragment wearing them and is built
+/// ahead, a look a frame, before anything breaks. A cottage's and a timber wall's are
+/// their own. Building a collapse's pieces on the frame it fell cost a weak device tens
+/// of milliseconds.
+fn shared_debris_key(shape: &CoverShape, parts: &PartSet) -> Option<SharedDebrisKey> {
+    matches!(shape.kind, CoverKind::Cargo | CoverKind::Tower).then(|| SharedDebrisKey {
+        kind: shape.kind,
+        size: [shape.w, shape.d, shape.h].map(f64::to_bits),
+        color: shape.color,
+        parts: *parts,
+    })
+}
+
+/// [`shared_debris_key`]: the structure's kind, size (`w`, `d`, `h` as bits) and paint,
+/// and the parts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum SharedDebris {
-    Section(SectionKey),
-    Tower(TowerPiece, u32),
+struct SharedDebrisKey {
+    kind: CoverKind,
+    size: [u64; 3],
+    color: u32,
+    parts: PartSet,
 }
 
 struct FragmentView {
@@ -805,10 +839,12 @@ struct FragmentView {
     /// It fades while it sinks; a felled crown only sinks, so its alpha-tested
     /// foliage never turns into a blended sheet.
     fades: bool,
-    /// A loose timber member and the scars shells have left on it since it fell.
-    timber: Option<TimberPart>,
     /// The body's last pose, to find where a shell struck the piece.
     pose: (Vec3, Quat),
+    /// When a cottage's loose board, rafter or brick was first shown (presentation
+    /// seconds), for it to grow out of the falling wreck ([`LOOSE_EMERGE`]); None
+    /// for every other piece.
+    emerges_from: Option<f64>,
 }
 
 struct PickupView {
@@ -896,10 +932,9 @@ struct CoverPlan {
     combined: Vec<usize>,
     /// The rest, each its own instance, added after the combined model.
     own: Vec<usize>,
-    /// The combined model's root and each built cover's index, damage stage, model
-    /// and tree parts.
+    /// The combined model's root and each built cover's index, model and tree parts.
     root: Node,
-    built: Vec<(usize, u32, Arc<Node>, Option<TreeParts>)>,
+    built: Vec<(usize, Arc<Node>, Option<TreeParts>)>,
 }
 
 impl CoverPlan {
@@ -1014,25 +1049,23 @@ pub struct Presentation {
     /// uploaded (one per cover at most).
     cover_looks: Vec<CoverLook>,
     /// Whether this frame already rebuilt a cover's look or built a debris model:
-    /// work that can wait (debris looks built ahead, a cottage's collapse cut ahead)
-    /// then waits for a quieter frame instead of piling onto this one.
+    /// work that can wait (debris looks built ahead) then waits for a quieter frame
+    /// instead of piling onto this one.
     busy: bool,
     fragments: HashMap<u32, FragmentView>,
-    /// Debris models built this round, shared by every fragment that looks the same:
-    /// crate walls split at a few places, so sizes repeat between crates, and every
-    /// watchtower of a paint breaks into the same pieces.
-    shared_debris: HashMap<SharedDebris, BoundedModel>,
-    /// Debris looks this round's covers can break into, still to build; one is built
-    /// a frame, so a crate or tower breaking builds none.
-    debris_warmups: Vec<SharedDebris>,
-    /// The pieces of each collapsing cottage still to be given a view: the whole
-    /// set is taken from the preparation, or built, when its first piece appears.
-    house_pieces: HashMap<u32, Vec<Prepared<(ModelId, Aabb)>>>,
-    /// The collapse pieces of the most damaged standing cottage, cut and uploaded
-    /// a little each frame before it falls.
-    house_prep: HousePreparation<(ModelId, Aabb)>,
-    /// Collapsed cottages' resting shards, merged into one model each.
-    settled: SettledShards<(ModelId, InstanceId)>,
+    /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
+    piles: HousePiles<(ModelId, InstanceId), DebrisSource>,
+    /// Cottages' layouts while a build holds them, and this frame's pieces for their
+    /// fallen bodies.
+    layouts: CottageLayouts,
+    /// Structure debris looks shared by every fragment that looks the same.
+    shared_debris: HashMap<SharedDebrisKey, SharedDebris>,
+    /// Shared looks no fragment showed any more, oldest first (one may have come back
+    /// into use since).
+    idle_debris: VecDeque<SharedDebrisKey>,
+    /// Debris looks this round's crates can break into, still to build; one is built a
+    /// frame, so a crate breaking builds none.
+    debris_warmups: Vec<(CoverShape, PartSet)>,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
     chimneys: Vec<(u32, bool)>,
@@ -1124,11 +1157,11 @@ impl Presentation {
             cover_looks: Vec::new(),
             busy: false,
             fragments: HashMap::new(),
+            piles: HousePiles::default(),
+            layouts: CottageLayouts::default(),
             shared_debris: HashMap::new(),
+            idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
-            house_pieces: HashMap::new(),
-            house_prep: HousePreparation::default(),
-            settled: SettledShards::default(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
             supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
@@ -1400,7 +1433,9 @@ impl Presentation {
                 }
             }
             if shown {
-                self.chimneys = model_catalog::standing_chimneys(&state.covers);
+                self.chimneys.clear();
+                self.chimneys
+                    .extend(model_catalog::standing_chimneys(&state.covers));
             }
         }
         if self.theme != Some(theme) {
@@ -1587,7 +1622,7 @@ impl Presentation {
                 z: motion.origin_z,
                 w: motion.w,
                 d: motion.d,
-                ..cover.clone()
+                ..*cover
             }),
             None => std::borrow::Cow::Borrowed(cover),
         }
@@ -1598,17 +1633,16 @@ impl Presentation {
     fn cover_entry(
         &mut self,
         cover: &RenderCover,
-        stage: u32,
-        built_model: Option<(CoverModel, Option<PendingModel>)>,
+        built_model: Option<CoverModel>,
     ) -> (String, Mat4) {
         let movable = cover.motion.is_some();
         let built = Self::built_cover(cover);
-        let key = Self::cover_model_key(cover, stage);
+        let key = Self::cover_model_key(cover);
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
-            let (CoverModel { mut root, tree }, pending) =
-                built_model.unwrap_or_else(|| (model_catalog::cover_model(&built, stage), None));
+            let CoverModel { mut root, tree } =
+                built_model.unwrap_or_else(|| model_catalog::cover_model(&built));
             if movable {
                 // The body's centre is half the cover's height up; drop the parts.
                 let drop = cover.h / (2.0 * root.scale.y);
@@ -1617,12 +1651,7 @@ impl Presentation {
                 }
             }
             self.textures.request_scenery(&mut self.renderer, &root);
-            // A model prepared ahead was prepared from this root; only cottages, which
-            // never move, are.
-            let model = match pending.filter(|_| !movable) {
-                Some(pending) => self.renderer.add_pending_model(pending, Lifetime::Round),
-                None => self.renderer.add_model(&root, Lifetime::Round),
-            };
+            let model = self.renderer.add_model(&root, Lifetime::Round);
             self.cover_models.insert(
                 key.clone(),
                 CoverModelEntry {
@@ -1645,8 +1674,8 @@ impl Presentation {
     /// The key a cover's look's model is kept under in `cover_models`: covers that look
     /// the same share it, movable ones apart (their parts are dropped to the body's
     /// centre).
-    fn cover_model_key(cover: &RenderCover, stage: u32) -> String {
-        let mut key = cover_key(&Self::built_cover(cover), stage);
+    fn cover_model_key(cover: &RenderCover) -> String {
+        let mut key = cover_key(&Self::built_cover(cover));
         if cover.motion.is_some() {
             key += "/movable";
         }
@@ -1669,15 +1698,9 @@ impl Presentation {
         self.add_cover_with(cover, None);
     }
 
-    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead,
-    /// and prepared for upload when that was done ahead too.
-    fn add_cover_with(
-        &mut self,
-        cover: &RenderCover,
-        built_model: Option<(CoverModel, Option<PendingModel>)>,
-    ) {
-        let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-        let (key, world) = self.cover_entry(cover, stage, built_model);
+    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead.
+    fn add_cover_with(&mut self, cover: &RenderCover, built_model: Option<CoverModel>) {
+        let (key, world) = self.cover_entry(cover, built_model);
         let entry = &self.cover_models[&key];
         let model = entry.model;
         let scale = entry.source.scale.as_vec3();
@@ -1696,9 +1719,7 @@ impl Presentation {
                 instance,
                 joint: None,
                 key,
-                stage,
-                hits: cover.timber_hits.len(),
-                debris_seed: cover.debris_seed,
+                marks: look_print(cover),
                 movable: cover.motion.is_some(),
                 scale,
                 world,
@@ -1722,34 +1743,22 @@ impl Presentation {
     /// combined model (a joint each), so their shadows merge into a couple of
     /// draws; covers sharing a look stay instanced, movable ones get their own
     /// instance. A combined cover that changes its look moves out to its own.
-    /// Queue every shared debris look this round's covers can break into: crate walls
-    /// and lids split in a few patterns only, so each size of crate has a few dozen
-    /// sections, and each paint of watchtower falls into its twelve pieces. Looks pop
-    /// from the back, so the towers' pieces, the costliest to build, come first.
+    /// Queue every shared debris look this round's crates break into: each wall and
+    /// the lid alone, and each piece a landing breaks them into.
     fn queue_debris(&mut self, covers: &[RenderCover]) {
         self.debris_warmups.clear();
-        let mut crates = Vec::new();
+        let mut seen = std::collections::HashSet::new();
         for cover in covers.iter().filter(|cover| cover.kind == CoverKind::Cargo) {
-            let shape = [cover.w, cover.d, cover.h].map(f64::to_bits);
-            if crates.contains(&(shape, cover.color)) {
-                continue;
-            }
-            crates.push((shape, cover.color));
-            for (piece, size) in crate_section_looks(cover.w, cover.d, cover.h) {
-                for look in 0..CRATE_SECTION_LOOKS {
-                    let key = section_key(piece, DVec3::from_array(size), cover.color, look);
-                    let key = SharedDebris::Section(key);
-                    if !self.debris_warmups.contains(&key) {
-                        self.debris_warmups.push(key);
-                    }
-                }
-            }
-        }
-        for cover in covers.iter().filter(|cover| cover.kind == CoverKind::Tower) {
-            for piece in TowerPiece::ALL.into_iter().rev() {
-                let key = SharedDebris::Tower(piece, cover.color);
-                if !self.debris_warmups.contains(&key) {
-                    self.debris_warmups.push(key);
+            let shape = CoverShape::from(cover);
+            let layout = crate_structure(cover.w, cover.d, cover.h);
+            let first = layout.parts.len();
+            let bodies = (0..first.min(5)).chain(first..first + layout.pieces.len());
+            for index in bodies {
+                let parts = PartSet::from_indices([index]);
+                if let Some(key) = shared_debris_key(&shape, &parts)
+                    && seen.insert(key)
+                {
+                    self.debris_warmups.push((shape.clone(), parts));
                 }
             }
         }
@@ -1761,28 +1770,68 @@ impl Presentation {
         if self.busy {
             return;
         }
-        if let Some(key) = self.debris_warmups.pop() {
-            self.shared_debris(key);
+        if let Some((shape, parts)) = self.debris_warmups.pop()
+            && let Some(key) = shared_debris_key(&shape, &parts)
+        {
+            let shared = self.shared_structure_debris(&shape, &parts, key);
+            shared.ahead = true;
+            if shared.users == 0 {
+                shared.node = None;
+            }
         }
     }
 
-    /// A shared debris look's model, built on first use. Debris fades as it is
-    /// cleared away.
-    fn shared_debris(&mut self, key: SharedDebris) -> &BoundedModel {
+    /// The shared look of a structure's fallen parts under `key`
+    /// ([`shared_debris_key`]), built on first use.
+    fn shared_structure_debris(
+        &mut self,
+        shape: &CoverShape,
+        parts: &PartSet,
+        key: SharedDebrisKey,
+    ) -> &mut SharedDebris {
         let renderer = &mut self.renderer;
         self.shared_debris.entry(key).or_insert_with(|| {
-            let node = match key {
-                SharedDebris::Section((piece, millimetres, color, look)) => {
-                    let size = DVec3::from_array(millimetres.map(|mm| mm as f64 / 1000.0));
-                    crate_piece_model(piece, size, color, look)
-                }
-                SharedDebris::Tower(piece, color) => tower_piece_model(piece, color),
-            };
-            BoundedModel {
+            let node = structure_debris(shape, parts);
+            let look = BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
-                model: renderer.add_fading_model(&node, Lifetime::Round),
+                model: renderer.add_falling_debris_model(&node, Lifetime::Round),
+            };
+            SharedDebris {
+                look,
+                node: Some(node),
+                users: 0,
+                ahead: false,
             }
         })
+    }
+
+    /// A fragment showing shared look `key` left: once no fragment shows it, it waits
+    /// among the idle looks, and the oldest idle ones beyond [`IDLE_SHARED_DEBRIS`]
+    /// release their models.
+    fn release_shared_debris(&mut self, key: SharedDebrisKey) {
+        let Some(shared) = self.shared_debris.get_mut(&key) else {
+            return;
+        };
+        shared.users -= 1;
+        if shared.users > 0 {
+            return;
+        }
+        shared.node = None;
+        if shared.ahead {
+            return;
+        }
+        self.idle_debris.push_back(key);
+        while self.idle_debris.len() > IDLE_SHARED_DEBRIS {
+            let oldest = self.idle_debris.pop_front().expect("over the bound");
+            if self
+                .shared_debris
+                .get(&oldest)
+                .is_some_and(|shared| shared.users == 0)
+            {
+                let shared = self.shared_debris.remove(&oldest).expect("looked up");
+                self.renderer.remove_model(shared.look.model);
+            }
+        }
     }
 
     /// Build the next of `plan`'s combined covers' models into its root; false once
@@ -1792,13 +1841,12 @@ impl Presentation {
             return false;
         };
         let cover = &covers[index];
-        let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-        let CoverModel { root: model, tree } = model_catalog::cover_model(cover, stage);
+        let CoverModel { root: model, tree } = model_catalog::cover_model(cover);
         self.textures.request_scenery(&mut self.renderer, &model);
         let mut joint = Node::group(combined_joint(cover.id));
         joint.children.push(model.clone());
         plan.root.children.push(joint);
-        plan.built.push((index, stage, Arc::new(model), tree));
+        plan.built.push((index, Arc::new(model), tree));
         true
     }
 
@@ -1816,7 +1864,7 @@ impl Presentation {
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("combined cover model");
-        for (index, stage, source, tree) in built {
+        for (index, source, tree) in built {
             let cover = &covers[index];
             let nodes = self.renderer.model_nodes(model);
             let name = combined_joint(cover.id);
@@ -1846,9 +1894,7 @@ impl Presentation {
                     instance,
                     joint: Some(joint),
                     key,
-                    stage,
-                    hits: cover.timber_hits.len(),
-                    debris_seed: cover.debris_seed,
+                    marks: look_print(cover),
                     movable: false,
                     scale: Vec3::ONE,
                     world: Mat4::IDENTITY,
@@ -1935,9 +1981,6 @@ impl Presentation {
         }
         if event.cover_kind == Some(CoverKind::Tree) {
             self.tree_event(event);
-        }
-        if event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::Timber) {
-            self.scar_timber_debris(event);
         }
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
@@ -2045,64 +2088,6 @@ impl Presentation {
         }
     }
 
-    /// A shell that strikes a loose timber member leaves a scar on it, like the
-    /// standing wall's. The simulation only marks standing walls (their members are
-    /// gameplay data), so loose members are marked here from the impact, which every
-    /// viewer receives: the struck member is the one whose surface is nearest.
-    fn scar_timber_debris(&mut self, event: &SimEvent) {
-        let Some(height) = event.height else {
-            return;
-        };
-        let point = Vec3::new(event.x as f32, height as f32, event.z as f32);
-        let struck = self
-            .fragments
-            .iter()
-            .filter_map(|(&id, view)| {
-                let part = view.timber.as_ref()?;
-                let (position, rotation) = view.pose;
-                let local = rotation.inverse() * (point - position);
-                let half = Vec3::new(part.w as f32, part.h as f32, part.d as f32) / 2.0;
-                let outside = (local.abs() - half).max(Vec3::ZERO).length();
-                (outside <= DEBRIS_HIT_REACH && part.marks.len() < MAX_DEBRIS_MARKS)
-                    .then_some((outside, id, local))
-            })
-            .min_by(|a, b| a.0.total_cmp(&b.0));
-        let Some((_, id, local)) = struck else {
-            return;
-        };
-        let view = self.fragments.get_mut(&id).expect("struck fragment");
-        let Some(part) = view.timber.as_mut() else {
-            return;
-        };
-        let mark = part.loose_mark(
-            f64::from(local.x),
-            f64::from(local.y),
-            f64::from(local.z),
-            DEBRIS_MARK_SIZE,
-        );
-        part.marks.push(mark);
-        let (model, look) = owned_look(&mut self.renderer, &timber_debris_model(part), true);
-        let Some(instance) = self
-            .renderer
-            .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
-        else {
-            self.renderer.remove_model(model);
-            return;
-        };
-        self.renderer.remove_instance(view.instance);
-        if let FragmentLook::Owned(old, _) = view.look {
-            self.renderer.remove_model(old);
-        }
-        view.instance = instance;
-        view.look = look;
-        // The next fragment update poses the new instance.
-        let (position, rotation) = view.pose;
-        self.renderer.set_transform(
-            instance,
-            Mat4::from_rotation_translation(rotation, position),
-        );
-    }
-
     /// Screen angle of damage for the HUD's direction indicator.
     pub fn damage_angle(&self, event: &SimEvent) -> Option<f64> {
         let origin = event.damage_source?.origin;
@@ -2141,7 +2126,6 @@ impl Presentation {
         self.update_supply_pieces();
         self.update_fragments(state);
         self.warm_debris();
-        self.prepare_houses(&state.covers);
         self.update_mines(state);
         // The camera is final here; the effects order smoke by this frame's eye.
         self.renderer.set_camera(self.rig.camera);
@@ -2501,11 +2485,12 @@ impl Presentation {
     /// Stop the smoke of a cottage whose chimney has toppled or fallen, and start it
     /// again when the cottage stands again.
     fn update_chimney_smoke(&mut self, state: &RenderState) {
-        let chimneys = model_catalog::standing_chimneys(&state.covers);
-        if chimneys == self.chimneys {
+        if model_catalog::standing_chimneys(&state.covers).eq(self.chimneys.iter().copied()) {
             return;
         }
-        self.chimneys = chimneys;
+        self.chimneys.clear();
+        self.chimneys
+            .extend(model_catalog::standing_chimneys(&state.covers));
         let Some(theme) = self.theme else {
             return;
         };
@@ -2524,31 +2509,24 @@ impl Presentation {
     /// what is left of the time waits for the next frame (`longest` is the longest
     /// step this frame has taken): the time bounds the frame rather than when its last
     /// step starts.
-    fn build_cover_look(&mut self, cover: &RenderCover, stage: u32, start: f64, longest: &mut f64) {
-        let key = cover_key(cover, stage);
-        let index = match self
+    fn build_cover_look(&mut self, cover: &RenderCover, start: f64, longest: &mut f64) {
+        let print = look_print(cover);
+        let found = self
             .cover_looks
             .iter()
-            .position(|look| look.cover == cover.id)
-        {
-            Some(index) if self.cover_looks[index].key == key => index,
+            .position(|look| look.cover == cover.id);
+        // A newer look of a cottage still building keeps its layout.
+        let _layout = found.and_then(|index| match &self.cover_looks[index].phase {
+            LookPhase::Building(build) => Some(build.layout().clone()),
+            _ => None,
+        });
+        let index = match found {
+            Some(index) if self.cover_looks[index].print == print => index,
             found => {
-                let phase = if cover.kind == CoverKind::House {
-                    LookPhase::Building(Box::new(HouseCoverBuild::new(
-                        cover.x,
-                        cover.z,
-                        cover.w,
-                        cover.d,
-                        cover.h,
-                        stage,
-                        &cover.timber_hits,
-                    )))
-                } else {
-                    LookPhase::Unbuilt
-                };
+                let phase = LookPhase::Unbuilt;
                 let look = CoverLook {
                     cover: cover.id,
-                    key,
+                    print,
                     phase,
                 };
                 match found {
@@ -2567,34 +2545,44 @@ impl Presentation {
             let before = now_ms();
             let phase = &mut self.cover_looks[index].phase;
             let installed = match phase {
+                // A look another cover already shows needs no model of its own.
+                LookPhase::Unbuilt
+                    if cover.kind == CoverKind::House
+                        && !self
+                            .cover_models
+                            .contains_key(&Self::cover_model_key(cover)) =>
+                {
+                    let layout = self.layouts.layout(cover.id, &CoverShape::from(cover));
+                    *phase = LookPhase::Building(Box::new(HouseBuild::new(
+                        layout,
+                        cover.x,
+                        cover.z,
+                        &cover.broken,
+                    )));
+                    false
+                }
                 LookPhase::Building(build) => {
-                    if let Some(root) = build.step() {
-                        *phase = LookPhase::Built(root);
+                    if build.step()
+                        && let LookPhase::Building(build) =
+                            std::mem::replace(phase, LookPhase::Unbuilt)
+                    {
+                        *phase = LookPhase::Ready(model_catalog::house_cover_model(*build));
                     }
                     false
                 }
-                LookPhase::Built(root) => {
-                    let model = model_catalog::built_cover_model(std::mem::take(root));
-                    let pending = self.renderer.prepare_pending_model(&model.root);
-                    *phase = LookPhase::Ready(model, Some(pending));
-                    false
-                }
-                // A look another cover already shows needs no model of its own.
                 LookPhase::Unbuilt
                     if !self
                         .cover_models
-                        .contains_key(&Self::cover_model_key(cover, stage)) =>
+                        .contains_key(&Self::cover_model_key(cover)) =>
                 {
-                    let model = model_catalog::cover_model(&Self::built_cover(cover), stage);
-                    *phase = LookPhase::Ready(model, None);
+                    let model = model_catalog::cover_model(&Self::built_cover(cover));
+                    *phase = LookPhase::Ready(model);
                     false
                 }
                 LookPhase::Unbuilt | LookPhase::Ready(..) => {
                     let look = self.cover_looks.swap_remove(index);
                     match look.phase {
-                        LookPhase::Ready(model, pending) => {
-                            self.add_cover_with(cover, Some((model, pending)));
-                        }
+                        LookPhase::Ready(model) => self.add_cover_with(cover, Some(model)),
                         _ => self.add_cover(cover),
                     }
                     true
@@ -2616,33 +2604,20 @@ impl Presentation {
         let mut longest = 0.0_f64;
         for cover in &state.covers {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
-            let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
             let shown = self.covers.get(&cover.id);
-            let rebuild = shown.is_none_or(|view| {
-                cover.alive
-                    && (view.stage != stage
-                        || view.debris_seed != cover.debris_seed
-                        || (matches!(
-                            cover.kind,
-                            CoverKind::Timber | CoverKind::Cargo | CoverKind::House
-                        ) && view.hits != cover.timber_hits.len()))
-            });
-            // A blast that marks several crates, walls or cottages at once rebuilds them
-            // over a few frames on a slow device: one step a frame at least, more while
-            // this frame's rebuild time lasts. A cover keeps its last look meanwhile;
-            // one without a view is always built. A hit cottage, crate or timber wall
-            // builds its new look in steps (a cottage's model in several), uploading
-            // it in a step of its own.
+            // A structure changes as its parts break, levelled or not.
+            let structure = structural(cover.kind);
+            let rebuild = shown.is_none_or(|view| structure && view.marks != look_print(cover));
+            // A blast that breaks several structures at once rebuilds them over a few
+            // frames on a slow device: one step a frame at least, more while this frame's
+            // rebuild time lasts. A cover keeps its last look meanwhile; one without a
+            // view is always built. A broken structure builds its new look in a step,
+            // uploading it in a step of its own.
             let shown = shown.is_some();
             let wait = shown && rebuilt && now_ms() - start + longest >= COVER_REBUILD_MS;
             if rebuild && !wait {
-                if shown
-                    && matches!(
-                        cover.kind,
-                        CoverKind::House | CoverKind::Cargo | CoverKind::Timber
-                    )
-                {
-                    self.build_cover_look(cover, stage, start, &mut longest);
+                if shown && structure {
+                    self.build_cover_look(cover, start, &mut longest);
                 } else {
                     let before = now_ms();
                     self.add_cover(cover);
@@ -2701,7 +2676,9 @@ impl Presentation {
                 self.renderer
                     .set_node_visible(view.instance, tree.cut, stump);
             }
-            let shown = cover.alive || stump;
+            // A structure shows what still stands of it for good (a cottage its plinth,
+            // a watchtower its footings).
+            let shown = cover.alive || stump || structure;
             match view.joint {
                 Some(joint) => self.renderer.set_node_visible(view.instance, joint, shown),
                 None => self.renderer.set_visible(view.instance, shown),
@@ -3252,24 +3229,21 @@ impl Presentation {
     }
 
     fn update_fragments(&mut self, state: &RenderState) {
+        let mut gone_shared = Vec::new();
         self.live.clear();
         self.live.extend(state.fragments.iter().map(|f| f.id));
         for (_, view) in self.fragments.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.instance);
-            if let FragmentLook::Owned(model, _) = view.look {
-                self.renderer.remove_model(model);
+            match view.look {
+                FragmentLook::Owned(model, _) => self.renderer.remove_model(model),
+                FragmentLook::Shared(_, key) => gone_shared.push(key),
+                _ => {}
             }
         }
-        for (model, instance) in self.settled.retain(&self.live) {
-            self.renderer.remove_instance(instance);
-            self.renderer.remove_model(model);
+        for key in gone_shared.drain(..) {
+            self.release_shared_debris(key);
         }
-        let renderer = &mut self.renderer;
-        release_spent_houses(&mut self.house_pieces, &state.fragments, |(model, _)| {
-            renderer.remove_model(model);
-        });
-        let standing = |house: u32| state.covers.iter().any(|c| c.id == house && c.alive);
-        for (model, instance) in self.settled.rebuilt(standing) {
+        for (model, instance) in self.piles.retain(&self.live) {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
         }
@@ -3302,7 +3276,11 @@ impl Presentation {
                     // The piece pool is sized for the largest debris budget.
                     self.renderer
                         .set_visible(view.instance, count <= FRAGMENT_CAPACITY);
-                    let size = fragment.size as f32;
+                    let emerged = view.emerges_from.map_or(1.0, |from| {
+                        let t = ((self.time - from) / LOOSE_EMERGE).clamp(0.0, 1.0);
+                        (t * t * (3.0 - 2.0 * t)) as f32
+                    });
+                    let size = fragment.size as f32 * emerged;
                     let scale = fragment
                         .dimensions
                         .map_or(Vec3::splat(size), |d| vec3(d) * size);
@@ -3328,7 +3306,7 @@ impl Presentation {
                             vehicle(*kind).scale as f32,
                             self.library.wrecks[&(*kind, *team, *part)].bounds,
                         ),
-                        FragmentLook::Owned(_, bounds) | FragmentLook::Shared(bounds) => {
+                        FragmentLook::Owned(_, bounds) | FragmentLook::Shared(bounds, _) => {
                             (1.0, *bounds)
                         }
                         FragmentLook::Piece => unreachable!("handled above"),
@@ -3362,19 +3340,25 @@ impl Presentation {
             if view.fades {
                 self.renderer.set_opacity(view.instance, 1.0 - cleanup);
             }
-            if self.settled.tracks(fragment.id) {
-                self.settled
+            if self.piles.tracks(fragment.id) {
+                self.piles
                     .observe(fragment.id, view.pose, cleanup > 0.0, self.time);
             }
         }
-        self.settle_houses();
+        self.settle_piles();
+        self.layouts.end_frame();
     }
 
-    /// Bake resting cottage shards into merged chunks, one a frame, and hide their
-    /// own views; show again the ones whose chunk broke up. The merges are one-off
-    /// models, merged straight into the upload layout and not kept once uploaded.
-    fn settle_houses(&mut self) {
-        let plan = self.settled.plan(self.time);
+    /// Bake resting cottage parts into merged chunks, one a frame, and hide their own
+    /// views; show again the ones whose chunk broke up. The merges are one-off models,
+    /// merged straight into the upload layout and not kept once uploaded.
+    fn settle_piles(&mut self) {
+        let (layouts, shared) = (&mut self.layouts, &self.shared_debris);
+        let plan = self.piles.plan(self.time, |source| {
+            let node = shared_debris_key(&source.shape, &source.parts)
+                .and_then(|key| shared.get(&key)?.node.clone());
+            node.unwrap_or_else(|| layouts.body(source))
+        });
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
@@ -3385,22 +3369,13 @@ impl Presentation {
                 self.renderer
                     .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             {
-                self.settled.built(chunk, (model, instance));
-            }
-        }
-        if let Some((house, parts)) = self.settled.remains() {
-            let model = self.renderer.add_merged_model(parts, Lifetime::Round);
-            if let Some(instance) =
-                self.renderer
-                    .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
-            {
-                self.settled.remains_built(house, (model, instance));
+                self.piles.built(chunk, (model, instance));
             }
         }
         for (&id, view) in &self.fragments {
-            if self.settled.tracks(id) {
+            if self.piles.tracks(id) {
                 self.renderer
-                    .set_visible(view.instance, !self.settled.merged(id));
+                    .set_visible(view.instance, !self.piles.merged(id));
             }
         }
     }
@@ -3412,25 +3387,33 @@ impl Presentation {
         fragment: &RenderFragment,
         covers: &[RenderCover],
     ) -> Option<FragmentView> {
-        let (model, look) = if let Some(part) = &fragment.timber_part {
-            owned_look(&mut self.renderer, &timber_debris_model(part), true)
-        } else if let (Some(piece), Some(house)) = (fragment.house_piece, fragment.house_id) {
-            let Prepared { node, model, .. } = self.house_piece(piece, house, covers)?;
-            let look = match model {
-                Some((model, bounds)) => (model, FragmentLook::Owned(model, bounds)),
-                None => owned_look(&mut self.renderer, &node, true),
+        let (model, look) = if let (Some(parts), Some(structure)) =
+            (fragment.structure_parts, fragment.structure_id)
+        {
+            // A structure's parts that fell together, drawn as they stood about its
+            // ground centre, where the body started.
+            let cover = covers.iter().find(|cover| cover.id == structure)?;
+            let source = DebrisSource {
+                cover: structure,
+                shape: CoverShape::from(cover),
+                parts,
             };
-            self.settled.track(fragment.id, house, node, self.time);
-            look
-        } else if let Some(piece) = fragment.tower_piece {
-            let piece = self.shared_debris(SharedDebris::Tower(piece, fragment.color));
-            (piece.model, FragmentLook::Shared(piece.bounds))
-        } else if let (Some(piece), Some(size)) = (fragment.crate_piece, fragment.dimensions) {
-            let size = DVec3::new(size.x, size.y, size.z);
-            let look = fragment.id % CRATE_SECTION_LOOKS;
-            let key = section_key(piece, size, fragment.color, look);
-            let section = self.shared_debris(SharedDebris::Section(key));
-            (section.model, FragmentLook::Shared(section.bounds))
+            if let Some(key) = shared_debris_key(&source.shape, &parts) {
+                let shared = self.shared_structure_debris(&source.shape, &parts, key);
+                shared.users += 1;
+                let (model, bounds) = (shared.look.model, shared.look.bounds);
+                self.piles
+                    .track(fragment.id, structure, source, None, self.time);
+                (model, FragmentLook::Shared(bounds, key))
+            } else {
+                // A cottage's bodies falling this frame are cut from one build of its
+                // pieces.
+                let node = self.layouts.body(&source);
+                let look = structure_debris_look(&mut self.renderer, &node);
+                self.piles
+                    .track(fragment.id, structure, source, Some(node), self.time);
+                look
+            }
         } else if let Some(tree) = fragment.tree_cover_id {
             let view = self.covers.get(&tree)?;
             let entry = self.cover_models.get(&view.key)?;
@@ -3468,84 +3451,18 @@ impl Presentation {
         Some(FragmentView {
             instance,
             look,
-            sink: None,
+            // A watchtower's pieces fade where they lie, its tangle's top first, rather
+            // than sinking through what lies under them; other structures' pieces sink
+            // away, each once nothing lies over it.
+            sink: (fragment.structure_parts.is_some()
+                && fragment.source_kind == Some(CoverKind::Tower))
+            .then_some(0.0),
             fades: fragment.tree_cover_id.is_none(),
-            timber: fragment.timber_part.clone(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),
+            emerges_from: (fragment.source_kind == Some(CoverKind::House)
+                && fragment.structure_parts.is_none())
+            .then_some(self.time),
         })
-    }
-
-    /// A collapsing cottage's piece, taking the cottage's whole set when its first
-    /// piece appears: made ahead (models and all) if it was the one being prepared,
-    /// otherwise cut now.
-    fn house_piece(
-        &mut self,
-        piece: HousePiece,
-        house: u32,
-        covers: &[RenderCover],
-    ) -> Option<Prepared<(ModelId, Aabb)>> {
-        let pieces = match self.house_pieces.entry(house) {
-            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let cover = covers.iter().find(|cover| cover.id == house)?;
-                let pieces = self.house_prep.take(cover).unwrap_or_else(|| {
-                    house_pieces(
-                        cover.x,
-                        cover.z,
-                        cover.w,
-                        cover.d,
-                        cover.h,
-                        &cover.timber_hits,
-                    )
-                    .into_iter()
-                    .map(|(piece, node)| Prepared {
-                        piece,
-                        node,
-                        model: None,
-                    })
-                    .collect()
-                });
-                entry.insert(pieces)
-            }
-        };
-        let index = pieces.iter().position(|prepared| prepared.piece == piece)?;
-        let prepared = pieces.swap_remove(index);
-        if pieces.is_empty() {
-            self.house_pieces.remove(&house);
-        }
-        Some(prepared)
-    }
-
-    /// Work on the next cottage collapse for this frame's share of time: the most
-    /// damaged standing cottage's pieces, cut and uploaded ahead of its fall.
-    fn prepare_houses(&mut self, covers: &[RenderCover]) {
-        for (model, _) in self.house_prep.aim(covers, self.time) {
-            self.renderer.remove_model(model);
-        }
-        // The cut is ahead of the collapse: a frame that rebuilt a look or built debris
-        // leaves it for the next.
-        if self.busy {
-            return;
-        }
-        let (start, time) = (now_ms(), self.time);
-        // A step takes up to a few milliseconds on a slow device, so one that would not
-        // fit in what is left of the budget waits for the next frame (the first always
-        // runs): the budget bounds the frame rather than when the last step starts.
-        let mut longest_step = 0.0_f64;
-        for _ in 0..PREPARE_STEPS {
-            let renderer = &mut self.renderer;
-            let before = now_ms();
-            // Its pieces are debris, which fades as it is cleared away.
-            let more = self.house_prep.step(time, |node| {
-                let bounds = node_bounds(node, DMat4::IDENTITY);
-                (renderer.add_fading_model(node, Lifetime::Round), bounds)
-            });
-            let after = now_ms();
-            longest_step = longest_step.max(after - before);
-            if !more || after - start + longest_step >= PREPARE_BUDGET_MS {
-                break;
-            }
-        }
     }
 
     fn update_mines(&mut self, state: &RenderState) {
@@ -3639,6 +3556,14 @@ fn tree_view(
         },
         shudder: None,
     }
+}
+
+/// A structure's fallen parts' model, fading as it is cleared away and drawing no
+/// ambient occlusion depth while it falls.
+fn structure_debris_look(renderer: &mut Renderer, node: &Node) -> (ModelId, FragmentLook) {
+    let bounds = node_bounds(node, DMat4::IDENTITY);
+    let model = renderer.add_falling_debris_model(node, Lifetime::Round);
+    (model, FragmentLook::Owned(model, bounds))
 }
 
 /// A debris look with a model of its own, built for this round: one that fades as it

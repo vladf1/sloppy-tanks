@@ -5,6 +5,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
 use super::data::ARENA;
+use super::structure_physics::ground_footprints;
 use super::math::Vec2;
 use super::tree_proportions::tree_proportions;
 use super::types::{Cover, CoverKind};
@@ -88,7 +89,11 @@ impl Navigation {
     pub fn rebuild(&mut self, covers: &[Cover], region: Option<Footprint>) {
         self.obstacles.clear();
         for cover in covers {
-            if cover.alive {
+            if cover.structure.is_some() {
+                // A structure blocks where its standing parts reach the ground, so tanks
+                // drive through its gaps where they fit.
+                ground_footprints(cover, &mut self.obstacles);
+            } else if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {
                 let diameter = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h)

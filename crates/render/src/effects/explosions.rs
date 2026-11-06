@@ -14,6 +14,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::{Mat4, Vec3};
 use sloppy_core::geometry::math::smoothstep;
+use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::render_state::RenderFragment;
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
@@ -55,6 +56,16 @@ const BURNOUT_FIRE_SCALE: f64 = 0.72;
 const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
 const COLLAPSE_LIFETIME: f64 = 3.2;
+/// A watchtower's crash dust: earth and timber tan, and how much farther its second
+/// skirt rolls.
+const TOWER_DUST: u32 = 0xb59c76;
+const TOWER_CRASH_SPREAD: f64 = 1.5;
+/// The scuffed patch a fallen tower leaves: each churned stain's size (m) and how far
+/// apart (m) they lie along it; the splinter dust strewn round it.
+const TOWER_SCUFF: (f64, f64) = (3.8, 1.9);
+const TOWER_SPLINTERS: u32 = 0xa88a62;
+const TOWER_SPLINTER_PATCHES: usize = 6;
+const TOWER_SPLINTER_SIZE: f64 = 1.2;
 const COLLAPSE_DUST: f64 = 1.35;
 /// A cottage's collapse dust: how long it hangs, when its walls start to strike
 /// the ground (s after the break) and over how long they go on landing, how many
@@ -100,10 +111,39 @@ const FOOTPRINT_LOBE: f64 = 7.5;
 const PLASTER_DUST: u32 = 0xb9ab95;
 /// A cottage's collapse dust: plaster, mortar and soot together.
 const RUBBLE_DUST: u32 = 0x8e8476;
+/// How far (m) round a fallen cottage landing debris raises the wreck's dust, the
+/// share of the soil's dust in it, how far it is drawn to grey and its shade.
+const RUIN_DUST_REACH: f64 = 4.0;
+const RUIN_DUST_SOIL: f64 = 0.25;
+const RUIN_DUST_MUTING: f64 = 0.5;
+const RUIN_DUST_SHADE: f64 = 0.6;
 /// A shell through a cottage's siding: the share of plaster in its dust against
 /// the paint, and the shade the dust takes so it never glows over the wall.
 const SIDING_PLASTER: f64 = 0.7;
 const SIDING_DUST_SHADE: f64 = 0.92;
+/// A siding hit's dust: how long it lasts (s), its billows, how fast (m/s) they
+/// climb off the face and when they have thinned away (s), and the scale of the
+/// ring it sheds at the wall's foot. It is gone within about a second, so the
+/// breach reads between shells instead of behind a standing ball of dust.
+const SIDING_HIT_LIFETIME: f64 = 1.4;
+const SIDING_BILLOWS: usize = 4;
+const SIDING_RISE: [f64; 2] = [1.3, 0.9];
+const SIDING_THIN: [f64; 2] = [0.08, 1.0];
+const SIDING_RING: f64 = 0.3;
+/// A shell in a fallen cottage's pile: how long its dust lasts (s); the billows
+/// it blows out low over the pile and when they have thinned (s); and the column
+/// that boils up off it: its puffs, one born this long (s) after another, how
+/// high (m) the top one climbs, how fast (per s) they get there, how much taller
+/// than round they are and when they have thinned away (s).
+const RUBBLE_HIT_LIFETIME: f64 = 3.0;
+const RUBBLE_BURST: usize = 3;
+const RUBBLE_BURST_THIN: [f64; 2] = [0.1, 0.8];
+const RUBBLE_COLUMN: usize = 5;
+const RUBBLE_STAGGER: f64 = 0.04;
+const RUBBLE_RISE: f64 = 4.5;
+const RUBBLE_RISE_RATE: f64 = 2.5;
+const RUBBLE_STRETCH: f64 = 1.3;
+const RUBBLE_THIN: [f64; 2] = [0.35, 2.7];
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
 const STONE_HIT_LIFETIME: f64 = 3.0;
@@ -185,7 +225,31 @@ pub const WIND: [f64; 2] = [0.9, -0.35];
 /// The light a blast throws on everything around it: peak intensity (times its
 /// scale squared), reach (m) and height over the blast (m, times its scale).
 const BLAST_LIGHT: f64 = 34.0;
+/// The share of a blast's light that gets out of the cottage it went off in: the rest
+/// is held in by the walls, which the lights do not shadow.
+const ENCLOSED_LIGHT: f64 = 0.12;
+/// A blast's scale inside a cottage, its fireball no bigger than the room.
+const ENCLOSED_SCALE: f64 = 0.3;
+/// The height of a fireball's middle over its foot, at scale 1 (m).
+const ENCLOSED_FIRE_MIDDLE: f64 = 1.0;
+/// How far (m) a burst's fire and soot in a room keep inside the wall it came in through.
+const ROOM_CLEARANCE: f64 = 0.08;
+/// How far toward a wall a puff's card reaches, in radii: pulled toward the eye by
+/// most of a radius, and a radius (to its corner, √2) across.
+const CARD_REACH: f64 = 2.05;
+/// The share of the way to the wall a lobe in a room may be wide.
+const ROOM_PUFF_SHARE: f64 = 0.9;
+/// How far (m) a burst in a room is drawn back toward the hole it came in by.
+const ENCLOSED_SETBACK: f64 = 0.2;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
+/// How much bigger a shell's burst in a fallen cottage's pile is than its hit on a
+/// wall: the pile's loose dust goes up with it.
+const RUBBLE_HIT_SCALE: f64 = 1.4;
+/// How far (m) a shell hit's flash reaches: the struck face and the ground at its
+/// foot. Point lights cast no shadow, so a longer reach lit a cottage's far gable
+/// through its walls (from below, its soffits and vent louvres) at every hit.
+pub const HIT_LIGHT_DISTANCE: f32 = 3.0;
+
 /// The light hangs high over the fire, so a hull beside or under it is lit
 /// warm, not blown out.
 const LIGHT_HEIGHT: f64 = 4.2;
@@ -316,6 +380,13 @@ enum Struck {
     Stone,
     /// A container's sheet steel: a flash, a shower of sparks and a little soot.
     Sheet,
+    /// A cottage's siding: a flash and plaster dust that bursts out of the hole
+    /// and climbs off the face on the wind, so the breach shows again between
+    /// shells.
+    Siding,
+    /// A fallen cottage's pile: a flash and a column of plaster dust boiling up
+    /// off it and drifting away.
+    Rubble,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -335,6 +406,9 @@ enum Kind {
     Hit(Struck),
     /// Heavy debris slamming down: a skirt of the ground's dust.
     Landing,
+    /// A watchtower's top crashing down: earth and timber dust rolling out low where
+    /// it struck and settling within a few seconds, no column.
+    TowerCrash,
 }
 
 /// How a fireball erupts: lobes bursting out round its source ("seams") and the
@@ -527,6 +601,11 @@ struct Blast {
     /// killing shot), zero when unknown.
     y: f64,
     direction: [f64; 2],
+    /// Gone off inside a cottage: its walls hold in most of its light.
+    enclosed: bool,
+    /// Inside a cottage, the unit direction to the wall it came in through and how far
+    /// that wall is (m): its fire and soot stay on the room's side of it.
+    room: Option<([f64; 2], f64)>,
     /// What its fireball, column and skirt puffs draw from its phase.
     draws: BlastDraws,
 }
@@ -663,6 +742,16 @@ struct WallMark {
 }
 
 impl Blast {
+    /// How far (m) a burst in a room is drawn up off the ground: its fireball is
+    /// built about the ground at its small scale, which put it at the wall's foot.
+    fn enclosed_lift(&self) -> f64 {
+        if self.enclosed {
+            (self.y - ENCLOSED_FIRE_MIDDLE * self.scale).max(0.0)
+        } else {
+            0.0
+        }
+    }
+
     fn look(&self) -> Look {
         match self.kind {
             Kind::Tank | Kind::Burnout => TANK_BLASTS[self.variant],
@@ -681,7 +770,10 @@ impl Blast {
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
             Kind::Hit(Struck::Steel) => HIT_LIFETIME,
             Kind::Hit(Struck::Sheet) => SHEET_HIT_LIFETIME,
+            Kind::Hit(Struck::Siding) => SIDING_HIT_LIFETIME,
+            Kind::Hit(Struck::Rubble) => RUBBLE_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
+            Kind::TowerCrash => COLLAPSE_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
     }
@@ -965,6 +1057,7 @@ impl ExplosionEffects {
 
     /// A skirt of the ground's dust rolling out low from `(x, z)` at `scale`.
     fn dust_skirt(&mut self, x: f64, z: f64, scale: f64, phase: f64) {
+        let dust = self.landing_dust(x, z);
         let blast = &mut self.blasts[self.cursor];
         self.cursor = (self.cursor + 1) % MAX_EXPLOSIONS;
         *blast = Blast {
@@ -975,9 +1068,24 @@ impl ExplosionEffects {
             scale,
             phase,
             tempo: 1.0,
-            dust: self.ground.dust(x, z),
+            dust,
             ..Blast::default()
         };
+    }
+
+    /// The dust a piece landing at `(x, z)` raises: the ground's, or on and round a
+    /// fallen cottage the wreck's own: crushed plaster and mortar with a little of
+    /// the soil, muted and darkened, since the ground's dust (the lanes' ochre)
+    /// thinning over the grass round a pile read as mustard-yellow blobs.
+    fn landing_dust(&self, x: f64, z: f64) -> [f64; 3] {
+        let ground = self.ground.dust(x, z);
+        if self.walls.in_ruin(x, z, RUIN_DUST_REACH) {
+            let dust = mixed(linear(RUBBLE_DUST), ground, RUIN_DUST_SOIL);
+            let grey = 0.2126 * dust[0] + 0.7152 * dust[1] + 0.0722 * dust[2];
+            scaled(mixed(dust, [grey; 3], RUIN_DUST_MUTING), RUIN_DUST_SHADE)
+        } else {
+            ground
+        }
     }
 
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
@@ -987,12 +1095,25 @@ impl ExplosionEffects {
             self.dust_skirt(event.x, event.z, TREE_SNAP_DUST, phase);
             return;
         }
+        // A shell bursting inside a cottage: its dust bursts out of the hole it came in
+        // by, back toward the gun; the fire stays in the room.
+        if event.kind == SimEventType::Explosion
+            && event.cover_kind == Some(CoverKind::House)
+            && let Some(hole) = event.from
+        {
+            let mut out = SimEvent::at(SimEventType::Shatter, hole.x, hole.z);
+            out.cover_kind = Some(CoverKind::House);
+            out.height = Some(hole.y);
+            out.from = Some(Point3::new(event.x, hole.y, event.z));
+            self.event(&out, random);
+        }
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
         let wood = match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo))
-            | (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
-                Some(WoodDust::Hit)
-            }
+            | (
+                SimEventType::Shatter,
+                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::House),
+            ) => Some(WoodDust::Hit),
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => Some(WoodDust::Burst),
             _ => None,
         };
@@ -1003,13 +1124,19 @@ impl ExplosionEffects {
             && event.height.is_none())
         .then(|| self.walls.strike(event.x, 1.0, event.z))
         .flatten();
+        // A shell bursting in a fallen cottage's pile: a dull hit in its dust.
+        let rubble =
+            event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::House);
         let struck = match event.kind {
+            SimEventType::Impact if rubble => Some(Struck::Rubble),
             SimEventType::Impact if event.cover_kind.is_none() => Some(if event.height.is_some() {
                 Struck::Steel
-            } else if strike.is_some_and(|strike| strike.material == WallMaterial::Steel) {
-                Struck::Sheet
             } else {
-                Struck::Stone
+                match strike.map(|strike| strike.material) {
+                    Some(WallMaterial::Steel) => Struck::Sheet,
+                    Some(WallMaterial::Siding) => Struck::Siding,
+                    _ => Struck::Stone,
+                }
             }),
             SimEventType::Ricochet => Some(Struck::Stone),
             _ => None,
@@ -1041,6 +1168,8 @@ impl ExplosionEffects {
             Kind::Blast
         } else if event.cover_kind == Some(CoverKind::House) {
             Kind::HouseFall
+        } else if event.cover_kind == Some(CoverKind::Tower) {
+            Kind::TowerCrash
         } else {
             Kind::Collapse
         };
@@ -1052,6 +1181,8 @@ impl ExplosionEffects {
             x: event.x,
             z: event.z,
             dust: self.ground.dust(event.x, event.z),
+            enclosed: event.kind == SimEventType::Explosion
+                && event.cover_kind == Some(CoverKind::House),
             ..Blast::default()
         };
         blast.variant = if tank {
@@ -1078,6 +1209,23 @@ impl ExplosionEffects {
         };
         if barrel {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
+        }
+        // A shell's burst in a room stays in the room, at the height it went off, drawn
+        // a little back toward the hole it came in by, clear of a wall it struck from
+        // inside, whose face its fire would show through.
+        if blast.enclosed {
+            blast.scale = ENCLOSED_SCALE;
+            blast.y = event.height.unwrap_or(1.0);
+            if let Some(hole) = event.from {
+                let (dx, dz) = (hole.x - event.x, hole.z - event.z);
+                let length = dx.hypot(dz);
+                if length > 1e-6 {
+                    let back = (length * 0.5).min(ENCLOSED_SETBACK);
+                    blast.x += dx / length * back;
+                    blast.z += dz / length * back;
+                    blast.room = Some(([dx / length, dz / length], length - back));
+                }
+            }
         }
         // Timber and a tower going down raise more dust than a shell's pop.
         if kind == Kind::Collapse {
@@ -1122,6 +1270,16 @@ impl ExplosionEffects {
                 };
                 wall_mark = Some((strike, blast.phase, blast.dust));
             }
+            if rubble {
+                // A bigger, taller burst off a pile than off a wall face.
+                blast.scale = RUBBLE_HIT_SCALE;
+                // Plaster, lath and paint dust off the pile, not the ground's.
+                let paint = event.color.unwrap_or(PLASTER_DUST);
+                blast.dust = scaled(
+                    mixed(linear(paint), linear(PLASTER_DUST), SIDING_PLASTER),
+                    SIDING_DUST_SHADE,
+                );
+            }
         }
         if let Some(wood) = wood {
             let (y, direction) = match wood {
@@ -1157,8 +1315,12 @@ impl ExplosionEffects {
         }
         let footprint =
             (kind == Kind::HouseFall).then_some((blast.x, blast.z, blast.phase, blast.dust));
+        let scuff =
+            (kind == Kind::TowerCrash).then_some((blast.x, blast.z, blast.phase, blast.dust));
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
+            // The floor boards cover the ground a blast in a room would char.
+            Kind::Blast if blast.enclosed => None,
             Kind::Blast => Some(5.2),
             Kind::Barrel => Some(6.2),
             Kind::Tank => Some(7.4),
@@ -1172,6 +1334,9 @@ impl ExplosionEffects {
         }
         if let Some((x, z, phase, ground)) = footprint {
             self.house_footprint(x, z, phase, ground);
+        }
+        if let Some((x, z, phase, ground)) = scuff {
+            self.tower_scuff(x, z, phase, ground);
         }
         if let Some((strike, phase, powder)) = wall_mark {
             // Crushed concrete spills pale powder on the ground at the wall's foot.
@@ -1226,6 +1391,37 @@ impl ExplosionEffects {
         }
     }
 
+    /// Where a watchtower's top crashed down: the ground scuffed and churned dark in a
+    /// patch the length of the wreck, strewn with pale splinter dust that stays once
+    /// the ruin has cleared.
+    fn tower_scuff(&mut self, x: f64, z: f64, phase: f64, ground: [f64; 3]) {
+        let (size, apart) = TOWER_SCUFF;
+        for side in [-1.0, 0.0, 1.0] {
+            self.stain(
+                x + phase.cos() * apart * side,
+                z + phase.sin() * apart * side,
+                size * (0.85 + 0.3 * hash(phase + side)),
+                phase + side,
+                scaled(ground, 0.38),
+                POWDER,
+            );
+        }
+        let timber = linear(TOWER_SPLINTERS);
+        for k in 0..TOWER_SPLINTER_PATCHES {
+            let kf = k as f64;
+            let angle = phase * 1.7 + kf * TAU / TOWER_SPLINTER_PATCHES as f64;
+            let reach = apart * (0.6 + 0.9 * hash(phase * 1.3 + kf));
+            self.stain(
+                x + angle.cos() * reach,
+                z + angle.sin() * reach,
+                TOWER_SPLINTER_SIZE * (0.7 + 0.6 * hash(phase * 2.1 + kf)),
+                phase + kf * 0.41,
+                scaled(timber, 0.9 + 0.2 * hash(phase + kf * 1.9)),
+                POWDER,
+            );
+        }
+    }
+
     /// Leave a ground decal that lasts: a scorch or a powder stain.
     fn stain(&mut self, x: f64, z: f64, diameter: f64, phase: f64, dust: [f64; 3], kind: f32) {
         let y = self.pads.decal_height(x, z, diameter * 0.5, SCORCH_HEIGHT);
@@ -1271,8 +1467,11 @@ impl ExplosionEffects {
             let s = blast.scale;
             let (intensity, height) = match blast.kind {
                 Kind::Blast | Kind::Tank | Kind::Barrel => (
-                    BLAST_LIGHT * s * blast.fire_light(t, &blast.look()),
-                    LIGHT_HEIGHT * s + LIGHT_LIFT,
+                    BLAST_LIGHT
+                        * s
+                        * blast.fire_light(t, &blast.look())
+                        * if blast.enclosed { ENCLOSED_LIGHT } else { 1.0 },
+                    LIGHT_HEIGHT * s + LIGHT_LIFT + blast.enclosed_lift(),
                 ),
                 Kind::Burnout => (
                     BLAST_LIGHT * BURNOUT_FIRE_SCALE * s * blast.fire_light(t, &blast.look()),
@@ -1281,16 +1480,22 @@ impl ExplosionEffects {
                 Kind::Hit(_) => (HIT_LIGHT * (-t * HIT_LIGHT_DECAY).exp(), blast.y + 0.6),
                 _ => continue,
             };
+            if !super::light_admitted(lights, intensity as f32) {
+                continue;
+            }
+            let position = Vec3::new(blast.x as f32, height as f32, blast.z as f32);
             super::offer_light(
                 lights,
                 Flash {
-                    position: Vec3::new(blast.x as f32, height as f32, blast.z as f32),
+                    position,
                     intensity: intensity as f32,
                     color: if t < 0.07 {
                         FLASH_LIGHT_COLOR
                     } else {
                         FIRE_LIGHT_COLOR
                     },
+                    point: matches!(blast.kind, Kind::Hit(_)),
+                    blocker: self.walls.light_blocker(position),
                 },
             );
         }
@@ -1451,6 +1656,17 @@ impl ExplosionEffects {
                 self.ring(b, t, inner.scale);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
+            Kind::TowerCrash => {
+                // The ground's earth with the timber's tan in it, lit the same from
+                // every side: no dark column standing over the wreck.
+                let dust = mixed(b.dust, linear(TOWER_DUST), 0.5);
+                self.skirt(b, t, dust);
+                let mut wider = *b;
+                wider.scale *= TOWER_CRASH_SPREAD;
+                wider.phase += 1.3;
+                self.skirt(&wider, t - 0.15, scaled(dust, 1.08));
+                self.haze(b, t, lifetime, scaled(dust, 1.12));
+            }
             Kind::Collapse => {
                 let dust = linear(DUST);
                 self.haze(b, t, lifetime, dust);
@@ -1473,9 +1689,14 @@ impl ExplosionEffects {
                 let smoke = linear(look.smoke);
                 // No sitting haze: the column carries the smoke up and away,
                 // and a broad faint disc over the ground read as a flat decal.
-                self.ground_glow(b, t, &look, streaks);
-                self.skirt(b, t, b.dust);
-                self.column(b, t, lifetime, &look, smoke, true);
+                // Inside a cottage the walls and roof hold the ground's dust and the
+                // column in; only the flash in the room and what bursts out of the
+                // hole show.
+                if !b.enclosed {
+                    self.ground_glow(b, t, &look, streaks);
+                    self.skirt(b, t, b.dust);
+                    self.column(b, t, lifetime, &look, smoke, true);
+                }
                 if b.kind == Kind::Tank {
                     self.turret_jet(b, t, smoke, streaks);
                 }
@@ -1488,8 +1709,11 @@ impl ExplosionEffects {
                 let s = b.scale;
                 // Low in the hull's middle: the seams' glows carry the flash round
                 // it, and the hull stands dark against them.
-                let center = Vec3::new(b.x as f32, (0.9 * s) as f32, b.z as f32);
-                if t < BLOOM_SECONDS {
+                let center =
+                    Vec3::new(b.x as f32, (0.9 * s + b.enclosed_lift()) as f32, b.z as f32);
+                // A burst in a room draws no flash sprite: a camera-facing glow wider
+                // than the room's depth showed past the cottage's corner, outside.
+                if t < BLOOM_SECONDS && !b.enclosed {
                     let k = t / BLOOM_SECONDS;
                     let [r, g, bl] = BLOOM_COLOR;
                     glow(
@@ -1499,7 +1723,7 @@ impl ExplosionEffects {
                         [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.3) as f32],
                     );
                 }
-                if t < FLASH_SECONDS {
+                if t < FLASH_SECONDS && !b.enclosed {
                     let k = t / FLASH_SECONDS;
                     let [r, g, bl] = FLASH_COLOR;
                     glow(
@@ -1509,8 +1733,11 @@ impl ExplosionEffects {
                         [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.7) as f32],
                     );
                 }
-                self.shock(b, t, b.scale);
-                self.ring(b, t, b.scale);
+                // The room's floor and walls hold the shock and the ring on the ground.
+                if !b.enclosed {
+                    self.shock(b, t, b.scale);
+                    self.ring(b, t, b.scale);
+                }
             }
         }
     }
@@ -1757,7 +1984,8 @@ impl ExplosionEffects {
             let soot_age = (age - look.fire_life * 0.5).max(0.0);
             let buoyancy = SOOT_BUOYANCY * (0.55 + 0.9 * r2);
             let climb = 0.5 * buoyancy * soot_age * soot_age;
-            let lift = (height + look.fire_rise * age * 0.6) * s + climb * s.sqrt();
+            let lift =
+                (height + look.fire_rise * age * 0.6) * s + climb * s.sqrt() + b.enclosed_lift();
             let reach = (reach + 0.35 * soot_age) * s;
             // The burning part shrinks back a little as it cools; the soot it
             // leaves keeps spreading.
@@ -1765,8 +1993,25 @@ impl ExplosionEffects {
                 + (0.35 + 0.3 * r2) * soot_age * s.sqrt();
             let pale = smoothstep(soot_age, 0.1, 0.1 + SOOT_SECONDS);
             let carry = soot_age * soot_age * 0.5;
-            let x = b.x + draw.cos * reach + phase_cos * age * look.drift * 0.5 + WIND[0] * carry;
-            let z = b.z + draw.sin * reach + phase_sin * age * look.drift * 0.5 + WIND[1] * carry;
+            let mut x =
+                b.x + draw.cos * reach + phase_cos * age * look.drift * 0.5 + WIND[0] * carry;
+            let mut z =
+                b.z + draw.sin * reach + phase_sin * age * look.drift * 0.5 + WIND[1] * carry;
+            // In a room, a lobe stays its whole size short of the wall the shell came in
+            // through: a ball reaching past it bloomed on the outside of the siding.
+            let mut size = size;
+            if let Some(([ux, uz], wall)) = b.room {
+                // Its card stands toward the eye and spans its radius each way
+                // (`puff_vertex.wgsl`): seen at a slant through the hole, a card
+                // nearer the wall than that drew over the siding beside it.
+                size = size.min(ROOM_PUFF_SHARE * wall / CARD_REACH);
+                let along = (x - b.x) * ux + (z - b.z) * uz;
+                let limit = wall - size * CARD_REACH - ROOM_CLEARANCE;
+                if along > limit {
+                    x -= ux * (along - limit);
+                    z -= uz * (along - limit);
+                }
+            }
             // Each seam glows white-hot round the hull for the flash's first frames,
             // outlining the hull rather than hiding it.
             if vehicle && seam && age < SEAM_FLASH_SECONDS {
@@ -2043,11 +2288,12 @@ impl ExplosionEffects {
         let wall = struck != Struck::Steel;
         let (flash_seconds, flare) = match struck {
             Struck::Sheet => (0.14, 2.3),
-            Struck::Stone => (0.12, 1.8),
+            Struck::Stone | Struck::Siding | Struck::Rubble => (0.12, 1.8),
             Struck::Steel => (0.09, 1.0),
         };
-        // Concrete flashes white and bursts into powder; only steel burns.
-        let (core, bloom) = if struck == Struck::Stone {
+        // Concrete and plaster flash white and burst into powder; only steel burns.
+        let powder = matches!(struck, Struck::Stone | Struck::Siding | Struck::Rubble);
+        let (core, bloom) = if powder {
             (STONE_FLASH, STONE_BLOOM)
         } else {
             (HIT_FLASH, HIT_BLOOM)
@@ -2073,10 +2319,10 @@ impl ExplosionEffects {
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
             Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
-            Struck::Stone => (b.dust, 0.85, 0.8),
+            Struck::Stone | Struck::Siding | Struck::Rubble => (b.dust, 0.85, 0.8),
         };
         let heat = fire_heat(t, 9.0);
-        if struck != Struck::Stone && burning(heat) > 0.0 {
+        if !powder && burning(heat) > 0.0 {
             // A wall's burst blows out of its face, not back into it.
             let [ox, oz] = if wall { b.direction } else { [0.0; 2] };
             let size = (0.4 + 0.8 * t.sqrt()) * if wall { 1.5 } else { 1.0 };
@@ -2095,6 +2341,19 @@ impl ExplosionEffects {
                 softness: 0.0,
                 underglow: 0.0,
             });
+        }
+        match struck {
+            Struck::Siding => {
+                self.ring(b, t, SIDING_RING);
+                self.siding_dust(b, t, y, color);
+                return;
+            }
+            // A ring on the ground under a pile read as a flat disc on its slabs.
+            Struck::Rubble => {
+                self.rubble_dust(b, t, y, color);
+                return;
+            }
+            _ => {}
         }
         let stone = struck == Struck::Stone;
         let life = if stone {
@@ -2129,7 +2388,7 @@ impl ExplosionEffects {
             let size = match struck {
                 Struck::Stone => (0.45 + 1.25 * age.sqrt()) * (0.75 + 0.5 * r),
                 Struck::Sheet => (0.4 + 0.95 * age.sqrt()) * (0.8 + 0.4 * r),
-                Struck::Steel => 0.4 + 0.9 * age.sqrt(),
+                Struck::Steel | Struck::Siding | Struck::Rubble => 0.4 + 0.9 * age.sqrt(),
             };
             // Held a little over its own radius out of the face, so the wall's
             // soft fade thins only the billow's far edge, never the whole of it.
@@ -2155,6 +2414,121 @@ impl ExplosionEffects {
                     0.0
                 },
             });
+        }
+    }
+
+    /// Plaster and paint dust out of a cottage's holed siding: billows burst out
+    /// of the hole, then climb off the face and drift away on the wind, thinning
+    /// as they go, gone within about a second. Nothing pools at the wall's foot,
+    /// where a standing ball of dust hid the breach's framing between shells.
+    fn siding_dust(&mut self, b: &Blast, t: f64, y: f64, color: [f64; 3]) {
+        let [bx, bz] = b.direction;
+        for j in 0..SIDING_BILLOWS {
+            let jf = j as f64;
+            let age = t - 0.02 - jf * 0.035;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 1.3 + jf * 0.77);
+            let r2 = hash(b.phase * 0.59 + jf * 1.41);
+            let size = (0.35 + 0.85 * age.sqrt()) * (0.8 + 0.4 * r);
+            // Blown out of the hole fast, held a little over its radius clear of
+            // the face, and spread along it.
+            let out = (0.25 + 0.8 * r) * settle(age, 7.0) + size * 0.5;
+            let along = (r2 - 0.5) * 1.1 * settle(age, 5.0);
+            let climb = (SIDING_RISE[0] + SIDING_RISE[1] * r2) * age + 0.4 * age * age;
+            let thin = 1.0 - smoothstep(age, SIDING_THIN[0], SIDING_THIN[1]);
+            self.puff(Puff {
+                position: [
+                    b.x + bx * out - bz * along + WIND[0] * age,
+                    y + climb,
+                    b.z + bz * out + bx * along + WIND[1] * age,
+                ],
+                size,
+                color: scaled(color, 0.95 + jf * 0.05),
+                opacity: (age / 0.04).min(1.0) * 0.62 * thin * thin.sqrt(),
+                seed: b.phase * 0.61 + jf * 0.23,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.1, SIDING_THIN[1] - 0.1) * 0.95,
+                softness: 0.85,
+                underglow: if j == 0 {
+                    0.5 * (-age * 8.0).exp()
+                } else {
+                    0.0
+                },
+            });
+        }
+    }
+
+    /// A shell bursting in a fallen cottage's pile: a few billows blown out low
+    /// across the pile, and a column of plaster dust boiling up off it, each puff
+    /// climbing to its own height and drifting off on the wind as it thins.
+    fn rubble_dust(&mut self, b: &Blast, t: f64, y: f64, color: [f64; 3]) {
+        for j in 0..RUBBLE_BURST {
+            let jf = j as f64;
+            let age = t - 0.02 - jf * 0.03;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 1.7 + jf * 0.61);
+            let angle = b.phase + jf * TAU / RUBBLE_BURST as f64 + (r - 0.5) * 0.9;
+            let reach = (0.5 + 1.0 * r) * settle(age, 4.0);
+            let size = (0.4 + 0.8 * age.sqrt()) * (0.8 + 0.4 * r);
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * reach + WIND[0] * age * 0.6,
+                    y + size * 0.3 + 0.3 * settle(age, 2.0),
+                    b.z + angle.sin() * reach + WIND[1] * age * 0.6,
+                ],
+                size,
+                color: scaled(color, 0.92),
+                opacity: (age / 0.04).min(1.0)
+                    * 0.4
+                    * (1.0 - smoothstep(age, RUBBLE_BURST_THIN[0], RUBBLE_BURST_THIN[1])),
+                seed: b.phase * 0.47 + jf * 0.31,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.1, RUBBLE_BURST_THIN[1]) * 0.9,
+                softness: 0.8,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..RUBBLE_COLUMN {
+            let jf = j as f64;
+            let age = t - 0.03 - jf * RUBBLE_STAGGER;
+            if age <= 0.0 {
+                continue;
+            }
+            let r = hash(b.phase * 2.3 + jf * 0.83);
+            let r2 = hash(b.phase * 0.71 + jf * 1.97);
+            // The first thrown climbs highest and leans furthest downwind; the
+            // rest fill the column below it.
+            let top = RUBBLE_RISE * (1.0 - 0.75 * (jf + r) / RUBBLE_COLUMN as f64);
+            let climb = top * settle(age, RUBBLE_RISE_RATE);
+            let size = (0.35 + 0.95 * age.sqrt()) * (0.75 + 0.35 * r2);
+            let wander = (r2 - 0.5) * 0.6;
+            let drift = age * (0.4 + 0.25 * climb);
+            push_stretched_puff(
+                &mut self.puffs,
+                Puff {
+                    position: [
+                        b.x + WIND[0] * drift + WIND[1] * wander,
+                        y + 0.2 + climb + size * 0.3,
+                        b.z + WIND[1] * drift - WIND[0] * wander,
+                    ],
+                    size,
+                    color: scaled(color, 0.9 + 0.04 * jf),
+                    opacity: (age / 0.06).min(1.0)
+                        * 0.5
+                        * (1.0 - 0.08 * jf)
+                        * (1.0 - smoothstep(age, RUBBLE_THIN[0], RUBBLE_THIN[1])),
+                    seed: b.phase * 0.83 + jf * 0.37,
+                    heat: 0.0,
+                    erosion: smoothstep(age, 0.2, RUBBLE_THIN[1]) * 0.9,
+                    softness: 0.8,
+                    underglow: 0.0,
+                },
+                RUBBLE_STRETCH,
+            );
         }
     }
 
@@ -2636,6 +3010,34 @@ mod tests {
 
     fn rings_of(pool: &PoolBuffer, kind: f32) -> usize {
         pool.records().iter().filter(|r| r.data[2] == kind).count()
+    }
+
+    #[test]
+    fn a_burst_in_a_room_keeps_its_fire_and_soot_inside_the_wall_it_came_through() {
+        let mut random = CosmeticRandom::default();
+        let mut effects = ExplosionEffects::default();
+        let mut streaks = PoolBuffer::new(16);
+        // A shell through the wall at z = 1 bursting a metre inside.
+        let mut event = SimEvent::at(SimEventType::Explosion, 0.0, 0.0);
+        event.size = Some(1.4);
+        event.height = Some(1.0);
+        event.cover_kind = Some(CoverKind::House);
+        event.from = Some(Point3::new(0.0, 1.0, 1.0));
+        effects.event(&event, &mut random);
+        for _ in 0..40 {
+            effects.update(0.05, &mut streaks);
+            // Its fire, that is: the dust it blows out of the hole is meant to be outside.
+            for record in effects.puffs.records().iter().filter(|r| r.data[1] > 0.05) {
+                let (z, size) = (record.world_rows[2][3], record.world_rows[0][0]);
+                let card = z + size * CARD_REACH as f32;
+                assert!(
+                    card <= 1.0,
+                    "its card reaches {:.2} m past the wall",
+                    card - 1.0
+                );
+            }
+            streaks.clear();
+        }
     }
 
     #[test]

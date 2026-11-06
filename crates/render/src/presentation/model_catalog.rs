@@ -1,7 +1,7 @@
 //! The adapter between presentation and the cover, tree and scenery model
 //! builders in `sloppy_core::models`.
 //!
-//! - [`cover_model`] ← `models::cover_model(cover, Full, stage)`, batched like
+//! - [`cover_model`] ← `models::cover_model(cover, Full)`, batched like
 //!   `physicalCoverModel` in `presentation.ts`; trees list their shedding boughs
 //!   ([`TreeParts`]).
 //! - [`scenery`] ← `models::build_scenery(theme)` (or the page's cached copy,
@@ -15,14 +15,16 @@ use std::collections::HashMap;
 use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
-    self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, cover_damage_stage, tree_part,
+    self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, HouseBuild, Scenery, SmokeCover,
+    TreeDetail, WATERWHEEL, batch, branch_drop_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
+use sloppy_core::sim::house_structure::CHIMNEY_PART;
 use sloppy_core::sim::quarry_barrier_shapes::dragon_tooth_variant;
 use sloppy_core::sim::quarry_rock_shape::quarry_rock_variant;
 use sloppy_core::sim::render_state::RenderCover;
+use sloppy_core::sim::tower_structure::LOWER_LEGS;
 
 use super::theme::Theme;
 
@@ -75,14 +77,13 @@ impl TreeParts {
 /// look stay instanced, movable ones move). A lone static cover with a look of its own
 /// is not worth a combined model: it leads the rest instead.
 pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
-    let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
     let mut looks: HashMap<String, usize> = HashMap::new();
     for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
-        *looks.entry(cover_key(cover, stage(cover))).or_default() += 1;
+        *looks.entry(cover_key(cover)).or_default() += 1;
     }
     let (mut combined, mut own): (Vec<usize>, Vec<usize>) = (0..covers.len()).partition(|&index| {
         let cover = &covers[index];
-        cover.motion.is_none() && looks[&cover_key(cover, stage(cover))] == 1
+        cover.motion.is_none() && looks[&cover_key(cover)] == 1
     });
     if combined.len() < 2 {
         combined.append(&mut own);
@@ -91,7 +92,7 @@ pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
     (combined, own)
 }
 
-pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
+pub fn cover_key(cover: &RenderCover) -> String {
     let placement = match cover.kind {
         CoverKind::Drum
         | CoverKind::Hedgehog
@@ -101,40 +102,46 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         | CoverKind::Tower => String::new(),
         CoverKind::Rock => format!("v{}", quarry_rock_variant(cover.x, cover.z)),
         CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
-        CoverKind::Rubble if cover.debris_seed.is_some() => {
-            format!("s{}", cover.debris_seed.unwrap_or(0.0))
-        }
         _ => format!("@{}/{}", cover.x, cover.z),
     };
-    let hits: Vec<String> = cover
-        .timber_hits
-        .iter()
-        .map(|hit| format!("{hit:?}"))
-        .collect();
     format!(
-        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}",
+        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:x?}{}",
         cover.kind,
         cover.w,
         cover.h,
         cover.d,
         cover.color,
         cover.timber_join,
-        hits.join(";"),
+        cover.broken.0,
+        tower_scars(cover),
     )
 }
 
+/// What a watchtower's look shows of the shells that struck it: its struck legs (a
+/// bite while they stand, a tall stub once shot out). Nothing for other cover.
+pub fn tower_scars(cover: &RenderCover) -> String {
+    if cover.kind != CoverKind::Tower {
+        return String::new();
+    }
+    let legs: Vec<usize> = LOWER_LEGS
+        .into_iter()
+        .filter(|&leg| cover.cracked.contains(leg))
+        .collect();
+    format!("/struck{legs:?}")
+}
+
 /// `physicalCoverModel`'s model: the cover's full-detail model, batched.
-pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
+pub fn cover_model(cover: &RenderCover) -> CoverModel {
     let shape = CoverShape::from(cover);
-    let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage);
+    let mut root = core_models::cover_model(&shape, TreeDetail::Full);
     batch(&mut root);
     let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
     CoverModel { root, tree }
 }
 
-/// [`cover_model`] for a cottage whose core model was built ahead, in steps
-/// (`models::HouseCoverBuild`): batched the same way.
-pub fn built_cover_model(mut root: Node) -> CoverModel {
+/// A cottage's model from its finished stepwise build, as [`cover_model`] builds it.
+pub fn house_cover_model(build: HouseBuild) -> CoverModel {
+    let mut root = build.finish();
     batch(&mut root);
     CoverModel { root, tree: None }
 }
@@ -375,18 +382,17 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
 /// Where a fallen chimney's smoke is sent, out of sight below the ground.
 const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
 
-/// Whether a cottage's chimney is up: it topples when the cottage is wrecked.
+/// Whether a cottage's chimney is up: it smokes until it breaks or falls.
 fn chimney_stands(cover: &RenderCover) -> bool {
-    cover.alive && cover_damage_stage(cover.kind, cover.hp, cover.max_hp) < 2
+    !cover.broken.contains(CHIMNEY_PART)
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.
-pub fn standing_chimneys(covers: &[RenderCover]) -> Vec<(u32, bool)> {
+pub fn standing_chimneys(covers: &[RenderCover]) -> impl Iterator<Item = (u32, bool)> + '_ {
     covers
         .iter()
         .filter(|cover| cover.kind == CoverKind::House)
         .map(|cover| (cover.id, chimney_stands(cover)))
-        .collect()
 }
 
 /// The wisp instances of a smoke node: identity placements with each wisp's
@@ -558,11 +564,11 @@ mod tests {
             d: 1.2,
             ..RenderCover::default()
         };
-        assert_eq!(cover_key(&drum(0.0), 0), cover_key(&drum(5.0), 0));
+        assert_eq!(cover_key(&drum(0.0)), cover_key(&drum(5.0)));
         let house = |x: f64| RenderCover {
             kind: CoverKind::House,
             ..drum(x)
         };
-        assert_ne!(cover_key(&house(0.0), 0), cover_key(&house(5.0), 0));
+        assert_ne!(cover_key(&house(0.0)), cover_key(&house(5.0)));
     }
 }

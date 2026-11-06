@@ -683,6 +683,16 @@ impl Game {
             },
             "tanks": tanks,
             "view": {
+                // The point lights (blast and hit flashes, fires) lit this frame:
+                // [x, y, z, intensity].
+                "pointLights": self
+                    .view
+                    .renderer
+                    .point_lights()
+                    .iter()
+                    .flatten()
+                    .map(|light| [light.position.x, light.position.y, light.position.z, light.intensity])
+                    .collect::<Vec<_>>(),
                 "zoom": rig.zoom,
                 "minZoom": CAMERA.min_zoom,
                 "maxZoom": CAMERA.max_zoom,

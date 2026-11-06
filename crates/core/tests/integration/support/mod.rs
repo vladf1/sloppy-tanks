@@ -212,3 +212,150 @@ pub fn assert_spawns_and_pickups_clear(sim: &mut Simulation) -> Vec<Vec2> {
     }
     points
 }
+
+/// Bring cottage `house` down the way a battle does: every part standing on the
+/// ground breaks, so the rest of it falls.
+pub fn fell_cottage(s: &mut Simulation, house: usize) {
+    let layout = s.covers[house]
+        .structure
+        .as_ref()
+        .expect("a cottage")
+        .layout
+        .clone();
+    let footing = sloppy_core::sim::structure::PartSet::from_indices(
+        (0..layout.parts.len()).filter(|&index| {
+            layout.parts[index].grounded
+                && layout.parts[index].house().kind
+                    != sloppy_core::sim::house_structure::PartKind::Chimney
+        }),
+    );
+    s.break_structure(
+        house,
+        footing,
+        sloppy_core::sim::structure::PartSet::EMPTY,
+        None,
+        None,
+    );
+}
+
+/// A point of levelled cottage `house`'s ground a tank can drive onto: its middle, moved
+/// a metre and a half away from the chimney's stack that stands in the ruin.
+pub fn open_ruin_ground(s: &Simulation, house: usize) -> Vec2 {
+    let c = &s.covers[house];
+    let layout = &c.structure.as_ref().expect("a cottage").layout;
+    let (min, max) = layout.world_box(sloppy_core::sim::house_structure::CHIMNEY_STACK);
+    let stack = Vec2::new(c.x + (min.x + max.x) / 2.0, c.z + (min.z + max.z) / 2.0);
+    let (dx, dz) = (c.x - stack.x, c.z - stack.z);
+    let length = dx.hypot(dz).max(1e-6);
+    Vec2::new(c.x + dx / length * 1.5, c.z + dz / length * 1.5)
+}
+
+/// Break each of `breaks` out of structure `cover` a tick at a time on a room host, and
+/// check a client following the room and a client joining after see what stands of it
+/// and every body falling from it, part for part.
+pub fn assert_structure_replicates(
+    s: &mut Simulation,
+    cover: usize,
+    breaks: &[sloppy_core::sim::structure::PartSet],
+) {
+    use crate::net_support::{apply_batch, baseline, batch};
+    use sloppy_core::net::replication::{StateMirror, StateStream};
+    use sloppy_core::net::scene_codec::{MirrorScene, Scene};
+    use sloppy_core::sim::structure::PartSet;
+    let id = s.covers[cover].id;
+    let viewer = s.human().id;
+    let mut stream = StateStream::new("room", 1);
+    let mut mirror = StateMirror::default();
+    let scene = Scene::capture(s);
+    mirror
+        .apply_full(
+            &baseline(&stream.full(0, 0, [], || scene.clone())),
+            "room",
+            1,
+        )
+        .unwrap();
+    let gone = |s: &Simulation| s.covers[cover].structure.as_ref().unwrap().gone;
+    for (tick, broken) in breaks.iter().enumerate() {
+        s.break_structure(cover, *broken, PartSet::EMPTY, None, None);
+        idle(s);
+        let mut next = Scene::capture(s);
+        let body = stream.snapshot(&mut next, tick as u64 + 1, &[], &[]);
+        apply_batch(
+            &mut mirror,
+            &batch(1, 0, stream.seq, &[(tick as u64 + 1, body)]),
+        );
+        let shown = mirror.render(viewer).unwrap();
+        let seen = shown.covers.iter().find(|shown| shown.id == id).unwrap();
+        assert_eq!(seen.broken, gone(s), "tick {tick}");
+        assert_eq!(seen.alive, s.covers[cover].alive, "tick {tick}");
+        for fragment in s.fragments.iter().filter(|f| f.of_structure(cover)) {
+            let seen = shown
+                .fragments
+                .iter()
+                .find(|shown| shown.id == fragment.id)
+                .expect("each falling body reaches the client");
+            assert_eq!(seen.structure_parts, fragment.structure_parts());
+            assert_eq!(seen.structure_id, Some(id));
+        }
+    }
+    assert!(
+        s.fragments.iter().any(|f| f.of_structure(cover)),
+        "something fell"
+    );
+    let late = MirrorScene::from_scene(Scene::capture(s))
+        .unwrap()
+        .render(viewer)
+        .unwrap();
+    let seen = late.covers.iter().find(|shown| shown.id == id).unwrap();
+    assert_eq!(seen.broken, gone(s));
+    let falling: Vec<_> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(cover))
+        .map(|f| (f.id, f.structure_parts()))
+        .collect();
+    let joined: Vec<_> = late
+        .fragments
+        .iter()
+        .filter(|f| f.structure_id == Some(id))
+        .map(|f| (f.id, f.structure_parts))
+        .collect();
+    assert_eq!(joined, falling);
+}
+
+/// Run `s` idle for `seconds`.
+pub fn run(s: &mut Simulation, seconds: f64) {
+    for _ in 0..(seconds / sloppy_core::sim::data::STEP).round() as usize {
+        idle(s);
+    }
+}
+
+/// A shell of `weapon_kind` at height `y` from `from` toward `to`, fired by tank 0.
+pub fn fire_at(
+    s: &mut Simulation,
+    from: Vec2,
+    to: Vec2,
+    y: f64,
+    weapon_kind: sloppy_core::sim::Weapon,
+) -> u32 {
+    let (dx, dz) = (to.x - from.x, to.z - from.z);
+    let length = dx.hypot(dz);
+    let stats = sloppy_core::sim::data::weapon(weapon_kind);
+    let id = s.allocate_id();
+    s.shots.push(Shot {
+        id,
+        x: from.x,
+        z: from.z,
+        y: Some(y),
+        vx: dx / length * stats.speed,
+        vz: dz / length * stats.speed,
+        team: sloppy_core::sim::Team::Blue,
+        owner: s.tanks[0].id,
+        weapon: weapon_kind,
+        damage: stats.damage,
+        piercing: u32::from(weapon_kind == sloppy_core::sim::Weapon::Piercing),
+        life: 3.0,
+        ..Default::default()
+    });
+    id
+}

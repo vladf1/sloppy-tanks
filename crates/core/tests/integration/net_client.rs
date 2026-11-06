@@ -613,7 +613,6 @@ fn an_own_shell_strikes_near_cover_close_to_when_it_is_drawn_there() {
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
-        debris_seed: None,
     });
     net.run(500.0);
     net.peers[alice].recording = true;
@@ -671,7 +670,6 @@ fn a_pushed_drum_is_drawn_ahead_of_the_hull_and_handed_back_without_a_jump() {
         color: 0xaa3322,
         timber_join: None,
         timber_bays: None,
-        debris_seed: None,
     });
     let drum_id = sim.covers[index].id;
     net.run(500.0);
@@ -1289,6 +1287,10 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
 /// enemy and circles it from 18 m for a minute: how close the shells that hit her were
 /// drawn to her hull as her present reached each hit, and how many hit before they were
 /// drawn at all.
+/// Steps of 100 ms the battle lasts: long enough for several hits whatever cover the
+/// shells meet on the way (cottage walls now stop some and let others through).
+const BATTLE_STEPS: usize = 900;
+
 fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
     let mut net = Network::new();
     net.dodger_first = dodger_first;
@@ -1301,7 +1303,7 @@ fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(300.0);
     let tank_id = net.peers[alice].client.control().unwrap().tank_id;
-    for step in 0..600 {
+    for step in 0..BATTLE_STEPS {
         let sim = net.host.simulation.as_ref().unwrap();
         let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
         let target = me.alive.then(|| {
@@ -1380,7 +1382,7 @@ fn shots_that_hit(shooter_first: bool) -> Samples {
     net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(300.0);
     let tank_id = net.peers[alice].client.control().unwrap().tank_id;
-    for step in 0..600 {
+    for step in 0..BATTLE_STEPS {
         let sim = net.host.simulation.as_ref().unwrap();
         let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
         let target = me.alive.then(|| {
@@ -1453,9 +1455,11 @@ fn a_shooter_hits_tanks_where_its_page_drew_them() {
         describe(&judged_now)
     );
     // Aimed at the tanks as drawn, with no lead for the view delay, shells strike where
-    // the tanks were drawn; judged in the host's present, often a metre or more away. How
-    // many hit depends on the platform's floating point (11 to 31 in a minute), so only
-    // where they strike is compared.
+    // the tanks were drawn. Judged in the host's present, a tank on the move is struck a
+    // view delay's travel away, a metre or more, while most bots hit stand or crawl and
+    // are struck where drawn either way. How many hit, and how many of those were on the
+    // move, follows the match and the platform's floating point (19 to 31 hits in a
+    // minute, a few of them far), so the furthest hit is compared, not a share.
     for samples in [&favored, &judged_now] {
         assert!(
             samples.count >= 5,
@@ -1464,11 +1468,8 @@ fn a_shooter_hits_tanks_where_its_page_drew_them() {
         );
     }
     assert!(favored.percentile(0.9) < 0.3, "{}", describe(&favored));
-    assert!(
-        judged_now.percentile(0.9) > 0.5,
-        "{}",
-        describe(&judged_now)
-    );
+    assert!(favored.largest < 0.5, "{}", describe(&favored));
+    assert!(judged_now.largest > 1.0, "{}", describe(&judged_now));
 }
 
 #[test]

@@ -68,7 +68,7 @@ pub extern "C" fn build(workload: u32) {
                 return;
             }
             for cover in &view.covers {
-                let mut root = cover_model(&CoverShape::from(cover), TreeDetail::Full, 0);
+                let mut root = cover_model(&CoverShape::from(cover), TreeDetail::Full);
                 batch(&mut root);
                 std::hint::black_box(&root);
             }

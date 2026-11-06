@@ -322,6 +322,7 @@ impl CoverCast for Wall {
             distance: along,
             normal: Vec2::new(0.0, 1.0),
             struck: None,
+            part: None,
         })
     }
 }

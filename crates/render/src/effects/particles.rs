@@ -138,15 +138,6 @@ const TREE_HIT: Style = Style {
     height: 0.7,
     lift: 1.8,
 };
-const WOOD_HIT: Style = Style {
-    count: 12,
-    life: [0.45, 0.4],
-    size: [0.07, 0.1],
-    speed: 4.0,
-    scatter: 0.35,
-    height: 0.8,
-    lift: 1.5,
-};
 const PICKUP: Style = Style {
     count: 24,
     life: [0.5, 0.3],
@@ -168,6 +159,9 @@ const EXPLOSION: Style = Style {
 /// Clods of the ground a fiery blast throws, beside its sparks; they leave the
 /// fireball glowing, cool to the ground's color, bounce and settle.
 const CLODS: usize = 14;
+/// A shell bursting within this distance (m) of a crate or timber wall went off
+/// against it: a fused shell bursts a metre past the part it broke.
+const WOOD_BURST_REACH: f64 = 1.2;
 /// A landing clod keeps this share of its fall speed, and this share of its
 /// slide; it lies still for its last moments before it shrinks away.
 const CLOD_BOUNCE: f64 = 0.32;
@@ -211,11 +205,6 @@ const IMPACT: Style = Style {
     lift: 0.0,
 };
 
-/// Extra splinters a collapsing timber wall bursts, and how much longer than a
-/// hit's chips they lie.
-const TIMBER_COLLAPSE_SPLINTERS: i64 = 12;
-const TIMBER_COLLAPSE_LIFE: f64 = 9.0;
-const TIMBER_COLORS: [u32; 4] = [0x805336, 0xb47a49, 0xc99a65, 0x947958];
 /// Dark bark and pale fresh wood torn from a trunk.
 const TREE_CHIP_COLORS: [u32; 3] = [0x6b5038, 0x8a6a4a, 0xc9a978];
 const EXPLOSION_COLORS: [u32; 6] = [0x536779, 0xff9250, 0xffc569, 0x536779, 0xffc569, 0xff9250];
@@ -249,6 +238,13 @@ impl ParticleEffects {
         self.records.clear();
     }
 
+    /// Drop every chip over the box `half_w` × `half_d` about `(x, z)`: rebuilt cover's
+    /// footprint and the ground round it.
+    pub fn clear_round(&mut self, x: f64, z: f64, half_w: f64, half_d: f64) {
+        self.particles
+            .retain(|chip| (chip.x - x).abs() > half_w || (chip.z - z).abs() > half_d);
+    }
+
     /// Spawn the event's particles and blast. Returns whether it deserves the
     /// explosion light flash.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) -> bool {
@@ -258,13 +254,19 @@ impl ParticleEffects {
         let hurt = event.kind == T::Hurt;
         let explosion = matches!(event.kind, T::Explosion | T::Death | T::Destroy);
         let cover_effect = matches!(event.kind, T::Destroy | T::Impact);
-        // A crate's splinters and packing are lit wood (`wood_chips.rs`).
-        if cover_effect && event.cover_kind == Some(CoverKind::Cargo) {
+        // A crate's, a timber wall's and a fallen cottage's splinters are lit wood in
+        // the struck wood's own colour (`wood_chips.rs`): these grey-lit faceted chips
+        // read as stone round them.
+        if cover_effect
+            && matches!(
+                event.cover_kind,
+                Some(CoverKind::Cargo | CoverKind::Timber | CoverKind::House)
+            )
+        {
             return false;
         }
-        let timber = cover_effect && event.cover_kind == Some(CoverKind::Timber);
         let tree = cover_effect && event.cover_kind == Some(CoverKind::Tree);
-        let chip_hit = event.kind == T::Impact && (tree || timber);
+        let chip_hit = event.kind == T::Impact && tree;
         // A felled tree's falling trunk and crown carry the moment: the snap
         // only bursts bark and splinters from the stump.
         if tree && !chip_hit {
@@ -273,10 +275,8 @@ impl ParticleEffects {
             }
             return false;
         }
-        let style = if timber {
-            &WOOD_HIT
-        } else if chip_hit {
-            if tree { &TREE_HIT } else { &WOOD_HIT }
+        let style = if chip_hit {
+            &TREE_HIT
         } else if pickup {
             &PICKUP
         } else if explosion {
@@ -290,7 +290,7 @@ impl ParticleEffects {
         let tank_death = event.kind == T::Death;
         let burnout = tank_death && event.death_style == Some(DeathStyle::Burnout);
         let fiery = event.kind == T::Explosion || tank_death;
-        if explosion && !tree && !timber && !fiery {
+        if explosion && !fiery {
             return false;
         }
         // A gun's own flash and smoke are the muzzle flashes' (`muzzle.rs`).
@@ -303,32 +303,16 @@ impl ParticleEffects {
             return false;
         }
         if fiery {
-            if !burnout {
+            if !burnout && !self.bursts_in_wood(event) {
                 self.clods(event, random);
             }
             return !burnout;
         }
-        // The real beams carry a collapse; add only a hit-sized handful of chips.
-        // A wall torn down bursts splinters from every snapped joint; they land
-        // and lie in the grass by the wreck.
-        let collapse = timber && explosion;
-        let count = if timber {
-            style.count as i64 - 2
-                + (random.next_f64() * 5.0).floor() as i64
-                + if collapse {
-                    TIMBER_COLLAPSE_SPLINTERS
-                } else {
-                    0
-                }
-        } else {
-            style.count as i64
-        };
+        let count = style.count as i64;
         let speed = style.speed;
         let accent = event.color;
         let color_at = |i: usize| -> u32 {
-            if timber {
-                TIMBER_COLORS[i % TIMBER_COLORS.len()]
-            } else if tree {
+            if tree {
                 TREE_CHIP_COLORS[i % TREE_CHIP_COLORS.len()]
             } else if pickup {
                 if i.is_multiple_of(4) {
@@ -344,21 +328,13 @@ impl ParticleEffects {
                 accent.unwrap_or(SPARK_COLOR)
             }
         };
-        let life_scale = if collapse {
-            TIMBER_COLLAPSE_LIFE
-        } else if tree {
-            1.6
-        } else if timber {
-            2.0
-        } else {
-            1.0
-        };
+        let life_scale = if tree { 1.6 } else { 1.0 };
         let mut i = 0usize;
         while (i as i64) < count && self.particles.len() < MAX_PARTICLES {
             // Draw order matches the former object literal: life, x, y, z, vx, vy, vz, size.
             let life = (style.life[0] + random.next_f64() * style.life[1]) * life_scale;
             let x = event.x + (random.next_f64() - 0.5) * style.scatter;
-            let y = if chip_hit && tree {
+            let y = if chip_hit {
                 0.7 + random.next_f64() * 0.4
             } else {
                 style.height
@@ -369,7 +345,7 @@ impl ParticleEffects {
             let vz = (random.next_f64() - 0.5) * speed;
             let size = style.size[0] + random.next_f64() * style.size[1];
             self.particles.push(Particle {
-                splinter: timber || tree,
+                splinter: tree,
                 x,
                 y,
                 z,
@@ -381,8 +357,8 @@ impl ParticleEffects {
                 size,
                 color: hex_to_linear(color_at(i)),
                 hot: 0.0,
-                glow: if timber || tree { 0.0 } else { 0.9 },
-                rests: collapse,
+                glow: if tree { 0.0 } else { 0.9 },
+                rests: false,
                 plate: false,
                 lying_turn: None,
             });
@@ -588,6 +564,20 @@ impl ParticleEffects {
             }
             _ => {}
         }
+    }
+
+    /// Whether a shell went off in or against wood: in a cottage's room, or through a
+    /// crate's or timber wall's face. It throws no clods of the ground there: they
+    /// flew out through the cottage's walls, and the harbour paving's grey lumps
+    /// round a burst crate read as stone among its splinters, which the parts it broke
+    /// throw (`wood_chips.rs`).
+    fn bursts_in_wood(&self, event: &SimEvent) -> bool {
+        event.kind == SimEventType::Explosion
+            && (event.cover_kind == Some(CoverKind::House)
+                || self
+                    .explosions
+                    .walls
+                    .wooden_near(event.x, event.z, WOOD_BURST_REACH))
     }
 
     /// Clods of the ground a blast throws up and out; they fall back and roll.
@@ -844,6 +834,8 @@ impl ParticleEffects {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sloppy_core::sim::RenderState;
+    use sloppy_core::sim::render_state::RenderCover;
 
     fn at(kind: SimEventType) -> SimEvent {
         SimEvent::at(kind, 0.0, 0.0)
@@ -888,7 +880,38 @@ mod tests {
             particles.explosions.puffs.records()[0].tint[0] < 1.0,
             "collapse produces dust, not the bright fire core"
         );
-        assert!(particles.particles.iter().all(|p| p.splinter));
+        assert!(particles.particles.is_empty(), "its splinters are lit wood");
+    }
+
+    #[test]
+    fn a_shell_bursting_in_wood_throws_no_clods_of_the_ground() {
+        let mut random = CosmeticRandom::default();
+        let mut particles = ParticleEffects::default();
+        particles.explosions.walls.sync(&RenderState {
+            covers: vec![RenderCover {
+                kind: CoverKind::Cargo,
+                x: 10.0,
+                w: 2.8,
+                h: 2.4,
+                d: 2.8,
+                alive: true,
+                ..RenderCover::default()
+            }],
+            ..RenderState::default()
+        });
+        let burst = |x: f64, cover_kind: Option<CoverKind>| SimEvent {
+            size: Some(1.4),
+            height: Some(1.0),
+            cover_kind,
+            ..SimEvent::at(SimEventType::Explosion, x, 0.0)
+        };
+        // A metre past a crate's far face, and in a cottage's room.
+        particles.event(&burst(12.2, None), &mut random);
+        particles.event(&burst(-20.0, Some(CoverKind::House)), &mut random);
+        assert!(particles.particles.is_empty());
+        // In the open it digs up the ground.
+        particles.event(&burst(-5.0, None), &mut random);
+        assert_eq!(particles.particles.len(), CLODS);
     }
 
     #[test]
@@ -991,41 +1014,41 @@ mod tests {
         );
     }
 
-    /// `cover-hit-effects.test.ts`, particle part: hits chip, a fatal hit bursts.
-    /// A tree's leaves are the leaf fall's (`leaves.rs`), and a crate's splinters
+    /// `cover-hit-effects.test.ts`, particle part: a tree's hit chips its bark, its
+    /// felling snaps splinters off the stump. A tree's leaves are the leaf fall's
+    /// (`leaves.rs`), and a crate's, a timber wall's and a fallen cottage's splinters
     /// lit wood chips (`wood_chips.rs`), not particles.
     #[test]
-    fn cover_hits_chip_trees_and_timber() {
+    fn cover_hits_chip_trees_and_leave_sawn_wood_to_the_wood_chips() {
         let mut random = CosmeticRandom::constant(0.5);
         let chips = |p: &ParticleEffects| p.particles.iter().filter(|q| q.splinter).count();
-        for kind in [SimEventType::Impact, SimEventType::Destroy] {
-            let mut cargo = ParticleEffects::default();
-            assert!(!cargo.event(&with_cover(kind, CoverKind::Cargo), &mut random));
-            assert!(
-                cargo.particles.is_empty(),
-                "{kind:?}: crate wood is not particles"
-            );
-        }
-        for cover in [CoverKind::Tree, CoverKind::Timber] {
-            let mut hit = ParticleEffects::default();
-            hit.event(&with_cover(SimEventType::Impact, cover), &mut random);
-            assert!(chips(&hit) > 0, "{cover:?} hit chips");
-            assert_eq!(chips(&hit), hit.particles.len());
-            let mut destroyed = ParticleEffects::default();
-            destroyed.event(&with_cover(SimEventType::Destroy, cover), &mut random);
-            if cover == CoverKind::Tree {
-                assert_eq!(
-                    chips(&destroyed),
-                    SNAP_SPLINTERS,
-                    "the felled trunk snaps off its stump in splinters"
-                );
-            } else {
+        for cover in [CoverKind::Cargo, CoverKind::Timber, CoverKind::House] {
+            for kind in [SimEventType::Impact, SimEventType::Destroy] {
+                let mut wood = ParticleEffects::default();
+                assert!(!wood.event(&with_cover(kind, cover), &mut random));
                 assert!(
-                    chips(&destroyed) > chips(&hit),
-                    "{cover:?}: collapse adds more chips than a hit"
+                    wood.particles.is_empty(),
+                    "{cover:?} {kind:?}: its wood is not particles"
                 );
             }
         }
+        let mut hit = ParticleEffects::default();
+        hit.event(
+            &with_cover(SimEventType::Impact, CoverKind::Tree),
+            &mut random,
+        );
+        assert!(chips(&hit) > 0, "a tree hit chips");
+        assert_eq!(chips(&hit), hit.particles.len());
+        let mut felled = ParticleEffects::default();
+        felled.event(
+            &with_cover(SimEventType::Destroy, CoverKind::Tree),
+            &mut random,
+        );
+        assert_eq!(
+            chips(&felled),
+            SNAP_SPLINTERS,
+            "the felled trunk snaps off its stump in splinters"
+        );
     }
 
     #[test]

@@ -7,19 +7,19 @@ use crate::support;
 
 use std::collections::HashSet;
 
-use sloppy_core::sim::data::{ARENA, STEP};
+use sloppy_core::sim::data::{ARENA, STEP, weapon};
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
+use sloppy_core::sim::house_layout::HOUSE_HEALTH;
 use sloppy_core::sim::level_rules::single_player_rules;
-use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::superstress_level::{
     REBUILD_SECONDS, SUPERSTRESS_MAP, SUPERSTRESS_SCALE, superstress_level, superstress_rules,
 };
-use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::{
-    CoverKind, FragmentShape, SimEventType, Simulation, SimulationSetup, VehicleCommand,
+    CoverKind, FragmentShape, SimEventType, Simulation, SimulationSetup, VehicleCommand, Weapon,
 };
-use support::{assert_spawns_and_pickups_clear, set_translation};
+use support::{assert_spawns_and_pickups_clear, fell_cottage, set_translation};
 
 const YARD: f64 = ARENA * SUPERSTRESS_SCALE;
 
@@ -71,12 +71,12 @@ fn the_yard_is_dense_half_turn_symmetric_and_has_only_cover_that_rebuilds_in_pla
         "two watchtowers, both breakable so they rebuild"
     );
     assert_eq!(
-        layout
+        destructible
             .iter()
-            .filter(|c| c.kind == CoverKind::House && !c.hp.is_finite())
+            .filter(|c| c.kind == CoverKind::House && c.hp == HOUSE_HEALTH)
             .count(),
         2,
-        "two cottages that stand for good, like the village's"
+        "two cottages that fall like the village's, so they rebuild"
     );
     let keys: HashSet<String> = layout.iter().map(|c| key(c.kind, c.x, c.z)).collect();
     assert_eq!(
@@ -161,7 +161,12 @@ fn destroyed_cover_rises_with_its_identity_once_the_rebuild_delay_passes_and_it_
         let cover = &sim.covers[c];
         assert!(cover.alive);
         assert_eq!(cover.hp, cover.max_hp);
-        assert!(cover.timber_hits.is_empty());
+        assert!(
+            cover
+                .structure
+                .as_ref()
+                .is_none_or(|state| state.gone.is_empty())
+        );
         assert_eq!(cover.id, id, "{:?} keeps its record", cover.kind);
         assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&c));
         let at = Vec2::new(cover.x, cover.z);
@@ -245,13 +250,8 @@ fn a_seeded_superstress_brawl_keeps_rebuilding_its_cover_and_stays_inside_its_bo
     }
     assert!(sim.destroyed > 15, "only {} covers fell", sim.destroyed);
     assert!(restored.len() > 5, "only {} covers rebuilt", restored.len());
-    // Only a tower's first collapse adds covers: the two rubble footings it reuses.
-    let towers = sim
-        .covers
-        .iter()
-        .filter(|c| c.kind == CoverKind::Tower)
-        .count();
-    assert!(sim.covers.len() <= cover_count + 2 * towers);
+    // Fallen cover rebuilds in its own record: the list never grows.
+    assert_eq!(sim.covers.len(), cover_count);
     for tank in sim.tanks.iter().filter(|t| t.alive) {
         let p = sim.body_translation(tank.body);
         assert!(
@@ -261,65 +261,79 @@ fn a_seeded_superstress_brawl_keeps_rebuilding_its_cover_and_stays_inside_its_bo
     }
 }
 
+/// A cottage shot and brought down waits while a tank stands in its footprint, then
+/// rises whole: its fallen parts cleared with their bodies and routes blocked again,
+/// each time it falls. A reset leaves the yard's first bodies.
 #[test]
-fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
+fn a_fallen_cottage_rebuilds_whole_each_time_it_falls() {
     let mut sim = superstress(731.0);
-    let tower = sim
+    let bodies = sim.world.bodies.len();
+    let covers = sim.covers.len();
+    let house = sim
         .covers
         .iter()
-        .position(|c| c.kind == CoverKind::Tower)
+        .position(|c| c.kind == CoverKind::House)
         .unwrap();
-    let (x, z) = (sim.covers[tower].x, sim.covers[tower].z);
-    let footings = |sim: &Simulation, alive: bool| -> Vec<usize> {
-        [-1.0, 1.0]
-            .iter()
-            .filter_map(|side| sim.rubble_at(x + side * TOWER_BASE.offset, z, alive))
-            .collect()
-    };
+    let c = &sim.covers[house];
+    let (x, z, id) = (c.x, c.z, c.id);
+    let impact = Point3::new(x + c.w / 2.0, 1.0, z);
     for tank in 0..sim.tanks.len() {
-        set_translation(&mut sim, tank, -30.0, 0.0);
+        set_translation(&mut sim, tank, 30.0, 0.0);
     }
-    let (id, team) = (sim.human().id, sim.human().team);
-    let mut covers = None;
-    for cycle in 0..2 {
-        sim.damage_cover(tower, 9999.0, id, team, None, None);
-        assert!(!sim.covers[tower].alive);
-        let rubble = footings(&sim, true);
-        assert_eq!(
-            rubble.len(),
-            2,
-            "cycle {cycle}: the collapse leaves both footings"
+    let (owner, team) = (sim.human().id, sim.human().team);
+    let shell = weapon(Weapon::Standard).damage;
+    for cycle in 0..3 {
+        sim.damage_cover(house, shell, owner, team, None, Some(impact));
+        assert!(
+            !sim.covers[house]
+                .structure
+                .as_ref()
+                .unwrap()
+                .gone
+                .is_empty()
         );
-        for &r in &rubble {
-            let at = Vec2::new(sim.covers[r].x, sim.covers[r].z);
-            assert!(sim.nav.is_blocked(at), "rubble blocks routes");
-        }
-        // The second collapse reuses the first one's rubble records.
-        let count = *covers.get_or_insert(sim.covers.len());
-        assert_eq!(sim.covers.len(), count, "cycle {cycle}: no new covers");
+        fell_cottage(&mut sim, house);
+        assert!(!sim.covers[house].alive);
+        assert!(
+            !sim.nav.is_blocked(support::open_ruin_ground(&sim, house)),
+            "cycle {cycle}: it opens"
+        );
+        assert!(sim.fragments.iter().any(|f| f.of_structure(house)));
+        assert!(sim.fragments.len() <= sim.max_fragments);
+        assert_eq!(sim.covers.len(), covers);
 
         superstress_rules(&mut sim);
         sim.elapsed += REBUILD_SECONDS;
-        superstress_rules(&mut sim);
-        assert!(sim.covers[tower].alive, "cycle {cycle}: the tower rebuilt");
-        assert!(
-            footings(&sim, true).is_empty(),
-            "its rubble is cleared away"
-        );
-        for &r in &rubble {
-            let cover = &sim.covers[r];
-            assert!(!cover.alive);
+        if cycle == 0 {
+            set_translation(&mut sim, 0, x, z);
+            superstress_rules(&mut sim);
             assert!(
-                !sim.world.bodies.contains(cover.body),
-                "no rubble body is left"
+                !sim.covers[house].alive,
+                "a tank in its footprint delays it"
             );
-            assert!(!sim.cover_by_collider.values().any(|&c| c == r));
+            set_translation(&mut sim, 0, 30.0, 0.0);
         }
-        let at = Vec2::new(x, z);
-        assert!(sim.nav.is_blocked(at), "the tower blocks routes again");
-        assert_eq!(
-            sim.cover_by_collider.get(&sim.covers[tower].collider),
-            Some(&tower)
+        superstress_rules(&mut sim);
+        let cover = &sim.covers[house];
+        assert!(cover.alive, "cycle {cycle}: the cottage rebuilt");
+        assert_eq!(cover.id, id);
+        assert_eq!(cover.hp, HOUSE_HEALTH);
+        assert!(
+            cover.structure.as_ref().unwrap().gone.is_empty(),
+            "it stands whole"
         );
+        assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&house));
+        assert!(
+            sim.fragments.iter().all(|f| !f.of_structure(house)),
+            "its fallen parts are cleared"
+        );
+        assert!(
+            sim.nav.is_blocked(Vec2::new(x, z)),
+            "routes go round it again"
+        );
+        assert_eq!(sim.world.bodies.len(), bodies + sim.fragments.len());
     }
+    sim.reset(None);
+    assert_eq!(sim.world.bodies.len(), bodies);
+    assert!(sim.fragments.is_empty());
 }

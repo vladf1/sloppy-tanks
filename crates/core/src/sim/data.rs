@@ -307,16 +307,13 @@ pub mod group {
     pub const GROUND: u32 = 0x0004_000b;
     pub const FRAGMENT: u32 = 0x0008_0006;
     pub const PUSHABLE_DEBRIS: u32 = SOLID_DEBRIS;
-    pub const TIMBER_DEBRIS: u32 = SOLID_DEBRIS;
     pub const WRECK: u32 = SOLID_DEBRIS;
-    /// A collapsing watchtower's thin brace frames: still debris to shells and
-    /// tanks, but they skip other debris so the falling deck crushes through
-    /// them instead of resting on them.
-    pub const CRUSHED_FRAME: u32 = 0x0508_0407;
-    /// A collapsing cottage's shards: solid debris that also rests on its rubble
-    /// mound.
-    pub const HOUSE_SHARD: u32 = 0x0108_0307;
-    /// The mound itself: only the shards rest on it; tanks, shells and other
-    /// debris pass through it.
-    pub const HOUSE_MOUND: u32 = 0x0200_0100;
+    /// A structure's fallen parts: solid debris that also rests on a cottage garden's
+    /// poles and plants.
+    pub const STRUCTURE_DEBRIS: u32 = 0x0108_0307;
+    /// A structure's fallen part wedged on its remains, dropping through them: it skips
+    /// standing cover.
+    pub const STRUCTURE_DEBRIS_THROUGH: u32 = 0x0108_0305;
+    /// A cottage garden's poles and plants: met by its fallen parts alone.
+    pub const GARDEN_PROPS: u32 = 0x0200_0100;
 }

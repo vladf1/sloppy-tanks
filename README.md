@@ -105,7 +105,7 @@ between single player and multiplayer. Playing an extra level or an online team
 battle keeps your preferred single-player mode for the next standard map.
 
 Opening the game with `?debug` adds two stress levels, marked **EXTRA**, to
-the map dropdowns: **Stress Grid** (30 tanks among 75 destructibles) and
+the map dropdowns: **Stress Grid** (30 tanks among 83 destructibles) and
 **Scrap Yard** (30 tanks in a compact yard whose cover rebuilds). In single player
 they are an endless 15 v 15 team battle with your chosen tank; online they follow
 the room's rules. Players are nearly invulnerable on both, and pickups are ten

@@ -27,7 +27,10 @@ use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
-use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
+use super::wood_chips::{
+    MAX_BOARDS, MAX_LUMPS, MAX_SCRAPS, MAX_STRAW, MAX_WOOD_CHIPS, board_mesh, lump_mesh,
+    scrap_mesh, splinter_mesh, straw_mesh,
+};
 
 /// Tread marks draw after the ground decals they lie on (`renderOrder = 1`),
 /// and blast decals with them; smoke draws over both, glows over the smoke.
@@ -203,18 +206,48 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             MAX_LEAVES,
         )
     });
-    // Crate splinters, faceted and lit like the boards they came from; the
-    // instance tint is the wood's color.
+    // Splinters and boards of sawn wood, faceted and lit like the wood they came
+    // from: the instance tint is its faces' color, the struck wood's or paint's, and
+    // the chip effect shows its own pale wood on the faces its vertex colors mark bare
+    // (end grain, split sides, a board's back). The bent roofing scraps show both
+    // sides.
+    let sawn = Material {
+        flat_shading: true,
+        vertex_colors: true,
+        effect: custom(DEBRIS_CHIP.name),
+        ..Material::standard(0xffffff, 0.0, 0.85)
+    };
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new("wood chips", splinter_mesh(), sawn.clone(), MAX_WOOD_CHIPS)
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new("wood boards", board_mesh(), sawn, MAX_BOARDS)
+    });
     pools.push(PoolDesc {
         receive_shadow: true,
         ..PoolDesc::new(
-            "wood chips",
-            splinter_mesh(),
+            "plaster lumps",
+            lump_mesh(),
             Material {
                 flat_shading: true,
-                ..Material::standard(0xffffff, 0.0, 0.85)
+                ..Material::standard(0xffffff, 0.0, 0.95)
             },
-            MAX_WOOD_CHIPS,
+            MAX_LUMPS,
+        )
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new(
+            "roof scraps",
+            scrap_mesh(),
+            Material {
+                side: Side::Double,
+                flat_shading: true,
+                ..Material::standard(0xffffff, 0.1, 0.7)
+            },
+            MAX_SCRAPS,
         )
     });
     pools.push(PoolDesc {

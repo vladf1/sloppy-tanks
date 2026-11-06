@@ -225,7 +225,7 @@ fn shot_sound(weapon: Option<Weapon>) -> Sound {
 }
 
 /// Drums emit a separate blast event, so their shell plays nothing of its own. A shell
-/// bursting a loose crate or watchtower piece (`shatter`) breaks wood.
+/// bursting a loose crate board or a watchtower part (`shatter`) breaks wood.
 fn destruction_sound(kind: SimEventType, cover_kind: Option<CoverKind>) -> Option<Sound> {
     match (kind, cover_kind) {
         (SimEventType::Shatter, _) => Some(Sound::WoodBreak),
@@ -346,7 +346,7 @@ mod tests {
             destruction_sound(SimEventType::Impact, Some(CoverKind::Tree)),
             None
         );
-        // A shell bursting a loose crate or watchtower board.
+        // A shell bursting a loose crate board or breaking a watchtower part.
         for kind in [CoverKind::Cargo, CoverKind::Tower] {
             assert_eq!(
                 destruction_sound(SimEventType::Shatter, Some(kind)),

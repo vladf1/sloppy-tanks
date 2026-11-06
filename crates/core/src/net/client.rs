@@ -74,6 +74,7 @@ use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, present_share};
 use crate::sim::types::{
     AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
 };
+use crate::sim::veterancy::rank_stats;
 use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
@@ -353,6 +354,8 @@ struct Gun {
     team: Team,
     /// Seconds between shots.
     interval: f64,
+    /// Each shell's damage, with the viewer's rank.
+    damage: f64,
 }
 
 pub struct NetworkClient {
@@ -417,6 +420,8 @@ pub struct NetworkClient {
     pending_hull: Option<(HostUpdate, f64)>,
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
+    /// The predicted bodies held this frame, kept between frames.
+    held_poses: Vec<HeldPose>,
     pub feel: FeelReadings,
     /// The viewer's shots, drawn from the frame they are fired.
     pub own_shots: OwnShots,
@@ -482,6 +487,7 @@ impl NetworkClient {
             prediction: HullPrediction::default(),
             pending_hull: None,
             prediction_scene: RenderState::default(),
+            held_poses: Vec::new(),
             feel: FeelReadings::default(),
             own_shots: OwnShots::default(),
             hull_trail: VecDeque::new(),
@@ -675,7 +681,12 @@ impl NetworkClient {
     /// A binary frame: a baseline or a snapshot batch.
     pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now_ms: f64) {
         if self.is_current(socket) && bytes.len() <= MAX_SERVER_MESSAGE_BYTES {
-            self.arrive(Message::Binary(bytes.to_vec()), now_ms);
+            // Without a development delay the message is read where it lies.
+            if self.delay.is_some() {
+                self.arrive(Message::Binary(bytes.to_vec()), now_ms);
+            } else if self.handle_binary(bytes, now_ms).is_err() {
+                self.receive_failure();
+            }
         } else if self.is_current(socket) {
             self.unreadable();
         }
@@ -1017,7 +1028,12 @@ impl NetworkClient {
                         && self.ready_round == self.round_id
                         && !self.hidden
                     {
-                        let rendered = self.mirror.render(control.tank_id);
+                        // The sample refills one the timeline dropped, buffers and all.
+                        let mut state = self.timeline.spare_state();
+                        let rendered = self
+                            .mirror
+                            .fill_render(&mut state, control.tank_id)
+                            .map(|()| state);
                         if let Ok(state) = &rendered {
                             self.feel.received(self.mirror.tick as f64, state);
                         }
@@ -1148,6 +1164,7 @@ impl NetworkClient {
             weapon,
             team: viewer.team,
             interval: fire_interval(weapon, viewer.rapid, viewer.human, viewer.xp),
+            damage: crate::sim::data::weapon(weapon).damage * rank_stats(viewer.xp).damage,
         })
     }
 
@@ -1516,6 +1533,7 @@ impl NetworkClient {
                     weapon: gun.weapon,
                     team: gun.team,
                     tank_id: control.tank_id,
+                    damage: gun.damage,
                 };
                 flashes.push((shot.tick, self.own_shots.fire(firing, &self.prediction)));
             }
@@ -1551,9 +1569,10 @@ impl NetworkClient {
             }
         }
         // What the hull touches is drawn where the predicted world moves it.
+        self.prediction.held_into(now_ms, &mut self.held_poses);
         let released = draw_held(
             display,
-            &self.prediction.held(now_ms),
+            &self.held_poses,
             self.prediction.predicted_tick(),
         );
         for moved in released {

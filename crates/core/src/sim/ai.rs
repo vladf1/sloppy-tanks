@@ -12,6 +12,7 @@ use super::hitboxes::{HullAt, ShotProbe, tank_hit_time};
 use super::humvee_tactics::{humvee_can_fire, humvee_holding_position, steady_humvee_shot};
 use super::math::{Vec2, angle_delta, distance};
 use super::simulation::Simulation;
+use super::structure_physics::breach_point;
 use super::types::{AmmoSelection, BotMode, CoverKind, VehicleCommand, VehicleKind, Weapon};
 
 const BREACH_RANGE: f64 = 14.0;
@@ -168,8 +169,11 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         }
         _ => command.aim = turn(mx.atan2(mz)),
     }
-    // Deliberately clear nearby weak timber and towers that obstruct a useful route;
-    // cottages take fifteen shells, so bots drive round them instead.
+    // Deliberately clear nearby weak cover that obstructs a useful route (a structure
+    // where a shell still breaks something that blocks the way: a tower's nearest leg, a
+    // timber wall's post or beam at shell height);
+    // a cottage only opens where its walls break, so bots drive round it (or through the
+    // gaps navigation finds) instead.
     // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
     // A target in sight keeps the turret while it slews or the bot reacts; otherwise
     // cover beside the target's bearing would win every tick the shot is not yet lined up.
@@ -177,21 +181,33 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         let goal = simulation.tanks[tank_index].brain.goal;
         let route = (goal.x - position.x).atan2(goal.z - position.z);
         // A distance is never shorter than either axis offset; the box only skips far covers.
-        let weak = simulation.covers.iter().find(|o| {
-            o.alive
+        let weak = simulation.covers.iter().find_map(|o| {
+            let near = o.alive
                 && o.destructible
                 && !matches!(o.kind, CoverKind::Drum | CoverKind::House)
                 && (o.x - position.x).abs() < BREACH_RANGE
                 && (o.z - position.z).abs() < BREACH_RANGE
                 && distance(position, Vec2::new(o.x, o.z)) < BREACH_RANGE
                 && angle_delta(route, (o.x - position.x).atan2(o.z - position.z)).abs()
-                    < BREACH_ROUTE_ANGLE
+                    < BREACH_ROUTE_ANGLE;
+            if !near {
+                return None;
+            }
+            // Where the shell goes must lie on the route too: a frame's batten at the far
+            // side of a crate is not in the way.
+            match &o.structure {
+                Some(_) => breach_point(o, position).filter(|at| {
+                    angle_delta(route, (at.x - position.x).atan2(at.z - position.z)).abs()
+                        < BREACH_ROUTE_ANGLE
+                }),
+                None => Some(Vec2::new(o.x, o.z)),
+            }
         });
-        if let Some(weak) = weak {
-            let desired = (weak.x - position.x).atan2(weak.z - position.z);
+        if let Some(at) = weak {
+            let desired = (at.x - position.x).atan2(at.z - position.z);
             command.aim = turn(desired);
             command.fire = angle_delta(command.aim, desired).abs() < BREACH_FIRE_ANGLE;
-            firing_range = distance(position, Vec2::new(weak.x, weak.z));
+            firing_range = distance(position, at);
             breaching = true;
         }
     }

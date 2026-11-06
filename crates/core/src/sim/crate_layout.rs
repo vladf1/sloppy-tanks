@@ -21,6 +21,13 @@ pub const CRATE_BATTEN_WIDTH: f64 = 0.15;
 pub const CRATE_BOARD_PITCH: f64 = 0.3;
 /// Width of a skid across its grain.
 pub const CRATE_SKID_WIDTH: f64 = 0.2;
+/// The sheathing boards a wall of a crate `h` high is laid in, and their pitch up it.
+pub fn crate_wall_rows(h: f64) -> (usize, f64) {
+    let span = h - CRATE_LID - CRATE_BASE;
+    let rows = (span / CRATE_BOARD_PITCH).round().clamp(3.0, 10.0);
+    (rows as usize, span / rows)
+}
+
 /// Clearance between neighbouring sections so they start apart, not interpenetrating.
 const SECTION_GAP: f64 = 0.02;
 
@@ -28,11 +35,6 @@ const SECTION_GAP: f64 = 0.02;
 /// it. A few patterns rather than any cut keep section sizes repeating, so crates
 /// share their sections' models.
 pub const CRATE_SPLITS: [&[u8]; 5] = [&[6], &[2, 4], &[3, 3], &[4, 2], &[2, 2, 2]];
-/// How likely each of [`CRATE_SPLITS`] is for the long walls, the short ends (stiffer,
-/// so more often whole) and the lid.
-const LONG_WALL_ODDS: [f64; 5] = [0.2, 0.2, 0.15, 0.2, 0.25];
-const END_ODDS: [f64; 5] = [0.45, 0.2, 0.1, 0.2, 0.05];
-const LID_ODDS: [f64; 5] = [0.2, 0.2, 0.2, 0.2, 0.2];
 /// Lengths of the loose planks that can fall out, as a share of the crate's width.
 pub const CRATE_PLANK_LENGTHS: [f64; 3] = [0.4, 0.55, 0.7];
 const MAX_LOOSE_PLANKS: usize = 2;
@@ -90,8 +92,8 @@ impl CratePiece {
     }
 }
 
-/// How one crate falls apart: each wall's split (front, back, right, left) and the
-/// lid's, as indices into [`CRATE_SPLITS`], the loose planks (indices into
+/// How a crate falls apart: each wall's split (front, back, right, left) and the lid's,
+/// as indices into [`CRATE_SPLITS`], the loose planks (indices into
 /// [`CRATE_PLANK_LENGTHS`]) and whether a skid comes away.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CrateBreak {
@@ -99,39 +101,6 @@ pub struct CrateBreak {
     pub lid: usize,
     pub planks: Vec<usize>,
     pub skid: bool,
-}
-
-impl CrateBreak {
-    /// A random break from `next`, a stream of draws in [0, 1).
-    pub fn random(mut next: impl FnMut() -> f64) -> Self {
-        let mut pick = |odds: &[f64]| {
-            let mut roll = next();
-            for (index, &chance) in odds.iter().enumerate() {
-                if roll < chance {
-                    return index;
-                }
-                roll -= chance;
-            }
-            odds.len() - 1
-        };
-        let walls = [
-            pick(&LONG_WALL_ODDS),
-            pick(&LONG_WALL_ODDS),
-            pick(&END_ODDS),
-            pick(&END_ODDS),
-        ];
-        let lid = pick(&LID_ODDS);
-        let planks = (0..pick(&[0.3, 0.45, 0.25]))
-            .map(|_| pick(&[1.0 / 3.0; 3]))
-            .collect();
-        let skid = next() < 0.5;
-        Self {
-            walls,
-            lid,
-            planks,
-            skid,
-        }
-    }
 }
 
 /// Where a section sat in the standing crate.
@@ -264,30 +233,6 @@ pub fn crate_sections(w: f64, d: f64, h: f64, how: &CrateBreak) -> Vec<CrateSect
     sections
 }
 
-/// Every section and size a `w` × `d` × `h` crate can break into, for building
-/// their models ahead of the first break.
-pub fn crate_section_looks(w: f64, d: f64, h: f64) -> Vec<(CratePiece, [f64; 3])> {
-    let mut looks: Vec<(CratePiece, [f64; 3])> = Vec::new();
-    let mut every = CrateBreak {
-        planks: vec![0, 1],
-        skid: true,
-        ..CrateBreak::default()
-    };
-    for split in 0..CRATE_SPLITS.len() {
-        every.walls = [split; 4];
-        every.lid = split;
-        for plank in 0..CRATE_PLANK_LENGTHS.len() {
-            every.planks = vec![plank, plank];
-            for section in crate_sections(w, d, h, &every) {
-                if !looks.contains(&(section.piece, section.size)) {
-                    looks.push((section.piece, section.size));
-                }
-            }
-        }
-    }
-    looks
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,30 +284,6 @@ mod tests {
                     .sum();
                 let gaps = (CRATE_SPLITS[how.lid].len() - 1) as f64 * SECTION_GAP;
                 assert!((lid + gaps - d).abs() < 1e-9);
-            }
-        }
-    }
-
-    #[test]
-    fn breaks_vary_and_every_section_has_a_prepared_look() {
-        let mut rng = crate::sim::math::Random::new(7.0);
-        let breaks: Vec<_> = (0..40).map(|_| CrateBreak::random(|| rng.next())).collect();
-        let distinct = breaks
-            .iter()
-            .enumerate()
-            .filter(|(i, how)| !breaks[..*i].contains(how))
-            .count();
-        assert!(distinct > 20, "breaks repeat: {distinct} of 40 differ");
-        let (w, d, h) = (3.0, 3.0, 2.6);
-        let looks = crate_section_looks(w, d, h);
-        for how in &breaks {
-            let sections = crate_sections(w, d, h, how);
-            assert!((5..=18).contains(&sections.len()), "{}", sections.len());
-            for section in sections {
-                assert!(
-                    looks.contains(&(section.piece, section.size)),
-                    "{section:?}"
-                );
             }
         }
     }

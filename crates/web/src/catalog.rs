@@ -76,8 +76,8 @@ pub const MAP_CARDS: [MapCard; MAP_OPTIONS.len()] = [
     },
     MapCard {
         id: MapId::StressTest,
-        description: "30 tanks · 75 destructibles · permanent buildings and barriers",
-        short_description: Some("30 tanks · 75 destructibles"),
+        description: "30 tanks · 83 destructibles · cottages fall, barriers stand",
+        short_description: Some("30 tanks · 83 destructibles"),
         icon: "stress",
         tint: 0x6a5ea8,
         team_tanks: Some(15),

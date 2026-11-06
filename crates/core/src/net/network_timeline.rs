@@ -294,6 +294,12 @@ impl NetworkTimeline {
         self.poses.reset(at_tick(state.clone(), tick));
     }
 
+    /// A render state to fill for the next [`push`](Self::push), reusing a dropped
+    /// sample's buffers when there is one; every field must be overwritten.
+    pub fn spare_state(&mut self) -> RenderState {
+        self.poses.spare()
+    }
+
     /// Records one message's arrival after its frames have been pushed.
     pub fn arrive(&mut self, now_ms: f64) {
         self.clock.arrive(self.newest_tick, now_ms);
@@ -334,10 +340,10 @@ impl NetworkTimeline {
             match (entry, shell) {
                 (PathEntry::Launch(path), _) => self.shells.push(Shell::new(
                     &path,
-                    forecast(&path, weapon(path.launch.weapon).bounces, cover),
+                    forecast(&path, weapon(path.launch.weapon).bounces, None, cover),
                 )),
                 (PathEntry::Change(path), Some(shell)) => {
-                    shell.forecast = forecast(&path, 0, cover)
+                    shell.forecast = forecast(&path, 0, None, cover)
                 }
                 (PathEntry::End { .. }, Some(shell)) => shell.forecast = Forecast::default(),
                 _ => {}

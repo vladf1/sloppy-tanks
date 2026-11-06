@@ -77,6 +77,7 @@ use crate::draw_list::{
     ClassOrder, Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW,
     SHADOW_VIEW, VIEW_COUNT, ViewDraws,
 };
+use crate::effects::walls::LightBlocker;
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
@@ -125,8 +126,8 @@ pub struct InstanceId {
     generation: u32,
 }
 
-/// A model prepared for upload ([`Renderer::prepare_pending_model`]) that is not on
-/// the GPU yet ([`Renderer::add_pending_model`]).
+/// Scenery prepared for upload ([`Renderer::prepare_pending_scenery`]) that is not on
+/// the GPU yet ([`Renderer::add_pending_scenery`]).
 pub struct PendingModel {
     prepared: PreparedModel,
     merge: ShadowMerge,
@@ -231,6 +232,11 @@ pub struct PointLight {
     /// Cutoff distance; 0 is unlimited.
     pub distance: f32,
     pub decay: f32,
+    /// Whether its light wraps past the terminator (a fire's wide glow); a point
+    /// flash's does not.
+    pub wraps: bool,
+    /// The wall box that hides what lies behind it from this light.
+    pub blocker: Option<LightBlocker>,
 }
 
 pub const MAX_POINT_LIGHTS: usize = 4;
@@ -402,6 +408,7 @@ struct FrameUniform {
     bounce: [f32; 4],
     rim: [f32; 4],
     cloud_tiles: [f32; 4],
+    light_blocks: [[f32; 4]; 5],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade, the
@@ -599,6 +606,8 @@ struct ClassKey {
     /// The instance pool that owns this class, whose draws read the pool's own
     /// instance buffer; `None` for model parts.
     pool: Option<u32>,
+    /// Whether it draws into ambient occlusion's depth pass.
+    occludes: bool,
 }
 
 /// A mesh + material + pipeline combination that instances batch under.
@@ -988,6 +997,9 @@ pub struct Renderer {
     time: f32,
 
     builder: DrawListBuilder,
+    /// Whether the parts of the model being registered draw into ambient
+    /// occlusion's depth pass ([`Renderer::add_falling_debris_model`] clears it).
+    occluding: bool,
     views: [ViewDraws; VIEW_COUNT],
     joints: Vec<Mat4>,
     joint_visible: Vec<bool>,
@@ -1117,6 +1129,7 @@ impl Renderer {
             water: None,
             time: 0.0,
             builder: DrawListBuilder::default(),
+            occluding: true,
             views: Default::default(),
             joints: Vec::new(),
             joint_visible: Vec::new(),
@@ -1280,6 +1293,11 @@ impl Renderer {
         }
     }
 
+    /// The point lights set for the next frame, for diagnostics.
+    pub fn point_lights(&self) -> &[Option<PointLight>] {
+        &self.point_lights
+    }
+
     pub fn set_point_light(&mut self, index: usize, light: Option<PointLight>) {
         if let Some(slot) = self.point_lights.get_mut(index) {
             *slot = light;
@@ -1394,6 +1412,7 @@ impl Renderer {
             receive_shadow,
             faded,
             pool,
+            occludes: self.occluding,
         };
         let index = match self.class_index.get(&key) {
             Some(&index) => index,
@@ -1433,6 +1452,7 @@ impl Renderer {
                 // Without the shadow's dither, which only fades a caster's shadow.
                 let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
+                    && key.occludes
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
@@ -1673,21 +1693,6 @@ impl Renderer {
         self.register(prepared, lifetime, false, false)
     }
 
-    /// The CPU half of [`Self::add_model`]: the model prepared for upload and its
-    /// shadow casters merged, so a caller spreading a costly model over frames can
-    /// upload it in a later one ([`Self::add_pending_model`]).
-    pub fn prepare_pending_model(&mut self, root: &Node) -> PendingModel {
-        let prepared = prepare_model(root, &mut self.interner);
-        let merge = self.merge_for(&prepared, false);
-        PendingModel { prepared, merge }
-    }
-
-    /// Upload a model [`Self::prepare_pending_model`] made, as `add_model` would have.
-    pub fn add_pending_model(&mut self, pending: PendingModel, lifetime: Lifetime) -> ModelId {
-        let PendingModel { prepared, merge } = pending;
-        self.register_merged(prepared, merge, lifetime, false, false)
-    }
-
     /// `add_model` for a model whose instances fade (an opacity below 1 draws them
     /// blended), with the blended variants of its opaque parts compiled up front.
     pub fn add_fading_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
@@ -1709,6 +1714,32 @@ impl Renderer {
     pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_combined(root, &mut self.interner);
         self.register(prepared, lifetime, false, false)
+    }
+
+    /// A piece of debris falling for a few seconds (a collapsing cottage's shard),
+    /// fading as it is cleared away, [combined](Self::add_combined_model) when its
+    /// root has named children. It draws no ambient occlusion depth: a collapse
+    /// brings down dozens of pieces at once, each its own draw, and their depth
+    /// draws doubled that while they fell; once a pile rests its merged chunks
+    /// occlude again.
+    pub fn add_falling_debris_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let combined = root.children.iter().any(|child| !child.name.is_empty());
+        let prepared = if combined {
+            prepare_combined(root, &mut self.interner)
+        } else {
+            prepare_model(root, &mut self.interner)
+        };
+        self.occluding = false;
+        let model = self.register(prepared, lifetime, false, true);
+        self.occluding = true;
+        model
+    }
+
+    /// [`Self::add_combined_model`] for debris whose instances fade as they are
+    /// cleared away.
+    pub fn add_fading_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(root, &mut self.interner);
+        self.register(prepared, lifetime, false, true)
     }
 
     /// Joint index for a named node of a model.
@@ -1811,8 +1842,9 @@ impl Renderer {
         self.add_pending_scenery(pending, lifetime)
     }
 
-    /// The CPU half of [`Self::add_scenery`], as [`Self::prepare_pending_model`] is of
-    /// `add_model`: a caller building an arena over frames uploads it in a later one.
+    /// The CPU half of [`Self::add_scenery`]: the scenery prepared for upload and its
+    /// shadow casters merged, so a caller building an arena over frames uploads it in a
+    /// later one.
     /// It takes the scenery: its meshes go once the batches hold their copies, before
     /// the shadow merge copies the casters again, so a theme's 20 MB of source
     /// geometry and every merge of it never all sit in the Wasm heap at once.
@@ -2359,8 +2391,23 @@ impl Renderer {
         let [penumbra_u, penumbra_v, penumbra_depth, penumbra_steps] =
             penumbra_terms(shadow_matrix, self.sun_shadow.map_size as f32);
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
-        for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
+        // Each light's blocking wall box, one light per lane: west, south, east and
+        // north sides and its top, which is zero where a light has none.
+        let mut light_blocks = [[0.0; 4]; 5];
+        for (lane, (slot, light)) in point_lights.iter_mut().zip(&self.point_lights).enumerate() {
             if let (Some(light), false) = (light, self.debug_off.lights) {
+                if let Some(blocker) = light.blocker {
+                    let sides = [
+                        blocker.min[0],
+                        blocker.min[1],
+                        blocker.max[0],
+                        blocker.max[1],
+                        blocker.top,
+                    ];
+                    for (row, side) in light_blocks.iter_mut().zip(sides) {
+                        row[lane] = side;
+                    }
+                }
                 let [r, g, b] = hex_to_linear_scaled(light.color, light.intensity);
                 *slot = [
                     light.position.x,
@@ -2370,7 +2417,13 @@ impl Renderer {
                     r,
                     g,
                     b,
-                    light.decay,
+                    // The decay's sign carries whether it wraps (the shader takes
+                    // its magnitude).
+                    if light.wraps {
+                        light.decay
+                    } else {
+                        -light.decay
+                    },
                 ];
             }
         }
@@ -2418,6 +2471,7 @@ impl Renderer {
             camera_right: rgb4(world.x_axis.truncate().into(), 0.0),
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
+            light_blocks,
             quality: self.quality_uniform(),
             penumbra_u,
             penumbra_v,

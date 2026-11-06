@@ -8,15 +8,22 @@
 //! the host simulates (shells, blasts, debris, pickups, other players' steering) is
 //! absent; the client corrects for it when the next snapshot arrives.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use rapier3d::prelude::*;
 use serde_json::{Value, json};
 
-use super::own_shots::{CoverCast, CoverHit, Struck};
+use super::own_shots::{CoverCast, CoverHit, PartHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
+use crate::sim::simulation::structure_parts;
+use crate::sim::structure::{PartSet, Structure, structure_of};
+use crate::sim::structure_physics::{
+    WHOLE, cap_loose_speed, debris_colliders, part_collider, passes_through, rest_body,
+    set_passing_through, structural, unrest_body,
+};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -209,11 +216,22 @@ impl MovingBody {
             return;
         }
         let at = simulation.body_translation(tank.body).planar();
-        let mut near = |kind: BodyKind, id: u32, handle: RigidBodyHandle| {
+        // A cottage's loose parts hang off the ground centre of the cottage they fell
+        // from: they are as far as their centre of mass.
+        let place = |handle: RigidBodyHandle, loose_parts: bool| {
+            let body = &simulation.world.bodies[handle];
+            from_vector(if loose_parts {
+                body.center_of_mass()
+            } else {
+                body.translation()
+            })
+            .planar()
+        };
+        let mut near = |kind: BodyKind, id: u32, handle: RigidBodyHandle, loose_parts: bool| {
             let Some(body) = simulation.world.bodies.get(handle) else {
                 return;
             };
-            let gap = crate::sim::math::distance(from_vector(body.translation()).planar(), at);
+            let gap = crate::sim::math::distance(place(handle, loose_parts), at);
             if body.is_sleeping() || gap > MOVING_BODY_REACH {
                 return;
             }
@@ -227,33 +245,41 @@ impl MovingBody {
         for &index in &simulation.movable_covers {
             let cover = &simulation.covers[index];
             if cover.alive {
-                near(BodyKind::Cover, cover.id, cover.body);
+                near(BodyKind::Cover, cover.id, cover.body, false);
             }
         }
         for fragment in &simulation.fragments {
-            if fragment.wreck.is_some() || fragment.dimensions.is_some() {
-                near(BodyKind::Fragment, fragment.id, fragment.body);
+            let loose_parts = fragment.structure.is_some();
+            if fragment.wreck.is_some() || fragment.dimensions.is_some() || loose_parts {
+                near(BodyKind::Fragment, fragment.id, fragment.body, loose_parts);
             }
         }
+        // Nearest first: each body's distance found once, as its search is a scan.
         let gap = |body: &MovingBody| {
             let handle = match body.kind {
                 BodyKind::Cover => simulation
                     .covers
                     .iter()
                     .find(|cover| cover.id == body.id)
-                    .map(|cover| cover.body),
+                    .map(|cover| (cover.body, false)),
                 BodyKind::Fragment => simulation
                     .fragments
                     .iter()
                     .find(|fragment| fragment.id == body.id)
-                    .map(|fragment| fragment.body),
+                    .map(|fragment| {
+                        let loose_parts =
+                            fragment.structure.is_some();
+                        (fragment.body, loose_parts)
+                    }),
             };
-            handle.map_or(f64::INFINITY, |handle| {
-                crate::sim::math::distance(simulation.body_translation(handle).planar(), at)
+            handle.map_or(f64::INFINITY, |(handle, loose_parts)| {
+                crate::sim::math::distance(place(handle, loose_parts), at)
             })
         };
         if out.len() > MAX_MOVING_BODIES {
-            out.sort_by(|a, b| gap(a).total_cmp(&gap(b)));
+            // Distances are never negative, and such doubles order as their bits do; the
+            // sort keeps equal ones in order, as a stable sort by distance does.
+            out.sort_by_cached_key(|body| gap(body).to_bits());
             out.truncate(MAX_MOVING_BODIES);
         }
     }
@@ -321,6 +347,8 @@ struct PredictedHull {
 enum CoverForm {
     Standing,
     Stump,
+    /// A cottage's standing parts: those not in the set.
+    Parts(PartSet),
 }
 
 struct CoverBody {
@@ -329,8 +357,45 @@ struct CoverBody {
     movable: bool,
     /// What a shell striking it shows.
     struck: Struck,
+    /// A structure's layout, and its parts that took damage.
+    layout: Option<Arc<Structure>>,
+    cracked: PartSet,
     /// The scene sync that last found its record.
     seen: u64,
+}
+
+/// What a body of the predicted world stands for, kept in its user data, so a contact or
+/// a query finds the record behind a body without searching for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Owner {
+    Tank(u32),
+    Cover(u32),
+    Debris(u32),
+}
+
+const TANK_BODY: u128 = 1 << 64;
+const COVER_BODY: u128 = 2 << 64;
+const DEBRIS_BODY: u128 = 3 << 64;
+
+impl Owner {
+    fn user_data(self) -> u128 {
+        match self {
+            Owner::Tank(id) => TANK_BODY | u128::from(id),
+            Owner::Cover(id) => COVER_BODY | u128::from(id),
+            Owner::Debris(id) => DEBRIS_BODY | u128::from(id),
+        }
+    }
+
+    /// The owner a body's user data names; none for the viewer's hull and the ground.
+    fn of(user_data: u128) -> Option<Owner> {
+        let id = user_data as u32;
+        match user_data & !u128::from(u32::MAX) {
+            TANK_BODY => Some(Owner::Tank(id)),
+            COVER_BODY => Some(Owner::Cover(id)),
+            DEBRIS_BODY => Some(Owner::Debris(id)),
+            _ => None,
+        }
+    }
 }
 
 /// What the viewer's hull touched in a predicted step, for the correction statistics.
@@ -371,11 +436,17 @@ pub struct BodyPose {
     pub velocity: Point3,
     /// Asleep or all but still.
     pub resting: bool,
+    /// A structure's fallen piece passing through what stands, as the host lets it.
+    pub passes_through: bool,
 }
 
 /// Debris this far from the viewer's hull (metres) joins the predicted world: farther
 /// than the hull can drive in a prediction window.
 const DEBRIS_REACH: f64 = 12.0;
+/// The farthest (m) a structure's fallen part reaches from the ground centre of the
+/// structure it fell from, which its body is placed by: a watchtower's roof corner over
+/// a footing, farther than a cottage's eaves.
+const STRUCTURE_DEBRIS_OFFSET: f64 = 9.5;
 /// A body slower than this (m/s and rad/s) counts as resting.
 const RESTING_SPEED: f64 = 0.05;
 
@@ -383,6 +454,12 @@ const RESTING_SPEED: f64 = 0.05;
 struct DebrisBody {
     body: RigidBodyHandle,
     seen: u64,
+    /// Held at rest for good, as the host holds a structure's piece.
+    rested: bool,
+    /// A structure's fallen parts, whose speed the host caps while they are loose.
+    structure: bool,
+    /// Passing through what stands, as the host lets the piece.
+    through: bool,
 }
 
 struct OtherTank {
@@ -400,13 +477,18 @@ struct OtherTank {
 pub struct TankPredictor {
     world: PhysicsWorld,
     hull: Option<PredictedHull>,
-    covers: HashMap<u32, CoverBody>,
-    tanks: HashMap<u32, OtherTank>,
-    debris: HashMap<u32, DebrisBody>,
+    // Ordered by id: they are walked to remove bodies and drive the other tanks, and the
+    // order bodies leave and join the world decides its handles and its solver's order,
+    // so a hashed order made each run of the same frames predict a little differently.
+    covers: BTreeMap<u32, CoverBody>,
+    tanks: BTreeMap<u32, OtherTank>,
+    debris: BTreeMap<u32, DebrisBody>,
     /// Counts scene syncs, to find replicated records that disappeared.
     sync: u64,
     /// Storage reused for their ids.
     gone: Vec<u32>,
+    /// Storage reused for the colliders of a structure's parts that broke.
+    broken: Vec<ColliderHandle>,
 }
 
 impl Default for TankPredictor {
@@ -414,11 +496,12 @@ impl Default for TankPredictor {
         Self {
             world: arena_world(),
             hull: None,
-            covers: HashMap::new(),
-            tanks: HashMap::new(),
-            debris: HashMap::new(),
+            covers: BTreeMap::new(),
+            tanks: BTreeMap::new(),
+            debris: BTreeMap::new(),
             sync: 0,
             gone: Vec::new(),
+            broken: Vec::new(),
         }
     }
 }
@@ -447,11 +530,19 @@ impl TankPredictor {
                 continue;
             };
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
-            if current != Some(form) {
+            if current != Some(form) && !self.break_parts(cover.id, form) {
+                let mut layout = None;
                 if let Some(old) = self.covers.remove(&cover.id) {
                     self.world.remove_body(old.body);
+                    layout = old.layout;
                 }
-                let body = self.insert_cover(cover, form);
+                // A structure's layout is built once; a break only changes its parts.
+                let layout = layout.or_else(|| {
+                    let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
+                    structure_of(cover.kind, x, z, w, d, cover.h, cover.timber_join)
+                });
+                let body = self.insert_cover(cover, form, layout.as_deref());
+                self.world.bodies[body].user_data = Owner::Cover(cover.id).user_data();
                 let movable = cover.kind.movable();
                 self.covers.insert(
                     cover.id,
@@ -464,12 +555,15 @@ impl TankPredictor {
                             color: cover.color,
                             height: cover.h,
                         },
+                        layout,
+                        cracked: PartSet::EMPTY,
                         seen: sync,
                     },
                 );
             }
             let existing = self.covers.get_mut(&cover.id).expect("inserted above");
             existing.seen = sync;
+            existing.cracked = cover.cracked;
             if existing.movable {
                 // Movable cover rests where the host last had it; contact wakes it.
                 let body = &mut self.world.bodies[self.covers[&cover.id].body];
@@ -491,6 +585,41 @@ impl TankPredictor {
                 self.world.remove_body(old.body);
             }
         }
+    }
+
+    /// Takes the parts that broke out of a structure standing as its parts, as the host
+    /// takes their colliders out, when `form` only adds broken parts to the ones it had.
+    /// Returns false, changing nothing, when the structure needs building again: it stood
+    /// whole (one collider) or a rebuild restored parts.
+    fn break_parts(&mut self, id: u32, form: CoverForm) -> bool {
+        let Some(existing) = self.covers.get_mut(&id) else {
+            return false;
+        };
+        let (CoverForm::Parts(held), CoverForm::Parts(broken)) = (existing.form, form) else {
+            return false;
+        };
+        let Some(layout) = existing.layout.as_deref() else {
+            return false;
+        };
+        if (layout.whole && held.is_empty()) || held.union(&broken) != broken {
+            return false;
+        }
+        self.broken.clear();
+        self.broken.extend(
+            self.world.bodies[existing.body]
+                .colliders()
+                .iter()
+                .copied()
+                .filter(|&collider| {
+                    let part = self.world.colliders[collider].user_data as usize;
+                    broken.contains(part) && !held.contains(part)
+                }),
+        );
+        for collider in self.broken.drain(..) {
+            self.world.remove_collider(collider);
+        }
+        existing.form = form;
+        true
     }
 
     /// Matches what moves to a received scene: the bodies the host reported moving near the
@@ -517,23 +646,78 @@ impl TankPredictor {
             if !solid_debris(fragment)
                 || fragment.life < DEBRIS_CLEANUP_SECONDS
                 || crate::sim::math::distance(fragment.position.planar(), around.planar())
-                    > DEBRIS_REACH
+                    > DEBRIS_REACH + debris_offset(fragment)
             {
                 continue;
             }
             if !self.debris.contains_key(&fragment.id) {
-                let Some((body, collider)) = debris_parts(fragment) else {
-                    continue;
+                let colliders = match (fragment.structure_id, fragment.structure_parts) {
+                    // A structure's fallen parts: the replicated set gives their shapes,
+                    // from the structure's layout.
+                    (Some(structure), Some(parts)) => {
+                        let Some(layout) = self
+                            .covers
+                            .get(&structure)
+                            .and_then(|cover| cover.layout.as_deref())
+                        else {
+                            continue;
+                        };
+                        (structure_debris_body(), debris_colliders(layout, &parts))
+                    }
+                    _ => {
+                        let Some((body, collider)) = debris_parts(fragment) else {
+                            continue;
+                        };
+                        (body, vec![collider])
+                    }
                 };
-                let body = self.world.insert_body(body);
-                self.world.bodies[body].set_additional_solver_iterations(2);
-                self.world.insert_collider(collider, Some(body));
-                self.debris
-                    .insert(fragment.id, DebrisBody { body, seen: sync });
+                let body = self.world.insert_body(colliders.0);
+                self.world.bodies[body].user_data = Owner::Debris(fragment.id).user_data();
+                // As the host steps it: its own pieces with two more solver iterations.
+                if fragment.structure_parts.is_none() {
+                    self.world.bodies[body].set_additional_solver_iterations(2);
+                }
+                for collider in colliders.1 {
+                    self.world.insert_collider(collider, Some(body));
+                }
+                self.debris.insert(
+                    fragment.id,
+                    DebrisBody {
+                        body,
+                        seen: sync,
+                        rested: false,
+                        structure: fragment.structure_parts.is_some(),
+                        through: false,
+                    },
+                );
             }
             let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
             debris.seen = sync;
+            // A piece comes to rest, or a blast throws it out of its rest again.
+            if fragment.rested != debris.rested {
+                debris.rested = fragment.rested;
+                if fragment.rested {
+                    rest_body(&mut self.world, debris.body);
+                } else {
+                    unrest_body(&mut self.world, debris.body);
+                }
+            }
+            // A piece the host lets pass through what stands (a timber knocked out, a piece
+            // dropping off the remains it was wedged on) does here too, and meets it again
+            // when the host's does: jammed against the standing parts here, it would hold
+            // the hull where the host's piece fell through.
+            if debris.structure && fragment.passes_through != debris.through {
+                debris.through = fragment.passes_through;
+                set_passing_through(&mut self.world, debris.body, fragment.passes_through);
+            }
             let body = &mut self.world.bodies[debris.body];
+            if fragment.structure_parts.is_some() && !fragment.rested {
+                // Damped as the host damps it this tick.
+                let age = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
+                let (linear, angular) = fragment.damping.unwrap_or_default().values(age);
+                body.set_linear_damping(linear);
+                body.set_angular_damping(angular);
+            }
             body.set_translation(to_vector(fragment.position), false);
             body.set_rotation(to_rotation(fragment.rotation), false);
             match moving(BodyKind::Fragment, fragment.id) {
@@ -584,15 +768,28 @@ impl TankPredictor {
         }
     }
 
-    fn insert_cover(&mut self, cover: &RenderCover, form: CoverForm) -> RigidBodyHandle {
+    fn insert_cover(
+        &mut self,
+        cover: &RenderCover,
+        form: CoverForm,
+        layout: Option<&Structure>,
+    ) -> RigidBodyHandle {
         // Movable cover keeps its authored shape; its replicated footprint follows the nav.
         let (x, z, w, d) = match cover.motion {
             Some(motion) => (motion.origin_x, motion.origin_z, motion.w, motion.d),
             None => (cover.x, cover.z, cover.w, cover.d),
         };
-        let parts = cover_parts(cover.kind, x, z, w, d, cover.h);
+        let parts = match (form, layout) {
+            (CoverForm::Parts(broken), Some(layout)) => structure_parts(layout, x, z, &broken),
+            _ => cover_parts(cover.kind, x, z, w, d, cover.h),
+        };
         let body = self.world.insert_body(parts.body);
         match form {
+            CoverForm::Parts(_) => {
+                for collider in parts.colliders {
+                    self.world.insert_collider(collider, Some(body));
+                }
+            }
             CoverForm::Standing => {
                 for collider in parts.colliders {
                     self.world.insert_collider(collider, Some(body));
@@ -635,6 +832,7 @@ impl TankPredictor {
                 self.world.remove_body(old.body);
             }
             let body = self.insert_tank(tank.kind, tank.position);
+            self.world.bodies[body].user_data = Owner::Tank(tank.id).user_data();
             self.tanks.insert(
                 tank.id,
                 OtherTank {
@@ -729,6 +927,10 @@ impl TankPredictor {
                 other.drive,
             );
         }
+        // As the host does ahead of its step.
+        for debris in self.debris.values().filter(|debris| debris.structure && !debris.rested) {
+            cap_loose_speed(&mut self.world.bodies[debris.body]);
+        }
         self.world.step();
     }
 
@@ -764,16 +966,14 @@ impl TankPredictor {
                 let Some(body) = self.world.colliders[other].parent() else {
                     continue;
                 };
-                if let Some((&id, _)) = self.tanks.iter().find(|(_, tank)| tank.body == body) {
-                    touched(Some(Moved::Tank(id)));
-                } else if let Some((&id, cover)) =
-                    self.covers.iter().find(|(_, cover)| cover.body == body)
-                {
-                    touched(cover.movable.then_some(Moved::Cover(id)));
-                } else if let Some((&id, _)) =
-                    self.debris.iter().find(|(_, debris)| debris.body == body)
-                {
-                    touched(Some(Moved::Fragment(id)));
+                match Owner::of(self.world.bodies[body].user_data) {
+                    Some(Owner::Tank(id)) => touched(Some(Moved::Tank(id))),
+                    Some(Owner::Cover(id)) => {
+                        let movable = self.covers.get(&id).is_some_and(|cover| cover.movable);
+                        touched(movable.then_some(Moved::Cover(id)));
+                    }
+                    Some(Owner::Debris(id)) => touched(Some(Moved::Fragment(id))),
+                    None => {}
                 }
             }
         }
@@ -815,6 +1015,7 @@ impl TankPredictor {
             resting: body.is_sleeping()
                 || (f64::from(linvel.length()) < RESTING_SPEED
                     && f64::from(angvel.length()) < RESTING_SPEED),
+            passes_through: passes_through(&self.world, handle),
         })
     }
 
@@ -833,29 +1034,175 @@ impl TankPredictor {
 /// The cover as the host's shell query sees it.
 impl CoverCast for TankPredictor {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
+        self.cast_cover_past(origin, direction, distance, &[])
+    }
+
+    fn cast_cover_past(
+        &self,
+        origin: Point3,
+        direction: Vec2,
+        distance: f64,
+        past: &[u64],
+    ) -> Option<CoverHit> {
         let ray = Ray::new(to_vector(origin), vector(direction.x, 0.0, direction.z));
-        let (collider, hit) = self.world.cast_ray_and_get_normal(
-            &ray,
-            distance as f32,
-            true,
-            query_filter(group::COVER_QUERY),
-        )?;
-        let body = self.world.colliders[collider].parent();
+        // An intact crate or timber wall stands as one collider; a part of it the shell
+        // broke through is named with its collider. Past one, the structure is queried by
+        // the shapes of the parts still standing, as the host splits it and re-queries.
+        let breached = past.iter().filter_map(|&key| whole_part(key));
+        let through = |collider: ColliderHandle, _: &Collider| {
+            let key = collider_key(collider);
+            !past.contains(&key) && !breached.clone().any(|(whole, _)| whole == key)
+        };
+        let mut filter = query_filter(group::COVER_QUERY);
+        if !past.is_empty() {
+            filter.predicate = Some(&through);
+        }
+        let mut nearest = self
+            .world
+            .cast_ray_and_get_normal(&ray, distance as f32, true, filter)
+            .map(|(collider, hit)| (collider, hit, None));
+        // Each breached structure once, in the order of its collider's key.
+        let mut last = None;
+        while let Some(whole) = breached
+            .clone()
+            .map(|(whole, _)| whole)
+            .filter(|&whole| last.is_none_or(|last| whole > last))
+            .min()
+        {
+            last = Some(whole);
+            let Some(collider) = collider_of_key(whole).filter(|&collider| {
+                self.world.colliders.get(collider).is_some()
+            }) else {
+                continue;
+            };
+            let Some(cover) = self.cover_of(Some(collider)) else {
+                continue;
+            };
+            let Some(layout) = cover.layout.as_deref() else {
+                continue;
+            };
+            let gone = |index: usize| breached.clone().any(|part| part == (whole, index));
+            let body = *self.world.bodies[cover.body].position();
+            for index in (0..layout.parts.len()).filter(|&index| !gone(index)) {
+                // The layout keeps each part's shape once built (`ShapeCache`).
+                let part = part_collider(layout, index, -layout.debris.seam);
+                let pose = body * part.position;
+                let reach = nearest.as_ref().map_or(distance as f32, |(_, hit, _)| hit.time_of_impact);
+                if let Some(hit) = part.shape.cast_ray_and_get_normal(&pose, &ray, reach, true) {
+                    nearest = Some((collider, hit, Some(index)));
+                }
+            }
+        }
+        let (collider, hit, breached_part) = nearest?;
+        let cover = self.cover_of(Some(collider));
+        let part = cover.and_then(|cover| {
+            let user = self.world.colliders[collider].user_data;
+            let index = match (breached_part, user) {
+                (Some(index), _) => index,
+                // An intact structure's one collider: the part where the ray meets it.
+                (None, WHOLE) => {
+                    let at = ray.point_at(hit.time_of_impact);
+                    let middle = self.world.bodies[cover.body].translation();
+                    let local = glam::DVec3::new(
+                        f64::from(at.x - middle.x),
+                        f64::from(at.y),
+                        f64::from(at.z - middle.z),
+                    );
+                    let layout = cover.layout.as_ref()?;
+                    layout.part_at(layout.to_local(local), &PartSet::EMPTY)?
+                }
+                (None, index) => index as usize,
+            };
+            let cottage = cover.struck.kind == CoverKind::House;
+            // A watchtower's footing takes a shell as other concrete does.
+            let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)
+                .filter(|strength| strength.is_finite())?;
+            let key = if user == WHOLE {
+                whole_part_key(collider, index)
+            } else {
+                collider_key(collider)
+            };
+            Some(PartHit {
+                cottage,
+                key,
+                strength,
+                cracked: cover.cracked.contains(index),
+            })
+        });
         Some(CoverHit {
             distance: f64::from(hit.time_of_impact),
             normal: Vec2::new(f64::from(hit.normal.x), f64::from(hit.normal.z)),
-            struck: self
-                .covers
-                .values()
-                .find(|cover| Some(cover.body) == body)
-                .map(|cover| cover.struck),
+            struck: cover.map(|cover| cover.struck),
+            part,
         })
+    }
+}
+
+impl TankPredictor {
+    /// The replicated cover a collider of the predicted world belongs to.
+    fn cover_of(&self, collider: Option<ColliderHandle>) -> Option<&CoverBody> {
+        let body = self.world.colliders.get(collider?)?.parent()?;
+        match Owner::of(self.world.bodies[body].user_data)? {
+            Owner::Cover(id) => self.covers.get(&id),
+            _ => None,
+        }
+    }
+}
+
+
+/// The collider a key names ([`collider_key`]).
+fn collider_of_key(key: u64) -> Option<ColliderHandle> {
+    Some(ColliderHandle::from_raw_parts(
+        u32::try_from(key & u64::from(u32::MAX)).ok()?,
+        u32::try_from(key >> 32).ok()?,
+    ))
+}
+
+/// Marks a key naming a part of an intact structure's one collider.
+const WHOLE_PART_BIT: u64 = 1 << 63;
+/// The bits of such a key that name the part.
+const WHOLE_PART_BITS: u32 = 12;
+
+/// The key of part `index` of the intact structure standing as `collider`.
+fn whole_part_key(collider: ColliderHandle, index: usize) -> u64 {
+    WHOLE_PART_BIT | (collider_key(collider) << WHOLE_PART_BITS) & !WHOLE_PART_BIT | index as u64
+}
+
+/// The whole collider's key and the part a key names, if it names one.
+fn whole_part(key: u64) -> Option<(u64, usize)> {
+    (key & WHOLE_PART_BIT != 0).then_some((
+        (key & !WHOLE_PART_BIT) >> WHOLE_PART_BITS,
+        (key & ((1 << WHOLE_PART_BITS) - 1)) as usize,
+    ))
+}
+
+/// A collider's handle as one number.
+fn collider_key(collider: ColliderHandle) -> u64 {
+    let (index, generation) = collider.into_raw_parts();
+    (u64::from(generation) << 32) | u64::from(index)
+}
+
+/// The host's body for a structure's fallen parts (`drop_fall`): its origin is the
+/// structure's ground centre the parts fell from.
+fn structure_debris_body() -> RigidBodyBuilder {
+    RigidBodyBuilder::dynamic().can_sleep(true)
+}
+
+/// How far a fragment's solid parts may lie from its replicated position: a structure's
+/// fallen parts hang off the ground centre of the structure they fell from.
+pub fn debris_offset(fragment: &RenderFragment) -> f64 {
+    if fragment.structure_parts.is_some() {
+        STRUCTURE_DEBRIS_OFFSET
+    } else {
+        0.0
     }
 }
 
 /// How a cover record stands in the predicted world, or `None` when nothing is left of it.
 fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
-    if cover.alive {
+    if structural(cover.kind) {
+        Some(CoverForm::Parts(cover.broken))
+    } else if cover.alive {
         Some(CoverForm::Standing)
     } else if cover.kind == CoverKind::Tree {
         Some(CoverForm::Stump)
@@ -894,15 +1241,7 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
         0.35
     };
     let surface = debris_material(material);
-    let membership = if fragment.timber_part.is_some() {
-        group::TIMBER_DEBRIS
-    } else if fragment.tower_piece.is_some() {
-        group::CRUSHED_FRAME
-    } else if fragment.house_piece.is_some() {
-        group::HOUSE_SHARD
-    } else {
-        group::PUSHABLE_DEBRIS
-    };
+    let membership = group::PUSHABLE_DEBRIS;
     Some((
         RigidBodyBuilder::dynamic()
             .linear_damping(0.12)
@@ -917,10 +1256,12 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
 }
 
 /// Whether a replicated fragment blocks tanks on the host: wreck parts and the authored
-/// pieces of broken scenery (timber, crate sections, tower and house pieces), which the
+/// pieces of broken scenery and the fallen parts of structures, which the
 /// predicted world leaves out. Small shards only touch the ground and cover.
 pub fn solid_debris(fragment: &RenderFragment) -> bool {
-    fragment.wreck.is_some() || fragment.dimensions.is_some()
+    fragment.wreck.is_some()
+        || fragment.dimensions.is_some()
+        || fragment.structure_parts.is_some()
 }
 
 /// The host's per-tick drive: the speed pickup runs down before the drive impulse.
@@ -928,4 +1269,129 @@ fn drive(hull: &mut Hull, speed: &mut f64, body: &mut RigidBody, input: Vec2) {
     *speed = 0f64.max(*speed - STEP);
     hull.boosted = *speed > 0.0;
     drive_hull(hull, body, input.x, input.z, STEP);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::scene_codec::{MirrorScene, Scene};
+    use crate::net::wire::WireReader;
+    use crate::net::own_shots::CoverCast;
+    use crate::sim::arena::CoverDef;
+    use crate::sim::types::CoverKind;
+    use crate::sim::{Simulation, VehicleCommand};
+
+    fn mirrored(sim: &Simulation) -> RenderState {
+        let mut bytes = Vec::new();
+        Scene::capture(sim).write(&mut bytes);
+        MirrorScene::read(&mut WireReader::new(&bytes))
+            .unwrap()
+            .render(sim.tanks[0].id)
+            .unwrap()
+    }
+
+    fn turns(predictor: &TankPredictor, id: u32) -> bool {
+        let body = &predictor.world.bodies[predictor.debris[&id].body];
+        !body.locked_axes().contains(rapier3d::prelude::LockedAxes::ROTATION_LOCKED)
+    }
+
+    #[test]
+    fn a_shell_through_a_board_of_an_intact_crate_meets_the_far_wall() {
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        sim.add_cover(&CoverDef::new(CoverKind::Cargo, 0.0, 40.0, 3.0, 3.0, 2.6, 80.0, 0xb47a49));
+        let scene = mirrored(&sim);
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.world.step();
+        // A level shell along the crate's middle from the front (+z) toward the back.
+        let origin = Point3::new(0.4, 1.1, 50.0);
+        let direction = Vec2::new(0.0, -1.0);
+        let first = predictor.cast_cover(origin, direction, 20.0).expect("the crate's front");
+        let part = first.part.unwrap_or_else(|| panic!("a part of it: {} {:?}", first.distance, first.struck));
+        assert!((first.distance - 8.5).abs() < 0.2, "the front at {}", first.distance);
+        let next = predictor
+            .cast_cover_past(origin, direction, 20.0, &[part.key])
+            .expect("the shell through the board meets the crate's inside");
+        assert!(
+            next.distance > first.distance + 0.05 && next.distance < first.distance + 3.2,
+            "past the board it meets {} m on, not beyond the crate",
+            next.distance - first.distance
+        );
+        assert!(next.part.is_some_and(|hit| hit.key != part.key));
+    }
+
+    #[test]
+    fn a_shell_past_a_breached_board_strikes_a_part_where_the_part_stands() {
+        // Past a board of an intact crate, each shell meets a standing part where that
+        // part stands, as the host's split crate would have it, not at the crate's middle.
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        let crate_index =
+            sim.add_cover(&CoverDef::new(CoverKind::Cargo, 0.0, 40.0, 3.0, 3.0, 2.6, 80.0, 0xb47a49));
+        let scene = mirrored(&sim);
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.world.step();
+        let direction = Vec2::new(0.0, -1.0);
+        for x in [-1.2, -0.6, 0.0, 0.4, 0.9, 1.3] {
+            let origin = Point3::new(x, 1.1, 50.0);
+            let first = predictor.cast_cover(origin, direction, 20.0).expect("the crate");
+            let Some(part) = first.part else {
+                continue;
+            };
+            let Some(next) = predictor.cast_cover_past(origin, direction, 20.0, &[part.key]) else {
+                continue;
+            };
+            let (_, index) = whole_part(next.part.expect("a part of the crate").key)
+                .expect("a part of the intact crate");
+            let (min, max) = crate::sim::structure_physics::part_box(&sim.covers[crate_index], index)
+                .expect("a standing part");
+            let at = Point3::new(origin.x, origin.y, origin.z - next.distance);
+            let slack = 0.02;
+            assert!(
+                (min.x - slack..=max.x + slack).contains(&at.x)
+                    && (min.y - slack..=max.y + slack).contains(&at.y)
+                    && (min.z - slack..=max.z + slack).contains(&at.z),
+                "x {x}: struck part {index} at {at:?}, which stands within {min:?}..{max:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rested_piece_a_blast_throws_again_turns_in_the_predicted_world() {
+        // A cottage's walls shot out at once; its pieces come to rest, then a blast
+        // throws one out of its rest again.
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        let house = sim.add_cover(&CoverDef::house(0.0, 60.0, 7.0, 5.0, 4.9, 0xb87b4c));
+        let layout = sim.covers[house].structure.as_ref().unwrap().layout.clone();
+        let walls = PartSet::from_indices(
+            (0..layout.parts.len()).filter(|&index| layout.parts[index].grounded),
+        );
+        sim.break_structure(house, walls, PartSet::EMPTY, None, None);
+        for _ in 0..600 {
+            sim.step(VehicleCommand::idle(), false);
+        }
+        let scene = mirrored(&sim);
+        let piece = *scene
+            .fragments
+            .iter()
+            .find(|fragment| fragment.structure_parts.is_some() && fragment.rested)
+            .expect("a piece at rest");
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.sync_bodies(&scene, &[], piece.position);
+        assert!(!turns(&predictor, piece.id), "at rest it is held still");
+        let mut thrown = scene.clone();
+        for fragment in &mut thrown.fragments {
+            if fragment.id == piece.id {
+                fragment.rested = false;
+            }
+        }
+        predictor.sync_scene(&thrown);
+        predictor.sync_bodies(&thrown, &[], piece.position);
+        assert!(turns(&predictor, piece.id), "thrown again, it turns as it flies");
+        assert!(!predictor.debris[&piece.id].rested);
+    }
 }

@@ -29,6 +29,8 @@ pub struct Tally {
     pub player_hits_taken: u32,
     /// Decisions to fire the brain made; the host fires at most once per reload.
     pub trigger_pulls: u32,
+    /// Of those, the ones a hunter pulled with its brain on the player it hunts.
+    pub quarry_pulls: u32,
     /// Times the pilot changed sides to fight against, or beside, its player.
     pub team_changes: u32,
 }

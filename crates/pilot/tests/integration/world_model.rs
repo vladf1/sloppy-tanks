@@ -7,6 +7,8 @@ use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::render_state::RenderCover;
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{CoverKind, PlayerAssignment, Team, VehicleKind};
 use sloppy_pilot::world_model::{Perspective, WorldModel, scene_map};
 
@@ -106,15 +108,24 @@ fn synced_tanks_stand_where_the_scene_draws_them() {
 
 #[test]
 fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
-    let host = host_room(MapId::Village);
+    let host = host_room(MapId::Harbor);
     let mut scene = host.render_state(None);
     let mut model = WorldModel::new(
-        MapId::Village,
+        MapId::Harbor,
         Difficulty::Normal,
         BotPersonality::Guard,
         1.0,
     );
-    // A destructible, non-tree cover big enough to block a sight line through its middle.
+    // A destructible, non-tree cover big enough to block a sight line through its middle,
+    // with no other cover on that line.
+    let alone = |cover: &RenderCover| {
+        let reach = cover.w.max(cover.d) / 2.0 + 2.0;
+        !scene.covers.iter().any(|other| {
+            other.id != cover.id
+                && (other.x - cover.x).abs() < reach + other.w / 2.0
+                && (other.z - cover.z).abs() < other.d / 2.0 + 0.5
+        })
+    };
     let index = scene
         .covers
         .iter()
@@ -122,11 +133,14 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
             cover.alive
                 && cover.destructible
                 && cover.kind != CoverKind::Tree
+                && cover.kind != CoverKind::House
+                && cover.kind != CoverKind::Tower
                 && !cover.kind.movable()
                 && cover.w.min(cover.d) > 1.0
+                && alone(cover)
         })
-        .expect("the village has destructible cover");
-    let cover = scene.covers[index].clone();
+        .expect("the harbor has destructible cover");
+    let cover = scene.covers[index];
     let reach = cover.w.max(cover.d) / 2.0 + 2.0;
     let (a, b) = (
         Vec2::new(cover.x - reach, cover.z),
@@ -139,7 +153,9 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
     );
     let middle = Vec2::new(cover.x, cover.z);
     assert!(model.simulation.nav.is_blocked(middle));
+    // A crate or a timber wall falls as far as its parts do: here all of them.
     scene.covers[index].alive = false;
+    scene.covers[index].broken = PartSet::from_indices(0..64);
     model.sync(&scene, Perspective::default());
     assert!(
         model.simulation.visible(a, b),
@@ -147,10 +163,105 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
     );
     assert!(!model.simulation.nav.is_blocked(middle));
     scene.covers[index].alive = true;
+    scene.covers[index].broken = PartSet::EMPTY;
     model.sync(&scene, Perspective::default());
     assert!(
         !model.simulation.visible(a, b),
         "rebuilt cover blocks it again"
     );
+    assert!(model.simulation.nav.is_blocked(middle));
+}
+
+#[test]
+fn a_watchtower_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
+    let host = host_room(MapId::Village);
+    let mut scene = host.render_state(None);
+    let mut model = WorldModel::new(
+        MapId::Village,
+        Difficulty::Normal,
+        BotPersonality::Guard,
+        1.0,
+    );
+    let index = scene
+        .covers
+        .iter()
+        .position(|cover| cover.kind == CoverKind::Tower)
+        .expect("the village has watchtowers");
+    let cover = scene.covers[index];
+    let middle = Vec2::new(cover.x, cover.z);
+    model.sync(&scene, Perspective::default());
+    assert!(
+        model.simulation.nav.is_blocked(middle),
+        "it stands over its legs"
+    );
+    let parts = |model: &WorldModel| {
+        let tower = model
+            .simulation
+            .covers
+            .iter()
+            .find(|c| c.kind == CoverKind::Tower && c.x == cover.x && c.z == cover.z)
+            .unwrap();
+        tower
+            .structure
+            .as_ref()
+            .unwrap()
+            .colliders
+            .iter()
+            .flatten()
+            .count()
+    };
+    let whole = parts(&model);
+    // Toppled off its footings in the scene: the model keeps the footings alone.
+    scene.covers[index].broken = PartSet::from_indices(2..whole);
+    scene.covers[index].alive = false;
+    model.sync(&scene, Perspective::default());
+    assert_eq!(parts(&model), 2, "its footings stay");
+    assert!(!model.simulation.nav.is_blocked(middle), "its middle opens");
+    scene.covers[index].broken = Default::default();
+    scene.covers[index].alive = true;
+    model.sync(&scene, Perspective::default());
+    assert_eq!(parts(&model), whole, "rebuilt, it stands whole");
+    assert!(model.simulation.nav.is_blocked(middle));
+}
+
+#[test]
+fn a_cottage_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
+    let host = host_room(MapId::Village);
+    let mut scene = host.render_state(None);
+    let mut model = WorldModel::new(
+        MapId::Village,
+        Difficulty::Normal,
+        BotPersonality::Guard,
+        1.0,
+    );
+    let index = scene
+        .covers
+        .iter()
+        .position(|cover| cover.kind == CoverKind::House)
+        .expect("the village has cottages");
+    let cover = scene.covers[index];
+    let reach = cover.w.max(cover.d) / 2.0 + 2.0;
+    let (a, b) = (
+        Vec2::new(cover.x - reach, cover.z),
+        Vec2::new(cover.x + reach, cover.z),
+    );
+    model.sync(&scene, Perspective::default());
+    assert!(!model.simulation.visible(a, b), "its walls block the view");
+    let middle = Vec2::new(cover.x, cover.z);
+    assert!(model.simulation.nav.is_blocked(middle));
+    // Every part gone in the scene: nothing of it is left in the model.
+    let all = host.covers[index].structure.as_ref().unwrap().layout.all();
+    scene.covers[index].broken = all;
+    scene.covers[index].alive = false;
+    model.sync(&scene, Perspective::default());
+    assert!(
+        model.simulation.visible(a, b),
+        "a levelled cottage hides nothing"
+    );
+    assert!(!model.simulation.nav.is_blocked(middle));
+    scene.covers[index].broken = Default::default();
+    scene.covers[index].alive = true;
+    model.sync(&scene, Perspective::default());
+    assert!(!model.simulation.visible(a, b), "rebuilt, it blocks again");
     assert!(model.simulation.nav.is_blocked(middle));
 }

@@ -43,7 +43,6 @@ pub struct TankInspection {
 pub struct CoverInspection {
     pub id: u32,
     pub shown: bool,
-    pub stage: u32,
     pub model_key: String,
     /// Trees: whether the crown and the cut stump surface show.
     pub crown: Option<bool>,
@@ -65,15 +64,13 @@ pub struct PickupInspection {
 #[derive(Clone, Debug)]
 pub struct FragmentInspection {
     pub id: u32,
-    /// "piece", "wreck" or "owned" (timber members, watchtower pieces and falling
-    /// crowns).
+    /// "piece", "wreck", "owned" (timber members, cottages' and watchtowers' fallen
+    /// parts and falling crowns) or "shared" (crate sections).
     pub look: &'static str,
     pub shown: bool,
     pub opacity: f32,
     pub position: Vec3,
     pub scale: Vec3,
-    /// Scars on a loose timber member (`None` for other debris).
-    pub timber_marks: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -165,7 +162,6 @@ impl Presentation {
             inspection.covers.push(CoverInspection {
                 id,
                 shown,
-                stage: view.stage,
                 model_key: view.key.clone(),
                 crown: view
                     .tree
@@ -211,7 +207,6 @@ impl Presentation {
                 opacity: state.opacity,
                 position,
                 scale,
-                timber_marks: view.timber.as_ref().map(|part| part.marks.len()),
             });
         }
         inspection.tanks.sort_by_key(|tank| tank.id);
