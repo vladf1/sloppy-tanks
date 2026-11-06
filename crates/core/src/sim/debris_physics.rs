@@ -283,7 +283,9 @@ pub fn drain_debris_contacts(simulation: &mut Simulation) {
             }
             data.impact_after = elapsed + IMPACT_REPEAT_SECONDS;
             let (id, material) = (data.id, data.material);
-            let p = simulation.body_translation(body);
+            // Where the piece is: a structure's fallen parts have their body's origin at
+            // the structure's ground centre, metres from them.
+            let p = from_vector(simulation.world.bodies[body].center_of_mass());
             let mut impact = SimEvent::at(SimEventType::DebrisImpact, p.x, p.z);
             impact.id = Some(id);
             impact.height = Some(p.y);

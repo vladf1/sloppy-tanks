@@ -924,3 +924,47 @@ fn a_tower_caught_on_a_wall_breaks_up_where_it_rests() {
     assert_eq!(whole, 0, "no frame lies whole across the wall");
     assert!(bodies(&s, tower).len() > 10, "it broke up");
 }
+
+/// A fallen piece's landing shows where the piece is, not at the tower's foot, where
+/// every body of a structure's fallen parts has its origin.
+#[test]
+fn a_falling_towers_landings_show_where_its_pieces_land() {
+    let (mut s, tower) = lone_tower();
+    let c = s.covers[tower].clone();
+    s.break_structure(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[1]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    let mut farthest: f64 = 0.0;
+    let mut landings = 0;
+    for _ in 0..(4.0 / STEP) as usize {
+        s.events.clear();
+        idle(&mut s);
+        for event in s
+            .events
+            .iter()
+            .filter(|e| e.kind == SimEventType::DebrisImpact)
+        {
+            let Some(piece) = s
+                .fragments
+                .iter()
+                .find(|f| Some(f.id) == event.id && f.of_structure(tower))
+            else {
+                continue;
+            };
+            let middle = s.world.bodies[piece.body].center_of_mass();
+            let off = (event.x - f64::from(middle.x)).hypot(event.z - f64::from(middle.z));
+            assert!(off < 0.01, "a landing {off:.2} m from its piece");
+            farthest = farthest.max((event.x - c.x).hypot(event.z - c.z));
+            landings += 1;
+        }
+    }
+    assert!(landings > 0, "its pieces land");
+    assert!(
+        farthest > 3.0,
+        "the top lands away from the foot: {farthest:.2} m"
+    );
+}
