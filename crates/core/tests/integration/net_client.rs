@@ -1455,9 +1455,11 @@ fn a_shooter_hits_tanks_where_its_page_drew_them() {
         describe(&judged_now)
     );
     // Aimed at the tanks as drawn, with no lead for the view delay, shells strike where
-    // the tanks were drawn; judged in the host's present, often a metre or more away. How
-    // many hit depends on the platform's floating point (11 to 31 in a minute), so only
-    // where they strike is compared.
+    // the tanks were drawn. Judged in the host's present, a tank on the move is struck a
+    // view delay's travel away, a metre or more, while most bots hit stand or crawl and
+    // are struck where drawn either way. How many hit, and how many of those were on the
+    // move, follows the match and the platform's floating point (19 to 31 hits in a
+    // minute, a few of them far), so the furthest hit is compared, not a share.
     for samples in [&favored, &judged_now] {
         assert!(
             samples.count >= 5,
@@ -1466,11 +1468,8 @@ fn a_shooter_hits_tanks_where_its_page_drew_them() {
         );
     }
     assert!(favored.percentile(0.9) < 0.3, "{}", describe(&favored));
-    assert!(
-        judged_now.percentile(0.9) > 0.5,
-        "{}",
-        describe(&judged_now)
-    );
+    assert!(favored.largest < 0.5, "{}", describe(&favored));
+    assert!(judged_now.largest > 1.0, "{}", describe(&judged_now));
 }
 
 #[test]

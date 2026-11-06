@@ -8,7 +8,7 @@
 //! the host simulates (shells, blasts, debris, pickups, other players' steering) is
 //! absent; the client corrects for it when the next snapshot arrives.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use rapier3d::prelude::*;
@@ -431,9 +431,12 @@ struct OtherTank {
 pub struct TankPredictor {
     world: PhysicsWorld,
     hull: Option<PredictedHull>,
-    covers: HashMap<u32, CoverBody>,
-    tanks: HashMap<u32, OtherTank>,
-    debris: HashMap<u32, DebrisBody>,
+    // Ordered by id: they are walked to remove bodies and drive the other tanks, and the
+    // order bodies leave and join the world decides its handles and its solver's order,
+    // so a hashed order made each run of the same frames predict a little differently.
+    covers: BTreeMap<u32, CoverBody>,
+    tanks: BTreeMap<u32, OtherTank>,
+    debris: BTreeMap<u32, DebrisBody>,
     /// Counts scene syncs, to find replicated records that disappeared.
     sync: u64,
     /// Storage reused for their ids.
@@ -445,9 +448,9 @@ impl Default for TankPredictor {
         Self {
             world: arena_world(),
             hull: None,
-            covers: HashMap::new(),
-            tanks: HashMap::new(),
-            debris: HashMap::new(),
+            covers: BTreeMap::new(),
+            tanks: BTreeMap::new(),
+            debris: BTreeMap::new(),
             sync: 0,
             gone: Vec::new(),
         }
