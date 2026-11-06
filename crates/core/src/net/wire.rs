@@ -205,7 +205,7 @@ macro_rules! wire_fields {
 pub(crate) use wire_fields;
 
 /// One field's value.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub enum Slot {
     #[default]
     Absent,
@@ -213,6 +213,27 @@ pub enum Slot {
     Number(i64),
     Text(String),
     Blob(Vec<u8>),
+}
+
+impl Clone for Slot {
+    fn clone(&self) -> Self {
+        match self {
+            Slot::Absent => Slot::Absent,
+            Slot::Number(value) => Slot::Number(*value),
+            Slot::Text(text) => Slot::Text(text.clone()),
+            Slot::Blob(bytes) => Slot::Blob(bytes.clone()),
+        }
+    }
+
+    /// Keeps a text or blob slot's buffer when the source holds the same kind, so a
+    /// client copying its records frame after frame does not allocate them again.
+    fn clone_from(&mut self, source: &Self) {
+        match (self, source) {
+            (Slot::Text(text), Slot::Text(from)) => text.clone_from(from),
+            (Slot::Blob(bytes), Slot::Blob(from)) => bytes.clone_from(from),
+            (slot, source) => *slot = source.clone(),
+        }
+    }
 }
 
 impl Slot {
@@ -229,10 +250,25 @@ impl Slot {
 }
 
 /// One record: an entity id (zero for the match, the map and events) and a slot per field.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub struct WireRecord {
     pub id: u32,
     pub slots: Vec<Slot>,
+}
+
+impl Clone for WireRecord {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            slots: self.slots.clone(),
+        }
+    }
+
+    /// Reuses the slots and their text and blob buffers.
+    fn clone_from(&mut self, source: &Self) {
+        self.id = source.id;
+        self.slots.clone_from(&source.slots);
+    }
 }
 
 impl WireRecord {
@@ -421,31 +457,77 @@ pub struct ChangedFields {
     pub deleted: u64,
 }
 
-fn read_value(
+/// A field's next value as read, borrowing text and blobs from the message until it is
+/// stored over the record's slot.
+#[derive(Clone, Copy, PartialEq)]
+enum Incoming<'a> {
+    Absent,
+    Number(i64),
+    Text(&'a str),
+    Blob(&'a [u8]),
+}
+
+impl Incoming<'_> {
+    fn is_absent(&self) -> bool {
+        matches!(self, Incoming::Absent)
+    }
+
+    fn matches(&self, slot: &Slot) -> bool {
+        match (self, slot) {
+            (Incoming::Absent, Slot::Absent) => true,
+            (Incoming::Number(value), Slot::Number(held)) => value == held,
+            (Incoming::Text(text), Slot::Text(held)) => text == held,
+            (Incoming::Blob(bytes), Slot::Blob(held)) => bytes == held,
+            _ => false,
+        }
+    }
+
+    /// Writes the value over `slot`, keeping its text or blob buffer.
+    fn store(self, slot: &mut Slot) {
+        match (self, &mut *slot) {
+            (Incoming::Absent, _) => *slot = Slot::Absent,
+            (Incoming::Number(value), _) => *slot = Slot::Number(value),
+            (Incoming::Text(text), Slot::Text(held)) => {
+                held.clear();
+                held.push_str(text);
+            }
+            (Incoming::Text(text), _) => *slot = Slot::Text(text.to_string()),
+            (Incoming::Blob(bytes), Slot::Blob(held)) => {
+                held.clear();
+                held.extend_from_slice(bytes);
+            }
+            (Incoming::Blob(bytes), _) => *slot = Slot::Blob(bytes.to_vec()),
+        }
+    }
+}
+
+fn read_value<'a>(
     field: &Field,
     expected: Option<i64>,
-    reader: &mut WireReader<'_>,
-) -> ReadResult<Slot> {
+    reader: &mut WireReader<'a>,
+) -> ReadResult<Incoming<'a>> {
     Ok(match field.kind {
-        FieldKind::Fixed(_) => Slot::Number(expected.unwrap_or(0).wrapping_add(reader.signed()?)),
-        FieldKind::Count => {
-            Slot::Number(i64::try_from(reader.varint()?).map_err(|_| "Invalid number".to_string())?)
+        FieldKind::Fixed(_) => {
+            Incoming::Number(expected.unwrap_or(0).wrapping_add(reader.signed()?))
         }
+        FieldKind::Count => Incoming::Number(
+            i64::try_from(reader.varint()?).map_err(|_| "Invalid number".to_string())?,
+        ),
         FieldKind::Flag => match reader.varint()? {
-            value @ (0 | 1) => Slot::Number(value as i64),
+            value @ (0 | 1) => Incoming::Number(value as i64),
             _ => return Err("Invalid boolean".into()),
         },
         FieldKind::Choice(names) => match reader.varint()? {
-            index if (index as usize) < names.len() => Slot::Number(index as i64),
+            index if (index as usize) < names.len() => Incoming::Number(index as i64),
             _ => return Err("Invalid choice".into()),
         },
-        FieldKind::Text(max) => Slot::Text(reader.text(max)?.to_string()),
+        FieldKind::Text(max) => Incoming::Text(reader.text(max)?),
         FieldKind::Blob(max, _) => {
             let length = reader.varint()?;
             if length > max as u64 {
                 return Err("Invalid list".into());
             }
-            Slot::Blob(reader.bytes(length as usize)?.to_vec())
+            Incoming::Blob(reader.bytes(length as usize)?)
         }
     })
 }
@@ -466,7 +548,7 @@ pub fn read_changes(
 pub fn read_moving_changes(
     fields: &[Field],
     record: &mut WireRecord,
-    motion: Option<&mut Motion>,
+    mut motion: Option<&mut Motion>,
     reader: &mut WireReader<'_>,
 ) -> ReadResult<ChangedFields> {
     record.slots.resize(fields.len(), Slot::Absent);
@@ -481,7 +563,9 @@ pub fn read_moving_changes(
     }
     let held_motion: &[i64] = motion.as_deref().map_or(&[], |motion| motion.as_slice());
     let mut changed = ChangedFields::default();
-    let mut next_motion = Motion::new();
+    // This frame's motion, written over the held one's buffer once it is read.
+    let mut next_motion = [0i64; 64];
+    let mut moving = false;
     for (index, field) in fields.iter().enumerate() {
         let old = &record.slots[index];
         let expected = expected(fields, index, Some(old), held_motion);
@@ -489,28 +573,35 @@ pub fn read_moving_changes(
             read_value(field, expected, reader)
                 .map_err(|error| format!("{}: {error}", field.name))?
         } else if deleted & (1 << index) != 0 {
-            Slot::Absent
+            Incoming::Absent
         } else if let Some(expected) = expected {
-            Slot::Number(expected)
+            Incoming::Number(expected)
         } else {
             continue;
         };
-        if next != *old {
+        if !next.matches(old) {
             if next.is_absent() {
                 changed.deleted |= 1 << index;
             } else {
                 changed.set |= 1 << index;
             }
         }
-        let change = change(field, Some(old), &next);
-        if change != 0 {
-            next_motion.resize(fields.len(), 0);
-            next_motion[index] = change;
+        if let (FieldKind::Fixed(_), Slot::Number(old), Incoming::Number(new)) =
+            (field.kind, old, next)
+        {
+            let change = new.wrapping_sub(*old);
+            if change != 0 {
+                next_motion[index] = change;
+                moving = true;
+            }
         }
-        record.slots[index] = next;
+        next.store(&mut record.slots[index]);
     }
-    if let Some(motion) = motion {
-        *motion = next_motion;
+    if let Some(motion) = motion.as_deref_mut() {
+        motion.clear();
+        if moving {
+            motion.extend_from_slice(&next_motion[..fields.len()]);
+        }
     }
     Ok(changed)
 }
@@ -677,6 +768,62 @@ mod tests {
             held = next;
         }
         assert!(motion.is_empty(), "a record at rest keeps no motion");
+    }
+
+    #[test]
+    fn copies_and_reads_over_held_buffers_give_the_same_records() {
+        // A client copies its records into buffers that held other records, and reads
+        // text over text: the result is the record itself, whatever the buffers held.
+        let mut renamed = record(3.0, None);
+        renamed.set_text(sample::NAME, "Alexandra");
+        let mut buffer = renamed.clone();
+        buffer.clone_from(&record(1.0, Some(5.0)));
+        assert_eq!(buffer, record(1.0, Some(5.0)));
+        let mut odd = WireRecord::default();
+        odd.reset(9, SAMPLE_FIELDS.len());
+        odd.set_text(sample::X, "not a number");
+        buffer.clone_from(&odd);
+        assert_eq!(buffer, odd);
+        buffer.clone_from(&renamed);
+        assert_eq!(buffer, renamed);
+
+        let mut out = Vec::new();
+        assert!(write_changes(
+            SAMPLE_FIELDS,
+            Some(&renamed),
+            &record(3.0, Some(2.0)),
+            &mut out
+        ));
+        let changed = read_moving_changes(
+            SAMPLE_FIELDS,
+            &mut buffer,
+            Some(&mut Motion::new()),
+            &mut WireReader::new(&out),
+        )
+        .unwrap();
+        assert_eq!(buffer, record(3.0, Some(2.0)));
+        assert_eq!(changed.set, 1 << sample::NAME | 1 << sample::HP);
+        // A record that stops moving leaves its motion empty.
+        let mut moved = vec![0; SAMPLE_FIELDS.len()];
+        moved[sample::X] = 5;
+        let (mut held, mut motion) = (buffer.clone(), moved.clone());
+        out.clear();
+        assert!(write_moving_changes(
+            SAMPLE_FIELDS,
+            Some(&buffer),
+            &buffer,
+            Some(&mut moved),
+            &mut out
+        ));
+        read_moving_changes(
+            SAMPLE_FIELDS,
+            &mut held,
+            Some(&mut motion),
+            &mut WireReader::new(&out),
+        )
+        .unwrap();
+        assert_eq!(held, buffer);
+        assert!(motion.is_empty() && moved.is_empty());
     }
 
     #[test]

@@ -1020,7 +1020,12 @@ impl NetworkClient {
                         && self.ready_round == self.round_id
                         && !self.hidden
                     {
-                        let rendered = self.mirror.render(control.tank_id);
+                        // The sample refills one the timeline dropped, buffers and all.
+                        let mut state = self.timeline.spare_state();
+                        let rendered = self
+                            .mirror
+                            .fill_render(&mut state, control.tank_id)
+                            .map(|()| state);
                         if let Ok(state) = &rendered {
                             self.feel.received(self.mirror.tick as f64, state);
                         }

@@ -294,6 +294,12 @@ impl NetworkTimeline {
         self.poses.reset(at_tick(state.clone(), tick));
     }
 
+    /// A render state to fill for the next [`push`](Self::push), reusing a dropped
+    /// sample's buffers when there is one; every field must be overwritten.
+    pub fn spare_state(&mut self) -> RenderState {
+        self.poses.spare()
+    }
+
     /// Records one message's arrival after its frames have been pushed.
     pub fn arrive(&mut self, now_ms: f64) {
         self.clock.arrive(self.newest_tick, now_ms);

@@ -6,6 +6,9 @@ use crate::sim::math::{Quat4, Vec2, angle_delta};
 use crate::sim::render_state::{RenderState, RenderTank, fill_each};
 
 const MAX_SAMPLES: usize = 32;
+/// Samples the timeline is done with that it keeps for refilling: a frame usually drops
+/// one as one arrives, and each holds every cover and fragment of the scene.
+const MAX_SPARES: usize = 4;
 /// Longest a hull is carried past its newest authoritative pose, local or remote.
 pub const MAX_EXTRAPOLATION_SECONDS: f64 = 0.1;
 const CORRECTION_RATE: f64 = 20.0;
@@ -45,18 +48,37 @@ fn interpolate_rotation(a: Quat4, b: Quat4, alpha: f64) -> Quat4 {
 pub struct RenderTimeline {
     samples: VecDeque<RenderState>,
     local: Option<RenderTank>,
+    /// Dropped samples whose buffers the next ones reuse ([`Self::spare`]).
+    spares: Vec<RenderState>,
+}
+
+fn recycle(spares: &mut Vec<RenderState>, state: RenderState) {
+    if spares.len() < MAX_SPARES {
+        spares.push(state);
+    }
 }
 
 impl RenderTimeline {
     pub fn reset(&mut self, state: RenderState) {
-        self.samples.clear();
+        for old in self.samples.drain(..) {
+            recycle(&mut self.spares, old);
+        }
         self.samples.push_back(state);
         self.local = None;
     }
 
+    /// A sample to fill and [`push`](Self::push): one the timeline dropped, with its
+    /// buffers, when it has one. Its contents are stale; the caller overwrites every field.
+    pub fn spare(&mut self) -> RenderState {
+        self.spares.pop().unwrap_or_default()
+    }
+
     pub fn push(&mut self, state: RenderState) {
         self.samples.push_back(state);
-        self.samples.retain_back(MAX_SAMPLES);
+        while self.samples.len() > MAX_SAMPLES {
+            let oldest = self.samples.pop_front().expect("over the limit");
+            recycle(&mut self.spares, oldest);
+        }
     }
 
     /// Fills `output` for the delayed display `time` (seconds); `local_time` is where the
@@ -176,6 +198,8 @@ impl RenderTimeline {
         output.map_scale = before.map_scale;
         output.custom_map = before.custom_map;
         // Keep one predecessor for interpolation, with all delayed lifecycle data intact.
-        self.samples.drain(..index);
+        for old in self.samples.drain(..index) {
+            recycle(&mut self.spares, old);
+        }
     }
 }

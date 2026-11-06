@@ -1025,6 +1025,18 @@ impl<'a> Fields<'a> {
         }
     }
 
+    /// Required text of at most `max` UTF-16 units, copied into `buffer`.
+    fn text_into(&self, field: usize, max: usize, mut buffer: String) -> ReadResult<String> {
+        match self.record.slots.get(field) {
+            Some(Slot::Text(text)) if text_length(text) <= max => {
+                buffer.clear();
+                buffer.push_str(text);
+                Ok(buffer)
+            }
+            _ => self.error(field, "Invalid text"),
+        }
+    }
+
     fn blob(&self, field: usize) -> Option<&'a [u8]> {
         match self.record.slots.get(field) {
             Some(Slot::Blob(bytes)) => Some(bytes),
@@ -1073,6 +1085,14 @@ impl<'a> Fields<'a> {
 
 /// `tankReader`, projected with `previous` at its position.
 pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
+    read_tank_reusing(record, None)
+}
+
+/// [`read_tank`], keeping the name buffer of `spare`, a value the mirror no longer needs.
+pub(crate) fn read_tank_reusing(
+    record: &WireRecord,
+    spare: Option<RenderTank>,
+) -> ReadResult<RenderTank> {
     use tank::*;
     let fields = Fields::new(TANK_FIELDS, record);
     // The tank table splits position across non-adjacent fields.
@@ -1084,9 +1104,7 @@ pub fn read_tank(record: &WireRecord) -> ReadResult<RenderTank> {
     Ok(RenderTank {
         id: record.id,
         life: fields.count32(LIFE)?,
-        name: fields
-            .opt_text(NAME, 64)?
-            .ok_or_else(|| "name: Invalid text".to_string())?,
+        name: fields.text_into(NAME, 64, spare.map(|tank| tank.name).unwrap_or_default())?,
         kind: fields.choice(KIND, &VEHICLE_KINDS)?,
         team: fields.team(TEAM)?,
         human: fields.flag(HUMAN)?,
@@ -1395,23 +1413,26 @@ impl<T> EntityStore<T> {
         Ok(())
     }
 
-    /// Replaces a record in place, or appends a new one.
-    pub(crate) fn upsert(&mut self, stored: Stored<T>) {
+    /// Replaces a record in place, returning the one it replaced, or appends a new one.
+    pub(crate) fn upsert(&mut self, stored: Stored<T>) -> Option<Stored<T>> {
         match self.index.get(&stored.wire.id) {
-            Some(&index) => self.records[index] = stored,
+            Some(&index) => Some(std::mem::replace(&mut self.records[index], stored)),
             None => {
                 self.index.insert(stored.wire.id, self.records.len());
                 self.records.push(stored);
+                None
             }
         }
     }
 
-    /// Removes records, keeping the order of the rest.
-    pub(crate) fn remove_all(&mut self, ids: &[u32]) {
+    /// Removes records, keeping the order of the rest, and hands each to `removed`.
+    pub(crate) fn remove_all(&mut self, ids: &[u32], removed: impl FnMut(Stored<T>)) {
         if ids.is_empty() {
             return;
         }
-        self.records.retain(|stored| !ids.contains(&stored.wire.id));
+        self.records
+            .extract_if(.., |stored| ids.contains(&stored.wire.id))
+            .for_each(removed);
         self.index.clear();
         for (index, stored) in self.records.iter().enumerate() {
             self.index.insert(stored.wire.id, index);
