@@ -91,6 +91,8 @@ pub struct Flash {
     /// wrap round onto the faces turned from it as a fire's rolling glow does
     /// (wrapped, a hit on a cottage's wall lit the gable round the corner).
     pub point: bool,
+    /// The wall hiding what lies behind it from this light.
+    pub blocker: Option<walls::LightBlocker>,
 }
 
 /// What this frame's views can show, so an effect can leave out smoke no view draws:
@@ -514,6 +516,7 @@ mod browser {
                         },
                         decay: FLASH_DECAY,
                         wraps: !light.point,
+                        blocker: light.blocker,
                     }),
                 );
             }
@@ -527,6 +530,7 @@ mod browser {
                     distance: MUZZLE_LIGHT_DISTANCE,
                     decay: FLASH_DECAY,
                     wraps: true,
+                    blocker: None,
                 }),
             );
         }

@@ -42,6 +42,23 @@ pub enum WallMaterial {
     Siding,
 }
 
+/// A blast's light finds the wall that hides ground from it within this distance (m)
+/// of the light, and the shader tests its box this far inside the wall's faces, so the
+/// faces turned to the light stay lit by it.
+const BLOCKER_REACH: f64 = 6.0;
+const BLOCKER_INSET: f64 = 0.15;
+
+/// A wall box that hides what lies behind it from a point light (`standard.wgsl`): the
+/// lights cast no shadow map, so a blast just behind a cottage lit the ground in the
+/// cottage's sun shadow as brightly as the sunlit ground round it, and the shadow
+/// vanished while the blast burned. Corners on the ground plane (m) and its top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightBlocker {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+    pub top: f32,
+}
+
 /// A brick cottage's walls, for the chips a hit knocks off them.
 const BRICK: u32 = 0x8e5240;
 
@@ -410,6 +427,35 @@ impl Walls {
         self.soft
     }
 
+    /// The standing wall nearest a blast's or hit's light at `light`, within
+    /// [`BLOCKER_REACH`], that hides what lies behind it from that light; `None` when
+    /// the light is inside a wall's box (a burst in a cottage's room) or none is near.
+    pub fn light_blocker(&self, light: Vec3) -> Option<LightBlocker> {
+        let (x, z) = (f64::from(light.x), f64::from(light.z));
+        let mut nearest: Option<(f64, &WallBox)> = None;
+        for wall in self.boxes.iter().filter(|wall| wall.material.is_some()) {
+            let (dx, dz) = (
+                (x - wall.x).abs() - wall.half_w,
+                (z - wall.z).abs() - wall.half_d,
+            );
+            if dx < BLOCKER_INSET && dz < BLOCKER_INSET {
+                return None;
+            }
+            let distance = dx.max(0.0).hypot(dz.max(0.0));
+            if distance <= BLOCKER_REACH && nearest.is_none_or(|(best, _)| distance < best) {
+                nearest = Some((distance, wall));
+            }
+        }
+        nearest.map(|(_, wall)| {
+            let (half_w, half_d) = (wall.half_w - BLOCKER_INSET, wall.half_d - BLOCKER_INSET);
+            LightBlocker {
+                min: [(wall.x - half_w) as f32, (wall.z - half_d) as f32],
+                max: [(wall.x + half_w) as f32, (wall.z + half_d) as f32],
+                top: wall.height as f32,
+            }
+        })
+    }
+
     /// Whether `(x, z)` lies on a fallen cottage's footprint or within `reach` (m) of
     /// it, as of the last sync.
     pub fn in_ruin(&self, x: f64, z: f64, reach: f64) -> bool {
@@ -616,6 +662,33 @@ mod tests {
             }],
             ..Walls::default()
         }
+    }
+
+    #[test]
+    fn a_blast_behind_a_cottage_finds_the_cottage_hiding_its_shadow() {
+        let mut walls = Walls::default();
+        walls.sync(&RenderState {
+            covers: vec![sloppy_core::sim::render_state::RenderCover {
+                kind: CoverKind::House,
+                x: 24.0,
+                w: 5.0,
+                d: 7.0,
+                h: 4.9,
+                alive: true,
+                ..Default::default()
+            }],
+            ..RenderState::default()
+        });
+        // Just behind its back wall: the box, inset from the faces the light falls on.
+        let blocker = walls
+            .light_blocker(Vec3::new(25.2, 3.1, -4.3))
+            .expect("the cottage");
+        assert_eq!(blocker.min, [21.65, -3.35]);
+        assert_eq!(blocker.max, [26.35, 3.35]);
+        assert_eq!(blocker.top, 4.9);
+        // In its room the walls already hold the light; far off, nothing is near.
+        assert!(walls.light_blocker(Vec3::new(24.5, 1.0, 2.0)).is_none());
+        assert!(walls.light_blocker(Vec3::new(40.0, 1.0, 0.0)).is_none());
     }
 
     #[test]

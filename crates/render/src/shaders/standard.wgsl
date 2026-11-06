@@ -294,7 +294,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let span = dx * dx + dy * dy + dz * dz;
         // Past the cutoff the attenuation window is exactly zero: the rest runs only
         // where some light reaches.
-        let reaches = (strength > vec4f(0.0)) & ((cutoff <= vec4f(0.0)) | (span < cutoff * cutoff));
+        let reaches = (strength > vec4f(0.0)) & ((cutoff <= vec4f(0.0)) | (span < cutoff * cutoff)) & !light_blocked(world, dx, dy, dz);
         if any(reaches) {
             let distance = sqrt(span);
             // Three's distance attenuation (`distance_attenuation`), lane by lane.
@@ -320,8 +320,11 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                 // ground, walls and hulls around them in daylight; but added over sunlit
                 // grass, amber only yellowed the green into an acid blotch, so sunlit
                 // faces take less of it. Each light eases toward its ceiling
-                // (`FIRE_LIGHT_LIMIT`).
-                let gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
+                // (`FIRE_LIGHT_LIMIT`). The cut follows how a face turns to the sun,
+                // not whether a cast shadow hides it: the ground in a cottage's shadow
+                // took four times the firelight of the sunlit ground beside it, and a
+                // blast near the cottage switched its shadow off.
+                let gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
                 scale = attenuation * gain / (1.0 + luma * attenuation * gain / FIRE_LIGHT_LIMIT);
                 // Fire is a wide, rolling source, not a point: its light wraps past the
                 // terminator, so the ground and the sides of hulls and walls around a
@@ -507,7 +510,7 @@ const FIRE_WRAP: f32 = 0.6;
 // toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
 // pink screen tint rather than firelight.
 const FIRE_AMBER: vec3f = vec3f(1.0, 0.48, 0.17);
-// The share of firelight a fully sunlit face, square to the sun, does without.
+// The share of firelight a face square to the sun does without, in a cast shadow too.
 const FIRE_SUNLIT_DIM: f32 = 0.75;
 // The share of a surface's own hue firelight gives up for its brightness.
 const FIRE_ALBEDO_GREY: f32 = 0.8;
@@ -525,6 +528,33 @@ const FIRE_LIGHT_LIMIT: f32 = 5.0;
 fn fire_light_hue(light: vec3f) -> vec3f {
     let amber = FIRE_AMBER / dot(FIRE_AMBER, vec3f(0.2126, 0.7152, 0.0722));
     return mix(light, amber * dot(light, vec3f(0.2126, 0.7152, 0.0722)), FIRE_AMBER_SHARE);
+}
+
+// Whether each point light's blocking wall box (`frame.light_blocks`, lane by lane)
+// stands between `world` and the light, `d` away: the lights cast no shadow map, and a
+// blast just behind a cottage lit the ground in the cottage's sun shadow as brightly as
+// the sunlit ground beside it. A point inside the box (its roof, a room seen through a
+// hole) is not hidden by it.
+fn light_blocked(world: vec3f, dx: vec4f, dy: vec4f, dz: vec4f) -> vec4<bool> {
+    let blocks = frame.light_blocks;
+    let top = blocks[4];
+    let inside = (vec4f(world.x) > blocks[0]) & (vec4f(world.x) < blocks[2])
+        & (vec4f(world.z) > blocks[1]) & (vec4f(world.z) < blocks[3]) & (vec4f(world.y) < top);
+    // Where along the way to the light (0 here, 1 at the light) it is within the box on
+    // each axis; it passes through the box where all three spans overlap.
+    let tiny = vec4f(1e-6);
+    let ix = 1.0 / select(dx, tiny, abs(dx) < tiny);
+    let iy = 1.0 / select(dy, tiny, abs(dy) < tiny);
+    let iz = 1.0 / select(dz, tiny, abs(dz) < tiny);
+    let x0 = (blocks[0] - world.x) * ix;
+    let x1 = (blocks[2] - world.x) * ix;
+    let z0 = (blocks[1] - world.z) * iz;
+    let z1 = (blocks[3] - world.z) * iz;
+    let y0 = (vec4f(-1.0) - world.y) * iy;
+    let y1 = (top - world.y) * iy;
+    let enter = max(max(min(x0, x1), min(z0, z1)), max(min(y0, y1), vec4f(0.0)));
+    let exit = min(min(max(x0, x1), max(z0, z1)), min(max(y0, y1), vec4f(1.0)));
+    return (top > vec4f(0.0)) & !inside & (enter < exit);
 }
 // The seated view's own hull (`shade_standard`): within the first distance of the
 // eye its sky sheen is cut by this share and its glint entirely, easing back by the

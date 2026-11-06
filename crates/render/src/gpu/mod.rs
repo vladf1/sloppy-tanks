@@ -77,6 +77,7 @@ use crate::draw_list::{
     ClassOrder, Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW,
     SHADOW_VIEW, VIEW_COUNT, ViewDraws,
 };
+use crate::effects::walls::LightBlocker;
 use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
@@ -234,6 +235,8 @@ pub struct PointLight {
     /// Whether its light wraps past the terminator (a fire's wide glow); a point
     /// flash's does not.
     pub wraps: bool,
+    /// The wall box that hides what lies behind it from this light.
+    pub blocker: Option<LightBlocker>,
 }
 
 pub const MAX_POINT_LIGHTS: usize = 4;
@@ -405,6 +408,7 @@ struct FrameUniform {
     bounce: [f32; 4],
     rim: [f32; 4],
     cloud_tiles: [f32; 4],
+    light_blocks: [[f32; 4]; 5],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade, the
@@ -2387,8 +2391,23 @@ impl Renderer {
         let [penumbra_u, penumbra_v, penumbra_depth, penumbra_steps] =
             penumbra_terms(shadow_matrix, self.sun_shadow.map_size as f32);
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
-        for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
+        // Each light's blocking wall box, one light per lane: west, south, east and
+        // north sides and its top, which is zero where a light has none.
+        let mut light_blocks = [[0.0; 4]; 5];
+        for (lane, (slot, light)) in point_lights.iter_mut().zip(&self.point_lights).enumerate() {
             if let (Some(light), false) = (light, self.debug_off.lights) {
+                if let Some(blocker) = light.blocker {
+                    let sides = [
+                        blocker.min[0],
+                        blocker.min[1],
+                        blocker.max[0],
+                        blocker.max[1],
+                        blocker.top,
+                    ];
+                    for (row, side) in light_blocks.iter_mut().zip(sides) {
+                        row[lane] = side;
+                    }
+                }
                 let [r, g, b] = hex_to_linear_scaled(light.color, light.intensity);
                 *slot = [
                     light.position.x,
@@ -2452,6 +2471,7 @@ impl Renderer {
             camera_right: rgb4(world.x_axis.truncate().into(), 0.0),
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
+            light_blocks,
             quality: self.quality_uniform(),
             penumbra_u,
             penumbra_v,

@@ -164,6 +164,7 @@ impl MuzzleFlashes {
                 intensity: MUZZLE_LIGHT * shot.size as f32,
                 color: super::MUZZLE_FLASH_COLOR,
                 point: false,
+                blocker: None,
             };
         }
         self.pending.clear();

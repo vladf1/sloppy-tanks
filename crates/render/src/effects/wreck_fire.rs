@@ -286,6 +286,7 @@ impl WreckFires {
                     intensity: (FIRE_LIGHT * burner.fire) as f32,
                     color: FIRE_LIGHT_COLOR,
                     point: false,
+                    blocker: None,
                 },
             );
         }
