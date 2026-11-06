@@ -614,16 +614,21 @@ impl Simulation {
             if let Some(design) = state.layout.design().copied()
                 && let Some((bed, _)) = design.garden_bed()
             {
-                let (a, b) = bed.bounds(&design, GARDEN_PROPS_HEIGHT);
-                let (a, b) = (design.to_world(a), design.to_world(b));
-                let (min, max) = (a.min(b), a.max(b));
-                let (half, center) = ((max - min) / 2.0, (min + max) / 2.0);
-                let collider = ColliderBuilder::cuboid(half.x as f32, half.y as f32, half.z as f32)
-                    .translation(vector(center.x, center.y, center.z))
-                    .collision_groups(interaction_groups(group::GARDEN_PROPS))
-                    .friction(0.6);
                 let body = self.covers[index].body;
-                self.world.insert_collider(collider, Some(body));
+                for hull in bed.props(&design, GARDEN_PROPS_HEIGHT) {
+                    let points: Vec<_> = hull
+                        .into_iter()
+                        .map(|p| {
+                            let p = design.to_world(p);
+                            vector(p.x, p.y, p.z)
+                        })
+                        .collect();
+                    let collider = ColliderBuilder::convex_hull(&points)
+                        .expect("a garden prop has volume")
+                        .collision_groups(interaction_groups(group::GARDEN_PROPS))
+                        .friction(0.6);
+                    self.world.insert_collider(collider, Some(body));
+                }
             }
         }
         let cover = &mut self.covers[index];

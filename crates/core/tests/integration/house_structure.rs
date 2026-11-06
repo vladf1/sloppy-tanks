@@ -1371,6 +1371,65 @@ fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
     assert!(!meets(&s, group::COVER_QUERY), "a shell flies over it");
 }
 
+/// A bed of beans bears what falls on it up to its pole A-frames' tops: a wall coming
+/// down on them rests on the poles, never with them standing up through it, and between
+/// the frames over the plants nothing holds a piece up.
+#[test]
+fn a_bean_beds_poles_bear_a_fallen_wall_at_their_tops() {
+    use rapier3d::prelude::{QueryFilter, Vector};
+    use sloppy_core::sim::data::group;
+    use sloppy_core::sim::house_layout::{BEAN_POLE, HouseDesign};
+    use sloppy_core::sim::physics::interaction_groups;
+    let x = (0..200)
+        .map(|k| 20.0 + f64::from(k) * 0.5)
+        .find(|&x| {
+            HouseDesign::of(x, 0.0, 5.0, 7.0, 4.9)
+                .garden_bed()
+                .is_some_and(|(bed, _)| bed.beans)
+        })
+        .expect("a cottage growing beans");
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    clear_arena(&mut s, &[human]);
+    let house = s.add_cover(&CoverDef::house(x, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
+    s.world.step();
+    let design = *s.covers[house]
+        .structure
+        .as_ref()
+        .unwrap()
+        .layout
+        .design()
+        .unwrap();
+    let (bed, _) = design.garden_bed().unwrap();
+    let frames = bed.bean_frames();
+    assert!(frames.len() >= 2);
+    let (center, out, along, _) =
+        sloppy_core::sim::house_layout::wall_frames(design.w, design.d)[1];
+    let middle = (bed.near + bed.far) / 2.0;
+    let meets = |u: f64, y: f64| {
+        let p = design.to_world(center + along * u + out * middle + glam::DVec3::Y * y);
+        s.world
+            .intersect_point(
+                Vector::new((x + p.x) as f32, p.y as f32, p.z as f32),
+                QueryFilter::default().groups(interaction_groups(group::STRUCTURE_DEBRIS)),
+            )
+            .next()
+            .is_some()
+    };
+    for &u in &frames {
+        assert!(
+            meets(u, BEAN_POLE - 0.1),
+            "a fallen wall rests on the frame at {u:.2}"
+        );
+    }
+    let between = (frames[0] + frames[1]) / 2.0;
+    assert!(
+        !meets(between, BEAN_POLE - 0.1),
+        "nothing holds a piece up between the frames"
+    );
+}
+
 #[test]
 fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
     // The capture's roof strikes: rocket-strength bursts on the roof surface.

@@ -35,8 +35,9 @@ use crate::geometry::math::scale_hex_color;
 use crate::geometry::{Mesh, octahedron_geometry};
 use crate::scene::{Material, Node};
 use crate::sim::house_layout::{
-    CHIMNEY, EAVE_OVERHANG, GardenBed, HouseDesign, HousePart, PLINTH, RAFTER_DEPTH, Roof,
-    RoofCover, RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing, window_columns,
+    BEAN_POLE, BEAN_SPREAD, CHIMNEY, EAVE_OVERHANG, GardenBed, HouseDesign, HousePart, PLINTH,
+    RAFTER_DEPTH, Roof, RoofCover, RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing,
+    window_columns,
 };
 use crate::sim::math::Random;
 
@@ -77,7 +78,6 @@ const DORMER_HALF: f64 = 0.62;
 /// wall and how deep it is (m), how far out from the wall it starts, the
 /// cabbages' spacing along a row, the bean poles' height and the cabbages' green.
 const GARDEN_SPACING: f64 = 0.55;
-const BEAN_POLE: f64 = 1.15;
 const CABBAGE: u32 = 0x6f9257;
 const PLANT_CLUMPS: u32 = 4;
 const PLANT_BLOOMS: u32 = 5;
@@ -2486,7 +2486,6 @@ fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) 
         return;
     };
     let octahedron = OCTAHEDRON.get_or_insert((), || octahedron_geometry(1.0, 0));
-    let lot = (design.style.siding >> 3) ^ design.turns.rem_euclid(4) as u32;
     let (frame, _) = wall_frames(design.w, design.d)[1];
     let GardenBed {
         u0,
@@ -2496,6 +2495,7 @@ fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) 
         length,
         offset,
         depth,
+        beans,
     } = bed;
     let at = |u: f64, out: f64, y: f64| frame.transform_point3(DVec3::new(u, y, out));
     // Turned soil inside boards laid round it.
@@ -2540,7 +2540,7 @@ fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) 
         clump.position = p;
         plants.push(clump);
     };
-    if lot.is_multiple_of(2) {
+    if !beans {
         // Rows of cabbages along the bed, each a little out of line.
         let rows = if depth > 1.75 { 3 } else { 2 };
         for row in 0..rows {
@@ -2565,12 +2565,10 @@ fn garden(kit: &mut Kit<Surface>, plants: &mut Vec<Node>, design: &HouseDesign) 
     } else {
         // Bean poles in pairs leaning together with vines up them, and a heap of
         // compost in the bed's far corner.
-        let count = (length / 0.8).floor().clamp(2.0, 4.0) as usize;
-        for k in 0..count {
-            let u = u0 + 0.3 + k as f64 * (length - 0.9) / (count - 1) as f64;
+        for u in bed.bean_frames() {
             let top = at(u, (near + far) / 2.0, BEAN_POLE);
             for side in [-1.0, 1.0] {
-                let foot = at(u, (near + far) / 2.0 + side * 0.3, 0.0);
+                let foot = at(u, (near + far) / 2.0 + side * BEAN_SPREAD, 0.0);
                 kit.rod(Surface::Splinters, 0.02, foot, top, 4);
                 let p = foot.lerp(top, rng.range(0.4, 0.6));
                 plant(p, rng.range(0.16, 0.22), LEAVES, &mut rng);

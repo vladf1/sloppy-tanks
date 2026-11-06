@@ -379,6 +379,12 @@ impl Wing {
 /// wall and how deep it is (m), and how far out from the wall it starts.
 pub const GARDEN: (f64, f64) = (3.8, 1.8);
 pub const GARDEN_GAP: f64 = 0.85;
+/// A bed of beans: the height (m) its pole A-frames' tops meet at, how far out from the
+/// bed's middle line their feet stand, and how thick a frame's poles bear what falls on
+/// them.
+pub const BEAN_POLE: f64 = 1.15;
+pub const BEAN_SPREAD: f64 = 0.3;
+const BEAN_FRAME: f64 = 0.12;
 
 /// A cottage's garden bed along its back wall ([`wall_frames`] 1), in that wall's frame:
 /// from `u0` to `u1` along it and from `near` to `far` out from it.
@@ -392,9 +398,58 @@ pub struct GardenBed {
     pub length: f64,
     pub offset: f64,
     pub depth: f64,
+    /// It grows beans up pole A-frames (otherwise rows of cabbages).
+    pub beans: bool,
 }
 
 impl GardenBed {
+    /// Where along the wall a bed of beans stands its pole A-frames, each across the bed.
+    pub fn bean_frames(&self) -> Vec<f64> {
+        if !self.beans {
+            return Vec::new();
+        }
+        let count = (self.length / 0.8).floor().clamp(2.0, 4.0) as usize;
+        (0..count)
+            .map(|k| self.u0 + 0.3 + k as f64 * (self.length - 0.9) / (count - 1) as f64)
+            .collect()
+    }
+
+    /// What in the bed bears a fallen part, as convex hulls in the build frame: the plants
+    /// up to `height` over the whole bed, and each bean A-frame to its top, so a wall
+    /// coming down on the poles rests on them rather than through them.
+    pub fn props(&self, design: &HouseDesign, height: f64) -> Vec<Vec<DVec3>> {
+        let (a, b) = self.bounds(design, height);
+        let mut hulls = vec![
+            (0..8)
+                .map(|k| {
+                    DVec3::new(
+                        if k & 1 == 0 { a.x } else { b.x },
+                        if k & 2 == 0 { a.y } else { b.y },
+                        if k & 4 == 0 { a.z } else { b.z },
+                    )
+                })
+                .collect(),
+        ];
+        let (center, out, along, _) = wall_frames(design.w, design.d)[1];
+        let middle = (self.near + self.far) / 2.0;
+        for u in self.bean_frames() {
+            let at = |du: f64, o: f64, y: f64| center + along * (u + du) + out * o + DVec3::Y * y;
+            hulls.push(
+                [-BEAN_FRAME / 2.0, BEAN_FRAME / 2.0]
+                    .into_iter()
+                    .flat_map(|du| {
+                        [
+                            at(du, middle - BEAN_SPREAD, 0.0),
+                            at(du, middle + BEAN_SPREAD, 0.0),
+                            at(du, middle, BEAN_POLE),
+                        ]
+                    })
+                    .collect(),
+            );
+        }
+        hulls
+    }
+
     /// The bed's box in the build frame, from the ground up to `height`.
     pub fn bounds(&self, design: &HouseDesign, height: f64) -> (DVec3, DVec3) {
         let (center, out, along, _) = wall_frames(design.w, design.d)[1];
@@ -505,6 +560,7 @@ impl HouseDesign {
             length,
             offset,
             depth,
+            beans: !lot.is_multiple_of(2),
         };
         Some((bed, rng))
     }
