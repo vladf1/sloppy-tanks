@@ -88,6 +88,11 @@ const WEDGE_GIVE_UP: f64 = 1.0;
 const CRUSH_DAMAGE: f64 = 6.0;
 /// A falling body strikes with at most its momentum times this (a bounce back).
 const CRUSH_BOUNCE: f64 = 1.5;
+/// A body moving slower than this (m/s) where it meets a standing part presses on it and
+/// strikes nothing: a fallen floor squeezed against a chimney stack, creeping, once wore
+/// it down tick after tick, and a strip of wall tipping off its stubs ground them away as
+/// it turned on their edge.
+const CRUSH_SPEED: f64 = 1.0;
 /// Contact force per unit of a falling body's mass that counts as striking what it lands
 /// on rather than resting its weight there.
 const CRUSH_FORCE_PER_MASS: f64 = 40.0;
@@ -2130,16 +2135,34 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
     bodies.sort_by_key(|body| body.into_raw_parts());
     bodies.dedup();
     for body in bodies {
-        let total: f64 = blows.iter().filter(|blow| blow.1 == body).map(|blow| blow.2).sum();
-        let speed = simulation
+        // How fast the body came at each part it struck: last tick's velocity, turning
+        // about its middle as it turns now (a strip pivoting on a stub's edge barely moves
+        // there, however fast its top swings).
+        let velocity = simulation
             .fragments
             .iter()
             .find(|fragment| fragment.body == body)
             .and_then(|fragment| fragment.structure)
-            .map_or(0.0, |debris| {
-                let v = debris.velocity;
-                v.x.hypot(v.y).hypot(v.z)
-            });
+            .map_or(Point3::new(0.0, 0.0, 0.0), |debris| debris.velocity);
+        let rigid = &simulation.world.bodies[body];
+        let (middle, spin) = (from_vector(rigid.center_of_mass()), rigid.angvel());
+        let mut speed: f64 = 0.0;
+        for blow in blows.iter_mut().filter(|blow| blow.1 == body) {
+            let (cover, part) = blow.0;
+            let Some(at) = part_center(&simulation.covers[cover], part) else {
+                continue;
+            };
+            let arm = vector(at.x - middle.x, at.y - middle.y, at.z - middle.z);
+            let turning = from_vector(spin.cross(arm));
+            let (vx, vy, vz) = (velocity.x + turning.x, velocity.y + turning.y, velocity.z + turning.z);
+            let there = vx.hypot(vy).hypot(vz);
+            if there < CRUSH_SPEED {
+                blow.2 = 0.0;
+            } else {
+                speed = speed.max(there);
+            }
+        }
+        let total: f64 = blows.iter().filter(|blow| blow.1 == body).map(|blow| blow.2).sum();
         let carried = f64::from(simulation.world.bodies[body].mass()) * speed * CRUSH_BOUNCE;
         if total > carried && total > 0.0 {
             let scale = carried / total;
@@ -2148,6 +2171,7 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
             }
         }
     }
+    blows.retain(|blow| blow.2 > 0.0);
     let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
     for &(part, _, impulse, from) in &blows {
         match struck.iter_mut().find(|(key, _, _)| *key == part) {

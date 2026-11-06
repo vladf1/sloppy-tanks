@@ -52,8 +52,8 @@ fn village_scenery_is_pinned() {
         "village scenery",
         scenery_pin(MapTheme::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0x308a_034b_1793_fc21),
-            (MAC_RELEASE, 0xe17e_9b70_c061_3d5a),
+            (MAC_DEBUG, 0x0334_8941_bbef_7cab),
+            (MAC_RELEASE, 0x2b03_15a7_54c9_8b60),
             (LINUX_DEBUG, 0xd685_6b69_7366_4198),
         ]),
     );
@@ -96,8 +96,8 @@ fn village_covers_are_pinned() {
         "village covers",
         covers_pin(MapId::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0xc206_1e09_2ca1_cfbc),
-            (MAC_RELEASE, 0x5a04_70ff_8171_1287),
+            (MAC_DEBUG, 0xacd6_d30a_7238_94b4),
+            (MAC_RELEASE, 0x9b4a_ece5_ec80_379f),
             (LINUX_DEBUG, 0x3e2f_44b6_ebd8_1d83),
         ]),
     );

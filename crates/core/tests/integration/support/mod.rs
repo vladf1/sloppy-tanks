@@ -238,6 +238,18 @@ pub fn fell_cottage(s: &mut Simulation, house: usize) {
     );
 }
 
+/// A point of levelled cottage `house`'s ground a tank can drive onto: its middle, moved
+/// a metre and a half away from the chimney's stack that stands in the ruin.
+pub fn open_ruin_ground(s: &Simulation, house: usize) -> Vec2 {
+    let c = &s.covers[house];
+    let layout = &c.structure.as_ref().expect("a cottage").layout;
+    let (min, max) = layout.world_box(sloppy_core::sim::house_structure::CHIMNEY_STACK);
+    let stack = Vec2::new(c.x + (min.x + max.x) / 2.0, c.z + (min.z + max.z) / 2.0);
+    let (dx, dz) = (c.x - stack.x, c.z - stack.z);
+    let length = dx.hypot(dz).max(1e-6);
+    Vec2::new(c.x + dx / length * 1.5, c.z + dz / length * 1.5)
+}
+
 /// Break each of `breaks` out of structure `cover` a tick at a time on a room host, and
 /// check a client following the room and a client joining after see what stands of it
 /// and every body falling from it, part for part.

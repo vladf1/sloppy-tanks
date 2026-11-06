@@ -185,7 +185,7 @@ fn stress_cottages_fall_within_the_fragment_budget() {
         let c = &sim.covers[house];
         assert!(!c.alive, "{} {} is levelled", c.x, c.z);
         assert!(
-            !sim.nav.is_blocked(Vec2::new(c.x, c.z)),
+            !sim.nav.is_blocked(support::open_ruin_ground(&sim, house)),
             "its footprint opens"
         );
     }
