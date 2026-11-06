@@ -488,6 +488,9 @@ pub struct Levelling {
 pub struct DebrisRules {
     pub landing_speed: f64,
     pub firm_only: bool,
+    /// The whole ruin clears on one clock, top first (a watchtower's frame of sticks);
+    /// otherwise each piece keeps its own time, clearing before what it lies on.
+    pub one_clock: bool,
     pub life: f64,
     pub life_spread: f64,
     pub deadline: f64,

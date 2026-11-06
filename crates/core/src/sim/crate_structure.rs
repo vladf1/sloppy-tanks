@@ -97,6 +97,7 @@ const LEVELLED: f64 = 0.5;
 const CRATE_DEBRIS: DebrisRules = DebrisRules {
     landing_speed: 1.5,
     firm_only: false,
+    one_clock: false,
     life: 9.5,
     life_spread: 2.0,
     deadline: 18.0,

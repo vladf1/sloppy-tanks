@@ -165,6 +165,7 @@ const KNEE_CLEAR: f64 = 0.1;
 const TOWER_DEBRIS: DebrisRules = DebrisRules {
     landing_speed: 2.5,
     firm_only: true,
+    one_clock: true,
     life: 16.0,
     life_spread: 0.0,
     deadline: 24.0,

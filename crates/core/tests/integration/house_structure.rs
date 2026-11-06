@@ -1689,3 +1689,42 @@ fn a_collapse_after_shells_lies_solid_seconds_later() {
         );
     }
 }
+
+/// A cottage's ruin clears a piece at a time, staggered over seconds, each before what
+/// it lies on: not in one batch.
+#[test]
+fn a_ruin_clears_piece_by_piece() {
+    let (mut s, house) = cottage_alone(VILLAGE_DESIGNS[6]);
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let walls =
+        PartSet::from_indices((0..layout.parts.len()).filter(|&i| layout.parts[i].grounded));
+    s.break_structure(house, walls, PartSet::EMPTY, None, None);
+    for _ in 0..(6.0 / STEP) as usize {
+        idle(&mut s);
+    }
+    let mut clears: Vec<f64> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(house))
+        .map(|f| s.elapsed + f.life)
+        .collect();
+    clears.sort_by(f64::total_cmp);
+    assert!(clears.len() > 10, "{}", clears.len());
+    let spread = clears[clears.len() - 1] - clears[0];
+    assert!(spread > 4.0, "the ruin clears within {spread:.1} s");
+    let most = clears
+        .iter()
+        .map(|&at| {
+            clears
+                .iter()
+                .filter(|&&other| other >= at && other < at + 1.0)
+                .count()
+        })
+        .max()
+        .unwrap();
+    assert!(
+        most * 2 <= clears.len(),
+        "{most} of {} pieces clear in one second",
+        clears.len()
+    );
+}

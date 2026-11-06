@@ -3405,9 +3405,12 @@ impl Presentation {
         Some(FragmentView {
             instance,
             look,
-            // A structure's pieces fade where they lie, the pile's top first, rather
-            // than sinking through what lies under them.
-            sink: fragment.structure_parts.is_some().then_some(0.0),
+            // A watchtower's pieces fade where they lie, its tangle's top first, rather
+            // than sinking through what lies under them; other structures' pieces sink
+            // away, each once nothing lies over it.
+            sink: (fragment.structure_parts.is_some()
+                && fragment.source_kind == Some(CoverKind::Tower))
+            .then_some(0.0),
             fades: fragment.tree_cover_id.is_none(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),
             emerges_from: (fragment.source_kind == Some(CoverKind::House)

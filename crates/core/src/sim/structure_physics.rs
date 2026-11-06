@@ -98,10 +98,12 @@ const LOOSE_THROW_UP: f64 = 2.4;
 /// A blast breaks the loose parts within this share of its reach (at least
 /// [`BLAST_CORE`], at most [`LOOSE_CORE_MAX`] m) and throws the others in reach.
 const LOOSE_CORE_SHARE: f64 = 0.35;
+/// How much further than its reach on what stands a blast throws loose pieces.
+const LOOSE_REACH: f64 = 1.8;
 const LOOSE_CORE_MAX: f64 = 1.0;
 /// A blast's damage that throws loose parts at [`LOOSE_THROW_OUT`]; more throws them
 /// harder, up to [`LOOSE_THROW_MOST`] times.
-const LOOSE_THROW_DAMAGE: f64 = 40.0;
+const LOOSE_THROW_DAMAGE: f64 = 25.0;
 const LOOSE_THROW_MOST: f64 = 1.8;
 /// The dust a structure's load raises where it crashes down: its reach (m) and height.
 const CRASH_SIZE: f64 = 7.0;
@@ -1240,6 +1242,9 @@ pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius
     if radius <= 0.0 || damage <= 0.0 {
         return;
     }
+    // Loose pieces lie in the open: a burst throws them from further than it breaks
+    // what stands.
+    let radius = radius * LOOSE_REACH;
     let core = (radius * LOOSE_CORE_SHARE).clamp(BLAST_CORE, LOOSE_CORE_MAX);
     let strength = (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST);
     let at = vector(point.x, point.y, point.z);
@@ -1706,31 +1711,99 @@ fn middle_height(simulation: &Simulation, body: RigidBodyHandle) -> f64 {
 }
 
 /// Time a piece of a ruin that has just come to rest to clear in turn: the pile clears
-/// from the top down, so nothing fades through what lies over it. The whole ruin keeps
-/// one clock (the earliest of its resting pieces'), whenever each piece came loose.
+/// from the top down, so nothing fades through what lies over it. A ruin with one clock
+/// ([`DebrisRules::one_clock`], a watchtower's) keeps the earliest of its resting
+/// pieces', whenever each came loose; any other lies its pieces' own times, each piece
+/// clearing a moment before what it lies on.
 fn clear_in_turn(simulation: &mut Simulation, index: usize) {
     let fragment = &simulation.fragments[index];
-    let cover = fragment.structure.map(|debris| debris.cover);
+    let Some(debris) = fragment.structure else {
+        return;
+    };
+    let cover = debris.cover;
+    let one_clock = simulation.covers[cover]
+        .structure
+        .as_ref()
+        .is_some_and(|state| state.layout.debris.one_clock);
     let fell = fragment.expires_at;
-    // When a piece lying on the ground would clear.
-    let ground = simulation
-        .fragments
-        .iter()
-        .enumerate()
-        .filter(|&(other, piece)| {
+    let ruin: Vec<usize> = (0..simulation.fragments.len())
+        .filter(|&other| {
+            let piece = &simulation.fragments[other];
             other != index
                 && piece.life > DEBRIS_CLEANUP_SECONDS
                 && piece
                     .structure
-                    .is_some_and(|debris| debris.rested && Some(debris.cover) == cover)
+                    .is_some_and(|debris| debris.rested && debris.cover == cover)
                 && fell_together(piece.expires_at, fell)
         })
-        .map(|(_, piece)| piece.life + middle_height(simulation, piece.body) * CLEAR_TOP_FIRST)
-        .fold(fragment.life, f64::min);
+        .collect();
     let height = middle_height(simulation, fragment.body);
-    simulation.fragments[index].life =
-        (ground - height * CLEAR_TOP_FIRST).max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
+    let floor = DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST;
+    if one_clock {
+        // When a piece lying on the ground would clear.
+        let ground = ruin
+            .iter()
+            .map(|&other| {
+                let piece = &simulation.fragments[other];
+                piece.life + middle_height(simulation, piece.body) * CLEAR_TOP_FIRST
+            })
+            .fold(fragment.life, f64::min);
+        simulation.fragments[index].life = (ground - height * CLEAR_TOP_FIRST).max(floor);
+        return;
+    }
+    // A moment before what it lies on, and after what lies on it.
+    let mine = plan_box(simulation, fragment.body);
+    let mut life = fragment.life;
+    let mut over: Vec<usize> = Vec::new();
+    for &other in &ruin {
+        let piece = &simulation.fragments[other];
+        if !plan_box(simulation, piece.body).overlaps(&mine) {
+            continue;
+        }
+        if middle_height(simulation, piece.body) < height {
+            life = life.min(piece.life - CLEAR_GAP);
+        } else {
+            over.push(other);
+        }
+    }
+    let life = life.max(floor);
+    simulation.fragments[index].life = life;
+    for other in over {
+        let piece = &mut simulation.fragments[other];
+        piece.life = piece.life.min(life - CLEAR_GAP).max(DEBRIS_CLEANUP_SECONDS + CLEAR_GAP);
+    }
 }
+
+/// A body's footprint on the ground plane, a little grown so pieces lying edge to edge
+/// count as on each other.
+fn plan_box(simulation: &Simulation, body: RigidBodyHandle) -> PlanBox {
+    let mut plan = PlanBox {
+        min: [f32::INFINITY; 2],
+        max: [f32::NEG_INFINITY; 2],
+    };
+    for &collider in simulation.world.bodies[body].colliders() {
+        let aabb = simulation.world.colliders[collider].compute_aabb();
+        plan.min = [plan.min[0].min(aabb.mins.x), plan.min[1].min(aabb.mins.z)];
+        plan.max = [plan.max[0].max(aabb.maxs.x), plan.max[1].max(aabb.maxs.z)];
+    }
+    plan
+}
+
+struct PlanBox {
+    min: [f32; 2],
+    max: [f32; 2],
+}
+
+impl PlanBox {
+    fn overlaps(&self, other: &PlanBox) -> bool {
+        (0..2).all(|k| self.min[k] - ON_EACH_OTHER < other.max[k] && other.min[k] - ON_EACH_OTHER < self.max[k])
+    }
+}
+
+/// Pieces whose footprints come this near (m) count as lying on each other.
+const ON_EACH_OTHER: f32 = 0.05;
+/// The time (s) between a piece clearing and what it lies on.
+const CLEAR_GAP: f64 = 0.4;
 
 /// Pieces that fell within this many seconds of each other (by their clearing deadlines,
 /// which a landing's pieces keep from their body) are one ruin, which clears top first
