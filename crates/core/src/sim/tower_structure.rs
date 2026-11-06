@@ -610,6 +610,7 @@ fn build() -> Structure {
     structure.tipping = Some(Tipping {
         margin: STAND_MARGIN,
         rise: 0.0,
+        snap: None,
     });
     // It counts as destroyed as its deck starts down; its dust and noise come when the
     // deck lands.

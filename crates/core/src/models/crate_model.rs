@@ -559,9 +559,39 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
     for normal in &mut liner.normals {
         *normal = normal.map(|n| -n);
     }
-    let mut hold = scrap(liner, HOLD_COLOR);
-    hold.position = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
-    add(group, CRATE_BASE_PART, hold);
+    let middle = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
+    if broken.is_empty() {
+        let mut hold = scrap(liner, HOLD_COLOR);
+        hold.position = middle;
+        add(group, CRATE_BASE_PART, hold);
+    } else {
+        // Each of the liner's faces is the inside of a wall, the lid or the floor, and
+        // goes with it: through a gone wall the hold opens to the daylight.
+        for (part, inward) in [
+            (CRATE_WALLS[0], [0.0, 0.0, -1.0]),
+            (CRATE_WALLS[1], [0.0, 0.0, 1.0]),
+            (CRATE_WALLS[2], [-1.0, 0.0, 0.0]),
+            (CRATE_WALLS[3], [1.0, 0.0, 0.0]),
+            (CRATE_LID_PART, [0.0, -1.0, 0.0]),
+            (CRATE_BASE_PART, [0.0, 1.0, 0.0]),
+        ] {
+            let mut side = liner.clone();
+            side.indices = liner.indices.as_ref().map(|indices| {
+                indices
+                    .chunks(3)
+                    .filter(|triangle| {
+                        let normal = liner.normals[triangle[0] as usize];
+                        (0..3).all(|k| (normal[k] - inward[k]).abs() < 0.5)
+                    })
+                    .flatten()
+                    .copied()
+                    .collect()
+            });
+            let mut hold = scrap(side, HOLD_COLOR);
+            hold.position = middle;
+            add(group, part, hold);
+        }
+    }
 
     // Walls: sheathing planks, then the frame and brace over them.
     for (index, face) in faces[..4].iter().enumerate() {

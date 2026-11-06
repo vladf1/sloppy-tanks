@@ -130,7 +130,11 @@ const FLOOR_SEAT_NEEDED: f32 = 0.8;
 const COTTAGE_TIPPING: Tipping = Tipping {
     margin: 0.0,
     rise: 0.1,
+    snap: Some(STUB_TOP),
 };
+/// A wall's bottom course (its sill height and the plinth under it) reaches no higher
+/// than this: a tipping strip of wall breaks off over it, leaving the stub.
+const STUB_TOP: f64 = 1.5;
 /// A cottage counts as levelled once its roof is down or less than this share of its
 /// parts stands.
 const LEVELLED: f64 = 0.45;

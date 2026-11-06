@@ -433,11 +433,13 @@ pub const FIRM: f32 = 0.5;
 pub const SEAT_NEEDED: f32 = 0.5;
 
 /// A structure's tipping rule: a group stands while its weight lies at least `margin`
-/// plus `rise` times its height inside the ground it bears on.
+/// plus `rise` times its height inside the ground it bears on. A group that tips snaps
+/// off the parts it stands on that reach no higher than `snap` (m): the stubs stay.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tipping {
     pub margin: f64,
     pub rise: f64,
+    pub snap: Option<f64>,
 }
 
 /// When a structure counts as levelled (destroyed, for the score and the levels that
@@ -809,9 +811,23 @@ impl Structure {
                     let Some(tip) = tipping(&contacts, weight, toward, rule) else {
                         continue;
                     };
-                    more = more.union(&group);
+                    // A strip of wall alone that tips over snaps off its stubs on the
+                    // ground, which stand on as they can by themselves; a section that
+                    // carries roof comes down whole.
+                    let over = PartSet::from_indices(group.iter().filter(|&index| {
+                        let part = &self.parts[index];
+                        !(part.grounded && rule.snap.is_some_and(|snap| part.max.y <= snap))
+                    }));
+                    let over = if over.is_empty()
+                        || over.iter().any(|index| !self.parts[index].upright)
+                    {
+                        group
+                    } else {
+                        over
+                    };
+                    more = more.union(&over);
                     if loaded || !contacts.is_empty() {
-                        tips.push((group, tip));
+                        tips.push((over, tip));
                     }
                 }
             }
@@ -1120,6 +1136,7 @@ mod tests {
     const TOWER: Tipping = Tipping {
         margin: 0.35,
         rise: 0.0,
+        snap: None,
     };
 
     #[test]
@@ -1151,6 +1168,7 @@ mod tests {
         let rule = Tipping {
             margin: 0.0,
             rise: 0.12,
+            snap: None,
         };
         assert!(tipping(&slab, DVec3::new(0.0, 0.5, 0.0), DVec3::ZERO, rule).is_none());
         assert!(tipping(&slab, DVec3::new(0.0, 2.0, 0.0), DVec3::ZERO, rule).is_some());

@@ -32,7 +32,7 @@ pub struct TimberRole {
 }
 
 /// A beam breaks to a standard shell (40) that strikes it, but not to its burst behind the
-/// wall; a post takes two.
+/// wall; a post, like a watchtower's leg, to the second shell's burst at it.
 const BEAM: Material = Material {
     strength: 34.0,
     density: TIMBER_DENSITY,
@@ -40,7 +40,7 @@ const BEAM: Material = Material {
     breaking: Breaking::Splinters,
 };
 const POST: Material = Material {
-    strength: 70.0,
+    strength: 90.0,
     ..BEAM
 };
 const TIMBER_DENSITY: f64 = 0.35;
@@ -51,6 +51,7 @@ const SLOT: f32 = 0.9;
 const WALL_TIPPING: Tipping = Tipping {
     margin: 0.0,
     rise: 0.1,
+    snap: None,
 };
 /// A wall counts as destroyed once its beams are all gone, or less than this share of it
 /// stands.

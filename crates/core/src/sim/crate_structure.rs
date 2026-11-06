@@ -65,6 +65,7 @@ pub const WIDE_CRATE: f64 = 2.6;
 const CRATE_TIPPING: Tipping = Tipping {
     margin: 0.0,
     rise: 0.1,
+    snap: None,
 };
 /// A crate counts as destroyed once its walls are all gone or less than this share of it
 /// stands.
