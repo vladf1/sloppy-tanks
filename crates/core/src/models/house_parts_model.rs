@@ -190,7 +190,7 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
     // per finish, and only the big sections' shadows show from the battlefield.
     let (low, high) = parts.iter().fold(
         (DVec3::INFINITY, DVec3::NEG_INFINITY),
-        |(low, high), index| (low.min(layout.parts[index].min), high.max(layout.parts[index].max)),
+        |(low, high), index| (low.min(layout.part(index).min), high.max(layout.part(index).max)),
     );
     if (high - low).max_element() < SHADOWLESS_UNDER {
         uncast(&mut node);
@@ -244,15 +244,33 @@ fn piece_into(
                 .map(move |cell| (index, *cell))
         })
         .collect();
-    let drawn: Vec<(usize, PartCell)> = cells
+    let mut drawn: Vec<(usize, PartCell)> = cells
         .iter()
         .copied()
         .filter(|(index, _)| draw.contains(*index))
         .collect();
+    // The pieces a landing broke a part into, drawn as their own cells of it.
+    let whole = drawn.len() == cells.len();
+    let first = layout.parts.len();
+    let before = drawn.len();
+    drawn.extend(layout.pieces.iter().enumerate().flat_map(|(k, part)| {
+        let index = first + k;
+        let cells: Vec<(usize, PartCell)> = if draw.contains(index) {
+            part.house()
+                .cells
+                .iter()
+                .filter(|cell| cell.part == piece.part)
+                .map(|cell| (index, *cell))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        cells
+    }));
     if drawn.is_empty() {
         return;
     }
-    if drawn.len() == cells.len() {
+    if whole && drawn.len() == before {
         // All of it: the part as built.
         paint_cottage(group, piece.meshes.clone(), design, &pieces.palette);
         if let Some(shingles) = &piece.shingles {

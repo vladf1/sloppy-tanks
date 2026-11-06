@@ -710,6 +710,7 @@ fn add_pieces(structure: &mut Structure) {
         breakups.push(Breakup {
             needs: PartSet::from_indices([LOWER_LEGS[corner], UPPER_LEGS[corner]]),
             pieces: made,
+            alone: false,
         });
     }
     for (face, members) in FACES.iter().enumerate() {
@@ -743,6 +744,7 @@ fn add_pieces(structure: &mut Structure) {
         breakups.push(Breakup {
             needs: PartSet::from_indices(*members),
             pieces: made,
+            alone: false,
         });
     }
     for (side, &deck) in DECKS.iter().enumerate() {
@@ -764,6 +766,7 @@ fn add_pieces(structure: &mut Structure) {
         breakups.push(Breakup {
             needs: PartSet::from_indices([deck]),
             pieces: made,
+            alone: false,
         });
     }
     let wall_height = CABIN_TOP - DECK_TOP;
@@ -822,6 +825,7 @@ fn add_pieces(structure: &mut Structure) {
         breakups.push(Breakup {
             needs: PartSet::from_indices([part]),
             pieces: made,
+            alone: false,
         });
     }
     let roof = &structure.parts[ROOF];
@@ -832,6 +836,7 @@ fn add_pieces(structure: &mut Structure) {
     breakups.push(Breakup {
         needs: PartSet::from_indices([ROOF]),
         pieces: vec![roof],
+        alone: false,
     });
     for piece in &mut pieces {
         // A piece breaks no further: it lands as its own element.

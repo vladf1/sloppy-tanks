@@ -644,7 +644,7 @@ fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not
                 .structure_parts()
                 .unwrap()
                 .iter()
-                .map(|p| layout.parts[p].house().kind)
+                .map(|p| layout.part(p).house().kind)
                 .collect::<Vec<_>>(),
             fragment.structure
         );
@@ -940,11 +940,30 @@ fn fallen_section_breaks_under_shells(shift: f64) {
         "the section broke up: {parts:?} at {at:?} among {:?}",
         loose_bodies(&s, house)
     );
+    // Its parts, or the pieces a sheet of it breaks into.
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let of_it = |part: usize| {
+        parts.contains(part)
+            || layout.breakups.iter().any(|breakup| {
+                breakup.pieces.contains(&(part as u16))
+                    && breakup.needs.iter().all(|need| parts.contains(need))
+            })
+    };
     let pieces: Vec<_> = loose_bodies(&s, house)
         .into_iter()
-        .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+        .filter(|(_, p, _, _)| p.iter().all(of_it))
         .collect();
-    let left: usize = pieces.iter().map(|(_, p, _, _)| p.len()).sum();
+    // What is left of its parts (a sheet broken in pieces is still that sheet).
+    let parent = |part: usize| {
+        layout
+            .breakups
+            .iter()
+            .find(|breakup| breakup.pieces.contains(&(part as u16)))
+            .and_then(|breakup| breakup.needs.iter().next())
+            .unwrap_or(part)
+    };
+    let left =
+        PartSet::from_indices(pieces.iter().flat_map(|(_, p, _, _)| p.iter().map(parent))).len();
     assert!(left < parts.len(), "the struck part shattered");
     if parts.len() > 2 {
         assert!(pieces.len() >= 2, "into pieces: {pieces:?}");
@@ -1284,8 +1303,8 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
         let parts = f.structure_parts().unwrap();
         let floors = parts
             .iter()
-            .any(|p| layout.parts[p].house().kind == PartKind::Floor);
-        let walls = parts.iter().any(|p| layout.parts[p].house().wall.is_some());
+            .any(|p| layout.part(p).house().kind == PartKind::Floor);
+        let walls = parts.iter().any(|p| layout.part(p).house().wall.is_some());
         assert!(
             !(floors && walls),
             "a wall and a floor lie fused: {parts:?}"
@@ -1297,7 +1316,7 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
             body.center_of_mass(),
             parts
                 .iter()
-                .map(|p| layout.parts[p].house().kind)
+                .map(|p| layout.part(p).house().kind)
                 .collect::<Vec<_>>()
         );
     }
@@ -1404,7 +1423,7 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
             f.structure_parts()
                 .unwrap()
                 .iter()
-                .map(|p| layout.parts[p].house().kind)
+                .map(|p| layout.part(p).house().kind)
                 .collect::<Vec<_>>(),
             body.center_of_mass(),
             f.structure.unwrap().laying,
@@ -1727,4 +1746,28 @@ fn a_ruin_clears_piece_by_piece() {
         "{most} of {} pieces clear in one second",
         clears.len()
     );
+}
+
+/// No roof sheet lies whole on its own in a ruin: one a landing leaves alone breaks
+/// across its length into torn pieces.
+#[test]
+fn no_roof_sheet_lies_whole_on_its_own() {
+    for design in [VILLAGE_DESIGNS[0], VILLAGE_DESIGNS[4], VILLAGE_DESIGNS[6]] {
+        let (mut s, house) = cottage_alone(design);
+        let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+        let walls =
+            PartSet::from_indices((0..layout.parts.len()).filter(|&i| layout.parts[i].grounded));
+        s.break_structure(house, walls, PartSet::EMPTY, None, None);
+        for _ in 0..(5.0 / STEP) as usize {
+            idle(&mut s);
+        }
+        for f in s.fragments.iter().filter(|f| f.of_structure(house)) {
+            let parts = f.structure_parts().unwrap();
+            let lone_sheet = parts.len() == 1
+                && parts.iter().all(|p| {
+                    p < layout.parts.len() && layout.parts[p].house().kind == PartKind::Sheet
+                });
+            assert!(!lone_sheet, "{design:?}: sheet {parts:?} lies whole");
+        }
+    }
 }

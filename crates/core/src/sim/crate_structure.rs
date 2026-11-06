@@ -324,6 +324,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
         breakups.push(Breakup {
             needs: PartSet::from_indices(std::iter::once(face).chain(boards)),
             pieces: indices,
+            alone: false,
         });
     }
     structure.pieces = pieces;

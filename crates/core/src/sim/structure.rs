@@ -273,10 +273,13 @@ pub enum Lie {
 
 /// What a body that lands hard breaks into besides its parts: when it holds all of
 /// `needs`, those parts land as `pieces` (indices from [`Structure::parts`]' length on).
+/// One `alone` applies only to what a landing leaves of `needs` as a body of its own
+/// (a roof sheet that the slope it fell in broke away from its neighbours).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Breakup {
     pub needs: PartSet,
     pub pieces: Vec<u16>,
+    pub alone: bool,
 }
 
 /// One part of a structure, or one landing piece.
@@ -1030,7 +1033,7 @@ impl Structure {
         let mut rest = *parts;
         let mut bodies: Vec<PartSet> = Vec::new();
         if !coarse {
-            for breakup in &self.breakups {
+            for breakup in self.breakups.iter().filter(|breakup| !breakup.alone) {
                 if !breakup.needs.is_empty() && breakup.needs.iter().all(|index| rest.contains(index))
                 {
                     for index in breakup.needs.iter() {
@@ -1097,6 +1100,22 @@ impl Structure {
                 bodies.push(PartSet::from_indices(members[start..start + size].iter().copied()));
                 start += size;
             }
+        }
+        if !coarse {
+            // A part a landing left on its own breaks along its own pieces.
+            bodies = bodies
+                .into_iter()
+                .flat_map(|body| {
+                    match self.breakups.iter().find(|breakup| breakup.alone && breakup.needs == body) {
+                        Some(breakup) => breakup
+                            .pieces
+                            .iter()
+                            .map(|&piece| PartSet::from_indices([piece as usize]))
+                            .collect(),
+                        None => vec![body],
+                    }
+                })
+                .collect();
         }
         bodies.sort_by_key(|body| body.iter().next().unwrap_or(0));
         bodies

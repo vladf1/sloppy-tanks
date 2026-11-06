@@ -25,7 +25,7 @@ use super::house_layout::{
     wall_frames, window_columns,
 };
 use super::structure::{
-    Brace, Breaking, Build, DebrisRules, End, GROUND_BLOCK, end_rank, Levelling, Lie, MAX_PARTS, Material,
+    Brace, Breakup, Breaking, Build, DebrisRules, End, GROUND_BLOCK, end_rank, Levelling, Lie, MAX_PARTS, Material,
     Part, PartSet, PartShape, Role, SEAT_NEEDED, Structure, Support, Tipping,
 };
 
@@ -1521,9 +1521,86 @@ impl Frame {
             dust: COTTAGE_DUST,
         };
         structure.variant = design.variant;
+        add_sheet_pieces(&mut structure, &design);
         structure
     }
 }
+
+/// A roof sheet a landing leaves on its own breaks across its length, in two (three
+/// for a long one) at uneven places, its torn edges where the model shows broken
+/// boards: a 3-4 m slab of shingles never lies whole in a ruin.
+fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign) {
+    let first = structure.parts.len() + structure.pieces.len();
+    let mut pieces: Vec<Part> = Vec::new();
+    let mut breakups = Vec::new();
+    for index in 0..structure.parts.len() {
+        let part = &structure.parts[index];
+        let role = part.house().clone();
+        let (Some(cell), PartShape::Hull(points)) = (role.cells.first().copied(), &part.shapes[0]) else {
+            continue;
+        };
+        if role.kind != PartKind::Sheet || role.cells.len() != 1 {
+            continue;
+        }
+        let plane = part_plane(design, cell.part);
+        let along: Vec<f64> = points.iter().map(|p| p.dot(plane.s)).collect();
+        let (low, high) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), &s| {
+            (low.min(s), high.max(s))
+        });
+        let shares: &[f64] = if high - low > LONG_SHEET {
+            &[0.3, 0.68]
+        } else if index % 2 == 0 {
+            &[0.42]
+        } else {
+            &[0.58]
+        };
+        let cuts: Vec<f64> = std::iter::once(low)
+            .chain(shares.iter().map(|share| low + (high - low) * share))
+            .chain(std::iter::once(high))
+            .collect();
+        let mut made = Vec::new();
+        for span in cuts.windows(2) {
+            let (from, to) = (span[0], span[1]);
+            let clipped: Vec<DVec3> = points
+                .iter()
+                .map(|&p| {
+                    let s = p.dot(plane.s);
+                    p + plane.s * (s.clamp(from, to) - s)
+                })
+                .collect();
+            let mut piece_cell = cell;
+            if from > low {
+                piece_cell.min.x = from;
+            }
+            if to < high {
+                piece_cell.max.x = to;
+            }
+            let mut piece = Part::new(
+                vec![PartShape::Hull(clipped)],
+                part.material,
+                Role::House(HouseRole {
+                    cells: vec![piece_cell],
+                    ..role.clone()
+                }),
+            );
+            piece.paint = part.paint;
+            piece.lie = part.lie;
+            piece.element = u16::MAX;
+            made.push((first + pieces.len()) as u16);
+            pieces.push(piece);
+        }
+        breakups.push(Breakup {
+            needs: PartSet::from_indices([index]),
+            pieces: made,
+            alone: true,
+        });
+    }
+    structure.pieces.extend(pieces);
+    structure.breakups.extend(breakups);
+}
+
+/// A roof sheet longer than this (m) along the ridge breaks in three.
+const LONG_SHEET: f64 = 2.6;
 
 /// The structure of the cottage `design` lays out.
 pub fn house_structure(design: &HouseDesign) -> Structure {
