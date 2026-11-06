@@ -16,13 +16,31 @@ use support::{clear_arena, idle, place_tank};
 
 /// The arena's cottage at (24, 0): 5 m across x, 7 m along z, its door facing -x.
 fn lone_cottage() -> (Simulation, usize) {
+    lone_cottage_at(0.0)
+}
+
+/// Shifts (m) of the cottage: a fraction of a millimetre changes every rounding in its
+/// fall, as another machine's maths does (Linux x86 left a fallen slope lying 25 cm
+/// higher on the pile under it than macOS did). Over these the slope a shot-out eave
+/// wall drops lies on the loft floor and partitions that fell before it, its middle 1.2
+/// to 1.5 m up, or on the ground.
+const COTTAGE_SHIFTS: [f64; 4] = [0.0, 0.000_3, 0.001_1, 0.0047];
+
+fn lone_cottage_at(shift: f64) -> (Simulation, usize) {
     let mut s = Simulation::with_seed(731.0);
     s.start();
     let human = s.human_index().expect("a human tank");
     clear_arena(&mut s, &[human]);
     place_tank(&mut s, 0, -40.0, -40.0, None);
     s.tanks[0].protection = 999.0;
-    let house = s.add_cover(&CoverDef::house(24.0, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
+    let house = s.add_cover(&CoverDef::house(
+        24.0 + shift,
+        -0.6 * shift,
+        5.0,
+        7.0,
+        4.9,
+        0xb87b4c,
+    ));
     s.nav.rebuild(&s.covers, None);
     (s, house)
 }
@@ -43,6 +61,11 @@ fn kind(s: &Simulation, house: usize, part: usize) -> PartKind {
 
 /// A shell of `weapon` at combat height from `from` toward `to`.
 fn fire(s: &mut Simulation, from: Vec2, to: Vec2, weapon_kind: Weapon) -> u32 {
+    fire_level(s, from, to, 1.0, weapon_kind)
+}
+
+/// A shell of `weapon` from `from` toward `to`, `height` m up.
+fn fire_level(s: &mut Simulation, from: Vec2, to: Vec2, height: f64, weapon_kind: Weapon) -> u32 {
     let (dx, dz) = (to.x - from.x, to.z - from.z);
     let length = dx.hypot(dz);
     let stats = weapon(weapon_kind);
@@ -51,7 +74,7 @@ fn fire(s: &mut Simulation, from: Vec2, to: Vec2, weapon_kind: Weapon) -> u32 {
         id,
         x: from.x,
         z: from.z,
-        y: Some(1.0),
+        y: Some(height),
         vx: dx / length * stats.speed,
         vz: dz / length * stats.speed,
         team: Team::Blue,
@@ -720,8 +743,14 @@ fn loose_bodies(s: &Simulation, house: usize) -> Vec<(u32, PartSet, Point3, f64)
         .collect()
 }
 
-/// An eave wall shot out above its footing: the slope over it comes down, lands and
-/// comes to rest. Returns the biggest loose body's fragment id.
+/// How far (m) below where it sat a fallen roof section's middle lies at least: off the
+/// walls (their top is 3.3 m, the slope's middle sat at 4.2), down on the ground or on
+/// the loft floor and partitions that fell before it, not caught up where it was.
+const SECTION_DROP: f64 = 2.0;
+
+/// An eave wall shot out above its footing: the slope over it comes down, lands (on the
+/// ground or on what fell before it) and comes to rest. Returns the biggest loose body's
+/// fragment id.
 fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
     let wall: Vec<usize> = (0..layout.parts.len())
@@ -739,7 +768,15 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
         "a section of several parts lies there: {bodies:?}"
     );
     assert!(speed < 0.1, "it has come to rest: {speed}");
-    assert!(at.y < 1.5, "on the ground: {at:?}");
+    let seated = parts
+        .iter()
+        .map(|part| (layout.parts[part].min.y + layout.parts[part].max.y) / 2.0)
+        .sum::<f64>()
+        / parts.len() as f64;
+    assert!(
+        at.y < seated - SECTION_DROP,
+        "it came down from {seated} m: {at:?}"
+    );
     // No slope lies whole: each broke into pieces when it came down.
     let slope_sheets = (0..layout.parts.len())
         .filter(|&index| {
@@ -761,19 +798,29 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     id
 }
 
-/// A standard shell from 15 m off toward `at`, along whichever axis is clear of the
-/// cottage's remains.
+/// A shell from 15 m off toward `at`, along whichever axis is clear of the cottage's
+/// remains, level with it: a piece lying up on the fallen loft floor and partitions
+/// (its underside up to 1.3 m up) can be out of reach of a shell at combat height,
+/// which passes under it into the pile.
 fn fire_at(s: &mut Simulation, house: usize, at: Point3, weapon_kind: Weapon) {
     let c = &s.covers[house];
     let away = Vec2::new(at.x - c.x, at.z - c.z);
     let length = away.x.hypot(away.z).max(1e-6);
     let from = Vec2::new(at.x + away.x / length * 15.0, at.z + away.z / length * 15.0);
-    fire(s, from, Vec2::new(at.x, at.z), weapon_kind);
+    fire_level(s, from, Vec2::new(at.x, at.z), at.y, weapon_kind);
 }
 
 #[test]
 fn a_fallen_roof_section_breaks_under_shells_down_to_debris_that_clears() {
-    let (mut s, house) = lone_cottage();
+    for shift in COTTAGE_SHIFTS {
+        // Shown with a failure: which shift it was.
+        eprintln!("cottage shifted {shift} m");
+        fallen_section_breaks_under_shells(shift);
+    }
+}
+
+fn fallen_section_breaks_under_shells(shift: f64) {
+    let (mut s, house) = lone_cottage_at(shift);
     let rng = s.rng.state;
     let section = fallen_roof(&mut s, house);
     let (_, parts, at, _) = loose_bodies(&s, house)
@@ -845,7 +892,15 @@ fn a_fallen_roof_section_breaks_under_shells_down_to_debris_that_clears() {
 
 #[test]
 fn an_armour_piercing_round_breaks_a_fallen_section_and_flies_on() {
-    let (mut s, house) = lone_cottage();
+    for shift in COTTAGE_SHIFTS {
+        // Shown with a failure: which shift it was.
+        eprintln!("cottage shifted {shift} m");
+        armour_piercing_round_breaks_fallen_section(shift);
+    }
+}
+
+fn armour_piercing_round_breaks_fallen_section(shift: f64) {
+    let (mut s, house) = lone_cottage_at(shift);
     let section = fallen_roof(&mut s, house);
     let (_, parts, at, _) = loose_bodies(&s, house)
         .into_iter()
