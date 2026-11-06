@@ -141,10 +141,12 @@ fn superstress_layout() -> Vec<CoverDef> {
     yard.fence(17.0, 0.0, 2, false);
 
     // Crate stacks, drum trios and lone trees chain into each other across both diagonals.
+    // A trio stands by each pair of a watchtower's legs, close enough that its chain
+    // snaps them and brings the tower down.
     yard.crate_block(25.0, 29.0);
     yard.crate_block(-25.0, 22.0);
-    yard.drum_trio(11.0, 28.0);
-    yard.drum_trio(-11.0, 26.0);
+    yard.drum_trio(6.6, 27.0);
+    yard.drum_trio(-6.6, 26.0);
     yard.drum_trio(-15.0, 9.0);
     yard.drum_trio(-27.0, 35.0);
     yard.put(Piece::Tree, 25.0, 10.0);
