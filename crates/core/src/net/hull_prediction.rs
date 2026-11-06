@@ -584,10 +584,14 @@ impl HullPrediction {
             self.arrivals
                 .push_back(ack.arrival_tick as f64 - sent.sent_ms / SIMULATION_STEP_MS);
             self.arrivals.retain_back(MAX_ARRIVAL_SAMPLES);
-            let mut sorted: Vec<f64> = self.arrivals.iter().copied().collect();
-            sorted.sort_by(f64::total_cmp);
-            let late = sorted[((sorted.len() - 1) as f64 * ARRIVAL_PERCENTILE).round() as usize];
-            self.target_offset = late + ARRIVAL_MARGIN_TICKS;
+            let mut samples = [0f64; MAX_ARRIVAL_SAMPLES];
+            for (sample, arrival) in samples.iter_mut().zip(&self.arrivals) {
+                *sample = *arrival;
+            }
+            let samples = &mut samples[..self.arrivals.len()];
+            let rank = ((samples.len() - 1) as f64 * ARRIVAL_PERCENTILE).round() as usize;
+            let (_, late, _) = samples.select_nth_unstable_by(rank, f64::total_cmp);
+            self.target_offset = *late + ARRIVAL_MARGIN_TICKS;
         }
     }
 
@@ -693,23 +697,28 @@ impl HullPrediction {
     /// is left of their corrections, carried back to the moment between the last two
     /// predicted ticks the hull is drawn at.
     pub fn held(&self, now_ms: f64) -> Vec<HeldPose> {
+        let mut poses = Vec::new();
+        self.held_into(now_ms, &mut poses);
+        poses
+    }
+
+    /// [`held`](Self::held) into `poses`, overwriting them.
+    pub fn held_into(&self, now_ms: f64, poses: &mut Vec<HeldPose>) {
         let back = self.present(now_ms).map_or(0.0, |present| {
             (present - self.tick as f64).clamp(-1.0, 0.0) * STEP
         });
-        self.held
-            .iter()
-            .filter_map(|held| {
-                let mut pose = self.predictor.body_pose(held.moved)?;
-                pose.position.x += held.correction.x + pose.velocity.x * back;
-                pose.position.y += held.correction.y + pose.velocity.y * back;
-                pose.position.z += held.correction.z + pose.velocity.z * back;
-                Some(HeldPose {
-                    moved: held.moved,
-                    pose,
-                    touched: held.touched,
-                })
+        poses.clear();
+        poses.extend(self.held.iter().filter_map(|held| {
+            let mut pose = self.predictor.body_pose(held.moved)?;
+            pose.position.x += held.correction.x + pose.velocity.x * back;
+            pose.position.y += held.correction.y + pose.velocity.y * back;
+            pose.position.z += held.correction.z + pose.velocity.z * back;
+            Some(HeldPose {
+                moved: held.moved,
+                pose,
+                touched: held.touched,
             })
-            .collect()
+        }));
     }
 
     /// Hands a held body back to the delayed display.

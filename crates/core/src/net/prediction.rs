@@ -253,6 +253,7 @@ impl MovingBody {
                 near(BodyKind::Fragment, fragment.id, fragment.body, loose_parts);
             }
         }
+        // Nearest first: each body's distance found once, as its search is a scan.
         let gap = |body: &MovingBody| {
             let handle = match body.kind {
                 BodyKind::Cover => simulation
@@ -275,7 +276,9 @@ impl MovingBody {
             })
         };
         if out.len() > MAX_MOVING_BODIES {
-            out.sort_by(|a, b| gap(a).total_cmp(&gap(b)));
+            // Distances are never negative, and such doubles order as their bits do; the
+            // sort keeps equal ones in order, as a stable sort by distance does.
+            out.sort_by_cached_key(|body| gap(body).to_bits());
             out.truncate(MAX_MOVING_BODIES);
         }
     }

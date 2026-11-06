@@ -420,6 +420,8 @@ pub struct NetworkClient {
     pending_hull: Option<(HostUpdate, f64)>,
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
+    /// The predicted bodies held this frame, kept between frames.
+    held_poses: Vec<HeldPose>,
     pub feel: FeelReadings,
     /// The viewer's shots, drawn from the frame they are fired.
     pub own_shots: OwnShots,
@@ -485,6 +487,7 @@ impl NetworkClient {
             prediction: HullPrediction::default(),
             pending_hull: None,
             prediction_scene: RenderState::default(),
+            held_poses: Vec::new(),
             feel: FeelReadings::default(),
             own_shots: OwnShots::default(),
             hull_trail: VecDeque::new(),
@@ -678,7 +681,12 @@ impl NetworkClient {
     /// A binary frame: a baseline or a snapshot batch.
     pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now_ms: f64) {
         if self.is_current(socket) && bytes.len() <= MAX_SERVER_MESSAGE_BYTES {
-            self.arrive(Message::Binary(bytes.to_vec()), now_ms);
+            // Without a development delay the message is read where it lies.
+            if self.delay.is_some() {
+                self.arrive(Message::Binary(bytes.to_vec()), now_ms);
+            } else if self.handle_binary(bytes, now_ms).is_err() {
+                self.receive_failure();
+            }
         } else if self.is_current(socket) {
             self.unreadable();
         }
@@ -1561,9 +1569,10 @@ impl NetworkClient {
             }
         }
         // What the hull touches is drawn where the predicted world moves it.
+        self.prediction.held_into(now_ms, &mut self.held_poses);
         let released = draw_held(
             display,
-            &self.prediction.held(now_ms),
+            &self.held_poses,
             self.prediction.predicted_tick(),
         );
         for moved in released {
