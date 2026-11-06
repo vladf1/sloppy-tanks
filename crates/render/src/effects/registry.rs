@@ -230,8 +230,9 @@ pub const BLAST_RING: EffectDefinition =
 pub const TRACK_MARK: EffectDefinition =
     effect("track-mark", "").with_shared_unlit_surface(wgsl!("shaders/effects/track_mark.wgsl"));
 
-/// Lit debris chips with a per-instance glow for hot clods. `instance_data` =
-/// (glow rgb linear, unused). No params.
+/// Lit debris chips with a per-instance glow for hot clods, and sawn wood with its bare
+/// wood paler than its faces. `instance_data` = (glow rgb linear, 0) or (bare wood rgb
+/// linear, 1), the wood's vertex colours its shade and bare-wood mask. No params.
 pub const DEBRIS_CHIP: EffectDefinition = EffectDefinition {
     shared_surface: wgsl!("shaders/effects/debris_chip.wgsl"),
     ..effect("debris-chip", "")

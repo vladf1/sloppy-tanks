@@ -663,7 +663,9 @@ mod tests {
         assert_eq!(stats.particles, 0);
         assert_eq!(stats.wood_chips as usize, systems.wood.len());
         assert_eq!(
-            systems.wood.wood_records.len() + systems.wood.straw_records.len(),
+            systems.wood.wood_records.len()
+                + systems.wood.board_records.len()
+                + systems.wood.straw_records.len(),
             systems.wood.len()
         );
         systems.reset();
@@ -809,7 +811,8 @@ mod tests {
         let stats = systems.stats();
         assert!(peak.particles as usize <= particles::MAX_PARTICLES);
         assert!(peak.particles > 1000, "the particle pool saturates");
-        let wood_capacity = wood_chips::MAX_WOOD_CHIPS + wood_chips::MAX_STRAW;
+        let wood_capacity =
+            wood_chips::MAX_WOOD_CHIPS + wood_chips::MAX_BOARDS + wood_chips::MAX_STRAW;
         assert_eq!(
             peak.wood_chips as usize, wood_capacity,
             "the wood pools saturate"

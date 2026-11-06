@@ -128,6 +128,9 @@ pub struct Walls {
     /// The footprints of the cottages lying fallen, as `[x, z, half width, half
     /// depth]`, where landing debris raises the wreck's dust, not the ground's.
     ruins: Vec<[f64; 4]>,
+    /// The footprints of the standing crates and timber walls, as `ruins`: a shell
+    /// bursting in or against one throws its wood, not the ground's clods.
+    wooden: Vec<[f64; 4]>,
     /// The cover that splinters (cottages, timber walls, crates, watchtowers) lying
     /// destroyed at the last sync, by id, with footprints as `ruins`.
     down: Vec<(u32, [f64; 4])>,
@@ -379,6 +382,16 @@ impl Walls {
                 .filter(|cover| cover.kind == CoverKind::House && !cover.alive)
                 .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
         );
+        self.wooden.clear();
+        self.wooden.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| {
+                    cover.alive && matches!(cover.kind, CoverKind::Cargo | CoverKind::Timber)
+                })
+                .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
+        );
         let was = std::mem::take(&mut self.down);
         let splinters = |kind| {
             matches!(
@@ -450,6 +463,7 @@ impl Walls {
         self.standing.clear();
         self.fallen.clear();
         self.ruins.clear();
+        self.wooden.clear();
         self.down.clear();
         self.rebuilt.clear();
         self.soft = [[0.0; 4]; 4];
@@ -486,6 +500,14 @@ impl Walls {
                 max: [(wall.x + half_w) as f32, (wall.z + half_d) as f32],
                 top: wall.height as f32,
             }
+        })
+    }
+
+    /// Whether `(x, z)` lies on a standing crate's or timber wall's footprint or
+    /// within `reach` (m) of it, as of the last sync.
+    pub fn wooden_near(&self, x: f64, z: f64, reach: f64) -> bool {
+        self.wooden.iter().any(|&[cx, cz, half_w, half_d]| {
+            (x - cx).abs() <= half_w + reach && (z - cz).abs() <= half_d + reach
         })
     }
 
