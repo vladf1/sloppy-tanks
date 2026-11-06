@@ -25,6 +25,7 @@ use rapier3d::prelude::{
     Rotation, SharedShape, Vector,
 };
 
+use super::combat_rules::{BlastFalloff, StructureBlast};
 use super::data::{STEP, group};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{blast_loose_debris, debris_material, track_debris_contacts};
@@ -50,7 +51,7 @@ pub const BLAST_HEIGHT: f64 = 1.0;
 const SHIELDED: f64 = 0.35;
 /// A blast shatters the parts within this far (m) of it; parts farther off that it
 /// breaks come loose whole and fall, so splinters fly only where it went off.
-const BLAST_CORE: f64 = 0.5;
+pub const BLAST_CORE: f64 = 0.5;
 /// A falling body's colliders sit this far (m) inside its parts' faces, clear of the
 /// standing parts they were built against.
 const SHRINK: f64 = 0.03;
@@ -672,7 +673,8 @@ impl Simulation {
         if !force && state.damage[part] < strength {
             return false;
         }
-        // A board tears its neighbours of the same stuff near the hit along with it.
+        // A board tears its neighbours of the same stuff, nailed to the same frame, near
+        // the hit along with it.
         let layout = state.layout.clone();
         let material = layout.parts[part].material;
         let (x, z) = (self.covers[cover].x, self.covers[cover].z);
@@ -680,11 +682,16 @@ impl Simulation {
             return false;
         };
         let local = layout.to_local(DVec3::new(point.x - x, point.y, point.z - z));
+        let fastened = |index: usize| {
+            let by = |index: usize| layout.supports[index].iter().map(|support| support.by);
+            by(index).eq(by(part))
+        };
         let torn = PartSet::from_indices((0..layout.parts.len()).filter(|&index| {
             index == part
                 || (material.tear > 0.0
                     && state.standing(index)
                     && layout.parts[index].material == material
+                    && fastened(index)
                     && layout.parts[index].shape_distance(local) <= material.tear)
         }));
         let from = Point3::new(point.x - along.x, point.y, point.z - along.z);
@@ -712,6 +719,26 @@ impl Simulation {
         damage: f64,
         by: Option<(u32, Team)>,
     ) {
+        let blast = StructureBlast {
+            pressure: damage,
+            falloff: BlastFalloff::Even,
+            reach: radius,
+            shatter: BLAST_CORE,
+            throw: loose_throw(damage),
+        };
+        self.structure_blast_with(cover, point, blast, by);
+    }
+
+    /// A blast at `point` on structure `cover`'s standing parts, as `blast` says: its
+    /// pressure falling off to nothing at its reach, shielded by standing parts between.
+    pub fn structure_blast_with(
+        &mut self,
+        cover: usize,
+        point: Point3,
+        blast: StructureBlast,
+        by: Option<(u32, Team)>,
+    ) {
+        let (radius, damage) = (blast.reach, blast.pressure);
         let c = &self.covers[cover];
         let Some(state) = &c.structure else {
             return;
@@ -747,7 +774,7 @@ impl Simulation {
             if gap >= radius {
                 continue;
             }
-            let mut share = 1.0 - gap / radius;
+            let mut share = blast.falloff.share(gap, radius);
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
@@ -758,7 +785,7 @@ impl Simulation {
         for (index, amount, gap) in hits {
             state.take(index, amount);
             if state.damage[index] >= layout.parts[index].strength {
-                if gap < BLAST_CORE {
+                if gap < blast.shatter {
                     broken.insert(index);
                 } else {
                     loose.insert(index);
@@ -1416,14 +1443,27 @@ fn throw_velocity(at: Point3, from: Point3, strength: f64, parts: usize) -> Vect
 /// up and out from it, out of the rest damping, and land over the next moments. Each body
 /// is measured by its nearest part, not its middle. No random draw.
 pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius: f64, damage: f64) {
-    if radius <= 0.0 || damage <= 0.0 {
+    if damage > 0.0 {
+        throw_structure_debris(simulation, point, radius, loose_throw(damage));
+    }
+}
+
+/// How hard a blast of `damage` throws a structure's fallen pieces: a standard shell's
+/// burst throws them at [`LOOSE_THROW_OUT`].
+pub fn loose_throw(damage: f64) -> f64 {
+    (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST)
+}
+
+/// [`blast_structure_debris`] throwing the pieces `strength` times as hard as a standard
+/// shell's burst.
+pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius: f64, strength: f64) {
+    if radius <= 0.0 || strength <= 0.0 {
         return;
     }
     // Loose pieces lie in the open: a burst throws them from further than it breaks
     // what stands.
     let radius = radius * LOOSE_REACH;
     let core = (radius * LOOSE_CORE_SHARE).clamp(BLAST_CORE, LOOSE_CORE_MAX);
-    let strength = (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST);
     let at = vector(point.x, point.y, point.z);
     // The bodies there before the blast: the pieces it breaks off are thrown already.
     // A section still coming down as a structure falls as it was: a blast breaks or throws
