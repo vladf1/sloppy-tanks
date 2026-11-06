@@ -548,7 +548,7 @@ pub fn read_changes(
 pub fn read_moving_changes(
     fields: &[Field],
     record: &mut WireRecord,
-    mut motion: Option<&mut Motion>,
+    motion: Option<&mut Motion>,
     reader: &mut WireReader<'_>,
 ) -> ReadResult<ChangedFields> {
     record.slots.resize(fields.len(), Slot::Absent);
@@ -597,7 +597,7 @@ pub fn read_moving_changes(
         }
         next.store(&mut record.slots[index]);
     }
-    if let Some(motion) = motion.as_deref_mut() {
+    if let Some(motion) = motion {
         motion.clear();
         if moving {
             motion.extend_from_slice(&next_motion[..fields.len()]);

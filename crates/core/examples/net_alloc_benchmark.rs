@@ -130,6 +130,9 @@ struct Window {
     client_frame: [Tally; 2],
 }
 
+/// From which tick the hook knocks out the cottage's wall, a part a tick, and the parts.
+type WallKnock = (u64, Vec<usize>);
+
 /// Allocation marks the tick hook leaves: when it was entered and left, per tick.
 struct HookMarks {
     entered: Vec<Count>,
@@ -465,7 +468,7 @@ fn main() {
     };
 
     let hook_marks = marks.clone();
-    let wall: Arc<Mutex<Option<(u64, Vec<usize>)>>> = Arc::new(Mutex::new(None));
+    let wall: Arc<Mutex<Option<WallKnock>>> = Arc::new(Mutex::new(None));
     let knock = wall.clone();
     net.host.tick_hook = Some(Box::new(move |sim, tick| {
         hook_marks.lock().unwrap().entered.push(Count::now());
