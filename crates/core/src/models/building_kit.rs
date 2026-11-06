@@ -44,8 +44,9 @@ const BRASS: u32 = 0xb08a3e;
 const CONCRETE: u32 = 0xa9a59d;
 const TERRACOTTA: u32 = 0xa0512f;
 const STAINED_WOOD: u32 = 0x76512f;
-/// Old roof boards seen from under the roof: darker than the rafters on them.
-const SHEATHING: u32 = 0x3f3226;
+/// Old roof boards seen from under the roof: weathered grey-brown deal, which a slab
+/// lying upturned in the sun shows as boards (darker, it read as a black hole).
+const SHEATHING: u32 = 0x7a6650;
 const LAMP_GLASS: u32 = 0xf1d18f;
 /// Timber freshly split where a building broke apart, paler than its stain.
 const SPLIT_TIMBER: u32 = 0xb48d5c;
