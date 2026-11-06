@@ -99,11 +99,19 @@ impl PartKind {
         matches!(self, Self::Sheet | Self::Ridge | Self::Chimney)
     }
 
-    /// Whether it stands on its edge, so it tips out over its foot as it gives way.
+    /// Whether it stands on its edge, so it tips out over its foot as it gives way: a
+    /// wall's parts, its top plate among them (a strip of wall with its plate tipping
+    /// over once took the stubs it stood on down with it).
     fn upright(self) -> bool {
         matches!(
             self,
-            Self::Panel | Self::Window | Self::Door | Self::Gable | Self::Partition | Self::Post
+            Self::Panel
+                | Self::Window
+                | Self::Door
+                | Self::Gable
+                | Self::Partition
+                | Self::Post
+                | Self::Plate
         )
     }
 }

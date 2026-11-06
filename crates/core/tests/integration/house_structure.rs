@@ -1707,6 +1707,13 @@ fn a_collapse_after_shells_lies_solid_seconds_later() {
             "3 s after the collapse a piece of it clears in {life:.1} s"
         );
     }
+    // The walls' stubs stand on: a strip of wall that tips with its plate snaps off its
+    // bottom course rather than taking it along, so the ruin is not a bare pad.
+    let state = s.covers[house].structure.as_ref().unwrap();
+    let stubs = (0..state.layout.parts.len())
+        .filter(|&i| state.standing(i) && state.layout.parts[i].grounded)
+        .count();
+    assert!(stubs >= 2, "{stubs} stubs stand");
 }
 
 /// A cottage's ruin clears a piece at a time, staggered over seconds, each before what
