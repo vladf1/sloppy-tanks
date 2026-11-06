@@ -603,7 +603,8 @@ impl Simulation {
         if !force && state.damage[part] < strength {
             return false;
         }
-        // A board tears its neighbours of the same stuff near the hit along with it.
+        // A board tears its neighbours of the same stuff, nailed to the same frame, near
+        // the hit along with it.
         let layout = state.layout.clone();
         let material = layout.parts[part].material;
         let (x, z) = (self.covers[cover].x, self.covers[cover].z);
@@ -611,11 +612,16 @@ impl Simulation {
             return false;
         };
         let local = layout.to_local(DVec3::new(point.x - x, point.y, point.z - z));
+        let fastened = |index: usize| {
+            let by = |index: usize| layout.supports[index].iter().map(|support| support.by);
+            by(index).eq(by(part))
+        };
         let torn = PartSet::from_indices((0..layout.parts.len()).filter(|&index| {
             index == part
                 || (material.tear > 0.0
                     && state.standing(index)
                     && layout.parts[index].material == material
+                    && fastened(index)
                     && layout.parts[index].shape_distance(local) <= material.tear)
         }));
         let from = Point3::new(point.x - along.x, point.y, point.z - along.z);

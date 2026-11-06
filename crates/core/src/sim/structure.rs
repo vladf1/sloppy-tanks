@@ -194,8 +194,9 @@ pub struct Material {
     pub density: f64,
     pub surface: DebrisMaterial,
     pub breaking: Breaking,
-    /// A strike that breaks the part tears the parts of the same material within this
-    /// reach (m) of where it struck along with it (a crate board's neighbours).
+    /// A strike that breaks the part tears the parts of the same material, held by the
+    /// same parts, within this reach (m) of where it struck along with it (the boards
+    /// nailed to a crate wall's frame).
     pub tear: f64,
 }
 
