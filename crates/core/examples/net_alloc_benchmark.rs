@@ -131,7 +131,6 @@ struct Window {
 }
 
 /// Allocation marks the tick hook leaves: when it was entered and left, per tick.
-#[derive(Default)]
 struct HookMarks {
     entered: Vec<Count>,
     left: Vec<Count>,
@@ -306,13 +305,18 @@ impl Network {
                 let start = Count::now();
                 self.host.advance(at);
                 let end = Count::now();
-                let marks = std::mem::take(&mut *self.marks.lock().unwrap());
+                // Copied after the count: the hook's lists keep their capacity, so it
+                // allocates nothing of its own in the counted call.
+                let (entered, left) = {
+                    let marks = self.marks.lock().unwrap();
+                    (marks.entered.clone(), marks.left.clone())
+                };
                 if let Some(window) = self.window.as_mut() {
                     // Each tick's step runs from the previous tick's hook (or the start).
                     let mut from = start;
                     let mut step = Count::default();
                     let mut hooks = Count::default();
-                    for (entered, left) in marks.entered.iter().zip(&marks.left) {
+                    for (entered, left) in entered.iter().zip(&left) {
                         step.add(entered.since(from));
                         hooks.add(left.since(*entered));
                         from = *left;
@@ -320,7 +324,7 @@ impl Network {
                     let mut net = end.since(start);
                     net.allocations -= step.allocations + hooks.allocations;
                     net.bytes -= step.bytes + hooks.bytes;
-                    let ticks = marks.entered.len() as u64;
+                    let ticks = entered.len() as u64;
                     if ticks > 0 {
                         let per_tick = |count: Count| Count {
                             allocations: count.allocations / ticks,
@@ -388,7 +392,10 @@ fn main() {
         seed: 4242,
         content_version: None,
     });
-    let marks = Arc::new(Mutex::new(HookMarks::default()));
+    let marks = Arc::new(Mutex::new(HookMarks {
+        entered: Vec::with_capacity(16),
+        left: Vec::with_capacity(16),
+    }));
     let mut net = Network {
         host,
         peers: Vec::new(),
