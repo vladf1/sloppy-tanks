@@ -22,7 +22,7 @@ use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
 use crate::sim::house_layout::{HouseDesign, PLINTH, WALL_DEPTH};
 use crate::sim::house_structure::{
-    PartCell, PartKind, house_structure, part_outline, part_plane,
+    PartCell, PartKind, part_outline, part_plane, shared_house_structure,
 };
 use crate::sim::math::Random;
 use crate::sim::structure::{PartSet, Structure};
@@ -49,7 +49,7 @@ const ON_FACE: f64 = 0.01;
 /// The standing cottage for a cottage cover box, drawn from its parts not in
 /// `broken`, with its plinth and yard.
 pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) {
-    let layout = Arc::new(house_structure(&HouseDesign::of(x, z, w, d, h)));
+    let layout = shared_house_structure(&HouseDesign::of(x, z, w, d, h));
     let mut build = HouseBuild::new(layout, x, z, broken);
     while !build.step() {}
     group.children.push(build.finish_cottage());
@@ -72,7 +72,7 @@ pub struct HouseBuild {
 
 impl HouseBuild {
     /// The build of the cottage at `(x, z)` laid out as `layout` (its
-    /// [`house_structure`], which the caller keeps for the cottage rather than laying
+    /// [`shared_house_structure`], which the caller keeps for the cottage rather than laying
     /// it out again for every rebuild), with its parts in `broken` gone.
     pub fn new(layout: Arc<Structure>, x: f64, z: f64, broken: &PartSet) -> Self {
         let standing = PartSet::from_indices(
@@ -197,7 +197,7 @@ fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
 /// cottage's ground centre, turned into the world as the cottage stood. A page drawing
 /// several of a cottage's bodies at once builds one [`HouseDebris`] for them all.
 pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> Node {
-    let layout = Arc::new(house_structure(&HouseDesign::of(x, z, w, d, h)));
+    let layout = shared_house_structure(&HouseDesign::of(x, z, w, d, h));
     HouseDebris::new(layout, x, z).body(parts)
 }
 
@@ -212,7 +212,7 @@ pub struct HouseDebris {
 
 impl HouseDebris {
     /// The pieces of the cottage at `(x, z)` laid out as `layout` (its
-    /// [`house_structure`]).
+    /// [`shared_house_structure`]).
     pub fn new(layout: Arc<Structure>, x: f64, z: f64) -> Self {
         let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, false);
         Self { layout, pieces }

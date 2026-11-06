@@ -399,7 +399,13 @@ impl Simulation {
         self.rng = Random::new(self.seed);
         self.next_id = 1;
         self.tanks.clear();
-        self.covers.clear();
+        // Held until the new round's covers are added: a cottage laid out for this map
+        // before is taken again rather than laid out anew (`shared_house_structure`).
+        let laid_out: Vec<_> = self
+            .covers
+            .drain(..)
+            .filter_map(|cover| cover.structure.map(|state| state.layout))
+            .collect();
         self.cover_by_collider.clear();
         self.shots.clear();
         self.mines.clear();
@@ -429,6 +435,7 @@ impl Simulation {
         for cover in (self.current_map.layout)() {
             self.add_cover(&cover);
         }
+        drop(laid_out);
         let scale = self.map_scale();
         self.pickups = PICKUP_LAYOUT
             .iter()

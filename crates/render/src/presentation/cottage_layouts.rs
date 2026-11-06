@@ -1,7 +1,7 @@
 //! What the page builds a cottage's looks from, shared between the builds that need
 //! it at once instead of each making its own.
 //!
-//! A cottage's layout ([`house_structure`]) takes a weak device a few milliseconds to
+//! A cottage's layout ([`shared_house_structure`]) takes a weak device a few milliseconds to
 //! lay out, and its finished pieces several more; a rebuild of its look and every body
 //! of it that falls in a frame each made both again. The layout is shared while any
 //! build holds it (a stepwise rebuild holds it over its frames), and the pieces are
@@ -15,7 +15,7 @@ use sloppy_core::models::{CoverShape, HouseDebris, structure_debris};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::CoverKind;
 use sloppy_core::sim::house_layout::HouseDesign;
-use sloppy_core::sim::house_structure::house_structure;
+use sloppy_core::sim::house_structure::shared_house_structure;
 use sloppy_core::sim::structure::{PartSet, Structure};
 
 /// A fallen body's source: the structure it fell from (cover `cover`, shaped `shape`)
@@ -43,7 +43,7 @@ impl CottageLayouts {
             return layout;
         }
         let design = HouseDesign::of(shape.x, shape.z, shape.w, shape.d, shape.h);
-        let layout = Arc::new(house_structure(&design));
+        let layout = shared_house_structure(&design);
         self.layouts.insert(cover, Arc::downgrade(&layout));
         layout
     }

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use super::crate_structure::{CratePart, crate_structure};
 use super::debris_physics::DebrisMaterial;
 use super::house_layout::{HouseDesign, Roof};
-use super::house_structure::{HouseRole, house_structure};
+use super::house_structure::{HouseRole, shared_house_structure};
 use super::kinds::CoverKind;
 use super::structure_physics::ShapeCache;
 use super::timber_layout::TimberJoin;
@@ -632,7 +632,7 @@ pub fn structure_of(
     join: Option<TimberJoin>,
 ) -> Option<Arc<Structure>> {
     match kind {
-        CoverKind::House => Some(Arc::new(house_structure(&HouseDesign::of(x, z, w, d, h)))),
+        CoverKind::House => Some(shared_house_structure(&HouseDesign::of(x, z, w, d, h))),
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),

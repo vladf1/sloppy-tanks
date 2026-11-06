@@ -16,6 +16,8 @@
 //! +z, right +x, ground at y = 0). Each part also names the cells of the cottage's model
 //! it is drawn from: rectangles in the plane of a [`HousePart`] of the model.
 
+use std::sync::{Arc, Mutex, Weak};
+
 use glam::{DVec2, DVec3};
 
 use super::debris_physics::DebrisMaterial;
@@ -1738,6 +1740,35 @@ const LONG_SHEET: f64 = 2.6;
 /// The structure of the cottage `design` lays out.
 pub fn house_structure(design: &HouseDesign) -> Structure {
     Frame::new(design).into_structure()
+}
+
+/// The cottages laid out that something still holds, by design.
+static LAID_OUT: Mutex<Vec<(HouseDesign, Weak<Structure>)>> = Mutex::new(Vec::new());
+
+/// [`house_structure`], shared with whatever still holds the same design's: the
+/// simulation's cover, its model and a reset's next round all take one layout, whose
+/// part shapes are kept with it, instead of each laying it out again (most of a village
+/// reset, and of each cottage's model). Kept only while held, never for good. A layout
+/// is never changed once built, and follows from its design alone.
+pub fn shared_house_structure(design: &HouseDesign) -> Arc<Structure> {
+    let held = |laid_out: &[(HouseDesign, Weak<Structure>)]| {
+        laid_out
+            .iter()
+            .find(|(other, _)| other == design)
+            .and_then(|(_, layout)| layout.upgrade())
+    };
+    if let Some(layout) = held(&LAID_OUT.lock().expect("cottage layouts")) {
+        return layout;
+    }
+    // Laid out outside the lock: another thread's cottages need not wait for it.
+    let layout = Arc::new(house_structure(design));
+    let mut laid_out = LAID_OUT.lock().expect("cottage layouts");
+    if let Some(layout) = held(&laid_out) {
+        return layout;
+    }
+    laid_out.retain(|(_, layout)| layout.strong_count() > 0);
+    laid_out.push((*design, Arc::downgrade(&layout)));
+    layout
 }
 
 /// Where a touching part lies from the one it supports.
