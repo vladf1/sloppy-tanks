@@ -196,6 +196,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
                 // sheathing boards ([`crate_board_part`]) nailed to it.
                 wall.shapes = frame_shapes(&section);
                 wall.material = FRAME;
+                wall.strength = FRAME.strength;
                 wall.mass *= FRAME_SHARE;
                 wall.upright = true;
             }
@@ -346,6 +347,15 @@ mod tests {
             let boards = PartSet::from_indices((0..rows).map(|row| crate_board_part(2.6, face, row)));
             assert_eq!(crate_.unsupported(&PartSet::from_indices([wall])), boards, "{wall}");
         }
+    }
+
+    #[test]
+    fn a_frame_takes_more_than_its_boards() {
+        let crate_ = crate_structure(3.0, 3.0, 2.6);
+        for wall in CRATE_WALLS {
+            assert_eq!(crate_.parts[wall].strength, FRAME.strength);
+        }
+        assert_eq!(crate_.parts[crate_board_part(2.6, 0, 0)].strength, BOARDS.strength);
     }
 
     #[test]

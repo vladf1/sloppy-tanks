@@ -21,7 +21,7 @@ use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
 use crate::sim::structure_physics::{
-    WHOLE, cap_loose_speed, debris_colliders, rest_body, structural, unrest_body,
+    WHOLE, cap_loose_speed, debris_colliders, part_collider, rest_body, structural, unrest_body,
 };
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
@@ -954,20 +954,53 @@ impl CoverCast for TankPredictor {
         past: &[u64],
     ) -> Option<CoverHit> {
         let ray = Ray::new(to_vector(origin), vector(direction.x, 0.0, direction.z));
-        let through = |collider: ColliderHandle, _: &Collider| !past.contains(&collider_key(collider));
+        // An intact crate or timber wall stands as one collider; a part of it the shell
+        // broke through is named with its collider. Past one, the structure is queried by
+        // the shapes of the parts still standing, as the host splits it and re-queries.
+        let breached: Vec<(u64, usize)> = past.iter().filter_map(|&key| whole_part(key)).collect();
+        let through = |collider: ColliderHandle, _: &Collider| {
+            let key = collider_key(collider);
+            !past.contains(&key) && !breached.iter().any(|&(whole, _)| whole == key)
+        };
         let mut filter = query_filter(group::COVER_QUERY);
         if !past.is_empty() {
             filter.predicate = Some(&through);
         }
-        let (collider, hit) =
-            self.world
-                .cast_ray_and_get_normal(&ray, distance as f32, true, filter)?;
+        let mut nearest = self
+            .world
+            .cast_ray_and_get_normal(&ray, distance as f32, true, filter)
+            .map(|(collider, hit)| (collider, hit, None));
+        for whole in breached.iter().map(|&(whole, _)| whole).collect::<std::collections::BTreeSet<_>>() {
+            let Some((collider, _)) = self.world.colliders.iter().find(|(handle, _)| collider_key(*handle) == whole) else {
+                continue;
+            };
+            let Some(cover) = self.covers.values().find(|cover| Some(cover.body) == self.world.colliders[collider].parent())
+            else {
+                continue;
+            };
+            let Some(layout) = cover.layout.as_deref() else {
+                continue;
+            };
+            let gone: Vec<usize> = breached.iter().filter(|&&(key, _)| key == whole).map(|&(_, part)| part).collect();
+            let body = *self.world.bodies[cover.body].position();
+            for index in (0..layout.parts.len()).filter(|index| !gone.contains(index)) {
+                let shape = part_collider(layout, index, -layout.debris.seam).build();
+                let pose = body * *shape.position_wrt_parent().unwrap_or(&Pose::IDENTITY);
+                let reach = nearest.as_ref().map_or(distance as f32, |(_, hit, _)| hit.time_of_impact);
+                if let Some(hit) = shape.shape().cast_ray_and_get_normal(&pose, &ray, reach, true) {
+                    nearest = Some((collider, hit, Some(index)));
+                }
+            }
+        }
+        let (collider, hit, breached_part) = nearest?;
         let body = self.world.colliders[collider].parent();
         let cover = self.covers.values().find(|cover| Some(cover.body) == body);
         let part = cover.and_then(|cover| {
-            let index = match self.world.colliders[collider].user_data {
+            let user = self.world.colliders[collider].user_data;
+            let index = match (breached_part, user) {
+                (Some(index), _) => index,
                 // An intact structure's one collider: the part where the ray meets it.
-                WHOLE => {
+                (None, WHOLE) => {
                     let at = ray.point_at(hit.time_of_impact);
                     let middle = self.world.bodies[cover.body].translation();
                     let local = glam::DVec3::new(
@@ -978,15 +1011,20 @@ impl CoverCast for TankPredictor {
                     let layout = cover.layout.as_ref()?;
                     layout.part_at(layout.to_local(local), &PartSet::EMPTY)?
                 }
-                index => index as usize,
+                (None, index) => index as usize,
             };
             let cottage = cover.struck.kind == CoverKind::House;
             // A watchtower's footing takes a shell as other concrete does.
             let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)
                 .filter(|strength| strength.is_finite())?;
+            let key = if user == WHOLE {
+                whole_part_key(collider, index)
+            } else {
+                collider_key(collider)
+            };
             Some(PartHit {
                 cottage,
-                key: collider_key(collider),
+                key,
                 strength,
                 cracked: cover.cracked.contains(index),
             })
@@ -998,6 +1036,24 @@ impl CoverCast for TankPredictor {
             part,
         })
     }
+}
+
+/// Marks a key naming a part of an intact structure's one collider.
+const WHOLE_PART_BIT: u64 = 1 << 63;
+/// The bits of such a key that name the part.
+const WHOLE_PART_BITS: u32 = 12;
+
+/// The key of part `index` of the intact structure standing as `collider`.
+fn whole_part_key(collider: ColliderHandle, index: usize) -> u64 {
+    WHOLE_PART_BIT | (collider_key(collider) << WHOLE_PART_BITS) & !WHOLE_PART_BIT | index as u64
+}
+
+/// The whole collider's key and the part a key names, if it names one.
+fn whole_part(key: u64) -> Option<(u64, usize)> {
+    (key & WHOLE_PART_BIT != 0).then_some((
+        (key & !WHOLE_PART_BIT) >> WHOLE_PART_BITS,
+        (key & ((1 << WHOLE_PART_BITS) - 1)) as usize,
+    ))
 }
 
 /// A collider's handle as one number.
@@ -1100,7 +1156,9 @@ mod tests {
     use super::*;
     use crate::net::scene_codec::{MirrorScene, Scene};
     use crate::net::wire::WireReader;
+    use crate::net::own_shots::CoverCast;
     use crate::sim::arena::CoverDef;
+    use crate::sim::types::CoverKind;
     use crate::sim::{Simulation, VehicleCommand};
 
     fn mirrored(sim: &Simulation) -> RenderState {
@@ -1115,6 +1173,32 @@ mod tests {
     fn turns(predictor: &TankPredictor, id: u32) -> bool {
         let body = &predictor.world.bodies[predictor.debris[&id].body];
         !body.locked_axes().contains(rapier3d::prelude::LockedAxes::ROTATION_LOCKED)
+    }
+
+    #[test]
+    fn a_shell_through_a_board_of_an_intact_crate_meets_the_far_wall() {
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        sim.add_cover(&CoverDef::new(CoverKind::Cargo, 0.0, 40.0, 3.0, 3.0, 2.6, 80.0, 0xb47a49));
+        let scene = mirrored(&sim);
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.world.step();
+        // A level shell along the crate's middle from the front (+z) toward the back.
+        let origin = Point3::new(0.4, 1.1, 50.0);
+        let direction = Vec2::new(0.0, -1.0);
+        let first = predictor.cast_cover(origin, direction, 20.0).expect("the crate's front");
+        let part = first.part.unwrap_or_else(|| panic!("a part of it: {} {:?}", first.distance, first.struck));
+        assert!((first.distance - 8.5).abs() < 0.2, "the front at {}", first.distance);
+        let next = predictor
+            .cast_cover_past(origin, direction, 20.0, &[part.key])
+            .expect("the shell through the board meets the crate's inside");
+        assert!(
+            next.distance > first.distance + 0.05 && next.distance < first.distance + 3.2,
+            "past the board it meets {} m on, not beyond the crate",
+            next.distance - first.distance
+        );
+        assert!(next.part.is_some_and(|hit| hit.key != part.key));
     }
 
     #[test]
