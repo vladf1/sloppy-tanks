@@ -22,7 +22,7 @@ use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
 };
-use super::timber_model::{add_timber_parts, timber_debris_model};
+use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
@@ -31,7 +31,7 @@ use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
 use crate::sim::structure::{PartSet, Role};
-use crate::sim::timber_layout::{TimberJoin, TimberPart, TimberWall, timber_members, timber_parts};
+use crate::sim::timber_layout::{TimberJoin, TimberWall, timber_parts};
 use crate::sim::types::CoverKind;
 
 /// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
@@ -116,7 +116,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         // in the static covers' draws.
         CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
         CoverKind::Timber => {
-            let wall = TimberWall {
+            let parts = timber_parts(&TimberWall {
                 x: c.x,
                 z: c.z,
                 w: c.w,
@@ -124,35 +124,14 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 h: c.h,
                 color: c.color,
                 join: c.timber_join,
-            };
-            // The lengths that stand, numbered as the wall's structure numbers them: a
-            // member all of whose lengths stand draws whole as it stood, the lengths
-            // left of a broken beam each with its torn ends.
-            let members = timber_members(&wall);
-            let whole = |part: &TimberPart| {
-                members
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, member)| member.kind == part.kind && member.index == part.index)
-                    .all(|(index, _)| !c.broken.contains(index))
-            };
-            let parts = timber_parts(&wall);
-            add_timber_parts(group, parts.iter().filter(|part| whole(part)));
-            for (index, member) in members.iter().enumerate() {
-                let Some(beam) = parts
-                    .iter()
-                    .find(|part| part.kind == member.kind && part.index == member.index)
-                else {
-                    continue;
-                };
-                if c.broken.contains(index) || whole(beam) {
-                    continue;
-                }
-                let mut node = timber_debris_model(member);
-                node.position = DVec3::new(member.x, member.y, member.z);
-                node.rotation = glam::DQuat::from_rotation_y(member.yaw);
-                group.children.push(node);
-            }
+            });
+            // The members that stand, numbered as the wall's structure numbers them.
+            let standing = parts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !c.broken.contains(*index))
+                .map(|(_, part)| part);
+            add_timber_parts(group, standing);
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
@@ -244,7 +223,7 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
         CoverKind::House => house_debris(c.x, c.z, c.w, c.d, c.h, parts),
         CoverKind::Tower => tower_debris(c.color, parts),
         CoverKind::Timber => {
-            let members = timber_members(&TimberWall {
+            let members = timber_parts(&TimberWall {
                 x: c.x,
                 z: c.z,
                 w: c.w,
@@ -255,7 +234,8 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
             });
             let mut group = Node::default();
             for member in parts.iter().filter_map(|index| members.get(index)) {
-                let mut node = timber_debris_model(member);
+                // Knocked out of its slots or tipped over whole: its sawn ends as it stood.
+                let mut node = timber_part_model(member);
                 node.position = DVec3::new(member.x, member.y, member.z);
                 node.rotation = glam::DQuat::from_rotation_y(member.yaw);
                 group.children.push(node);

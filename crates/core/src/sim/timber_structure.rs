@@ -21,7 +21,7 @@ use super::structure::{
     Breaking, Build, DebrisRules, End, Levelling, Lie, Material, Part, PartSet, PartShape, Role,
     Structure, Support, Tipping,
 };
-use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, timber_members};
+use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, timber_parts};
 
 /// What a part of a timber wall is: its member's kind and index among the wall's beams
 /// (bottom up) or posts.
@@ -29,8 +29,6 @@ use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, timber_member
 pub struct TimberRole {
     pub kind: TimberPartKind,
     pub index: usize,
-    /// Which length of its beam, of how many.
-    pub segment: Option<(usize, usize)>,
 }
 
 /// A beam breaks to a standard shell (40) that strikes it, but not to its burst behind the
@@ -39,11 +37,12 @@ const BEAM: Material = Material {
     strength: 34.0,
     density: TIMBER_DENSITY,
     surface: DebrisMaterial::Wood,
-    breaking: Breaking::Splinters,
+    breaking: Breaking::Dislodges,
     tear: 0.0,
 };
 const POST: Material = Material {
     strength: 60.0,
+    breaking: Breaking::Splinters,
     ..BEAM
 };
 const TIMBER_DENSITY: f64 = 0.35;
@@ -93,7 +92,7 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
             }
         }
     });
-    let members = timber_members(&TimberWall {
+    let members = timber_parts(&TimberWall {
         x: 0.0,
         z: 0.0,
         w: length,
@@ -116,7 +115,6 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
                 Role::Timber(TimberRole {
                     kind: member.kind,
                     index: member.index,
-                    segment: member.segment,
                 }),
             );
             let mut part = Part::new(
@@ -150,43 +148,9 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
     let posts: Vec<usize> = (0..count)
         .filter(|&index| is(&structure.parts[index], TimberPartKind::Post))
         .collect();
-    let segment = |part: &Part| match part.role {
-        Role::Timber(TimberRole {
-            segment: Some(segment),
-            ..
-        }) => Some(segment),
-        _ => None,
-    };
     for index in 0..count {
         let part = &structure.parts[index];
-        if part.grounded && segment(part).is_none() {
-            continue;
-        }
-        // A length of a beam between two posts: its end lengths sit in their posts'
-        // slots, standing as stubs alone; a middle one bears on the lengths either side.
-        if let Some((k, of)) = segment(part) {
-            let supports = if k == 0 || k + 1 == of {
-                let middle = part.middle().x;
-                let post = posts
-                    .iter()
-                    .copied()
-                    .min_by(|&a, &b| {
-                        let gap = |post: usize| (structure.parts[post].middle().x - middle).abs();
-                        gap(a).total_cmp(&gap(b))
-                    })
-                    .expect("a segmented beam has its posts");
-                vec![(post, End::Any, SLOT)]
-            } else {
-                vec![(index - 1, End::A, 1.0), (index + 1, End::B, 1.0)]
-            };
-            for (by, end, share) in supports {
-                structure.supports[index].push(Support {
-                    by: by as u16,
-                    share,
-                    seat: 0.0,
-                    end,
-                });
-            }
+        if part.grounded {
             continue;
         }
         // A beam sits in a slot of each post it reaches; with one end open it sits in
@@ -214,15 +178,6 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
         }
     }
     structure.join_supports(&PartSet::EMPTY);
-    // A beam's lengths are one timber: what comes down of it together falls as one.
-    for index in 1..count {
-        let (a, b) = (segment(&structure.parts[index - 1]), segment(&structure.parts[index]));
-        if let (Some((ka, _)), Some((kb, _))) = (a, b)
-            && kb == ka + 1
-        {
-            structure.join(index - 1, index);
-        }
-    }
     // Beams lying on each other are fastened by their posts, not to each other: a body
     // of them comes down together only through a post.
     structure.whole = true;
@@ -245,7 +200,7 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::timber_layout::{BEAM_COUNT, BEAM_SEGMENTS};
+    use crate::sim::timber_layout::BEAM_COUNT;
 
     fn wall() -> Arc<Structure> {
         timber_structure(3.7, 0.9, 2.8, None)
@@ -254,32 +209,20 @@ mod tests {
     #[test]
     fn a_whole_wall_stands_and_a_beam_shot_out_leaves_the_rest_up() {
         let wall = wall();
-        assert_eq!(wall.parts.len(), BEAM_COUNT * BEAM_SEGMENTS + 2);
+        assert_eq!(wall.parts.len(), BEAM_COUNT + 2);
         assert!(wall.unsupported(&PartSet::EMPTY).is_empty());
-        // Any length of a beam shot out: the stubs in the posts stand, and so does
-        // everything else; an end length out drops the lengths it held up.
         for beam in 0..BEAM_COUNT {
-            let [first, middle, last] = [0, 1, 2].map(|k| beam * BEAM_SEGMENTS + k);
-            let falling = wall.unsupported(&PartSet::from_indices([middle]));
-            assert!(falling.is_empty(), "beam {beam}'s middle out drops {falling:?}");
-            let falling = wall.unsupported(&PartSet::from_indices([first]));
-            let held = if beam == 0 { PartSet::EMPTY } else { PartSet::from_indices([middle]) };
-            assert_eq!(falling, held, "beam {beam}'s end out");
-            assert!(!falling.contains(last));
+            let falling = wall.unsupported(&PartSet::from_indices([beam]));
+            assert!(falling.is_empty(), "beam {beam} out drops {falling:?}");
         }
     }
 
     #[test]
-    fn a_post_shot_out_drops_the_beam_lengths_it_held_but_the_ones_on_the_ground() {
+    fn a_post_shot_out_drops_the_beams_it_held_but_the_one_on_the_ground() {
         let wall = wall();
-        let posts = [BEAM_COUNT * BEAM_SEGMENTS, BEAM_COUNT * BEAM_SEGMENTS + 1];
-        for (side, post) in posts.into_iter().enumerate() {
+        for post in [BEAM_COUNT, BEAM_COUNT + 1] {
             let falling = wall.unsupported(&PartSet::from_indices([post]));
-            let end = if side == 0 { 0 } else { BEAM_SEGMENTS - 1 };
-            let expected = PartSet::from_indices((1..BEAM_COUNT).flat_map(|beam| {
-                [beam * BEAM_SEGMENTS + end, beam * BEAM_SEGMENTS + 1]
-            }));
-            assert_eq!(falling, expected, "post {post}");
+            assert_eq!(falling, PartSet::from_indices(1..BEAM_COUNT), "post {post}");
             let falls = wall.falls(&PartSet::from_indices([post]), &PartSet::EMPTY, DVec3::ZERO);
             assert!(!falls.is_empty());
         }

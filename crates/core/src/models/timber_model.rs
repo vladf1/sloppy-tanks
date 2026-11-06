@@ -315,86 +315,6 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
     group
 }
 
-/// A member torn out of a collapsing wall: the standing member's model with
-/// both ends snapped into a fringe of pale splinters where it tore off its posts
-/// and neighbours. The splinters are the member's own textured wood, so they
-/// batch into its draw.
-pub fn timber_debris_model(p: &TimberPart) -> Node {
-    let mut rng = Random::new(f64::from(p.seed) * 2.71 + 5.0);
-    let mut group = timber_part_model(p);
-    // The member's long axis: x for boards, y for posts.
-    let along = if p.h > p.w && p.h > p.d { 1 } else { 0 };
-    let size = [p.w, p.h, p.d];
-    let (across_a, across_b) = if along == 1 { (0, 2) } else { (1, 2) };
-    for end in [-1.0, 1.0] {
-        // Each cell's fibre: four slivers of two windings, three corners each.
-        let mut positions = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 3);
-        let mut uvs = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 2);
-        // The break runs through the whole section: a grid of fibres covers the
-        // end face, most snapped short and a few torn out long, each leaning its
-        // own way, so the end reads as torn wood rather than a sawn cut with
-        // points stuck on it.
-        let long = [
-            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
-            rng.range(0.0, SPLINTER_CELLS as f64).floor() as usize,
-        ];
-        let face = end * (size[along] / 2.0 - 0.01);
-        let point = |a: f64, b: f64, out: f64| {
-            let mut v = [0.0; 3];
-            v[along] = face + end * out;
-            v[across_a] = a;
-            v[across_b] = b;
-            v
-        };
-        for cell in 0..SPLINTER_CELLS {
-            let (ia, ib) = (cell % SPLINTER_GRID[0], cell / SPLINTER_GRID[0]);
-            let cell_a = size[across_a] / SPLINTER_GRID[0] as f64;
-            let cell_b = size[across_b] / SPLINTER_GRID[1] as f64;
-            let a0 = -size[across_a] / 2.0 + cell_a * ia as f64;
-            let b0 = -size[across_b] / 2.0 + cell_b * ib as f64;
-            let reach = if long.contains(&cell) {
-                rng.range(0.32, 0.55) + size[along] * 0.03
-            } else {
-                rng.range(0.04, 0.2)
-            };
-            let base = [
-                point(a0, b0, 0.0),
-                point(a0 + cell_a, b0, 0.0),
-                point(a0 + cell_a, b0 + cell_b, 0.0),
-                point(a0, b0 + cell_b, 0.0),
-            ];
-            let tip = point(
-                a0 + cell_a * rng.range(-0.2, 1.2),
-                b0 + cell_b * rng.range(-0.2, 1.2),
-                reach,
-            );
-            // Both windings, so every sliver shows whichever way it faces.
-            for i in 0..4 {
-                let (a, b) = (base[i], base[(i + 1) % 4]);
-                positions.extend(a.into_iter().chain(b).chain(tip));
-                positions.extend(b.into_iter().chain(a).chain(tip));
-                // A sliver of plank face, grain running out to the tip.
-                for _ in 0..2 {
-                    uvs.extend([0.1, 0.3, 0.14, 0.3, 0.12, 0.42]);
-                }
-            }
-        }
-        let mut mesh = Mesh::from_f64(&positions, &[], &uvs, None);
-        mesh.compute_vertex_normals();
-        group
-            .children
-            .push(Node::mesh(Arc::new(mesh), wood(SPLINTER_COLOR)));
-    }
-    batch(&mut group);
-    group
-}
-
-/// The fibres each snapped end of a fallen member breaks into (a grid across
-/// its section), and their fresh, pale wood.
-const SPLINTER_GRID: [usize; 2] = [3, 3];
-const SPLINTER_CELLS: usize = SPLINTER_GRID[0] * SPLINTER_GRID[1];
-const SPLINTER_COLOR: u32 = 0xd2ad78;
-
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers
 /// catch the light along every edge, and the wood darkens toward the ground
 /// where rain splashes it, greening with moss at the very foot. Each member
@@ -467,43 +387,6 @@ pub fn add_timber_parts<'a>(group: &mut Node, parts: impl IntoIterator<Item = &'
             child.position = DVec3::new(part.x, part.y, part.z);
             child.rotation = rotation;
             group.children.push(child);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sim::timber_layout::{TimberWall, timber_parts};
-
-    fn drawables(node: &Node) -> usize {
-        let mut count = 0;
-        node.traverse(glam::DMat4::IDENTITY, &mut |child, _| {
-            count += usize::from(child.drawable.is_some());
-        });
-        count
-    }
-
-    #[test]
-    fn snapped_members_draw_their_splinters_with_their_wood() {
-        let wall = TimberWall {
-            x: 0.0,
-            z: 0.0,
-            w: 6.0,
-            h: 2.2,
-            d: 0.5,
-            color: 0x8a5a36,
-            join: None,
-        };
-        let parts = timber_parts(&wall);
-        assert!(!parts.is_empty());
-        for part in &parts {
-            assert_eq!(
-                drawables(&timber_debris_model(part)),
-                drawables(&timber_part_model(part)),
-                "a torn {:?} costs no extra draw",
-                part.kind
-            );
         }
     }
 }

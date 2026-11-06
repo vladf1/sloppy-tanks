@@ -180,6 +180,9 @@ pub enum Breaking {
     Bricks,
     /// Concrete with its steel shoes, which never breaks: part of the ground.
     Never,
+    /// A heavy timber held in slots: what would break it knocks it out whole instead,
+    /// thrown from the hit (a timber wall's beam, far too thick to snap).
+    Dislodges,
 }
 
 /// What a part is made of: how much damage (in shell damage units) it takes before it

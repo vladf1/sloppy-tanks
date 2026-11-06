@@ -142,7 +142,7 @@ beyond_geometry! {
         SUPPLY_SCALE, atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint,
         pickup_pallet, pickup_parcel, pickup_signal, pickup_tile_offset,
     };
-    pub use timber_model::{timber_debris_model, timber_part_model};
+    pub use timber_model::timber_part_model;
     pub use tower_model::tower_debris;
 }
 pub use tree_models::{

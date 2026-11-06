@@ -11,9 +11,6 @@ use super::math::{js_round, to_int32};
 pub const TIMBER_HEALTH: f64 = 80.0;
 /// The beams stacked between a wall's posts.
 pub const BEAM_COUNT: usize = 4;
-/// The lengths a beam between two posts breaks in: a shell takes the one it strikes,
-/// and the ones left stand as stubs in their posts or come down without their end.
-pub const BEAM_SEGMENTS: usize = 3;
 
 /// Ends use the increasing world X/Z axis, independent of the model's yaw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,9 +45,6 @@ pub struct TimberPart {
     pub yaw: f64,
     pub color: u32,
     pub seed: i32,
-    /// A length of a beam as the wall's structure breaks it: which of how many.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub segment: Option<(usize, usize)>,
 }
 
 /// The wall footprint the members are laid out in. Position only seeds cosmetic variation.
@@ -104,7 +98,6 @@ pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
             yaw,
             color: colors[index % colors.len()],
             seed: seed ^ (index as i32 + 1).wrapping_mul(83_492_791),
-            segment: None,
         });
     }
     let sides: &[i32] = if post { &[0] } else { &[-1, 1] };
@@ -129,56 +122,7 @@ pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
             yaw,
             color: 0x805336,
             seed: seed ^ (side + 7).wrapping_mul(83_492_791),
-            segment: None,
         });
     }
     parts
-}
-
-/// The wall's members as its structure numbers its parts: each beam held by a post at
-/// both ends in [`BEAM_SEGMENTS`] lengths (bottom beam first, its lengths along the
-/// wall's increasing axis), then the posts; a beam on one post stays whole.
-pub fn timber_members(wall: &TimberWall) -> Vec<TimberPart> {
-    let parts = timber_parts(wall);
-    let posts = parts
-        .iter()
-        .filter(|part| part.kind == TimberPartKind::Post)
-        .count();
-    let segments = if posts == 2 { BEAM_SEGMENTS } else { 1 };
-    let mut members = Vec::with_capacity(parts.len() * segments);
-    for part in &parts {
-        if part.kind == TimberPartKind::Post || segments == 1 {
-            members.push(*part);
-            continue;
-        }
-        // Along x for a wall along x; a z-running wall's members turned, their x on z.
-        let (start, axis) = if part.yaw == 0.0 {
-            (part.x - part.w / 2.0, DVecAxis::X)
-        } else {
-            (-part.z - part.w / 2.0, DVecAxis::NegZ)
-        };
-        let length = part.w / segments as f64;
-        for k in 0..segments {
-            let middle = start + length * (k as f64 + 0.5);
-            let (x, z) = match axis {
-                DVecAxis::X => (middle, part.z),
-                DVecAxis::NegZ => (part.x, -middle),
-            };
-            members.push(TimberPart {
-                x,
-                z,
-                w: length,
-                seed: part.seed ^ (k as i32 + 3).wrapping_mul(19_349_663),
-                segment: Some((k, segments)),
-                ..*part
-            });
-        }
-    }
-    members
-}
-
-#[derive(Clone, Copy)]
-enum DVecAxis {
-    X,
-    NegZ,
 }

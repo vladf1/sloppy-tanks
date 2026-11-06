@@ -325,6 +325,8 @@ pub struct StructureDebris {
     pub rested: bool,
     /// How it is damped this tick.
     pub damping: Damping,
+    /// A timber knocked out whole passes through what stands until then.
+    pub clear_at: Option<f64>,
     /// It broke a part of a structure it came down on since the last tick: its landing,
     /// however gently it came to a stop there.
     pub struck: bool,
@@ -811,9 +813,15 @@ impl Simulation {
         let layout = state.layout.clone();
         let breakable =
             |index: usize| state.standing(index) && layout.parts[index].strength.is_finite();
-        // Brick does not splinter away where it stands: a broken chimney stack comes
-        // loose and bursts into bricks where it lands.
-        let brick = |index: usize| layout.parts[index].material.breaking == Breaking::Bricks;
+        // Brick does not splinter away where it stands, nor a heavy timber: a broken
+        // chimney stack comes loose and bursts into bricks where it lands, a wall's beam
+        // is knocked out of its slots whole and thrown.
+        let brick = |index: usize| {
+            matches!(
+                layout.parts[index].material.breaking,
+                Breaking::Bricks | Breaking::Dislodges
+            )
+        };
         let mut broken = PartSet::from_indices(
             broken_parts
                 .iter()
@@ -858,6 +866,20 @@ impl Simulation {
             let mut event = SimEvent::at(SimEventType::Shatter, x + center.x, z + center.z);
             event.height = Some(center.y);
             event.size = Some((part.max - part.min).max_element());
+            event.color = Some(part_paint(c, &layout, index));
+            event.cover_kind = Some(c.kind);
+            event.id = Some(c.id);
+            event.from = from;
+            self.events.push(event);
+        }
+        // Splinters and dust off the struck face of a timber knocked out whole.
+        for index in asked.iter().filter(|&index| {
+            layout.parts[index].material.breaking == Breaking::Dislodges && loose.contains(index)
+        }) {
+            let center = layout.to_world(layout.parts[index].middle());
+            let mut event = SimEvent::at(SimEventType::Shatter, x + center.x, z + center.z);
+            event.height = Some(center.y);
+            event.size = Some(DISLODGED_DUST);
             event.color = Some(part_paint(c, &layout, index));
             event.cover_kind = Some(c.kind);
             event.id = Some(c.id);
@@ -971,6 +993,10 @@ impl Simulation {
                 .can_sleep(true),
         );
         let colliders = self.insert_debris(layout, &parts, body);
+        let dislodged = blast.is_some()
+            && parts
+                .iter()
+                .all(|index| layout.parts[index].material.breaking == Breaking::Dislodges);
         let center = parts
             .iter()
             .map(|index| layout.to_world(layout.parts[index].middle()))
@@ -984,6 +1010,14 @@ impl Simulation {
                 let middle = from_vector(self.world.bodies[body].center_of_mass());
                 let middle = DVec3::new(middle.x - x, middle.y, middle.z - z);
                 (spin.cross(middle - pivot), spin)
+            }
+            // A timber knocked out of its slots flies out away from the hit, end over end.
+            None if dislodged => {
+                let blast = blast.expect("knocked out by a hit");
+                let away = DVec3::new(x + center.x - blast.x, 0.0, z + center.z - blast.z).normalize_or_zero();
+                let velocity = away * DISLODGE_THROW + DVec3::Y * DISLODGE_LIFT;
+                let spin = DVec3::Y.cross(away) * DISLODGE_SPIN;
+                (velocity, spin)
             }
             None => {
                 let out = DVec3::new(center.x, 0.0, center.z).normalize_or_zero();
@@ -1007,6 +1041,18 @@ impl Simulation {
         rigid_body.set_linvel(vector(linear.x, linear.y, linear.z), true);
         rigid_body.set_angvel(vector(angular.x, angular.y, angular.z), true);
         self.add_debris(cover, layout, body, &colliders, parts);
+        // It slides out between what still stands round it (the standing members'
+        // colliders reach past their faces and would jam it), meeting them again once
+        // clear of the wall.
+        if dislodged {
+            for &handle in &colliders {
+                self.world.colliders[handle]
+                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS_THROUGH));
+            }
+            if let Some(debris) = self.fragments.last_mut().and_then(|fragment| fragment.structure.as_mut()) {
+                debris.clear_at = Some(self.elapsed + DISLODGE_CLEAR);
+            }
+        }
     }
 
     /// A falling body's colliders, one for each of `parts`, each reporting what it lands
@@ -1356,6 +1402,16 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             continue;
         };
         let handle = fragment.body;
+        if debris.clear_at.is_some_and(|at| simulation.elapsed >= at) {
+            let colliders: Vec<ColliderHandle> = simulation.world.bodies[handle].colliders().to_vec();
+            for collider in colliders {
+                simulation.world.colliders[collider]
+                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS));
+            }
+            if let Some(debris) = &mut simulation.fragments[index].structure {
+                debris.clear_at = None;
+            }
+        }
         if !debris.rested {
             cap_loose_speed(&mut simulation.world.bodies[handle]);
         }
@@ -1840,6 +1896,15 @@ impl PlanBox {
 
 /// Pieces whose footprints come this near (m) count as lying on each other.
 const ON_EACH_OTHER: f32 = 0.05;
+
+/// The splinters and dust (m) a timber knocked out whole throws off its struck face.
+const DISLODGED_DUST: f64 = 0.7;
+/// How a timber knocked out whole flies: out from the hit (m/s), up (m/s), end over end
+/// (rad/s), and how long (s) it passes through what stands round it.
+const DISLODGE_THROW: f64 = 6.0;
+const DISLODGE_LIFT: f64 = 1.2;
+const DISLODGE_SPIN: f64 = 2.0;
+const DISLODGE_CLEAR: f64 = 0.3;
 
 /// Pieces that fell within this many seconds of each other (by their clearing deadlines,
 /// which a landing's pieces keep from their body) are one ruin, which clears top first
