@@ -1684,6 +1684,7 @@ fn middle_height(simulation: &Simulation, body: RigidBodyHandle) -> f64 {
 fn clear_in_turn(simulation: &mut Simulation, index: usize) {
     let fragment = &simulation.fragments[index];
     let cover = fragment.structure.map(|debris| debris.cover);
+    let fell = fragment.expires_at;
     // When a piece lying on the ground would clear.
     let ground = simulation
         .fragments
@@ -1695,12 +1696,25 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
                 && piece
                     .structure
                     .is_some_and(|debris| debris.rested && Some(debris.cover) == cover)
+                && fell_together(piece.expires_at, fell)
         })
         .map(|(_, piece)| piece.life + middle_height(simulation, piece.body) * CLEAR_TOP_FIRST)
         .fold(fragment.life, f64::min);
     let height = middle_height(simulation, fragment.body);
     simulation.fragments[index].life =
         (ground - height * CLEAR_TOP_FIRST).max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
+}
+
+/// Pieces that fell within this many seconds of each other (by their clearing deadlines)
+/// are one ruin, which clears top first and as a whole; a later fall onto an older ruin
+/// keeps its own time, or the new pile faded seconds after it came down.
+const FELL_TOGETHER: f64 = 4.0;
+
+fn fell_together(a: Option<f64>, b: Option<f64>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => (a - b).abs() <= FELL_TOGETHER,
+        _ => false,
+    }
 }
 
 /// A resting piece of a ruin about to clear takes what it holds up along: each resting
@@ -1742,6 +1756,7 @@ fn clear_together(simulation: &mut Simulation) {
                 let piece = &simulation.fragments[index];
                 if piece.structure.map(|debris| debris.cover) == cover
                     && rested(piece)
+                    && fell_together(piece.expires_at, fragment.expires_at)
                     && piece.life > fragment.life
                 {
                     along.push((index, fragment.life));

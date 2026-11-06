@@ -1551,3 +1551,63 @@ fn a_falling_section_of_wall_and_roof_tips_out_without_lifting_its_roof() {
         }
     }
 }
+
+/// A cottage brought down seconds after earlier hits left pieces lying beside it: the
+/// collapse's pieces lie solid their own time, not cleared with the older pieces they
+/// came down on or beside.
+#[test]
+fn a_collapse_onto_older_pieces_lies_its_own_time() {
+    let (mut s, house) = cottage_alone(VILLAGE_DESIGNS[6]);
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let grounded: Vec<usize> = (0..layout.parts.len())
+        .filter(|&i| layout.parts[i].grounded)
+        .collect();
+    // An earlier hit tears two roof sheets loose.
+    let sheets: Vec<usize> = (0..layout.parts.len())
+        .filter(|&i| layout.parts[i].house().kind == PartKind::Sheet)
+        .take(2)
+        .collect();
+    s.break_structure(
+        house,
+        PartSet::EMPTY,
+        PartSet::from_indices(sheets),
+        None,
+        None,
+    );
+    for _ in 0..(11.0 / STEP) as usize {
+        idle(&mut s);
+    }
+    let older: Vec<u32> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(house))
+        .map(|f| f.id)
+        .collect();
+    s.break_structure(
+        house,
+        PartSet::from_indices(grounded),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    for _ in 0..(3.0 / STEP) as usize {
+        idle(&mut s);
+    }
+    let fresh: Vec<f64> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(house) && !older.contains(&f.id))
+        .map(|f| f.life)
+        .collect();
+    assert!(
+        fresh.len() > 5,
+        "the collapse lies in pieces: {}",
+        fresh.len()
+    );
+    for life in fresh {
+        assert!(
+            life > 6.0,
+            "a piece of the collapse 3 s on clears in {life:.1} s"
+        );
+    }
+}
