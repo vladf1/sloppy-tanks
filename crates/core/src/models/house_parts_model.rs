@@ -9,12 +9,14 @@
 //! A cottage whose parts all stand is drawn uncut. Everything is batched, one draw per
 //! material.
 
+use std::sync::Arc;
+
 use glam::{DMat4, DVec2, DVec3};
 
 use super::batching::batch;
 use super::building_kit::Surface;
 use super::house_collapse::{ShardClip, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
-use super::house_model::{standing_house, CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage};
+use super::house_model::{standing_house, CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage, paint_cottage_whole};
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
@@ -47,7 +49,8 @@ const ON_FACE: f64 = 0.01;
 /// The standing cottage for a cottage cover box, drawn from its parts not in
 /// `broken`, with its plinth and yard.
 pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) {
-    let mut build = HouseBuild::new(x, z, w, d, h, broken);
+    let layout = Arc::new(house_structure(&HouseDesign::of(x, z, w, d, h)));
+    let mut build = HouseBuild::new(layout, x, z, broken);
     while !build.step() {}
     group.children.push(build.finish_cottage());
 }
@@ -58,7 +61,7 @@ pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64
 pub struct HouseBuild {
     x: f64,
     z: f64,
-    layout: Structure,
+    layout: Arc<Structure>,
     standing: PartSet,
     /// Whether a gap shows its rooms.
     open: bool,
@@ -68,8 +71,10 @@ pub struct HouseBuild {
 }
 
 impl HouseBuild {
-    pub fn new(x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) -> Self {
-        let layout = house_structure(&HouseDesign::of(x, z, w, d, h));
+    /// The build of the cottage at `(x, z)` laid out as `layout` (its
+    /// [`house_structure`], which the caller keeps for the cottage rather than laying
+    /// it out again for every rebuild), with its parts in `broken` gone.
+    pub fn new(layout: Arc<Structure>, x: f64, z: f64, broken: &PartSet) -> Self {
         let standing = PartSet::from_indices(
             (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
         );
@@ -87,6 +92,11 @@ impl HouseBuild {
         }
     }
 
+    /// The cottage's layout the build draws.
+    pub fn layout(&self) -> &Arc<Structure> {
+        &self.layout
+    }
+
     /// One step of the build; true once it is done.
     pub fn step(&mut self) -> bool {
         if !self.open {
@@ -97,12 +107,17 @@ impl HouseBuild {
             }
             return true;
         }
-        let Some(pieces) = &self.pieces else {
-            self.pieces = Some(cottage_pieces(self.layout.design().expect("a cottage"), self.x, self.z));
+        let Some(pieces) = &mut self.pieces else {
+            self.pieces = Some(cottage_pieces(self.layout.design().expect("a cottage"), self.x, self.z, true));
             return false;
         };
-        if let Some(piece) = pieces.parts.get(self.next) {
-            piece_into(&mut self.group, &self.layout, pieces, piece, &self.standing);
+        if self.next < pieces.parts.len() {
+            piece_into(&mut self.group, &self.layout, pieces, &pieces.parts[self.next], &self.standing);
+            // Each piece is drawn once: the model now holds what it kept of its meshes.
+            let piece = &mut pieces.parts[self.next];
+            piece.meshes = Vec::new();
+            piece.shingles = None;
+            piece.nodes = Vec::new();
             self.next += 1;
             return false;
         }
@@ -179,26 +194,50 @@ fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
 }
 
 /// The parts `parts` of the cottage for a cover box, fallen together: drawn about the
-/// cottage's ground centre, turned into the world as the cottage stood.
+/// cottage's ground centre, turned into the world as the cottage stood. A page drawing
+/// several of a cottage's bodies at once builds one [`HouseDebris`] for them all.
 pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> Node {
-    let design = HouseDesign::of(x, z, w, d, h);
-    let layout = house_structure(&design);
-    let pieces = cottage_pieces(&design, x, z);
-    let mut node = parts_node(&layout, &pieces, parts, true);
-    batch(&mut node);
-    // A small piece casts no shadow: a collapse brings down dozens, each a shadow draw
-    // per finish, and only the big sections' shadows show from the battlefield.
-    let (low, high) = parts.iter().fold(
-        (DVec3::INFINITY, DVec3::NEG_INFINITY),
-        |(low, high), index| (low.min(layout.part(index).min), high.max(layout.part(index).max)),
-    );
-    if (high - low).max_element() < SHADOWLESS_UNDER {
-        uncast(&mut node);
+    let layout = Arc::new(house_structure(&HouseDesign::of(x, z, w, d, h)));
+    HouseDebris::new(layout, x, z).body(parts)
+}
+
+/// What a cottage's fallen bodies are cut from: its layout and its finished pieces
+/// (without its plinth and yard, which never fall). Building the pieces is most of a
+/// body's cost, so a collapse's bodies share one; it is dropped once they are built,
+/// never kept, since the bodies' models hold what they draw.
+pub struct HouseDebris {
+    layout: Arc<Structure>,
+    pieces: CottagePieces,
+}
+
+impl HouseDebris {
+    /// The pieces of the cottage at `(x, z)` laid out as `layout` (its
+    /// [`house_structure`]).
+    pub fn new(layout: Arc<Structure>, x: f64, z: f64) -> Self {
+        let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, false);
+        Self { layout, pieces }
     }
-    node.set_rotation_euler(0.0, design.yaw(), 0.0);
-    let mut root = Node::group("house-debris");
-    root.children.push(node);
-    root
+
+    /// The body of its parts `parts`, as [`house_debris`] draws it.
+    pub fn body(&self, parts: &PartSet) -> Node {
+        let layout = &*self.layout;
+        let design = layout.design().expect("a cottage");
+        let mut node = parts_node(layout, &self.pieces, parts, true);
+        batch(&mut node);
+        // A small piece casts no shadow: a collapse brings down dozens, each a shadow draw
+        // per finish, and only the big sections' shadows show from the battlefield.
+        let (low, high) = parts.iter().fold(
+            (DVec3::INFINITY, DVec3::NEG_INFINITY),
+            |(low, high), index| (low.min(layout.part(index).min), high.max(layout.part(index).max)),
+        );
+        if (high - low).max_element() < SHADOWLESS_UNDER {
+            uncast(&mut node);
+        }
+        node.set_rotation_euler(0.0, design.yaw(), 0.0);
+        let mut root = Node::group("house-debris");
+        root.children.push(node);
+        root
+    }
 }
 
 /// Loose pieces smaller than this (m) across cast no shadow.
@@ -271,8 +310,8 @@ fn piece_into(
         return;
     }
     if whole && drawn.len() == before {
-        // All of it: the part as built.
-        paint_cottage(group, piece.meshes.clone(), design, &pieces.palette);
+        // All of it: the part as built, sharing its meshes.
+        paint_cottage_whole(group, piece.meshes.clone(), design, &pieces.palette);
         if let Some(shingles) = &piece.shingles {
             group.children.push(cottage_shingles(shingles.clone(), &pieces.palette));
         }
@@ -296,7 +335,7 @@ fn piece_into(
     if let Some(shingles) = &piece.shingles
         && let Some(mesh) = clip_mesh(shingles, &clip)
     {
-        group.children.push(cottage_shingles(mesh, &pieces.palette));
+        group.children.push(cottage_shingles(Arc::new(mesh), &pieces.palette));
     }
     group.children.extend(
         piece

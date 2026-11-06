@@ -37,6 +37,7 @@ use super::PRESENTATION_EFFECTS;
 use super::aim_assist::AimAssist;
 use super::aim_line::{AimLine, TouchAim};
 use super::camera_rig::{CameraRig, ViewerPose};
+use super::cottage_layouts::{CottageLayouts, DebrisSource};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
 use super::house_rest::HousePiles;
@@ -787,10 +788,11 @@ enum FragmentLook {
 }
 
 /// A structure debris look shared by every fragment that looks the same
-/// ([`shared_debris_key`]), with the parts' model the piles merge.
+/// ([`shared_debris_key`]). It keeps no model tree: the piles draw its parts again
+/// when they merge them, rather than every look built ahead holding its meshes on
+/// the CPU for the round.
 struct SharedDebris {
     look: BoundedModel,
-    node: Arc<Node>,
     /// The fragments showing it.
     users: usize,
     /// Built ahead (a crate's walls, lid and landing pieces): kept for the round.
@@ -1039,7 +1041,10 @@ pub struct Presentation {
     busy: bool,
     fragments: HashMap<u32, FragmentView>,
     /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
-    piles: HousePiles<(ModelId, InstanceId)>,
+    piles: HousePiles<(ModelId, InstanceId), DebrisSource>,
+    /// Cottages' layouts while a build holds them, and this frame's pieces for their
+    /// fallen bodies.
+    layouts: CottageLayouts,
     /// Structure debris looks shared by every fragment that looks the same.
     shared_debris: HashMap<String, SharedDebris>,
     /// Shared looks no fragment showed any more, oldest first (one may have come back
@@ -1140,6 +1145,7 @@ impl Presentation {
             busy: false,
             fragments: HashMap::new(),
             piles: HousePiles::default(),
+            layouts: CottageLayouts::default(),
             shared_debris: HashMap::new(),
             idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
@@ -1773,7 +1779,6 @@ impl Presentation {
             };
             SharedDebris {
                 look,
-                node: Arc::new(node),
                 users: 0,
                 ahead: false,
             }
@@ -2481,11 +2486,16 @@ impl Presentation {
     /// step starts.
     fn build_cover_look(&mut self, cover: &RenderCover, start: f64, longest: &mut f64) {
         let key = cover_key(cover);
-        let index = match self
+        let found = self
             .cover_looks
             .iter()
-            .position(|look| look.cover == cover.id)
-        {
+            .position(|look| look.cover == cover.id);
+        // A newer look of a cottage still building keeps its layout.
+        let _layout = found.and_then(|index| match &self.cover_looks[index].phase {
+            LookPhase::Building(build) => Some(build.layout().clone()),
+            _ => None,
+        });
+        let index = match found {
             Some(index) if self.cover_looks[index].key == key => index,
             found => {
                 let phase = LookPhase::Unbuilt;
@@ -2517,12 +2527,11 @@ impl Presentation {
                             .cover_models
                             .contains_key(&Self::cover_model_key(cover)) =>
                 {
+                    let layout = self.layouts.layout(cover.id, &CoverShape::from(cover));
                     *phase = LookPhase::Building(Box::new(HouseBuild::new(
+                        layout,
                         cover.x,
                         cover.z,
-                        cover.w,
-                        cover.d,
-                        cover.h,
                         &cover.broken,
                     )));
                     false
@@ -3312,13 +3321,15 @@ impl Presentation {
             }
         }
         self.settle_piles();
+        self.layouts.end_frame();
     }
 
     /// Bake resting cottage parts into merged chunks, one a frame, and hide their own
     /// views; show again the ones whose chunk broke up. The merges are one-off models,
     /// merged straight into the upload layout and not kept once uploaded.
     fn settle_piles(&mut self) {
-        let plan = self.piles.plan(self.time);
+        let layouts = &mut self.layouts;
+        let plan = self.piles.plan(self.time, |source| layouts.body(source));
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
@@ -3353,19 +3364,25 @@ impl Presentation {
             // A structure's parts that fell together, drawn as they stood about its
             // ground centre, where the body started.
             let cover = covers.iter().find(|cover| cover.id == structure)?;
-            let shape = CoverShape::from(cover);
-            if let Some(key) = shared_debris_key(&shape, &parts) {
-                let shared = self.shared_structure_debris(&shape, &parts, &key);
+            let source = DebrisSource {
+                cover: structure,
+                shape: CoverShape::from(cover),
+                parts,
+            };
+            if let Some(key) = shared_debris_key(&source.shape, &parts) {
+                let shared = self.shared_structure_debris(&source.shape, &parts, &key);
                 shared.users += 1;
-                let (model, bounds, node) =
-                    (shared.look.model, shared.look.bounds, shared.node.clone());
-                self.piles.track(fragment.id, structure, node, self.time);
+                let (model, bounds) = (shared.look.model, shared.look.bounds);
+                self.piles
+                    .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))
             } else {
-                let node = structure_debris(&shape, &parts);
+                // A cottage's bodies falling this frame are cut from one build of its
+                // pieces.
+                let node = self.layouts.body(&source);
                 let look = structure_debris_look(&mut self.renderer, &node);
                 self.piles
-                    .track(fragment.id, structure, Arc::new(node), self.time);
+                    .track(fragment.id, structure, source, Some(node), self.time);
                 look
             }
         } else if let Some(tree) = fragment.tree_cover_id {

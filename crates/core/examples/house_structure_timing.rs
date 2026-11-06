@@ -7,9 +7,10 @@
 //! step with the village's fourteen cottages standing against one with their bodies
 //! taken out. Manual evidence, not a CI gate.
 
+use std::sync::Arc;
 use std::time::Instant;
 
-use sloppy_core::models::{HouseBuild, house_debris, structural_house};
+use sloppy_core::models::{HouseBuild, HouseDebris, house_debris, structural_house};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::house_layout::HouseDesign;
 use sloppy_core::sim::house_structure::{PartKind, house_structure};
@@ -106,7 +107,8 @@ fn main() {
         // The same a step at a time, as the page spreads it over frames.
         let mut steps = Vec::new();
         for _ in 0..ROUNDS / 4 {
-            let mut build = HouseBuild::new(c.x, c.z, c.w, c.d, c.h, &broken);
+            let layout = Arc::new(house_structure(&HouseDesign::of(c.x, c.z, c.w, c.d, c.h)));
+            let mut build = HouseBuild::new(layout, c.x, c.z, &broken);
             loop {
                 let start = Instant::now();
                 let done = build.step();
@@ -129,6 +131,36 @@ fn main() {
         })
         .collect();
     println!("build its fallen roof's body model: {}", summary(samples));
+    // A collapse's bodies (a dozen here), each from its own pieces as the page built
+    // them, against all of them cut from one build of the cottage's pieces.
+    let bodies: Vec<PartSet> = (0..12)
+        .map(|k| PartSet::from_indices((0..layout.parts.len()).filter(|i| i % 12 == k)))
+        .collect();
+    let each = (0..ROUNDS / 20)
+        .map(|_| {
+            let start = Instant::now();
+            for parts in &bodies {
+                std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, parts));
+            }
+            start.elapsed().as_secs_f64() * 1e3
+        })
+        .collect();
+    println!("  a dozen bodies, each its own pieces: {}", summary(each));
+    let shared = (0..ROUNDS / 20)
+        .map(|_| {
+            let start = Instant::now();
+            let layout = Arc::new(house_structure(&HouseDesign::of(c.x, c.z, c.w, c.d, c.h)));
+            let pieces = HouseDebris::new(layout, c.x, c.z);
+            for parts in &bodies {
+                std::hint::black_box(pieces.body(parts));
+            }
+            start.elapsed().as_secs_f64() * 1e3
+        })
+        .collect();
+    println!(
+        "  a dozen bodies, one build of its pieces: {}",
+        summary(shared)
+    );
 
     // Break each lower wall panel in turn (rebuilding the cottage between), so the
     // support recompute runs on a whole cottage each time.

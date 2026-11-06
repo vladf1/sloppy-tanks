@@ -377,11 +377,13 @@ pub(super) struct CottagePieces {
 pub(super) struct CottagePiece {
     pub(super) part: HousePart,
     pub(super) meshes: KitMeshes<Surface>,
-    pub(super) shingles: Option<Mesh>,
+    pub(super) shingles: Option<Arc<Mesh>>,
     pub(super) nodes: Vec<Node>,
 }
 
-pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64) -> CottagePieces {
+/// A cottage's [`CottagePieces`]; `ground` false leaves the plinth, steps and yard
+/// unfinished (an empty [`CottagePieces::ground`]), which a fallen body never draws.
+pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64, ground: bool) -> CottagePieces {
     let palette = palette(design, x, z);
     let (roof, parts) = cottage_parts(design, Build::Parts);
     let walls = design.style.walls;
@@ -395,19 +397,24 @@ pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64) -> CottagePie
         lot_nodes,
         ..
     } = parts;
-    let mut ground = Node::group("");
+    let mut yard = Node::group("");
     let mut pieces = Vec::new();
     for (((part, kit), courses), nodes) in
         HousePart::ALL.into_iter().zip(kits).zip(courses).zip(nodes)
     {
-        let mut meshes = kit.finish_scaled(&uv);
-        grime(&mut meshes, roof.ridge);
         if part == HousePart::Ground {
-            add_weathered(&mut ground, meshes, &palette, walls);
-            ground.children.extend(nodes);
+            if ground {
+                let mut meshes = kit.finish_scaled(&uv);
+                grime(&mut meshes, roof.ridge);
+                add_weathered(&mut yard, meshes, &palette, walls);
+                yard.children.extend(nodes);
+            }
             continue;
         }
-        let shingles = (!courses.positions.is_empty()).then(|| courses.weathered_mesh(&roof));
+        let mut meshes = kit.finish_scaled(&uv);
+        grime(&mut meshes, roof.ridge);
+        let shingles =
+            (!courses.positions.is_empty()).then(|| Arc::new(courses.weathered_mesh(&roof)));
         pieces.push(CottagePiece {
             part,
             meshes,
@@ -415,14 +422,16 @@ pub(super) fn cottage_pieces(design: &HouseDesign, x: f64, z: f64) -> CottagePie
             nodes,
         });
     }
-    add_weathered(&mut ground, lot.finish_scaled(&uv), &palette, walls);
-    ground.children.extend(lot_nodes);
+    if ground {
+        add_weathered(&mut yard, lot.finish_scaled(&uv), &palette, walls);
+        yard.children.extend(lot_nodes);
+    }
     CottagePieces {
         roof,
         palette,
         parts: pieces,
         openings,
-        ground,
+        ground: yard,
     }
 }
 
@@ -441,13 +450,25 @@ pub(super) fn paint_cottage(
     add_finished(group, meshes, palette, design.style.walls, true);
 }
 
+/// [`paint_cottage`] for a part's meshes as [`cottage_pieces`] finished them, uncut:
+/// their siding already carries the weathering (`grime` from the ridge, which is the
+/// design's height), so they are painted as they are, sharing their meshes.
+pub(super) fn paint_cottage_whole(
+    group: &mut Node,
+    meshes: KitMeshes<Surface>,
+    design: &HouseDesign,
+    palette: &Palette,
+) {
+    add_finished(group, meshes, palette, design.style.walls, true);
+}
+
 /// A cottage's shingle courses, weathered as the standing roof's.
-pub(super) fn cottage_shingles(mesh: Mesh, palette: &Palette) -> Node {
+pub(super) fn cottage_shingles(mesh: Arc<Mesh>, palette: &Palette) -> Node {
     let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
         vertex_colors: true,
         ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
     });
-    shadowed(Arc::new(mesh), material)
+    shadowed(mesh, material)
 }
 
 /// The texture scale of a cottage's finishes.

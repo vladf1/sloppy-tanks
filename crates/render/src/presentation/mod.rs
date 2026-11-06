@@ -33,6 +33,8 @@ pub mod wreck_library;
 pub mod aim_line;
 // Built natively too, for its tests; only the page and the apps draw with it.
 #[cfg_attr(not(any(target_arch = "wasm32", feature = "native")), allow(dead_code))]
+mod cottage_layouts;
+#[cfg_attr(not(any(target_arch = "wasm32", feature = "native")), allow(dead_code))]
 mod house_rest;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod view;
