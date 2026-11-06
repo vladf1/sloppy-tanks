@@ -618,19 +618,18 @@ fn piece_model(group: &mut Node, kit: &mut Kit<Surface>, color: u32, index: usiz
             };
             let mut meshes = own.finish_scaled(uv_per_metre);
             for (surface, mesh) in &mut meshes {
-                let mut bent: Mesh = if *surface == Surface::Glass {
-                    shattered(mesh, index as u32)
-                } else {
-                    (**mesh).clone()
-                };
+                if *surface == Surface::Glass {
+                    *mesh = Arc::new(shattered(mesh, index as u32));
+                }
+                // The kit's own mesh: bent in place.
+                let bent = Arc::make_mut(mesh);
                 for position in &mut bent.positions {
                     let p = DVec3::from_array(position.map(f64::from));
                     let lift = ((p.y - DECK_TOP) / (CABIN_TOP - DECK_TOP)).clamp(0.0, 1.0);
                     let racked = p + along * rack * lift;
                     *position = bend.point(racked).as_vec3().to_array();
                 }
-                flat_normals(&mut bent);
-                *mesh = Arc::new(bent);
+                flat_normals(bent);
             }
             add_building(group, meshes, &palette(color));
         }
@@ -749,7 +748,7 @@ fn bend(folds: &[Fold], mut p: DVec3, mut n: DVec3) -> (DVec3, DVec3) {
 fn folded(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surface> {
     let mut meshes = kit.finish_scaled(uv_per_metre);
     for (_, mesh) in &mut meshes {
-        let mut bent: Mesh = (**mesh).clone();
+        let bent = Arc::make_mut(mesh);
         for (position, normal) in bent.positions.iter_mut().zip(&mut bent.normals) {
             let (p, n) = bend(
                 folds,
@@ -759,7 +758,6 @@ fn folded(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surfa
             *position = p.as_vec3().to_array();
             *normal = n.as_vec3().to_array();
         }
-        *mesh = Arc::new(bent);
     }
     meshes
 }
@@ -769,26 +767,27 @@ fn folded(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surfa
 fn crumpled(kit: Kit<Surface>, folds: &[Fold]) -> super::tank_kit::KitMeshes<Surface> {
     let mut meshes = kit.finish_scaled(uv_per_metre);
     for (_, mesh) in &mut meshes {
-        let mut bent: Mesh = (**mesh).clone();
+        let bent = Arc::make_mut(mesh);
         for position in &mut bent.positions {
             let p = DVec3::from_array(position.map(f64::from));
             let (p, _) = bend(folds, dent(p), DVec3::Y);
             *position = p.as_vec3().to_array();
         }
-        flat_normals(&mut bent);
-        *mesh = Arc::new(bent);
+        flat_normals(bent);
     }
     meshes
 }
 
 /// Each triangle's normal its face's, kept on the side it faced.
 fn flat_normals(mesh: &mut Mesh) {
-    let points = mesh.positions.clone();
-    for (corners, normals) in points
+    let Mesh {
+        positions, normals, ..
+    } = mesh;
+    for (corners, normals) in positions
         .as_chunks::<3>()
         .0
         .iter()
-        .zip(mesh.normals.as_chunks_mut::<3>().0)
+        .zip(normals.as_chunks_mut::<3>().0)
     {
         let at = |i: usize| DVec3::from_array(corners[i].map(f64::from));
         let face = (at(1) - at(0)).cross(at(2) - at(0));

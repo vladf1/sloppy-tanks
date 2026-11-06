@@ -134,6 +134,8 @@ pub struct Walls {
     /// The cover that splinters (cottages, timber walls, crates, watchtowers) lying
     /// destroyed at the last sync, by id, with footprints as `ruins`.
     down: Vec<(u32, [f64; 4])>,
+    /// Scratch for [`Self::sync`]: `down` as it was, sorted by id.
+    was_down: Vec<(u32, [f64; 4])>,
     /// Those that stood again at the last sync (rebuilt: a new round's map, or the
     /// Scrap Yard's cover rising in place), as `ruins`.
     pub rebuilt: Vec<[f64; 4]>,
@@ -392,7 +394,8 @@ impl Walls {
                 })
                 .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
         );
-        let was = std::mem::take(&mut self.down);
+        std::mem::swap(&mut self.down, &mut self.was_down);
+        self.down.clear();
         let splinters = |kind| {
             matches!(
                 kind,
@@ -407,14 +410,21 @@ impl Walls {
                 .map(|cover| (cover.id, [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5])),
         );
         self.rebuilt.clear();
-        self.rebuilt
-            .extend(was.into_iter().filter_map(|(id, ruin)| {
-                state
-                    .covers
-                    .iter()
-                    .any(|cover| cover.id == id && cover.alive)
-                    .then_some(ruin)
-            }));
+        if !self.was_down.is_empty() {
+            self.was_down.sort_unstable_by_key(|&(id, _)| id);
+            let was = &self.was_down;
+            self.rebuilt
+                .extend(
+                    state
+                        .covers
+                        .iter()
+                        .filter(|cover| cover.alive)
+                        .filter_map(|cover| {
+                            let found = was.binary_search_by_key(&cover.id, |&(id, _)| id);
+                            found.ok().map(|index| was[index].1)
+                        }),
+                );
+        }
         self.standing.clear();
         self.standing.extend(
             state
@@ -465,6 +475,7 @@ impl Walls {
         self.ruins.clear();
         self.wooden.clear();
         self.down.clear();
+        self.was_down.clear();
         self.rebuilt.clear();
         self.soft = [[0.0; 4]; 4];
     }

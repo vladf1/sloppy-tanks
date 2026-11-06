@@ -750,8 +750,9 @@ struct CoverView {
 /// A hit cover's new look being built over a few frames while its last one shows.
 struct CoverLook {
     cover: u32,
-    /// The look being built (`cover_key`).
-    key: String,
+    /// The look being built ([`look_print`]; the rest of a cover's look is fixed for
+    /// the round).
+    print: u64,
     phase: LookPhase,
 }
 
@@ -784,7 +785,7 @@ enum FragmentLook {
     Owned(ModelId, Aabb),
     /// A shared structure debris model ([`shared_debris_key`]), which every fragment
     /// of its look shares while any shows it.
-    Shared(Aabb, String),
+    Shared(Aabb, SharedDebrisKey),
 }
 
 /// A structure debris look shared by every fragment that looks the same
@@ -810,13 +811,23 @@ const IDLE_SHARED_DEBRIS: usize = 12;
 /// ahead, a look a frame, before anything breaks. A cottage's and a timber wall's are
 /// their own. Building a collapse's pieces on the frame it fell cost a weak device tens
 /// of milliseconds.
-fn shared_debris_key(shape: &CoverShape, parts: &PartSet) -> Option<String> {
-    matches!(shape.kind, CoverKind::Cargo | CoverKind::Tower).then(|| {
-        format!(
-            "{:?}/{}/{}/{}/{:x}/{:x?}",
-            shape.kind, shape.w, shape.d, shape.h, shape.color, parts.0
-        )
+fn shared_debris_key(shape: &CoverShape, parts: &PartSet) -> Option<SharedDebrisKey> {
+    matches!(shape.kind, CoverKind::Cargo | CoverKind::Tower).then(|| SharedDebrisKey {
+        kind: shape.kind,
+        size: [shape.w, shape.d, shape.h].map(f64::to_bits),
+        color: shape.color,
+        parts: *parts,
     })
+}
+
+/// [`shared_debris_key`]: the structure's kind, size (`w`, `d`, `h` as bits) and paint,
+/// and the parts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct SharedDebrisKey {
+    kind: CoverKind,
+    size: [u64; 3],
+    color: u32,
+    parts: PartSet,
 }
 
 struct FragmentView {
@@ -1046,10 +1057,10 @@ pub struct Presentation {
     /// fallen bodies.
     layouts: CottageLayouts,
     /// Structure debris looks shared by every fragment that looks the same.
-    shared_debris: HashMap<String, SharedDebris>,
+    shared_debris: HashMap<SharedDebrisKey, SharedDebris>,
     /// Shared looks no fragment showed any more, oldest first (one may have come back
     /// into use since).
-    idle_debris: VecDeque<String>,
+    idle_debris: VecDeque<SharedDebrisKey>,
     /// Debris looks this round's crates can break into, still to build; one is built a
     /// frame, so a crate breaking builds none.
     debris_warmups: Vec<(CoverShape, PartSet)>,
@@ -1420,7 +1431,9 @@ impl Presentation {
                 }
             }
             if shown {
-                self.chimneys = model_catalog::standing_chimneys(&state.covers);
+                self.chimneys.clear();
+                self.chimneys
+                    .extend(model_catalog::standing_chimneys(&state.covers));
             }
         }
         if self.theme != Some(theme) {
@@ -1758,7 +1771,7 @@ impl Presentation {
         if let Some((shape, parts)) = self.debris_warmups.pop()
             && let Some(key) = shared_debris_key(&shape, &parts)
         {
-            self.shared_structure_debris(&shape, &parts, &key).ahead = true;
+            self.shared_structure_debris(&shape, &parts, key).ahead = true;
         }
     }
 
@@ -1768,10 +1781,10 @@ impl Presentation {
         &mut self,
         shape: &CoverShape,
         parts: &PartSet,
-        key: &str,
+        key: SharedDebrisKey,
     ) -> &mut SharedDebris {
         let renderer = &mut self.renderer;
-        self.shared_debris.entry(key.to_owned()).or_insert_with(|| {
+        self.shared_debris.entry(key).or_insert_with(|| {
             let node = structure_debris(shape, parts);
             let look = BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
@@ -1788,7 +1801,7 @@ impl Presentation {
     /// A fragment showing shared look `key` left: once no fragment shows it, it waits
     /// among the idle looks, and the oldest idle ones beyond [`IDLE_SHARED_DEBRIS`]
     /// release their models.
-    fn release_shared_debris(&mut self, key: String) {
+    fn release_shared_debris(&mut self, key: SharedDebrisKey) {
         let Some(shared) = self.shared_debris.get_mut(&key) else {
             return;
         };
@@ -2461,11 +2474,12 @@ impl Presentation {
     /// Stop the smoke of a cottage whose chimney has toppled or fallen, and start it
     /// again when the cottage stands again.
     fn update_chimney_smoke(&mut self, state: &RenderState) {
-        let chimneys = model_catalog::standing_chimneys(&state.covers);
-        if chimneys == self.chimneys {
+        if model_catalog::standing_chimneys(&state.covers).eq(self.chimneys.iter().copied()) {
             return;
         }
-        self.chimneys = chimneys;
+        self.chimneys.clear();
+        self.chimneys
+            .extend(model_catalog::standing_chimneys(&state.covers));
         let Some(theme) = self.theme else {
             return;
         };
@@ -2485,7 +2499,7 @@ impl Presentation {
     /// step this frame has taken): the time bounds the frame rather than when its last
     /// step starts.
     fn build_cover_look(&mut self, cover: &RenderCover, start: f64, longest: &mut f64) {
-        let key = cover_key(cover);
+        let print = look_print(cover);
         let found = self
             .cover_looks
             .iter()
@@ -2496,12 +2510,12 @@ impl Presentation {
             _ => None,
         });
         let index = match found {
-            Some(index) if self.cover_looks[index].key == key => index,
+            Some(index) if self.cover_looks[index].print == print => index,
             found => {
                 let phase = LookPhase::Unbuilt;
                 let look = CoverLook {
                     cover: cover.id,
-                    key,
+                    print,
                     phase,
                 };
                 match found {
@@ -3370,7 +3384,7 @@ impl Presentation {
                 parts,
             };
             if let Some(key) = shared_debris_key(&source.shape, &parts) {
-                let shared = self.shared_structure_debris(&source.shape, &parts, &key);
+                let shared = self.shared_structure_debris(&source.shape, &parts, key);
                 shared.users += 1;
                 let (model, bounds) = (shared.look.model, shared.look.bounds);
                 self.piles

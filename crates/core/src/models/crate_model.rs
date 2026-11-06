@@ -205,7 +205,6 @@ fn spike(length: f64, width: f64, thickness: f64) -> Mesh {
 fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
     let half = board.length / 2.0;
     let mut removed: Vec<(f64, f64)> = damage.gaps.clone();
-    let cracks = damage.cracks.clone();
     removed.sort_by(|a, b| a.0.total_cmp(&b.0));
     // Keep what the removed spans leave; scraps too short to hold a nail fall out.
     let mut kept = Vec::new();
@@ -265,7 +264,9 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
         // A broken end splits along the grain: one strip of the board reaches past
         // the rest, so the break is stepped rather than sawn.
         let mut ends = [a, b];
-        let mut strips = Vec::new();
+        // One strip at each broken end at most.
+        let mut strips = [(0.0, 0.0, 0.0, 0.0); 2];
+        let mut stripped = 0;
         for (end, sign) in [(0usize, 1.0), (1, -1.0)] {
             if !broken[end] {
                 continue;
@@ -275,8 +276,10 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
             let edge = if rng.next() < 0.5 { -1.0 } else { 1.0 };
             let tip = ends[end];
             ends[end] = tip + sign * step;
-            strips.push((tip, ends[end], share, edge));
+            strips[stripped] = (tip, ends[end], share, edge);
+            stripped += 1;
         }
+        let strips = &strips[..stripped];
         let length = ends[1] - ends[0];
         let whole = damage.skin && strips.is_empty() && transform.is_none();
         let member = if whole {
@@ -393,7 +396,7 @@ fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
                 }
             }
         }
-        for &(t, reach, seed) in &cracks {
+        for &(t, reach, seed) in &damage.cracks {
             if t > ends[0] + 0.05 && t < ends[1] - 0.05 {
                 let reach = reach.min((t - ends[0]).min(ends[1] - t));
                 let s = random(seed, 3).range(-0.25, 0.25) * board.width;
@@ -517,8 +520,10 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
     let _snapped = rng.next();
     let tone = |rng: &mut Random| board_tone(c.color, rng);
 
-    // Skids under the crate.
-    let skids: &[f64] = if c.w >= WIDE_CRATE {
+    // Skids under the crate. A gone part's nodes are not built at all.
+    let skids: &[f64] = if !standing(CRATE_BASE_PART) {
+        &[]
+    } else if c.w >= WIDE_CRATE {
         &[-0.36, 0.0, 0.36]
     } else {
         &[-0.34, 0.34]
@@ -535,38 +540,41 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
     }
     // The floor; through a gone wall the walls' and lid's own inner faces show, shaded by
     // the lid.
-    let mut floor = timber_member(
-        DVec3::new(
-            c.w - 2.0 * CRATE_PLANK,
-            FLOOR_THICKNESS,
-            c.d - 2.0 * CRATE_PLANK,
-        ),
-        hash(seed, 450),
-        scale_hex_color(c.color, 0.7),
-    );
-    floor.position = DVec3::new(0.0, CRATE_BASE + FLOOR_THICKNESS / 2.0, 0.0);
-    add(group, CRATE_BASE_PART, floor);
-    // A liner turned inside out just within the walls: only its far side shows, so seams
-    // and a gone wall look into the crate's dark hold, not out of the other side.
-    let mut liner = box_geometry(
-        c.w - 2.0 * CRATE_PLANK - 0.006,
-        top - CRATE_BASE - FLOOR_THICKNESS,
-        c.d - 2.0 * CRATE_PLANK - 0.006,
-    );
-    if let Some(indices) = &mut liner.indices {
-        for triangle in indices.chunks_mut(3) {
-            triangle.swap(1, 2);
-        }
+    if standing(CRATE_BASE_PART) {
+        let mut floor = timber_member(
+            DVec3::new(
+                c.w - 2.0 * CRATE_PLANK,
+                FLOOR_THICKNESS,
+                c.d - 2.0 * CRATE_PLANK,
+            ),
+            hash(seed, 450),
+            scale_hex_color(c.color, 0.7),
+        );
+        floor.position = DVec3::new(0.0, CRATE_BASE + FLOOR_THICKNESS / 2.0, 0.0);
+        add(group, CRATE_BASE_PART, floor);
     }
-    for normal in &mut liner.normals {
-        *normal = normal.map(|n| -n);
-    }
-    let middle = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
     // An opened crate has no liner: its boards are drawn whole, their backs lit in the
     // daylight let in, so a hole shows the far wall's boards and battens from inside
     // and two holes in line show the day through.
     let opened = !broken.is_empty();
     if !opened {
+        // A liner turned inside out just within the walls: only its far side shows, so
+        // seams and a gone wall look into the crate's dark hold, not out of the other
+        // side.
+        let mut liner = box_geometry(
+            c.w - 2.0 * CRATE_PLANK - 0.006,
+            top - CRATE_BASE - FLOOR_THICKNESS,
+            c.d - 2.0 * CRATE_PLANK - 0.006,
+        );
+        if let Some(indices) = &mut liner.indices {
+            for triangle in indices.chunks_mut(3) {
+                triangle.swap(1, 2);
+            }
+        }
+        for normal in &mut liner.normals {
+            *normal = normal.map(|n| -n);
+        }
+        let middle = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
         let mut hold = scrap(liner, HOLD_COLOR);
         hold.position = middle;
         add(group, CRATE_BASE_PART, hold);
@@ -709,19 +717,25 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
     for side in [-1.0, 1.0] {
         let x = side * strap_x;
         for wall in [-1.0, 1.0] {
-            let mut down = band(DVec3::new(STRAP_WIDTH, rise, STRAP_THICKNESS));
-            down.position = DVec3::new(x, CRATE_BASE + rise / 2.0, wall * wrap);
             // The front wall faces +z, the back -z.
             let part = if wall > 0.0 { CRATE_WALLS[0] } else { CRATE_WALLS[1] };
-            add(group, part, down);
+            if standing(part) {
+                let mut down = band(DVec3::new(STRAP_WIDTH, rise, STRAP_THICKNESS));
+                down.position = DVec3::new(x, CRATE_BASE + rise / 2.0, wall * wrap);
+                add(group, part, down);
+            }
         }
-        let span = 2.0 * wrap + STRAP_THICKNESS;
-        let mut across = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, span));
-        across.position = DVec3::new(x, over, 0.0);
-        add(group, CRATE_LID_PART, across);
-        let mut buckle = band(DVec3::new(STRAP_WIDTH + 0.025, 0.014, 0.1));
-        buckle.position = DVec3::new(x, over + STRAP_THICKNESS, rng.range(-0.2, 0.2) * c.d);
-        add(group, CRATE_LID_PART, buckle);
+        // Drawn whether the lid stands or not, so later draws keep their values.
+        let buckle_at = rng.range(-0.2, 0.2) * c.d;
+        if standing(CRATE_LID_PART) {
+            let span = 2.0 * wrap + STRAP_THICKNESS;
+            let mut across = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, span));
+            across.position = DVec3::new(x, over, 0.0);
+            add(group, CRATE_LID_PART, across);
+            let mut buckle = band(DVec3::new(STRAP_WIDTH + 0.025, 0.014, 0.1));
+            buckle.position = DVec3::new(x, over + STRAP_THICKNESS, buckle_at);
+            add(group, CRATE_LID_PART, buckle);
+        }
     }
 }
 

@@ -388,12 +388,11 @@ fn chimney_stands(cover: &RenderCover) -> bool {
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.
-pub fn standing_chimneys(covers: &[RenderCover]) -> Vec<(u32, bool)> {
+pub fn standing_chimneys(covers: &[RenderCover]) -> impl Iterator<Item = (u32, bool)> + '_ {
     covers
         .iter()
         .filter(|cover| cover.kind == CoverKind::House)
         .map(|cover| (cover.id, chimney_stands(cover)))
-        .collect()
 }
 
 /// The wisp instances of a smoke node: identity placements with each wisp's

@@ -142,6 +142,12 @@ pub fn offer_light(lights: &mut [Flash], light: Flash) {
     }
 }
 
+/// Whether [`offer_light`] would take a light of `intensity`: a light's costlier
+/// parts (its wall blocker) need only be found for one it keeps.
+pub fn light_admitted(lights: &[Flash], intensity: f32) -> bool {
+    intensity > LIGHT_CUTOFF && lights.iter().any(|slot| slot.intensity < intensity)
+}
+
 /// Live effect counts, for tests and "Stats for nerds".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectStats {

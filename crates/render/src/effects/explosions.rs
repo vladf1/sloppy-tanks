@@ -1480,7 +1480,7 @@ impl ExplosionEffects {
                 Kind::Hit(_) => (HIT_LIGHT * (-t * HIT_LIGHT_DECAY).exp(), blast.y + 0.6),
                 _ => continue,
             };
-            if intensity as f32 <= super::LIGHT_CUTOFF {
+            if !super::light_admitted(lights, intensity as f32) {
                 continue;
             }
             let position = Vec3::new(blast.x as f32, height as f32, blast.z as f32);
