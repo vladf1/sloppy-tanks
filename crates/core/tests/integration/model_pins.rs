@@ -54,7 +54,7 @@ fn village_scenery_is_pinned() {
         platform_pin(&[
             (MAC_DEBUG, 0x0334_8941_bbef_7cab),
             (MAC_RELEASE, 0x2b03_15a7_54c9_8b60),
-            (LINUX_DEBUG, 0xd685_6b69_7366_4198),
+            (LINUX_DEBUG, 0x7d7d_5148_c5d1_dffa),
         ]),
     );
 }
@@ -98,7 +98,7 @@ fn village_covers_are_pinned() {
         platform_pin(&[
             (MAC_DEBUG, 0xacd6_d30a_7238_94b4),
             (MAC_RELEASE, 0x9b4a_ece5_ec80_379f),
-            (LINUX_DEBUG, 0x3e2f_44b6_ebd8_1d83),
+            (LINUX_DEBUG, 0xa26e_34ee_de92_136b),
         ]),
     );
 }
