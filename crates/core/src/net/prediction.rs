@@ -9,7 +9,7 @@
 //! absent; the client corrects for it when the next snapshot arrives.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use rapier3d::prelude::*;
 use serde_json::{Value, json};
@@ -358,9 +358,6 @@ struct CoverBody {
     struck: Struck,
     /// A structure's layout, and its parts that took damage.
     layout: Option<Arc<Structure>>,
-    /// Each part's standing shape and its pose on the body, built when a shell is first
-    /// forecast through the intact structure; they depend on the layout alone.
-    part_shapes: OnceLock<Box<[(Pose, SharedShape)]>>,
     cracked: PartSet,
     /// The scene sync that last found its record.
     seen: u64,
@@ -529,10 +526,10 @@ impl TankPredictor {
             };
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
             if current != Some(form) && !self.break_parts(cover.id, form) {
-                let (mut layout, mut part_shapes) = (None, OnceLock::new());
+                let mut layout = None;
                 if let Some(old) = self.covers.remove(&cover.id) {
                     self.world.remove_body(old.body);
-                    (layout, part_shapes) = (old.layout, old.part_shapes);
+                    layout = old.layout;
                 }
                 // A structure's layout is built once; a break only changes its parts.
                 let layout = layout.or_else(|| {
@@ -554,7 +551,6 @@ impl TankPredictor {
                             height: cover.h,
                         },
                         layout,
-                        part_shapes,
                         cracked: PartSet::EMPTY,
                         seen: sync,
                     },
@@ -1072,11 +1068,12 @@ impl CoverCast for TankPredictor {
             };
             let gone = |index: usize| breached.clone().any(|part| part == (whole, index));
             let body = *self.world.bodies[cover.body].position();
-            let shapes = cover.part_shapes.get_or_init(|| part_shapes(layout));
-            for (index, (part, shape)) in shapes.iter().enumerate().filter(|&(index, _)| !gone(index)) {
-                let pose = body * *part;
+            for index in (0..layout.parts.len()).filter(|&index| !gone(index)) {
+                // The layout keeps each part's shape once built (`ShapeCache`).
+                let part = part_collider(layout, index, -layout.debris.seam);
+                let pose = body * part.position;
                 let reach = nearest.as_ref().map_or(distance as f32, |(_, hit, _)| hit.time_of_impact);
-                if let Some(hit) = shape.cast_ray_and_get_normal(&pose, &ray, reach, true) {
+                if let Some(hit) = part.shape.cast_ray_and_get_normal(&pose, &ray, reach, true) {
                     nearest = Some((collider, hit, Some(index)));
                 }
             }
@@ -1137,15 +1134,6 @@ impl TankPredictor {
     }
 }
 
-/// Every part's standing shape of a structure, and its pose on the structure's body.
-fn part_shapes(layout: &Structure) -> Box<[(Pose, SharedShape)]> {
-    (0..layout.parts.len())
-        .map(|index| {
-            let collider = part_collider(layout, index, -layout.debris.seam);
-            (collider.position, collider.shape)
-        })
-        .collect()
-}
 
 /// The collider a key names ([`collider_key`]).
 fn collider_of_key(key: u64) -> Option<ColliderHandle> {
