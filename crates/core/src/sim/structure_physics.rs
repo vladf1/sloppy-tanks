@@ -17,7 +17,7 @@
 //!
 //! No random draw: every variation comes from the structure's parts and where it was hit.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use glam::{DVec2, DVec3};
 use rapier3d::prelude::{
@@ -25,6 +25,7 @@ use rapier3d::prelude::{
     Rotation, SharedShape, Vector,
 };
 
+use super::combat_rules::{BlastFalloff, StructureBlast};
 use super::data::{STEP, group};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{blast_loose_debris, debris_material, track_debris_contacts};
@@ -50,7 +51,7 @@ pub const BLAST_HEIGHT: f64 = 1.0;
 const SHIELDED: f64 = 0.35;
 /// A blast shatters the parts within this far (m) of it; parts farther off that it
 /// breaks come loose whole and fall, so splinters fly only where it went off.
-const BLAST_CORE: f64 = 0.5;
+pub const BLAST_CORE: f64 = 0.5;
 /// A falling body's colliders sit this far (m) inside its parts' faces, clear of the
 /// standing parts they were built against.
 const SHRINK: f64 = 0.03;
@@ -195,9 +196,15 @@ pub fn rest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHan
     rigid_body.lock_rotations(true, false);
     rigid_body.set_linear_damping(RESTED_DAMPING.0);
     rigid_body.set_angular_damping(RESTED_DAMPING.1);
-    let colliders: Vec<ColliderHandle> = rigid_body.colliders().to_vec();
-    for collider in colliders {
+    for &collider in world.bodies[body].colliders() {
         world.colliders[collider].set_friction(RESTED_FRICTION);
+    }
+}
+
+/// Set every collider of `body` to collide as `groups` (a group from [`group`]).
+fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle, groups: u32) {
+    for &collider in world.bodies[body].colliders() {
+        world.colliders[collider].set_collision_groups(interaction_groups(groups));
     }
 }
 
@@ -344,6 +351,72 @@ pub struct StructureDebris {
 /// A part's collider relative to its structure's ground centre (world axes), its shapes
 /// shrunk by `inset` metres, marked with the part's index.
 pub fn part_collider(layout: &Structure, index: usize, inset: f64) -> ColliderBuilder {
+    let (pose, shape) = layout.shapes.shape(layout, index, inset);
+    ColliderBuilder::new(shape).position(pose).user_data(index as u128)
+}
+
+/// A structure's parts' collider shapes, each built the first time a collider asks for it
+/// and shared by every collider made of it after: a part's shape (a hull's quickhull
+/// above all) never changes, so a falling body, each piece it lands in and a client's
+/// predicted copy all take theirs from here. One store for each inset the colliders use:
+/// a fallen part's [`SHRINK`] and a standing part's seam.
+#[derive(Default)]
+pub struct ShapeCache {
+    debris: OnceLock<PartShapes>,
+    standing: OnceLock<PartShapes>,
+}
+
+/// A slot for each part's and landing piece's shape and pose, filled when first asked.
+type PartShapes = Box<[OnceLock<(Pose, SharedShape)>]>;
+
+impl ShapeCache {
+    /// Part (or landing piece) `index`'s shape and pose at `inset`.
+    fn shape(&self, layout: &Structure, index: usize, inset: f64) -> (Pose, SharedShape) {
+        let store = if inset == SHRINK {
+            Some(&self.debris)
+        } else if inset == -layout.debris.seam {
+            Some(&self.standing)
+        } else {
+            None
+        };
+        let slot = store.and_then(|store| {
+            store
+                .get_or_init(|| {
+                    (0..layout.parts.len() + layout.pieces.len())
+                        .map(|_| OnceLock::new())
+                        .collect()
+                })
+                .get(index)
+        });
+        match slot {
+            Some(slot) => slot.get_or_init(|| part_shape(layout, index, inset)).clone(),
+            None => part_shape(layout, index, inset),
+        }
+    }
+}
+
+/// A copy of a structure starts with no shapes: it may be changed.
+impl Clone for ShapeCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+/// The shapes follow from the parts, so they never tell two structures apart.
+impl PartialEq for ShapeCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for ShapeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ShapeCache")
+    }
+}
+
+/// [`part_collider`]'s shape and its pose, built.
+fn part_shape(layout: &Structure, index: usize, inset: f64) -> (Pose, SharedShape) {
     let part = layout.part(index);
     let turn = Rotation::from_rotation_y(layout.yaw as f32);
     let mut shapes: Vec<(Pose, SharedShape)> = part
@@ -397,31 +470,29 @@ pub fn part_collider(layout: &Structure, index: usize, inset: f64) -> ColliderBu
             }
         })
         .collect();
-    let builder = if shapes.len() == 1 {
-        let (pose, shape) = shapes.remove(0);
-        ColliderBuilder::new(shape).position(pose)
+    if shapes.len() == 1 {
+        shapes.remove(0)
     } else {
-        ColliderBuilder::compound(shapes)
-    };
-    builder.user_data(index as u128)
+        (Pose::IDENTITY, SharedShape::compound(shapes))
+    }
 }
 
 /// The colliders of a body of a structure's loose `parts`, relative to its ground centre
 /// where they fell from: the host's, and a client's for its predicted world. Timber this
 /// size lands dead: no bounce lifts a piece off the ground.
 pub fn debris_colliders(layout: &Structure, parts: &PartSet) -> Vec<ColliderBuilder> {
-    parts
-        .iter()
-        .map(|index| {
-            let part = layout.part(index);
-            let surface = debris_material(part.material.surface);
-            part_collider(layout, index, SHRINK)
-                .collision_groups(interaction_groups(group::STRUCTURE_DEBRIS))
-                .mass(part.mass.max(0.01) as f32)
-                .friction(surface.friction as f32)
-                .restitution(0.0)
-        })
-        .collect()
+    parts.iter().map(|index| debris_collider(layout, index)).collect()
+}
+
+/// [`debris_colliders`]' collider for part `index`.
+fn debris_collider(layout: &Structure, index: usize) -> ColliderBuilder {
+    let part = layout.part(index);
+    let surface = debris_material(part.material.surface);
+    part_collider(layout, index, SHRINK)
+        .collision_groups(interaction_groups(group::STRUCTURE_DEBRIS))
+        .mass(part.mass.max(0.01) as f32)
+        .friction(surface.friction as f32)
+        .restitution(0.0)
 }
 
 /// The colliders of a structure's standing parts (those not in `gone`), in part order,
@@ -602,7 +673,8 @@ impl Simulation {
         if !force && state.damage[part] < strength {
             return false;
         }
-        // A board tears its neighbours of the same stuff near the hit along with it.
+        // A board tears its neighbours of the same stuff, nailed to the same frame, near
+        // the hit along with it.
         let layout = state.layout.clone();
         let material = layout.parts[part].material;
         let (x, z) = (self.covers[cover].x, self.covers[cover].z);
@@ -610,11 +682,16 @@ impl Simulation {
             return false;
         };
         let local = layout.to_local(DVec3::new(point.x - x, point.y, point.z - z));
+        let fastened = |index: usize| {
+            let by = |index: usize| layout.supports[index].iter().map(|support| support.by);
+            by(index).eq(by(part))
+        };
         let torn = PartSet::from_indices((0..layout.parts.len()).filter(|&index| {
             index == part
                 || (material.tear > 0.0
                     && state.standing(index)
                     && layout.parts[index].material == material
+                    && fastened(index)
                     && layout.parts[index].shape_distance(local) <= material.tear)
         }));
         let from = Point3::new(point.x - along.x, point.y, point.z - along.z);
@@ -642,6 +719,26 @@ impl Simulation {
         damage: f64,
         by: Option<(u32, Team)>,
     ) {
+        let blast = StructureBlast {
+            pressure: damage,
+            falloff: BlastFalloff::Even,
+            reach: radius,
+            shatter: BLAST_CORE,
+            throw: loose_throw(damage),
+        };
+        self.structure_blast_with(cover, point, blast, by);
+    }
+
+    /// A blast at `point` on structure `cover`'s standing parts, as `blast` says: its
+    /// pressure falling off to nothing at its reach, shielded by standing parts between.
+    pub fn structure_blast_with(
+        &mut self,
+        cover: usize,
+        point: Point3,
+        blast: StructureBlast,
+        by: Option<(u32, Team)>,
+    ) {
+        let (radius, damage) = (blast.reach, blast.pressure);
         let c = &self.covers[cover];
         let Some(state) = &c.structure else {
             return;
@@ -677,7 +774,7 @@ impl Simulation {
             if gap >= radius {
                 continue;
             }
-            let mut share = 1.0 - gap / radius;
+            let mut share = blast.falloff.share(gap, radius);
             if gap > 0.05 && self.shielded(cover, index, point, local, gap) {
                 share *= SHIELDED;
             }
@@ -688,7 +785,7 @@ impl Simulation {
         for (index, amount, gap) in hits {
             state.take(index, amount);
             if state.damage[index] >= layout.parts[index].strength {
-                if gap < BLAST_CORE {
+                if gap < blast.shatter {
                     broken.insert(index);
                 } else {
                     loose.insert(index);
@@ -849,30 +946,48 @@ impl Simulation {
         if broken.is_empty() && loose.is_empty() {
             return;
         }
+        // A group whose weight lies on the line of what it stands on tips toward what
+        // broke, or away from the blast that broke all round it.
+        let toward = |broken: &PartSet| {
+            let parts = broken.union(&loose);
+            let toward = parts.iter().map(|index| layout.parts[index].middle()).sum::<DVec3>()
+                / parts.len() as f64;
+            match from {
+                Some(from) if DVec2::new(toward.x, toward.z).length() < TOWARD_CENTRE => {
+                    layout.to_local(DVec3::new(x - from.x, 0.0, z - from.z))
+                }
+                _ => toward,
+            }
+        };
         // Glass the break leaves without its seat does not drop out whole: it goes, and
-        // its sash breaks up as it comes out.
+        // its sash breaks up as it comes out. When none does, what gives way is what
+        // comes down below: the same parts are out.
+        let mut given_way = None;
         if layout
             .parts
             .iter()
             .any(|part| part.material.breaking == Breaking::Glass)
         {
             let after = state.gone.union(&broken).union(&loose);
-            for index in layout.unsupported(&after).iter() {
-                if layout.parts[index].material.breaking == Breaking::Glass {
-                    broken.insert(index);
-                }
+            let way = layout.giving_way(&after, toward(&broken));
+            let glass = PartSet::from_indices(way.falling.iter().filter(|&index| {
+                layout.parts[index].material.breaking == Breaking::Glass
+            }));
+            if glass.is_empty() {
+                given_way = Some(way);
+            } else {
+                broken = broken.union(&glass);
             }
         }
         // Splinters from the heaviest broken parts.
-        let mut thrown: Vec<usize> = broken.iter().collect();
-        thrown.sort_by(|&a, &b| {
+        let thrown = first_few(broken.iter(), |&a, &b| {
             layout.parts[b]
                 .mass
                 .total_cmp(&layout.parts[a].mass)
                 .then(a.cmp(&b))
         });
         let c = &self.covers[cover];
-        for &index in thrown.iter().take(SHATTER_EVENTS) {
+        for &index in thrown.iter().flatten() {
             let part = &layout.parts[index];
             let center = layout.to_world(part.middle());
             let mut event = SimEvent::at(SimEventType::Shatter, x + center.x, z + center.z);
@@ -899,22 +1014,13 @@ impl Simulation {
             self.events.push(event);
         }
         self.remove_parts(cover, &broken);
-        // A group whose weight lies on the line of what it stands on tips toward what
-        // broke, or away from the blast that broke all round it.
-        let parts = broken.union(&loose);
-        let mut toward =
-            parts.iter().map(|index| layout.parts[index].middle()).sum::<DVec3>() / parts.len() as f64;
-        if let Some(from) = from
-            && DVec2::new(toward.x, toward.z).length() < TOWARD_CENTRE
-        {
-            toward = layout.to_local(DVec3::new(x - from.x, 0.0, z - from.z));
-        }
         let gone = self.covers[cover]
             .structure
             .as_ref()
             .map_or(PartSet::EMPTY, |state| state.gone);
+        let way = given_way.unwrap_or_else(|| layout.giving_way(&gone.union(&loose), toward(&broken)));
         let mut left = broken;
-        for fall in layout.falls(&gone, &loose, toward) {
+        for fall in layout.falls_after(&gone, &loose, way) {
             self.remove_parts(cover, &fall.parts);
             left = left.union(&fall.parts);
             let blast = fall
@@ -1070,9 +1176,9 @@ impl Simulation {
     /// A falling body's colliders, one for each of `parts`, each reporting what it lands
     /// on hard ([`crush_structure_parts`]).
     fn insert_debris(&mut self, layout: &Structure, parts: &PartSet, body: RigidBodyHandle) -> Vec<ColliderHandle> {
-        let colliders: Vec<ColliderHandle> = debris_colliders(layout, parts)
-            .into_iter()
-            .map(|collider| self.world.insert_collider(collider, Some(body)))
+        let colliders: Vec<ColliderHandle> = parts
+            .iter()
+            .map(|index| self.world.insert_collider(debris_collider(layout, index), Some(body)))
             .collect();
         let threshold = (f64::from(self.world.bodies[body].mass()) * CRUSH_FORCE_PER_MASS) as f32;
         for &handle in &colliders {
@@ -1260,10 +1366,8 @@ impl Simulation {
         let shattered = if room { PartSet::from_indices([struck]) } else { parts };
         // Each shattered part's splinters from where it lies now.
         let body = &self.world.bodies[fragment.body];
-        let mut thrown: Vec<(f64, usize, DVec3)> = body
-            .colliders()
-            .iter()
-            .filter_map(|&handle| {
+        let thrown = first_few(
+            body.colliders().iter().filter_map(|&handle| {
                 let collider = &self.world.colliders[handle];
                 let part = collider.user_data as usize;
                 shattered.contains(part).then(|| {
@@ -1273,11 +1377,11 @@ impl Simulation {
                     let size = (piece.max - piece.min).max_element();
                     (size, part, DVec3::new(middle.x as f64, middle.y as f64, middle.z as f64))
                 })
-            })
-            .collect();
-        thrown.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
+            }),
+            |a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)),
+        );
         let cover = &self.covers[debris.cover];
-        for &(size, part, middle) in thrown.iter().take(SHATTER_EVENTS) {
+        for &(size, part, middle) in thrown.iter().flatten() {
             let mut event = SimEvent::at(SimEventType::Shatter, middle.x, middle.z);
             event.height = Some(middle.y);
             event.size = Some(size);
@@ -1294,6 +1398,26 @@ impl Simulation {
         }
         self.split_debris(index, &layout, bodies, Some((point, strength)));
     }
+}
+
+/// The first [`SHATTER_EVENTS`] of `items` in `order`, in that order (equal ones as they
+/// came), without sorting them all.
+fn first_few<T: Copy>(
+    items: impl IntoIterator<Item = T>,
+    order: impl Fn(&T, &T) -> std::cmp::Ordering,
+) -> [Option<T>; SHATTER_EVENTS] {
+    let mut few = [None; SHATTER_EVENTS];
+    for item in items {
+        let Some(at) = few
+            .iter()
+            .position(|kept| kept.as_ref().is_none_or(|kept| order(&item, kept).is_lt()))
+        else {
+            continue;
+        };
+        few[at..].rotate_right(1);
+        few[at] = Some(item);
+    }
+    few
 }
 
 /// The velocity (m/s) a piece whose middle is at `at` is thrown with by a hit or burst at
@@ -1319,14 +1443,27 @@ fn throw_velocity(at: Point3, from: Point3, strength: f64, parts: usize) -> Vect
 /// up and out from it, out of the rest damping, and land over the next moments. Each body
 /// is measured by its nearest part, not its middle. No random draw.
 pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius: f64, damage: f64) {
-    if radius <= 0.0 || damage <= 0.0 {
+    if damage > 0.0 {
+        throw_structure_debris(simulation, point, radius, loose_throw(damage));
+    }
+}
+
+/// How hard a blast of `damage` throws a structure's fallen pieces: a standard shell's
+/// burst throws them at [`LOOSE_THROW_OUT`].
+pub fn loose_throw(damage: f64) -> f64 {
+    (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST)
+}
+
+/// [`blast_structure_debris`] throwing the pieces `strength` times as hard as a standard
+/// shell's burst.
+pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius: f64, strength: f64) {
+    if radius <= 0.0 || strength <= 0.0 {
         return;
     }
     // Loose pieces lie in the open: a burst throws them from further than it breaks
     // what stands.
     let radius = radius * LOOSE_REACH;
     let core = (radius * LOOSE_CORE_SHARE).clamp(BLAST_CORE, LOOSE_CORE_MAX);
-    let strength = (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST);
     let at = vector(point.x, point.y, point.z);
     // The bodies there before the blast: the pieces it breaks off are thrown already.
     // A section still coming down as a structure falls as it was: a blast breaks or throws
@@ -1415,11 +1552,7 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
         };
         let handle = fragment.body;
         if debris.clear_at.is_some_and(|at| simulation.elapsed >= at) {
-            let colliders: Vec<ColliderHandle> = simulation.world.bodies[handle].colliders().to_vec();
-            for collider in colliders {
-                simulation.world.colliders[collider]
-                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS));
-            }
+            set_body_groups(&mut simulation.world, handle, group::STRUCTURE_DEBRIS);
             if let Some(debris) = &mut simulation.fragments[index].structure {
                 debris.clear_at = None;
             }
@@ -2071,11 +2204,7 @@ fn unwedge(simulation: &mut Simulation) {
         };
         if elapsed - since > WEDGE_GIVE_UP {
             // Still up there: it comes down through what holds it.
-            let colliders: Vec<ColliderHandle> = simulation.world.bodies[handle].colliders().to_vec();
-            for collider in colliders {
-                simulation.world.colliders[collider]
-                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS_THROUGH));
-            }
+            set_body_groups(&mut simulation.world, handle, group::STRUCTURE_DEBRIS_THROUGH);
         }
         let body = &mut simulation.world.bodies[handle];
         body.set_linear_damping(FALLING_DAMPING.0);
@@ -2096,8 +2225,29 @@ fn unwedge(simulation: &mut Simulation) {
 /// with no more than its momentum (with a bounce), shared among the parts it lands on.
 /// Parts are taken in structure, then part order: no random draw.
 pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactForce]) {
-    // (standing part, falling body, impulse, the body's middle)
-    let mut blows: Vec<((usize, usize), RigidBodyHandle, f64, Point3)> = Vec::new();
+    let mut scratch = std::mem::take(&mut simulation.crush_scratch);
+    crush_with(simulation, contacts, &mut scratch);
+    simulation.crush_scratch = scratch;
+}
+
+/// [`crush_structure_parts`]' lists, kept from tick to tick: a collapse reports blows for
+/// many ticks running.
+#[derive(Clone, Debug, Default)]
+pub struct CrushScratch {
+    /// (standing part, falling body, impulse, the body's middle)
+    blows: Vec<((usize, usize), RigidBodyHandle, f64, Point3)>,
+    bodies: Vec<RigidBodyHandle>,
+    /// (standing part, its impulse, the middle of the first body that struck it)
+    struck: Vec<((usize, usize), f64, Point3)>,
+}
+
+fn crush_with(simulation: &mut Simulation, contacts: &[ContactForce], scratch: &mut CrushScratch) {
+    let CrushScratch {
+        blows,
+        bodies,
+        struck,
+    } = scratch;
+    blows.clear();
     for contact in contacts {
         for (falling, standing) in [
             (contact.collider1, contact.collider2),
@@ -2131,10 +2281,11 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
     if blows.is_empty() {
         return;
     }
-    let mut bodies: Vec<RigidBodyHandle> = blows.iter().map(|blow| blow.1).collect();
+    bodies.clear();
+    bodies.extend(blows.iter().map(|blow| blow.1));
     bodies.sort_by_key(|body| body.into_raw_parts());
     bodies.dedup();
-    for body in bodies {
+    for &body in bodies.iter() {
         // How fast the body came at each part it struck: last tick's velocity, turning
         // about its middle as it turns now (a strip pivoting on a stub's edge barely moves
         // there, however fast its top swings).
@@ -2172,15 +2323,15 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
         }
     }
     blows.retain(|blow| blow.2 > 0.0);
-    let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
-    for &(part, _, impulse, from) in &blows {
+    struck.clear();
+    for &(part, _, impulse, from) in blows.iter() {
         match struck.iter_mut().find(|(key, _, _)| *key == part) {
             Some((_, total, _)) => *total += impulse,
             None => struck.push((part, impulse, from)),
         }
     }
     struck.sort_by_key(|((cover, part), _, _)| (*cover, *part));
-    for ((cover, part), impulse, from) in struck {
+    for &((cover, part), impulse, from) in struck.iter() {
         let Some(center) = part_center(&simulation.covers[cover], part) else {
             continue;
         };

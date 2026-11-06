@@ -6,9 +6,9 @@ use rapier3d::prelude::{SharedShape, Vector};
 use super::ammunition::clear_ammo;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
-use super::combat_rules::{COMBAT, MINE};
+use super::combat_rules::{BlastFalloff, COMBAT, MINE, StructureBlast};
 use super::data::group;
-use super::debris_physics::blast_debris;
+use super::debris_physics::{blast_debris, blast_loose_debris};
 use super::difficulty::difficulty_tuning;
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
@@ -17,7 +17,10 @@ use super::physics::{from_rotation, from_vector, interaction_groups, vector};
 use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
-use super::structure_physics::{BLAST_HEIGHT, HE_BLAST_RADIUS, STRUCTURE_BLAST_REACH};
+use super::structure_physics::{
+    BLAST_CORE, BLAST_HEIGHT, HE_BLAST_RADIUS, STRUCTURE_BLAST_REACH, loose_throw,
+    throw_structure_debris,
+};
 use super::tank_destruction::tank_burnout;
 use super::tree_proportions::tree_proportions;
 use super::types::{
@@ -32,6 +35,21 @@ use super::wrecks::break_tank;
 pub struct TreeStump {
     pub shape: SharedShape,
     pub offset: Vector,
+}
+
+/// How a blast from outside (a drum, a rocket, a mine) meets a structure's standing parts:
+/// a drum's over its whole radius, the others' over [`STRUCTURE_BLAST_REACH`] of theirs.
+fn outside_structure_blast(cause: DamageCause, radius: f64, damage: f64) -> StructureBlast {
+    if cause == DamageCause::Drum {
+        return COMBAT.drum_structure_blast;
+    }
+    StructureBlast {
+        pressure: damage,
+        falloff: BlastFalloff::Even,
+        reach: radius * STRUCTURE_BLAST_REACH,
+        shatter: BLAST_CORE,
+        throw: loose_throw(damage),
+    }
 }
 
 pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
@@ -159,6 +177,15 @@ impl Simulation {
         let burnout = tank_burnout(self.seed, victim_id, life);
         if !burnout {
             blast_debris(self, position.planar(), 3.0, 60.0);
+            let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
+            for cover in 0..self.covers.len() {
+                self.structure_blast_with(
+                    cover,
+                    point,
+                    COMBAT.death_structure_blast,
+                    Some((owner, team)),
+                );
+            }
         }
         break_tank(self, tank_index, burnout);
         let mut death = SimEvent::at(SimEventType::Death, position.x, position.z);
@@ -302,7 +329,9 @@ impl Simulation {
         explosion.size = Some(radius);
         explosion.cover_kind = (cause == DamageCause::Drum).then_some(CoverKind::Drum);
         self.events.push(explosion);
-        blast_debris(self, position, radius, damage);
+        blast_loose_debris(self, position, radius, damage);
+        let throw = outside_structure_blast(cause, radius, damage).throw;
+        throw_structure_debris(self, Point3::new(position.x, BLAST_HEIGHT, position.z), radius, throw);
         // Blast-triggered mines retain the initiator of this chain, like drums.
         let (chained, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.mines)
             .into_iter()
@@ -347,13 +376,12 @@ impl Simulation {
         }
         // alive is cleared before recursion, so drums and chains are exactly-once and keep the
         // original owner.
+        let structure_blast = outside_structure_blast(cause, radius, damage);
+        let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
         let count = self.covers.len();
         for i in 0..count {
             if self.covers[i].structure.is_some() {
-                // A structure's parts in reach of the blast's lower share.
-                let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
-                let reach = radius * STRUCTURE_BLAST_REACH;
-                self.structure_blast_on(i, point, reach, damage, Some((owner, team)));
+                self.structure_blast_with(i, point, structure_blast, Some((owner, team)));
                 continue;
             }
             let cover = &mut self.covers[i];

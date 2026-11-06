@@ -1513,7 +1513,7 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
 }
 
 /// Every cottage design the village places, by where it stands.
-const VILLAGE_DESIGNS: [(f64, f64, f64, f64, f64); 14] = [
+pub(crate) const VILLAGE_DESIGNS: [(f64, f64, f64, f64, f64); 14] = [
     (-45.0, -39.0, 5.0, 6.0, 6.8),
     (-45.0, -13.0, 5.0, 6.0, 4.6),
     (-45.0, 13.0, 5.0, 6.0, 4.3),
@@ -1543,6 +1543,46 @@ fn cottage_alone((x, z, w, d, h): (f64, f64, f64, f64, f64)) -> (Simulation, usi
     (s, house)
 }
 
+/// The roof sheets down in `gone` that came down with what holds the roof still standing:
+/// a sheet may come down only once a corner is gone, or a wall's plates have lost what
+/// they stand on over three bays together (a top plate bridges two).
+pub(crate) fn sheets_down_off_a_hole(layout: &Structure, gone: &PartSet) -> Vec<usize> {
+    // Walls 0 and 1 run along x, 2 and 3 along z.
+    let sheets: Vec<usize> = gone
+        .iter()
+        .filter(|&part| layout.parts[part].house().kind == PartKind::Sheet)
+        .collect();
+    let corner = (0..4).any(|post| gone.contains(post));
+    let breach = (0..4).any(|wall| {
+        let along = |p: &glam::DVec3| if wall < 2 { p.x } else { p.z };
+        let mut plates: Vec<(f64, usize)> = (0..layout.parts.len())
+            .filter(|&index| {
+                let part = &layout.parts[index];
+                part.house().wall == Some(wall)
+                    && part.house().kind == PartKind::Plate
+                    && !part.house().upper_storey
+            })
+            .map(|index| (along(&layout.parts[index].middle()), index))
+            .collect();
+        plates.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let bare = |plate: usize| {
+            let over = &layout.parts[plate];
+            (0..layout.parts.len()).all(|below| {
+                let part = &layout.parts[below];
+                part.house().wall != over.house().wall
+                    || (part.max.y - over.min.y).abs() > 0.05
+                    || along(&part.max) <= along(&over.min) + 0.05
+                    || along(&part.min) >= along(&over.max) - 0.05
+                    || gone.contains(below)
+            })
+        };
+        plates
+            .windows(3)
+            .any(|run| run.iter().all(|&(_, plate)| bare(plate)))
+    });
+    if corner || breach { Vec::new() } else { sheets }
+}
+
 #[test]
 fn sixteen_shells_at_one_spot_of_any_wall_leave_the_roof_on() {
     for design in VILLAGE_DESIGNS {
@@ -1565,42 +1605,9 @@ fn sixteen_shells_at_one_spot_of_any_wall_leave_the_roof_on() {
                 run(&mut s, 0.3);
             }
             let gone = gone(&s, house);
-            let sheets: Vec<usize> = gone
-                .iter()
-                .filter(|&part| layout.parts[part].house().kind == PartKind::Sheet)
-                .collect();
-            // A roof sheet may come down only once a corner is gone, or an eave wall's
-            // plates have lost what they stand on over three bays together (a top
-            // plate bridges two).
-            let corner = (0..4).any(|post| gone.contains(post));
-            let breach = [2, 3].into_iter().any(|wall| {
-                let mut plates: Vec<(f64, usize)> = (0..layout.parts.len())
-                    .filter(|&index| {
-                        let part = &layout.parts[index];
-                        part.house().wall == Some(wall)
-                            && part.house().kind == PartKind::Plate
-                            && !part.house().upper_storey
-                    })
-                    .map(|index| (layout.parts[index].middle().z, index))
-                    .collect();
-                plates.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let bare = |plate: usize| {
-                    let over = &layout.parts[plate];
-                    (0..layout.parts.len()).all(|below| {
-                        let part = &layout.parts[below];
-                        part.house().wall != over.house().wall
-                            || (part.max.y - over.min.y).abs() > 0.05
-                            || part.max.z <= over.min.z + 0.05
-                            || part.min.z >= over.max.z - 0.05
-                            || gone.contains(below)
-                    })
-                };
-                plates
-                    .windows(3)
-                    .any(|run| run.iter().all(|&(_, plate)| bare(plate)))
-            });
+            let sheets = sheets_down_off_a_hole(&layout, &gone);
             assert!(
-                sheets.is_empty() || corner || breach,
+                sheets.is_empty(),
                 "{design:?} face ({nx}, {nz}): sheets {sheets:?} came down off a hole in the wall"
             );
         }

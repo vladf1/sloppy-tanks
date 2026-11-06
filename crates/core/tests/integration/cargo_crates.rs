@@ -1,5 +1,5 @@
-//! Cargo crates as structures: a shell blows out the wall it strikes and its burst goes
-//! off in the hold, the lid stays on while enough wall is left under it and comes down
+//! Cargo crates as structures: a shell blows out the boards of the wall it strikes, down to
+//! its frame, and its burst goes off in the hold, the lid stays on while enough wall is left under it and comes down
 //! breaking along its boards once not, clients and late joiners see it all, the Scrap
 //! Yard rebuilds a crate in place and the fallen boards clear away.
 
@@ -48,63 +48,109 @@ fn gone(s: &Simulation, crate_: usize) -> PartSet {
 }
 
 #[test]
-fn a_shell_tears_out_the_boards_round_its_hit_and_the_wall_stands() {
-    let (mut s, crate_) = lone_crate();
-    let rng = s.rng.state;
-    fire_at(
-        &mut s,
-        Vec2::new(0.4, 0.0),
-        Vec2::new(0.4, 20.0),
-        1.0,
-        Weapon::Standard,
-    );
-    run(&mut s, 1.0);
-    let down = gone(&s, crate_);
-    // The back wall faces -z, toward the shell: two or three of its boards go round the
-    // hit, the rest hang on its battens.
+fn a_shell_tears_out_every_board_of_the_face_it_strikes_and_the_frame_stands() {
     let (rows, _) = crate_wall_rows(2.6);
-    let back: Vec<usize> = (0..rows).map(|row| crate_board_part(2.6, 1, row)).collect();
-    let torn = back.iter().filter(|&&board| down.contains(board)).count();
-    assert!((2..=3).contains(&torn), "{torn} boards torn: {down:?}");
-    assert!(!down.contains(CRATE_WALLS[1]), "its frame stands");
-    assert!(!down.contains(CRATE_LID_PART), "the lid stays on");
-    assert!(!down.contains(CRATE_BASE_PART));
-    let front: Vec<usize> = (0..rows).map(|row| crate_board_part(2.6, 0, row)).collect();
-    assert!(
-        front.iter().all(|&board| !down.contains(board)),
-        "the burst in the hold leaves the far wall"
-    );
-    assert!(s.covers[crate_].alive);
-    assert!(
-        s.events.iter().any(|e| e.kind == SimEventType::Explosion),
-        "the shell bursts in the hold"
-    );
-    assert_eq!(s.rng.state, rng, "a crate's break draws nothing");
+    let face = |wall: usize| -> Vec<usize> {
+        (0..rows)
+            .map(|row| crate_board_part(2.6, wall, row))
+            .collect()
+    };
+    // From every shell height and across the face, the middle and near its corners.
+    for y in [0.96, 1.09, 1.4] {
+        for x in [-1.1, 0.4, 1.1] {
+            let (mut s, crate_) = lone_crate();
+            let rng = s.rng.state;
+            fire_at(
+                &mut s,
+                Vec2::new(x, 0.0),
+                Vec2::new(x, 20.0),
+                y,
+                Weapon::Standard,
+            );
+            run(&mut s, 1.0);
+            let down = gone(&s, crate_);
+            // The back wall faces -z, toward the shell: all its boards go, its frame of
+            // battens stands, and so does every other wall's sheathing and the lid.
+            assert!(
+                face(1).iter().all(|&board| down.contains(board)),
+                "({x}, {y}): every board of the struck face went: {down:?}"
+            );
+            assert!(
+                !down.contains(CRATE_WALLS[1]),
+                "({x}, {y}): its frame stands"
+            );
+            assert!(
+                !down.contains(CRATE_LID_PART),
+                "({x}, {y}): the lid stays on"
+            );
+            assert!(!down.contains(CRATE_BASE_PART));
+            // A hit near a corner bursts by the side wall, which may lose a board to it.
+            for wall in if x == 0.4 { vec![0, 2, 3] } else { vec![0] } {
+                assert!(
+                    face(wall).iter().all(|&board| !down.contains(board)),
+                    "({x}, {y}): wall {wall}'s boards stay: {down:?}"
+                );
+            }
+            assert!(s.covers[crate_].alive);
+            assert!(
+                s.events.iter().any(|e| e.kind == SimEventType::Explosion),
+                "the shell bursts in the hold"
+            );
+            assert_eq!(s.rng.state, rng, "a crate's break draws nothing");
+        }
+    }
 }
 
-/// Shell after shell at one wall: its boards go a few at a time, and the wall comes
-/// away whole only once its frame breaks.
+/// Shell after shell through one wall's middle: the first opens its face, the second
+/// flies through its frame and opens the far wall, and later ones fly through both; a
+/// shell at a wall's battens breaks its frame (the strike and its burst against them),
+/// and the wall comes away.
 #[test]
-fn repeated_shells_take_a_wall_down_in_the_end() {
+fn shells_open_a_crate_face_by_face_and_its_battens_bring_a_wall_down() {
     let (mut s, crate_) = lone_crate();
-    let mut shells = 0;
-    while !gone(&s, crate_).contains(CRATE_WALLS[1]) && shells < 12 {
-        let x = [-0.8, 0.0, 0.8][shells % 3];
-        let y = [0.7, 1.4, 2.0][shells / 3 % 3];
+    let (rows, _) = crate_wall_rows(2.6);
+    let face = |wall: usize| -> Vec<usize> {
+        (0..rows)
+            .map(|row| crate_board_part(2.6, wall, row))
+            .collect()
+    };
+    for _ in 0..3 {
         fire_at(
             &mut s,
-            Vec2::new(x, 0.0),
-            Vec2::new(x, 20.0),
-            y,
+            Vec2::new(0.4, 0.0),
+            Vec2::new(0.4, 20.0),
+            1.0,
             Weapon::Standard,
         );
         run(&mut s, 0.6);
-        shells += 1;
     }
-    assert!(shells >= 3, "the wall went after {shells} shells");
+    let down = gone(&s, crate_);
+    for wall in [0, 1] {
+        assert!(
+            face(wall).iter().all(|&board| down.contains(board)),
+            "wall {wall} is open: {down:?}"
+        );
+        assert!(
+            !down.contains(CRATE_WALLS[wall]),
+            "wall {wall}'s frame stands"
+        );
+    }
+    assert!(
+        !down.contains(CRATE_LID_PART),
+        "the lid stays on its frames"
+    );
+    assert!(s.covers[crate_].alive);
+    fire_at(
+        &mut s,
+        Vec2::new(-1.42, 0.0),
+        Vec2::new(-1.42, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    run(&mut s, 0.6);
     assert!(
         gone(&s, crate_).contains(CRATE_WALLS[1]),
-        "12 shells did not take the wall"
+        "the struck frame broke"
     );
 }
 
