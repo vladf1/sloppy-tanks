@@ -37,7 +37,9 @@ use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quar
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::shooter_rewind::ShooterRewind;
 use super::structure::{PartSet, Structure, structure_of};
-use super::structure_physics::{StructureState, WHOLE, settle_structure_debris, standing_colliders};
+use super::structure_physics::{
+    CrushScratch, StructureState, WHOLE, settle_structure_debris, standing_colliders,
+};
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
@@ -196,6 +198,8 @@ pub struct Simulation {
     pub cover_by_collider: HashMap<ColliderHandle, usize>,
     pub shots: Vec<Shot>,
     pub(crate) projectile_tank_positions: Vec<Option<Point3>>,
+    /// The fallen structure bodies a shell's low reach can strike, reused per query.
+    pub(crate) projectile_structure_bodies: Vec<RigidBodyHandle>,
     pub(crate) bot_targets: super::bot_strategy::TargetScratch,
     pub mines: Vec<Mine>,
     /// Stable mine order while detonations can recursively remove entries.
@@ -243,6 +247,10 @@ pub struct Simulation {
     pub(crate) bot_names: Vec<&'static str>,
     /// Metadata for bodies whose contact forces feed debris-impact events.
     pub(crate) debris_contacts: HashMap<RigidBodyHandle, DebrisContact>,
+    /// Falling bodies' blows on standing parts, reused tick to tick.
+    pub(crate) crush_scratch: CrushScratch,
+    /// The debris budget's ranking and the players' places it scores by, reused.
+    pub(crate) cleanup_scratch: (Vec<(f64, usize)>, Vec<Vec2>),
 }
 
 impl Simulation {
@@ -263,6 +271,7 @@ impl Simulation {
             cover_by_collider: HashMap::new(),
             shots: Vec::new(),
             projectile_tank_positions: Vec::new(),
+            projectile_structure_bodies: Vec::new(),
             shooter_rewind: None,
             bot_targets: Default::default(),
             mines: Vec::new(),
@@ -302,6 +311,8 @@ impl Simulation {
             round_count: SIMULATION_RULES.default_tank_count,
             bot_names: Vec::new(),
             debris_contacts: HashMap::new(),
+            crush_scratch: CrushScratch::default(),
+            cleanup_scratch: (Vec::new(), Vec::new()),
         };
         setup.apply(&mut simulation);
         // reset advances the round (its number and the seed of the bot names), so start one
@@ -882,12 +893,14 @@ impl Simulation {
         if self.reinforcement_delay > 0.0 {
             return;
         }
-        let living: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| !self.tanks[i].human && self.tanks[i].alive)
-            .collect();
-        if living.len() >= SOLO.active_enemies {
+        let enemy = |tank: &Tank| !tank.human && tank.alive;
+        // Counted before they are listed: a full side is every tick of a solo match.
+        if self.tanks.iter().filter(|tank| enemy(tank)).count() >= SOLO.active_enemies {
             return;
         }
+        let living: Vec<usize> = (0..self.tanks.len())
+            .filter(|&i| enemy(&self.tanks[i]))
+            .collect();
         let team = self.human_team.opponent();
         let slots: Vec<Vec2> = (0..SOLO.active_enemies)
             .map(|slot| solo_spawn(team, slot))
