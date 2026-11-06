@@ -116,6 +116,12 @@ impl PoolBuffer {
         true
     }
 
+    /// Rewrite the live record at `slot`; only that slot will upload.
+    pub fn set(&mut self, slot: usize, record: InstanceRecord) {
+        self.records[slot] = record;
+        self.mark(slot as u32..slot as u32 + 1);
+    }
+
     /// Every record for rewriting in place; all of them will upload.
     pub fn records_mut(&mut self) -> &mut [InstanceRecord] {
         self.mark(0..self.records.len() as u32);

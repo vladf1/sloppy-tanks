@@ -19,6 +19,7 @@ use sloppy_core::sim::{CoverKind, SimEvent, SimEventType};
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use crate::color::hex_to_linear;
+use crate::draw_list::InstanceRecord;
 
 pub const MAX_WOOD_CHIPS: usize = 512;
 pub const MAX_BOARDS: usize = 192;
@@ -625,8 +626,9 @@ pub fn straw_mesh() -> Mesh {
     mesh
 }
 
-/// Shells chipping and bursting cargo crates; `wood_records` and `straw_records`
-/// are rebuilt whenever a piece moves.
+/// Shells chipping and bursting cargo crates; each pool's records are rewritten
+/// whole when its pieces were added or removed, and otherwise only where a piece
+/// moved, so a fresh burst in one pool leaves the others' resting pieces unsent.
 #[derive(Clone, Debug)]
 pub struct WoodChips {
     /// Splinters, boards, lumps and scraps, each its own pool.
@@ -640,9 +642,13 @@ pub struct WoodChips {
     pub lump_records: PoolBuffer,
     pub scrap_records: PoolBuffer,
     pub straw_records: PoolBuffer,
-    /// Pieces were added or removed since the records were written.
-    changed: bool,
+    /// Per pool (in [`Self::pools`] order), pieces were added or removed since its
+    /// records were written.
+    changed: [bool; POOLS],
 }
+
+/// The splinter, board, lump, scrap and straw pools.
+const POOLS: usize = 5;
 
 impl Default for WoodChips {
     fn default() -> Self {
@@ -657,7 +663,7 @@ impl Default for WoodChips {
             lump_records: PoolBuffer::new(MAX_LUMPS),
             scrap_records: PoolBuffer::new(MAX_SCRAPS),
             straw_records: PoolBuffer::new(MAX_STRAW),
-            changed: false,
+            changed: [false; POOLS],
         }
     }
 }
@@ -682,7 +688,7 @@ impl WoodChips {
         ] {
             records.clear();
         }
-        self.changed = false;
+        self.changed = [false; POOLS];
     }
 
     /// Live wood pieces (of every shape) and straw fibres.
@@ -713,28 +719,23 @@ impl WoodChips {
         let outside = |piece: &Piece| {
             (piece.position.x - x).abs() > half_w || (piece.position.z - z).abs() > half_d
         };
-        for pieces in [
-            &mut self.wood,
-            &mut self.boards,
-            &mut self.lumps,
-            &mut self.scraps,
-            &mut self.straw,
-        ] {
+        for (pieces, _, changed) in self.pools() {
             let before = pieces.len();
             pieces.retain(outside);
-            self.changed |= pieces.len() != before;
+            *changed |= pieces.len() != before;
         }
     }
 
     /// Put a new piece in its shape's pool, dropping that pool's oldest when full.
     fn add(&mut self, piece: Piece) {
-        let (pieces, capacity) = match piece.shape {
-            Shape::Splinter => (&mut self.wood, MAX_WOOD_CHIPS),
-            Shape::Board => (&mut self.boards, MAX_BOARDS),
-            Shape::Lump => (&mut self.lumps, MAX_LUMPS),
-            Shape::Scrap => (&mut self.scraps, MAX_SCRAPS),
+        let (pieces, capacity, pool) = match piece.shape {
+            Shape::Splinter => (&mut self.wood, MAX_WOOD_CHIPS, 0),
+            Shape::Board => (&mut self.boards, MAX_BOARDS, 1),
+            Shape::Lump => (&mut self.lumps, MAX_LUMPS, 2),
+            Shape::Scrap => (&mut self.scraps, MAX_SCRAPS, 3),
         };
         push(pieces, capacity, piece);
+        self.changed[pool] = true;
     }
 
     pub fn straw(&self) -> impl Iterator<Item = &Piece> {
@@ -823,7 +824,6 @@ impl WoodChips {
             let piece = wood_piece(random, cut, position, velocity, color, under_paint());
             self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A shell bursting in a fallen cottage's pile: lengths of its painted boards
@@ -872,7 +872,6 @@ impl WoodChips {
             let piece = wood_piece(random, cut, position, velocity, color, bare);
             self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A cottage's part broken out where it stood: a few pieces sized to what broke
@@ -923,7 +922,6 @@ impl WoodChips {
             let piece = wood_piece(random, cut, position, velocity, color, under_paint());
             self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A loose board a shell flew through bursts into splinters and chips across its
@@ -971,7 +969,6 @@ impl WoodChips {
             );
             self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A shell hit: pieces burst out of the face back toward the gun, `from`.
@@ -1025,7 +1022,6 @@ impl WoodChips {
             );
             self.add(piece);
         }
-        self.changed = true;
     }
 
     /// A destroyed crate: its boards splinter throughout and fly on along the
@@ -1125,38 +1121,49 @@ impl WoodChips {
                 let velocity = DVec3::new(vx + jitter(), vy + jitter() * 0.8, vz + jitter());
                 let piece = straw_piece(random, position, velocity);
                 push(&mut self.straw, MAX_STRAW, piece);
+                self.changed[4] = true;
             }
         }
-        self.changed = true;
     }
 
-    /// Advance every piece and rewrite the records when anything moved.
+    /// Each pool's pieces beside its records and whether it changed size.
+    fn pools(&mut self) -> [(&mut VecDeque<Piece>, &mut PoolBuffer, &mut bool); POOLS] {
+        let [wood, boards, lumps, scraps, straw] = &mut self.changed;
+        [
+            (&mut self.wood, &mut self.wood_records, wood),
+            (&mut self.boards, &mut self.board_records, boards),
+            (&mut self.lumps, &mut self.lump_records, lumps),
+            (&mut self.scraps, &mut self.scrap_records, scraps),
+            (&mut self.straw, &mut self.straw_records, straw),
+        ]
+    }
+
+    /// Advance every piece and bring each pool's records up to date: rewritten
+    /// whole when the pool gained or lost pieces, otherwise only the slots of the
+    /// pieces that moved (most of a pool lies still after the first seconds).
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
         let step = dt.min(MAX_STEP);
-        let mut moved = self.changed;
-        for pieces in [
-            &mut self.wood,
-            &mut self.boards,
-            &mut self.lumps,
-            &mut self.scraps,
-            &mut self.straw,
-        ] {
-            let before = pieces.len();
+        for (pieces, records, changed) in self.pools() {
+            // Slots match pieces only while the pool kept every piece in order.
+            let mut in_place = !*changed;
+            let mut slot = 0;
             pieces.retain_mut(|piece| {
                 let (live, moving) = advance(piece, dt, step, random);
-                moved |= moving;
+                if !live {
+                    in_place = false;
+                } else {
+                    if in_place && moving {
+                        records.set(slot, piece_record(piece));
+                    }
+                    slot += 1;
+                }
                 live
             });
-            moved |= pieces.len() != before;
+            if !in_place {
+                write(records, pieces);
+            }
+            *changed = false;
         }
-        if moved {
-            write(&mut self.wood_records, &self.wood);
-            write(&mut self.board_records, &self.boards);
-            write(&mut self.lump_records, &self.lumps);
-            write(&mut self.scrap_records, &self.scraps);
-            write(&mut self.straw_records, &self.straw);
-        }
-        self.changed = false;
     }
 }
 
@@ -1170,11 +1177,15 @@ fn push(pieces: &mut VecDeque<Piece>, capacity: usize, piece: Piece) {
 fn write(records: &mut PoolBuffer, pieces: &VecDeque<Piece>) {
     records.clear();
     for piece in pieces {
-        let [r, g, b] = piece.color;
-        let [br, bg, bb] = piece.bare;
-        // The chip effect's sawn wood (`debris_chip.wgsl`); straw draws plain.
-        records.push(record(piece.world(), [r, g, b, 1.0], [br, bg, bb, 1.0]));
+        records.push(piece_record(piece));
     }
+}
+
+fn piece_record(piece: &Piece) -> InstanceRecord {
+    let [r, g, b] = piece.color;
+    let [br, bg, bb] = piece.bare;
+    // The chip effect's sawn wood (`debris_chip.wgsl`); straw draws plain.
+    record(piece.world(), [r, g, b, 1.0], [br, bg, bb, 1.0])
 }
 
 fn pick_cut(random: &mut CosmeticRandom, mix: Mix) -> Cut {
@@ -1689,6 +1700,31 @@ mod tests {
             chips.wood_records.len() + chips.board_records.len(),
             chips.len()
         );
+    }
+
+    #[test]
+    fn a_new_burst_leaves_other_pools_resting_pieces_unsent() {
+        let mut random = CosmeticRandom::seeded(29);
+        let mut chips = WoodChips::default();
+        chips.event(&crate_event(SimEventType::Destroy, None), &mut random);
+        run(&mut chips, &mut random, 2.6);
+        assert!(chips.straw().count() > 0);
+        assert!(
+            chips
+                .straw()
+                .all(|piece| piece.landed() && piece.velocity == DVec3::ZERO)
+        );
+        chips.straw_records.take_dirty(|_, _| {});
+        let from = Point3::new(1.0, 1.1, -1.0);
+        chips.event(&crate_event(SimEventType::Impact, Some(from)), &mut random);
+        for _ in 0..30 {
+            chips.update(DT, &mut random);
+            assert!(chips.straw_records.dirty().is_empty());
+            for (pieces, records, _) in chips.pools() {
+                let expected: Vec<_> = pieces.iter().map(piece_record).collect();
+                assert_eq!(records.records(), expected.as_slice());
+            }
+        }
     }
 
     #[test]
