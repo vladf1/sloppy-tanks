@@ -20,7 +20,9 @@ use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
-use crate::sim::structure_physics::{WHOLE, debris_colliders, falling_damping, rest_body, structural};
+use crate::sim::structure_physics::{
+    WHOLE, debris_colliders, falling_damping, rest_body, structural, unrest_body,
+};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -599,9 +601,14 @@ impl TankPredictor {
             }
             let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
             debris.seen = sync;
-            if fragment.rested && !debris.rested {
-                debris.rested = true;
-                rest_body(&mut self.world, debris.body);
+            // A piece comes to rest, or a blast throws it out of its rest again.
+            if fragment.rested != debris.rested {
+                debris.rested = fragment.rested;
+                if fragment.rested {
+                    rest_body(&mut self.world, debris.body);
+                } else {
+                    unrest_body(&mut self.world, debris.body);
+                }
             }
             let body = &mut self.world.bodies[debris.body];
             if fragment.structure_parts.is_some() && !fragment.rested {
@@ -1073,4 +1080,64 @@ fn drive(hull: &mut Hull, speed: &mut f64, body: &mut RigidBody, input: Vec2) {
     *speed = 0f64.max(*speed - STEP);
     hull.boosted = *speed > 0.0;
     drive_hull(hull, body, input.x, input.z, STEP);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::net::scene_codec::{MirrorScene, Scene};
+    use crate::net::wire::WireReader;
+    use crate::sim::arena::CoverDef;
+    use crate::sim::{Simulation, VehicleCommand};
+
+    fn mirrored(sim: &Simulation) -> RenderState {
+        let mut bytes = Vec::new();
+        Scene::capture(sim).write(&mut bytes);
+        MirrorScene::read(&mut WireReader::new(&bytes))
+            .unwrap()
+            .render(sim.tanks[0].id)
+            .unwrap()
+    }
+
+    fn turns(predictor: &TankPredictor, id: u32) -> bool {
+        let body = &predictor.world.bodies[predictor.debris[&id].body];
+        !body.locked_axes().contains(rapier3d::prelude::LockedAxes::ROTATION_LOCKED)
+    }
+
+    #[test]
+    fn a_rested_piece_a_blast_throws_again_turns_in_the_predicted_world() {
+        // A cottage's walls shot out at once; its pieces come to rest, then a blast
+        // throws one out of its rest again.
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        let house = sim.add_cover(&CoverDef::house(0.0, 60.0, 7.0, 5.0, 4.9, 0xb87b4c));
+        let layout = sim.covers[house].structure.as_ref().unwrap().layout.clone();
+        let walls = PartSet::from_indices(
+            (0..layout.parts.len()).filter(|&index| layout.parts[index].grounded),
+        );
+        sim.break_structure(house, walls, PartSet::EMPTY, None, None);
+        for _ in 0..600 {
+            sim.step(VehicleCommand::idle(), false);
+        }
+        let scene = mirrored(&sim);
+        let piece = *scene
+            .fragments
+            .iter()
+            .find(|fragment| fragment.structure_parts.is_some() && fragment.rested)
+            .expect("a piece at rest");
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.sync_bodies(&scene, &[], piece.position);
+        assert!(!turns(&predictor, piece.id), "at rest it is held still");
+        let mut thrown = scene.clone();
+        for fragment in &mut thrown.fragments {
+            if fragment.id == piece.id {
+                fragment.rested = false;
+            }
+        }
+        predictor.sync_scene(&thrown);
+        predictor.sync_bodies(&thrown, &[], piece.position);
+        assert!(turns(&predictor, piece.id), "thrown again, it turns as it flies");
+        assert!(!predictor.debris[&piece.id].rested);
+    }
 }

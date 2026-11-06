@@ -194,6 +194,12 @@ pub fn rest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHan
     }
 }
 
+/// Let a rested piece turn again, thrown out of its rest by a blast (the host's, and a
+/// client's predicted world's as the host has it).
+pub fn unrest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle) {
+    world.bodies[body].lock_rotations(false, true);
+}
+
 /// The linear and angular damping of a falling body `age` seconds after it came loose.
 pub fn falling_damping(age: f64) -> (f32, f32) {
     if age > SETTLE_AFTER {
@@ -1227,7 +1233,7 @@ pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius
         let velocity = rigid_body.linvel() + push;
         rigid_body.set_linvel(velocity, true);
         // Thrown out of its rest, it flies and lands again before it settles.
-        rigid_body.lock_rotations(false, true);
+        unrest_body(&mut simulation.world, handle);
         let elapsed = simulation.elapsed;
         let fragment = &mut simulation.fragments[index];
         fragment.created_at = Some(elapsed);
