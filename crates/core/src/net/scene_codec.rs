@@ -25,7 +25,7 @@ use super::wire::{
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
-use crate::sim::structure_physics::Damping;
+use crate::sim::structure_physics::{Damping, passes_through};
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -326,6 +326,7 @@ wire_fields!(
         TEAM = Field::new("team", COUNT),
         STRUCTURE_ID = Field::new("structureId", COUNT),
         DAMPING = Field::new("damping", FieldKind::Choice(&DAMPING_NAMES)),
+        PASSES_THROUGH = Field::new("passesThrough", FLAG),
     }
 );
 
@@ -696,6 +697,10 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         None => record.clear(STRUCTURE_PARTS),
     }
     set_choice(record, DAMPING, &DAMPINGS, fragment.structure.map(|debris| debris.damping));
+    // Sent only while it passes through: absent is the usual case.
+    if fragment.structure.is_some() && passes_through(&simulation.world, fragment.body) {
+        record.set_flag(PASSES_THROUGH, true);
+    }
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
     }
@@ -1224,6 +1229,7 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map_err(|e| format!("structureParts: {e}"))?,
         rested: fields.opt_choice(DAMPING, &DAMPINGS)? == Some(Damping::Rested),
         damping: fields.opt_choice(DAMPING, &DAMPINGS)?,
+        passes_through: fields.opt_flag(PASSES_THROUGH).unwrap_or(false),
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,

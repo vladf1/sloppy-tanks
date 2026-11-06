@@ -12,7 +12,7 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
 use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure::Role;
-use sloppy_core::sim::structure_physics::breach_point;
+use sloppy_core::sim::structure_physics::{FUSE_DISTANCE, breach_point};
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
 use sloppy_core::sim::timber_layout::{BEAM_COUNT, TIMBER_HEALTH, TimberPartKind};
 use sloppy_core::sim::timber_structure::TimberRole;
@@ -448,4 +448,50 @@ fn beams_held_at_one_end_come_down() {
             assert!(y <= top + 0.05, "nothing rises: {top} -> {y}");
         }
     }
+}
+
+/// An HE shell that knocks a beam out flies on its fuse length and bursts there, as the
+/// shooter's own forecast has it: it does not meet the beam it just knocked loose.
+#[test]
+fn a_standard_shell_through_a_beam_bursts_its_fuse_length_on_not_on_the_beam() {
+    let (mut s, wall) = lone_wall();
+    let id = fire_at(
+        &mut s,
+        Vec2::new(0.3, 0.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    // Where the shell struck the beam, lighting its fuse, and where it burst.
+    let mut lit = None;
+    let mut burst = None;
+    for _ in 0..120 {
+        s.events.clear();
+        run(&mut s, 1.0 / 60.0);
+        if lit.is_none()
+            && let Some(fuse) = s
+                .shots
+                .iter()
+                .find(|shot| shot.id == id)
+                .and_then(|shot| shot.fuse.map(|fuse| shot.z - (FUSE_DISTANCE - fuse)))
+        {
+            lit = Some(fuse);
+        }
+        if let Some(explosion) = s
+            .events
+            .iter()
+            .find(|event| event.kind == SimEventType::Explosion)
+        {
+            burst = Some(explosion.z);
+            break;
+        }
+    }
+    let beam = member(&s, wall, TimberPartKind::Beam, 1);
+    assert!(gone(&s, wall).contains(beam), "the struck beam is out");
+    let lit = lit.expect("the strike lit the fuse");
+    let burst = burst.expect("the shell bursts");
+    assert!(
+        (burst - (lit + FUSE_DISTANCE)).abs() < 0.01,
+        "it bursts its fuse length past where it struck ({lit}), not on the beam: {burst}"
+    );
 }

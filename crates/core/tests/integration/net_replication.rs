@@ -722,6 +722,10 @@ fn reference_scene(sim: &Simulation) -> Value {
             fragment.get("wreck").is_some_and(|wreck| !wreck.is_null()),
         );
         fragment.insert("life".into(), json!(life));
+        // A piece passing through what stands is flagged; the rest carry no flag.
+        if fragment.get("passesThrough") == Some(&Value::Bool(false)) {
+            fragment.remove("passesThrough");
+        }
     });
     entities.insert("fragments".into(), fragments);
     entities.insert("mines".into(), kind_records(3, &[], &|_| {}));

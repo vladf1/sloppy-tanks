@@ -134,6 +134,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             weapon: fired,
             piercing: if fired == Weapon::Piercing { 1 } else { 0 },
             pierced_shot: None,
+            loosened: Vec::new(),
             laser_checked_by: Vec::new(),
             fuse: None,
         });

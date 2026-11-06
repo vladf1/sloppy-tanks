@@ -21,7 +21,8 @@ use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
 use crate::sim::structure_physics::{
-    WHOLE, cap_loose_speed, debris_colliders, part_collider, rest_body, structural, unrest_body,
+    WHOLE, cap_loose_speed, debris_colliders, part_collider, passes_through, rest_body,
+    set_passing_through, structural, unrest_body,
 };
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
@@ -435,6 +436,8 @@ pub struct BodyPose {
     pub velocity: Point3,
     /// Asleep or all but still.
     pub resting: bool,
+    /// A structure's fallen piece passing through what stands, as the host lets it.
+    pub passes_through: bool,
 }
 
 /// Debris this far from the viewer's hull (metres) joins the predicted world: farther
@@ -455,6 +458,8 @@ struct DebrisBody {
     rested: bool,
     /// A structure's fallen parts, whose speed the host caps while they are loose.
     structure: bool,
+    /// Passing through what stands, as the host lets the piece.
+    through: bool,
 }
 
 struct OtherTank {
@@ -682,6 +687,7 @@ impl TankPredictor {
                         seen: sync,
                         rested: false,
                         structure: fragment.structure_parts.is_some(),
+                        through: false,
                     },
                 );
             }
@@ -695,6 +701,14 @@ impl TankPredictor {
                 } else {
                     unrest_body(&mut self.world, debris.body);
                 }
+            }
+            // A piece the host lets pass through what stands (a timber knocked out, a piece
+            // dropping off the remains it was wedged on) does here too, and meets it again
+            // when the host's does: jammed against the standing parts here, it would hold
+            // the hull where the host's piece fell through.
+            if debris.structure && fragment.passes_through != debris.through {
+                debris.through = fragment.passes_through;
+                set_passing_through(&mut self.world, debris.body, fragment.passes_through);
             }
             let body = &mut self.world.bodies[debris.body];
             if fragment.structure_parts.is_some() && !fragment.rested {
@@ -1001,6 +1015,7 @@ impl TankPredictor {
             resting: body.is_sleeping()
                 || (f64::from(linvel.length()) < RESTING_SPEED
                     && f64::from(angvel.length()) < RESTING_SPEED),
+            passes_through: passes_through(&self.world, handle),
         })
     }
 

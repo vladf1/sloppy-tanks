@@ -365,6 +365,20 @@ fn find_next_contact(
                 stop_at_penetration: true,
                 compute_impact_geometry_on_penetration: true,
             };
+            // The bodies its own strike knocked loose it flew on through.
+            let not_loosened = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+                collider
+                    .parent()
+                    .is_none_or(|body| !shot.loosened.contains(&body))
+            };
+            let in_reach = |handle: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+                in_structure_debris(handle, collider) && not_loosened(handle, collider)
+            };
+            let debris_filter = if shot.loosened.is_empty() {
+                query_filter(group::DEBRIS_QUERY)
+            } else {
+                query_filter(group::DEBRIS_QUERY).predicate(&not_loosened)
+            };
             // Only a fragment's collider counts as a debris contact, so without fragments the
             // cast cannot change the result.
             if !simulation.fragments.is_empty()
@@ -373,7 +387,7 @@ fn find_next_contact(
                     vector(shot.vx, 0.0, shot.vz),
                     &shell_shape,
                     options,
-                    query_filter(group::DEBRIS_QUERY),
+                    debris_filter,
                 )
                 && hit.time_of_impact as f64 <= time
                 && let Some(fragment) = fragment_with_collider(simulation, collider)
@@ -392,7 +406,7 @@ fn find_next_contact(
                         max_time_of_impact: time as f32,
                         ..options
                     },
-                    query_filter(group::DEBRIS_QUERY).predicate(&in_structure_debris),
+                    query_filter(group::DEBRIS_QUERY).predicate(&in_reach),
                 )
                 && (hit.time_of_impact as f64) < time
                 && let Some(fragment) = fragment_with_collider(simulation, collider)
@@ -874,13 +888,17 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
             true
         }
         Weapon::Piercing => {
+            let first = simulation.next_id;
             simulation.strike_structure(cover, part, shot.damage, true, point, along, by);
+            fly_past_loosened(simulation, si, first);
             false
         }
         _ => {
+            let first = simulation.next_id;
             let broke = simulation.strike_structure(cover, part, shot.damage, false, point, along, by);
             if broke && shot.fuse.is_none() {
                 simulation.shots[si].fuse = Some(FUSE_DISTANCE);
+                fly_past_loosened(simulation, si, first);
                 false
             } else {
                 if shot.fuse.is_none() {
@@ -891,4 +909,17 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
             }
         }
     }
+}
+
+/// Shell `si` flies on through the part it broke: the bodies that came down from the
+/// strike (the structure debris given ids from `first` on) start round it, and it never
+/// meets them, as the shooter's own forecast has it.
+fn fly_past_loosened(simulation: &mut Simulation, si: usize, first: u32) {
+    let Simulation { fragments, shots, .. } = simulation;
+    shots[si].loosened.extend(
+        fragments
+            .iter()
+            .filter(|fragment| fragment.id >= first && structure_debris(fragment))
+            .map(|fragment| fragment.body),
+    );
 }
