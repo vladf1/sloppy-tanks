@@ -187,7 +187,6 @@ pub struct RenderFragment {
     /// The parts of structure `structure_id` this body is.
     pub structure_parts: Option<PartSet>,
     /// A structure's piece come to rest for good: it no longer turns, and grips the pile.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub rested: bool,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,

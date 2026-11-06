@@ -5,7 +5,6 @@
 
 use crate::support;
 
-use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::{CoverKind, Shot, SimEventType, Simulation};

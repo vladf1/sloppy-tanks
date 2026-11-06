@@ -167,6 +167,8 @@ const ON_END: f32 = 0.7;
 const LAY_RATE: f32 = 2.5;
 const LAID: f32 = 0.93;
 const LAID_STICK: f32 = 0.35;
+/// A piece leaning on what stands is laid down off it until its face's rise reaches this.
+const LAID_OFF: f32 = 0.985;
 /// The fastest (m/s) a loose piece moves up and across, and turns (rad/s): a blast's
 /// throw at its strongest and a little more. Falling is left to gravity. The solver
 /// pushing apart parts that came loose overlapping would fling them over the roofs.
@@ -1424,14 +1426,26 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, layout: &Structur
                 if now.with_y(0.0).dot(out) >= 0.0 { -Vector::Y } else { Vector::Y }
             });
             let target = away.unwrap_or(if now.y >= 0.0 { Vector::Y } else { -Vector::Y });
-            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+            // Leaning on what stands, anything short of flat is laid down off it.
+            let (edge, laid) = if propped {
+                (LAID, LAID_OFF)
+            } else {
+                (LEANING, LAID)
+            };
+            (now, target, now.y.abs() >= laid, now.y.abs() < edge)
         }
         // A roof piece on its edge is laid down the way it leans, whichever face up:
         // turning one over off its back pivoted it into the ground and never finished.
         Lie::Roof(normal) => {
             let now = rotation * vector(normal.x, normal.y, normal.z);
             let target = if now.y >= 0.0 { Vector::Y } else { -Vector::Y };
-            (now, target, now.y.abs() >= LAID, now.y.abs() < LEANING)
+            // Leaning on what stands, anything short of flat is laid down off it.
+            let (edge, laid) = if propped {
+                (LAID, LAID_OFF)
+            } else {
+                (LEANING, LAID)
+            };
+            (now, target, now.y.abs() >= laid, now.y.abs() < edge)
         }
         Lie::Length(along) => {
             let now = rotation * vector(along.x, along.y, along.z);
@@ -1452,11 +1466,6 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, layout: &Structur
     if let Some(debris) = &mut simulation.fragments[index].structure {
         debris.laying = true;
     }
-    let low = body
-        .colliders()
-        .iter()
-        .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
-        .fold(f32::INFINITY, f32::min);
     let mut axis = now.cross(target);
     if axis.length() < 1e-4 {
         // Square on its back: over about its own length.
@@ -1468,13 +1477,82 @@ fn lay_down_on_edge(simulation: &mut Simulation, index: usize, layout: &Structur
     }
     let angle = now.angle_between(target).min(LAY_RATE * STEP as f32);
     let step = Rotation::from_axis_angle(axis / off, angle);
-    let foot = Vector::new(middle.x, low, middle.z);
-    let at = foot + step * (body.translation() - foot);
+    // It turns about where it bears on what holds it, on the side it goes over to: the
+    // edge a tipping board pivots on, not a point inside the pile under it.
+    let over = (axis / off).cross(Vector::Y).with_y(0.0);
+    let foot = support_point(simulation, handle, over).unwrap_or_else(|| {
+        let low = body
+            .colliders()
+            .iter()
+            .map(|&collider| simulation.world.colliders[collider].compute_aabb().mins.y)
+            .fold(f32::INFINITY, f32::min);
+        Vector::new(middle.x, low, middle.z)
+    });
+    let body = &simulation.world.bodies[handle];
+    let mut at = foot + step * (body.translation() - foot);
+    // Laid down, it never rises: its middle goes no higher than it was.
+    let raised = (foot + step * (middle - foot)).y - middle.y;
+    if raised > 0.0 {
+        at.y -= raised;
+    }
     let body = &mut simulation.world.bodies[handle];
     body.set_position(Pose::from_parts(at, step * rotation), true);
     body.set_linvel(Vector::ZERO, true);
     body.set_angvel(Vector::ZERO, true);
     Lying::Laying
+}
+
+/// Where body `body` bears on what it touches (the ground, the pile, the remains),
+/// furthest along `over` (the way it goes over), the lowest of those there: `None`
+/// while it touches nothing.
+fn support_point(simulation: &Simulation, body: RigidBodyHandle, over: Vector) -> Option<Vector> {
+    let mut best: Option<(f32, f32, Vector)> = None;
+    for &collider in simulation.world.bodies[body].colliders() {
+        for pair in simulation.world.contact_pairs_with(collider) {
+            if !pair.has_any_active_contact() {
+                continue;
+            }
+            let (first, ours_first) = if pair.collider1 == collider {
+                (pair.collider1, true)
+            } else {
+                (pair.collider2, false)
+            };
+            let other = if ours_first { pair.collider2 } else { pair.collider1 };
+            let (Some(ours), Some(theirs)) =
+                (simulation.world.colliders.get(first), simulation.world.colliders.get(other))
+            else {
+                continue;
+            };
+            let (first_pose, second_pose) = if ours_first {
+                (ours.position(), theirs.position())
+            } else {
+                (theirs.position(), ours.position())
+            };
+            for manifold in pair.manifolds() {
+                let sub = manifold.subshape_poses.as_deref();
+                let pose1 = sub.and_then(|poses| poses.pos1).map_or(*first_pose, |p| first_pose * p);
+                let pose2 = sub.and_then(|poses| poses.pos2).map_or(*second_pose, |p| second_pose * p);
+                for point in &manifold.points {
+                    if point.dist > 0.01 {
+                        continue;
+                    }
+                    // Our side of the contact.
+                    let at = if ours_first {
+                        pose1.transform_point(point.local_p1)
+                    } else {
+                        pose2.transform_point(point.local_p2)
+                    };
+                    let key = (at.dot(over), -at.y);
+                    if best.is_none_or(|(along, low, _)| {
+                        key.0 > along + 0.02 || ((key.0 - along).abs() <= 0.02 && key.1 > low)
+                    }) {
+                        best = Some((key.0, key.1, at));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, _, at)| at)
 }
 
 /// How high (m) a body's middle lies.

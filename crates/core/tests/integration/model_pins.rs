@@ -1,6 +1,6 @@
 //! Pins every value the model builders produce: the three themes' scenery, the
-//! vehicles and their wrecks, and each map's covers at every damage stage, batched
-//! as presentation draws them. A hash covers each node's name, transform and
+//! vehicles and their wrecks, and each map's covers as they stand, batched as
+//! presentation draws them. A hash covers each node's name, transform and
 //! visibility, and each drawable's material, flags, instances and mesh (positions,
 //! normals, UVs, colours, indices and custom attributes, bit for bit), so a
 //! construction speed-up that moves one vertex, reorders one triangle or drops one
@@ -96,7 +96,7 @@ fn village_covers_are_pinned() {
         "village covers",
         covers_pin(MapId::Village),
         platform_pin(&[
-            (MAC_DEBUG, 0xffb1_3022_c27d_6206),
+            (MAC_DEBUG, 0xc206_1e09_2ca1_cfbc),
             (MAC_RELEASE, 0xa927_26c9_a5f8_6f99),
             (LINUX_DEBUG, 0x8eaf_994c_2b7d_0d09),
         ]),
@@ -108,7 +108,7 @@ fn harbor_covers_are_pinned() {
     assert_pin(
         "harbor covers",
         covers_pin(MapId::Harbor),
-        0xb197_b799_92b0_3f77,
+        0x1ff0_772c_04b3_9139,
     );
 }
 
@@ -117,6 +117,6 @@ fn quarry_covers_are_pinned() {
     assert_pin(
         "quarry covers",
         covers_pin(MapId::Quarry),
-        0x5e0f_0aa7_0303_a172,
+        0x73c0_51c3_3360_a09e,
     );
 }

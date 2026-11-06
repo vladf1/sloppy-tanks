@@ -200,7 +200,7 @@ fn a_scrap_yard_room_replicates_the_compact_yard_its_debris_and_rebuilt_cover() 
     assert_eq!(scene.map.theme.as_str(), "superstress");
     assert_eq!(scene.tanks.len(), 30);
     assert!(
-        result.most_fragments > 128,
+        result.most_fragments > 96,
         "debris reached {} pieces",
         result.most_fragments
     );

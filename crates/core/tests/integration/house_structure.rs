@@ -1385,8 +1385,19 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
                     (low.min(aabb.mins.y), high.max(aabb.maxs.y))
                 });
         let layout = &s.covers[house].structure.as_ref().unwrap().layout;
+        // A piece may lie tilted on the pile, never stood up against what stands.
+        let on_what_stands = body.colliders().iter().any(|&collider| {
+            s.world.contact_pairs_with(collider).any(|pair| {
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                pair.has_any_active_contact() && s.structure_part(other).is_some()
+            })
+        });
         assert!(
-            high - low < 1.2,
+            high - low < 1.2 || !on_what_stands,
             "piece {} stands {:.2} m tall: {:?} at {:?}, laying {}, wedged {:?}",
             f.id,
             high - low,

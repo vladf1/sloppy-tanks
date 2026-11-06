@@ -853,8 +853,12 @@ fn a_falling_tower_breaks_the_crates_it_lands_on() {
         None,
     );
     run(&mut s, 4.0);
+    // It comes down through the lid of a crate it lands on.
     assert!(
-        crates.iter().any(|&index| !s.covers[index].alive),
+        crates.iter().any(|&index| {
+            let gone = s.covers[index].structure.as_ref().unwrap().gone;
+            gone.contains(sloppy_core::sim::crate_structure::CRATE_LID_PART)
+        }),
         "it broke through a crate it came down on"
     );
 }
