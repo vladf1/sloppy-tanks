@@ -5,10 +5,10 @@
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::difficulty::Difficulty;
-use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::render_state::RenderCover;
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{CoverKind, PlayerAssignment, Team, VehicleKind};
 use sloppy_pilot::world_model::{Perspective, WorldModel, scene_map};
 
@@ -153,7 +153,9 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
     );
     let middle = Vec2::new(cover.x, cover.z);
     assert!(model.simulation.nav.is_blocked(middle));
+    // A crate or a timber wall falls as far as its parts do: here all of them.
     scene.covers[index].alive = false;
+    scene.covers[index].broken = PartSet::from_indices(0..64);
     model.sync(&scene, Perspective::default());
     assert!(
         model.simulation.visible(a, b),
@@ -161,6 +163,7 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
     );
     assert!(!model.simulation.nav.is_blocked(middle));
     scene.covers[index].alive = true;
+    scene.covers[index].broken = PartSet::EMPTY;
     model.sync(&scene, Perspective::default());
     assert!(
         !model.simulation.visible(a, b),
@@ -199,7 +202,7 @@ fn a_watchtower_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
             .find(|c| c.kind == CoverKind::Tower && c.x == cover.x && c.z == cover.z)
             .unwrap();
         tower
-            .tower
+            .structure
             .as_ref()
             .unwrap()
             .colliders

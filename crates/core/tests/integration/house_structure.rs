@@ -8,9 +8,10 @@ use crate::{net_support, support};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::house_layout::{HousePart, RoofForm};
-use sloppy_core::sim::house_physics::{FUSE_DISTANCE, part_box};
-use sloppy_core::sim::house_structure::{CHIMNEY_PART, HouseStructure, PartKind, PartSet};
+use sloppy_core::sim::house_structure::{CHIMNEY_PART, PartKind};
 use sloppy_core::sim::math::{Point3, Vec2};
+use sloppy_core::sim::structure::{PartSet, Structure};
+use sloppy_core::sim::structure_physics::{FUSE_DISTANCE, part_box};
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
 
@@ -38,6 +39,7 @@ fn kind(s: &Simulation, house: usize, part: usize) -> PartKind {
         .expect("a cottage")
         .layout
         .parts[part]
+        .house()
         .kind
 }
 
@@ -160,7 +162,7 @@ fn an_he_shell_bursts_a_fuse_length_inside_and_breaks_what_is_there() {
     // A partition panel by an outer wall, and a line along it just clear of its face.
     let state = s.covers[house].structure.as_ref().unwrap();
     let partition = (0..state.layout.parts.len())
-        .filter(|&i| state.layout.parts[i].kind == PartKind::Partition)
+        .filter(|&i| state.layout.parts[i].house().kind == PartKind::Partition)
         .map(|i| (i, part_box(&s.covers[house], i).unwrap()))
         .max_by(|a, b| (a.1.1.z.max(-a.1.0.z)).total_cmp(&(b.1.1.z.max(-b.1.0.z))))
         .expect("a partition");
@@ -275,7 +277,7 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
             min.z > s.covers[house].z + s.covers[house].d / 2.0 - 0.35
                 && max.y < 3.5
                 && matches!(
-                    layout.parts[i].kind,
+                    layout.parts[i].house().kind,
                     PartKind::Panel
                         | PartKind::Window
                         | PartKind::Door
@@ -287,7 +289,7 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
     assert!(wall.len() > 10, "{wall:?}");
     let sheets_over = |s: &Simulation| -> Vec<usize> {
         (0..layout.parts.len())
-            .filter(|&i| layout.parts[i].kind == PartKind::Sheet)
+            .filter(|&i| layout.parts[i].house().kind == PartKind::Sheet)
             .filter(|&i| part_box(&s.covers[house], i).unwrap().0.z > s.covers[house].z + 0.5)
             .collect()
     };
@@ -296,8 +298,14 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
     // Most of the wall goes; until its plates do, the roof stands.
     let (plates, rest): (Vec<usize>, Vec<usize>) = wall
         .iter()
-        .partition(|&&i| layout.parts[i].kind == PartKind::Plate);
-    s.break_house_parts(house, PartSet::from_indices(rest.clone()), None, None);
+        .partition(|&&i| layout.parts[i].house().kind == PartKind::Plate);
+    s.break_structure(
+        house,
+        PartSet::from_indices(rest.clone()),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     let standing_sheets = over
         .iter()
         .filter(|&&i| !gone(&s, house).contains(i))
@@ -305,14 +313,20 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
     let falling: usize = s
         .fragments
         .iter()
-        .filter_map(|f| f.house_parts)
+        .filter_map(|f| f.structure_parts())
         .map(|parts| parts.len())
         .sum();
     // Bare plates spanning a whole wall do not carry it: they and the roof on them come
     // down; or they hold for now as beams between what still stands.
     if standing_sheets == over.len() {
         assert_eq!(falling, 0);
-        s.break_house_parts(house, PartSet::from_indices(plates), None, None);
+        s.break_structure(
+            house,
+            PartSet::from_indices(plates),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
     }
     for &sheet in &over {
         assert!(gone(&s, house).contains(sheet), "sheet {sheet} came down");
@@ -320,7 +334,7 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
     let fallen: PartSet = s
         .fragments
         .iter()
-        .filter_map(|f| f.house_parts)
+        .filter_map(|f| f.structure_parts())
         .fold(PartSet::EMPTY, |all, parts| all.union(&parts));
     assert!(
         over.iter().all(|&sheet| fallen.contains(sheet)),
@@ -328,7 +342,7 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
     );
     // The far slope still stands on its own wall.
     let far: Vec<usize> = (0..layout.parts.len())
-        .filter(|&i| layout.parts[i].kind == PartKind::Sheet)
+        .filter(|&i| layout.parts[i].house().kind == PartKind::Sheet)
         .filter(|&i| part_box(&s.covers[house], i).unwrap().1.z < s.covers[house].z - 1.0)
         .collect();
     assert!(
@@ -340,11 +354,7 @@ fn the_roof_comes_down_where_the_wall_under_it_is_gone() {
         run(&mut s, 1.0);
         assert!(s.fragments.len() <= s.max_fragments);
     }
-    assert!(
-        s.fragments
-            .iter()
-            .all(|f| f.house_id != Some(s.covers[house].id))
-    );
+    assert!(s.fragments.iter().all(|f| !f.of_structure(house)));
     assert_eq!(s.world.bodies.len(), bodies, "every fallen body is gone");
     assert_eq!(s.rng.state, rng, "a collapse draws nothing");
 }
@@ -354,7 +364,7 @@ fn a_rebuilt_cottage_stands_whole_again() {
     let (mut s, house) = lone_cottage();
     let colliders = s.world.colliders.len();
     let all = s.covers[house].structure.as_ref().unwrap().layout.all();
-    s.break_house_parts(house, all, None, None);
+    s.break_structure(house, all, PartSet::EMPTY, None, None);
     assert!(!s.covers[house].alive);
     s.restore_cover(house);
     assert!(s.covers[house].alive);
@@ -408,10 +418,19 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
     // A whole wall's lower courses and posts, one part a tick, then its plates.
     let wall: Vec<usize> = (0..layout.parts.len())
-        .filter(|&i| layout.parts[i].wall == Some(2) || layout.parts[i].kind == PartKind::Post)
+        .filter(|&i| {
+            layout.parts[i].house().wall == Some(2)
+                || layout.parts[i].house().kind == PartKind::Post
+        })
         .collect();
     for (tick, &part) in wall.iter().enumerate() {
-        s.break_house_parts(house, PartSet::from_indices([part]), None, None);
+        s.break_structure(
+            house,
+            PartSet::from_indices([part]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
         let mut next = Scene::capture(&s);
         let body = stream.snapshot(&mut next, tick as u64 + 1, &[], &[]);
         apply_batch(
@@ -421,17 +440,17 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
         let shown = mirror.render(viewer).unwrap();
         let cover = shown.covers.iter().find(|cover| cover.id == id).unwrap();
         assert_eq!(cover.broken, gone(&s, house), "tick {tick}");
-        for fragment in s.fragments.iter().filter(|f| f.house_id == Some(id)) {
+        for fragment in s.fragments.iter().filter(|f| f.of_structure(house)) {
             let seen = shown
                 .fragments
                 .iter()
                 .find(|shown| shown.id == fragment.id)
                 .expect("each falling body reaches the client");
-            assert_eq!(seen.house_parts, fragment.house_parts);
+            assert_eq!(seen.structure_parts, fragment.structure_parts());
         }
     }
     assert!(
-        s.fragments.iter().any(|f| f.house_id == Some(id)),
+        s.fragments.iter().any(|f| f.of_structure(house)),
         "something fell"
     );
     // A client joining now sees the cottage as it stands and what is falling.
@@ -445,14 +464,14 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
     let falling: Vec<_> = s
         .fragments
         .iter()
-        .filter(|f| f.house_id == Some(id))
-        .map(|f| (f.id, f.house_parts))
+        .filter(|f| f.of_structure(house))
+        .map(|f| (f.id, f.structure_parts()))
         .collect();
     let seen: Vec<_> = late
         .fragments
         .iter()
-        .filter(|f| f.house_id == Some(id))
-        .map(|f| (f.id, f.house_parts))
+        .filter(|f| f.structure_id == Some(id))
+        .map(|f| (f.id, f.structure_parts))
         .collect();
     assert_eq!(seen, falling);
 }
@@ -473,13 +492,19 @@ fn tanks_find_a_way_through_a_gutted_cottage() {
     let open: Vec<usize> = (0..layout.parts.len())
         .filter(|&i| {
             let (min, max) = part_box(&s.covers[house], i).unwrap();
-            layout.parts[i].blocks_ground()
-                && layout.parts[i].kind != PartKind::Post
+            layout.parts[i].blocks_ground
+                && layout.parts[i].house().kind != PartKind::Post
                 && (min.x + max.x) / 2.0 > c.x - 1.9
                 && (min.x + max.x) / 2.0 < c.x + 1.9
         })
         .collect();
-    s.break_house_parts(house, PartSet::from_indices(open), None, None);
+    s.break_structure(
+        house,
+        PartSet::from_indices(open),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     assert!(through(&mut s), "a path runs through the gap");
 }
 
@@ -498,20 +523,31 @@ fn a_shot_out_corner_brings_down_its_eave_and_the_roof_over_it() {
     };
     let shot: Vec<usize> = (0..layout.parts.len())
         .filter(|&i| {
-            layout.parts[i].kind.outer_wall() && layout.parts[i].kind != PartKind::Gable && near(i)
+            layout.parts[i].house().kind.outer_wall()
+                && layout.parts[i].house().kind != PartKind::Gable
+                && near(i)
         })
         .collect();
-    assert!(shot.iter().any(|&i| layout.parts[i].kind == PartKind::Post));
-    s.break_house_parts(house, PartSet::from_indices(shot.clone()), None, None);
+    assert!(
+        shot.iter()
+            .any(|&i| layout.parts[i].house().kind == PartKind::Post)
+    );
+    s.break_structure(
+        house,
+        PartSet::from_indices(shot.clone()),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     let fallen: PartSet = s
         .fragments
         .iter()
-        .filter_map(|f| f.house_parts)
+        .filter_map(|f| f.structure_parts())
         .fold(PartSet::EMPTY, |all, parts| all.union(&parts));
     // The roof sheet over the corner comes down with what is left of its eave.
     let over_corner = (0..layout.parts.len()).find(|&i| {
         let (min, max) = part_box(&s.covers[house], i).unwrap();
-        layout.parts[i].kind == PartKind::Sheet
+        layout.parts[i].house().kind == PartKind::Sheet
             && min.x <= corner.x + 0.5
             && max.x >= corner.x - 0.5
             && max.z >= corner.z - 0.2
@@ -533,17 +569,25 @@ fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not
     // the gables and the stubs left standing.
     let eave = 2;
     let upper: Vec<usize> = (0..layout.parts.len())
-        .filter(|&index| layout.parts[index].wall == Some(eave) && !layout.parts[index].grounded)
+        .filter(|&index| {
+            layout.parts[index].house().wall == Some(eave) && !layout.parts[index].grounded
+        })
         .collect();
     let gables: Vec<usize> = (0..layout.parts.len())
-        .filter(|&index| layout.parts[index].kind == PartKind::Gable)
+        .filter(|&index| layout.parts[index].house().kind == PartKind::Gable)
         .collect();
     let rng = s.rng.state;
-    s.break_house_parts(house, PartSet::from_indices(upper), None, None);
+    s.break_structure(
+        house,
+        PartSet::from_indices(upper),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     assert!(
         s.fragments
             .iter()
-            .any(|fragment| fragment.house_parts.is_some()),
+            .any(|fragment| fragment.structure.is_some()),
         "the slope fell"
     );
     let gables_before = gables
@@ -555,13 +599,31 @@ fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not
     for fragment in s
         .fragments
         .iter()
-        .filter(|fragment| fragment.house_parts.is_some())
+        .filter(|fragment| fragment.structure.is_some())
     {
         let body = &s.world.bodies[fragment.body];
+        // Up off the ground it lies on the pile, never on what stands.
+        let on_what_stands = body.colliders().iter().any(|&collider| {
+            s.world.contact_pairs_with(collider).any(|pair| {
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                pair.has_any_active_contact() && s.structure_part(other).is_some()
+            })
+        });
         assert!(
-            body.center_of_mass().y < 1.5 || body.linvel().length() > 0.2,
-            "a loose part rests up at {:?}",
-            body.center_of_mass()
+            body.center_of_mass().y < 1.5 || body.linvel().length() > 0.2 || !on_what_stands,
+            "a loose part rests up at {:?}: {:?} {:?}",
+            body.center_of_mass(),
+            fragment
+                .structure_parts()
+                .unwrap()
+                .iter()
+                .map(|p| layout.parts[p].house().kind)
+                .collect::<Vec<_>>(),
+            fragment.structure
         );
     }
     // The gables it slid off stand.
@@ -578,25 +640,33 @@ fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not
 
 #[test]
 fn a_falling_part_striking_a_standing_one_hard_breaks_it() {
-    use sloppy_core::sim::house_physics::crush_house_parts;
     use sloppy_core::sim::physics::ContactForce;
+    use sloppy_core::sim::structure_physics::crush_structure_parts;
     let (mut s, house) = lone_cottage();
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
     // A slope comes loose; one of its bodies strikes a wall stub.
     let eave = 2;
     let upper: Vec<usize> = (0..layout.parts.len())
-        .filter(|&index| layout.parts[index].wall == Some(eave) && !layout.parts[index].grounded)
+        .filter(|&index| {
+            layout.parts[index].house().wall == Some(eave) && !layout.parts[index].grounded
+        })
         .collect();
-    s.break_house_parts(house, PartSet::from_indices(upper), None, None);
+    s.break_structure(
+        house,
+        PartSet::from_indices(upper),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     let falling = s
         .fragments
         .iter()
-        .find(|fragment| fragment.house_parts.is_some())
+        .find(|fragment| fragment.structure.is_some())
         .map(|fragment| s.world.bodies[fragment.body].colliders()[0])
         .expect("a falling body");
     let stub = (0..layout.parts.len())
         .find(|&index| {
-            layout.parts[index].wall == Some(eave)
+            layout.parts[index].house().wall == Some(eave)
                 && layout.parts[index].grounded
                 && !gone(&s, house).contains(index)
         })
@@ -608,7 +678,7 @@ fn a_falling_part_striking_a_standing_one_hard_breaks_it() {
         total_force_magnitude: force,
     };
     // Its weight: nothing.
-    crush_house_parts(&mut s, &[contact(60.0)]);
+    crush_structure_parts(&mut s, &[contact(60.0)]);
     assert!(
         !gone(&s, house).contains(stub),
         "resting weight breaks nothing"
@@ -616,15 +686,17 @@ fn a_falling_part_striking_a_standing_one_hard_breaks_it() {
     // A hard landing: the stub breaks.
     let body = s.world.colliders[falling].parent().unwrap();
     for fragment in s.fragments.iter_mut().filter(|f| f.body == body) {
-        fragment.house_velocity = Some(Point3::new(0.0, -12.0, 0.0));
+        if let Some(debris) = &mut fragment.structure {
+            debris.velocity = Point3::new(0.0, -12.0, 0.0);
+        }
     }
-    crush_house_parts(&mut s, &[contact(1200.0)]);
+    crush_structure_parts(&mut s, &[contact(1200.0)]);
     assert!(gone(&s, house).contains(stub), "a hard strike breaks it");
 }
 
 /// Every cottage the maps place (the village's gable and hip roofs, its two-storey
 /// houses, the Stress Grid's and the Scrap Yard's), as their simulations build them.
-fn every_placed_cottage() -> Vec<std::sync::Arc<HouseStructure>> {
+fn every_placed_cottage() -> Vec<std::sync::Arc<Structure>> {
     use sloppy_core::sim::SimulationSetup;
     use sloppy_core::sim::level_rules::single_player_rules;
     use sloppy_core::sim::stress_test_level::stress_test_level;
@@ -642,6 +714,7 @@ fn every_placed_cottage() -> Vec<std::sync::Arc<HouseStructure>> {
     ];
     sims.iter()
         .flat_map(|sim| sim.covers.iter())
+        .filter(|cover| cover.kind == CoverKind::House)
         .filter_map(|cover| cover.structure.as_ref().map(|state| state.layout.clone()))
         .collect()
 }
@@ -650,22 +723,30 @@ fn every_placed_cottage() -> Vec<std::sync::Arc<HouseStructure>> {
 fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
     let cottages = every_placed_cottage();
     assert!(
-        cottages.iter().any(|c| c.roof.form == RoofForm::Hip),
+        cottages
+            .iter()
+            .any(|c| c.roof().unwrap().form == RoofForm::Hip),
         "a hip roof"
     );
     assert!(
-        cottages.iter().any(|c| c.roof.form == RoofForm::Gable),
+        cottages
+            .iter()
+            .any(|c| c.roof().unwrap().form == RoofForm::Gable),
         "a gable roof"
     );
     assert!(
-        cottages.iter().any(|c| c.design.storeys() == 2),
+        cottages.iter().any(|c| c.design().unwrap().storeys() == 2),
         "a two-storey house"
     );
     for layout in &cottages {
         let what = format!(
             "{:?} at {:?}",
-            layout.roof.form,
-            (layout.design.w, layout.design.d, layout.design.h)
+            layout.roof().unwrap().form,
+            (
+                layout.design().unwrap().w,
+                layout.design().unwrap().d,
+                layout.design().unwrap().h
+            )
         );
         assert!(
             layout.unsupported(&PartSet::EMPTY).is_empty(),
@@ -673,11 +754,12 @@ fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
         );
         for (side, slope) in [(2, HousePart::RightRoof), (3, HousePart::LeftRoof)] {
             let gone = PartSet::from_indices(
-                (0..layout.parts.len()).filter(|&index| layout.parts[index].wall == Some(side)),
+                (0..layout.parts.len())
+                    .filter(|&index| layout.parts[index].house().wall == Some(side)),
             );
             let falling = layout.unsupported(&gone);
             for (index, part) in layout.parts.iter().enumerate() {
-                if part.slope.is_some_and(|(over, _)| over == slope) {
+                if part.house().slope.is_some_and(|(over, _)| over == slope) {
                     assert!(
                         falling.contains(index),
                         "{what}: sheet {index} over wall {side} stays up"
@@ -691,7 +773,7 @@ fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
         }
         // With the roof down nothing above the walls is left floating.
         let roof = PartSet::from_indices(
-            (0..layout.parts.len()).filter(|&index| layout.parts[index].kind.roof()),
+            (0..layout.parts.len()).filter(|&index| layout.parts[index].house().kind.roof()),
         );
         let down = roof.union(&layout.unsupported(&roof));
         assert!(
@@ -703,16 +785,15 @@ fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
 
 /// The cottage's loose bodies: (fragment id, parts, middle, speed).
 fn loose_bodies(s: &Simulation, house: usize) -> Vec<(u32, PartSet, Point3, f64)> {
-    let id = s.covers[house].id;
     s.fragments
         .iter()
-        .filter(|f| f.house_id == Some(id) && f.house_parts.is_some())
+        .filter(|f| f.of_structure(house))
         .map(|f| {
             let body = &s.world.bodies[f.body];
             let at = body.center_of_mass();
             (
                 f.id,
-                f.house_parts.unwrap(),
+                f.structure_parts().unwrap(),
                 Point3::new(at.x.into(), at.y.into(), at.z.into()),
                 body.linvel().length().into(),
             )
@@ -725,9 +806,15 @@ fn loose_bodies(s: &Simulation, house: usize) -> Vec<(u32, PartSet, Point3, f64)
 fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
     let wall: Vec<usize> = (0..layout.parts.len())
-        .filter(|&index| layout.parts[index].wall == Some(2))
+        .filter(|&index| layout.parts[index].house().wall == Some(2))
         .collect();
-    s.break_house_parts(house, PartSet::from_indices(wall), None, None);
+    s.break_structure(
+        house,
+        PartSet::from_indices(wall),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
     run(s, 8.0);
     let bodies = loose_bodies(s, house);
     let (id, parts, at, speed) = *bodies
@@ -744,6 +831,7 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     let slope_sheets = (0..layout.parts.len())
         .filter(|&index| {
             layout.parts[index]
+                .house()
                 .slope
                 .is_some_and(|(slope, _)| slope == HousePart::RightRoof)
         })
@@ -751,7 +839,7 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     for (_, parts, _, _) in &bodies {
         let sheets = parts
             .iter()
-            .filter(|&part| layout.parts[part].kind == PartKind::Sheet)
+            .filter(|&part| layout.parts[part].house().kind == PartKind::Sheet)
             .count();
         assert!(
             sheets < slope_sheets,
@@ -901,7 +989,7 @@ fn a_levelled_cottage_leaves_no_loose_debris_after_twenty_seconds() {
     for (mut s, house) in [village, (stress, cottage)] {
         let baseline = s.fragments.len();
         // Levelled from within by a heavy blast at each wall, then shot at as it lies.
-        s.damage_every_house_part(house, 1000.0, None);
+        s.damage_every_part(house, 1000.0, None);
         run(&mut s, 3.0);
         let mut most = 0;
         for k in 0..3 {
@@ -941,12 +1029,12 @@ fn shells_through_a_gable_window_break_the_gables_not_the_roof() {
     let gone = gone(&s, house);
     assert!(
         gone.iter()
-            .any(|part| layout.parts[part].kind == PartKind::Window),
+            .any(|part| layout.parts[part].house().kind == PartKind::Window),
         "the window went"
     );
     let roof: Vec<usize> = gone
         .iter()
-        .filter(|&part| layout.parts[part].kind.roof())
+        .filter(|&part| layout.parts[part].house().kind.roof())
         .collect();
     assert!(
         roof.is_empty(),
@@ -965,8 +1053,8 @@ fn a_fallen_piece_left_on_its_edge_is_laid_down() {
         .fragments
         .iter()
         .find(|f| {
-            f.house_id == Some(c.id)
-                && f.house_parts.is_some_and(|parts| {
+            f.of_structure(house)
+                && f.structure_parts().is_some_and(|parts| {
                     parts.len() <= 2
                         && parts
                             .iter()
@@ -996,7 +1084,8 @@ fn a_fallen_piece_left_on_its_edge_is_laid_down() {
         .as_ref()
         .unwrap()
         .layout
-        .roof
+        .roof()
+        .unwrap()
         .pitch
         .atan() as f32;
     let place = |s: &mut Simulation, angle: f32| {
@@ -1019,6 +1108,13 @@ fn a_fallen_piece_left_on_its_edge_is_laid_down() {
         })
         .unwrap();
     place(&mut s, upright);
+    // As if it had just come down there: not yet come to rest.
+    if let Some(fragment) = s.fragments.iter_mut().find(|f| f.id == id)
+        && let Some(debris) = &mut fragment.structure
+    {
+        debris.rested = false;
+        debris.window = None;
+    }
     let (low, tall) = height(&s);
     assert!(tall > 1.0, "stood on its edge: {tall}");
     let rigid = &mut s.world.bodies[body];
@@ -1051,7 +1147,7 @@ fn a_blown_out_cottage_falls_rather_than_flying_up() {
     s.nav.rebuild(&s.covers, None);
     let c = s.covers[house].clone();
     assert_eq!(
-        c.structure.as_ref().unwrap().layout.roof.form,
+        c.structure.as_ref().unwrap().layout.roof().unwrap().form,
         RoofForm::Hip
     );
     for k in 0..6 {
@@ -1068,7 +1164,7 @@ fn a_blown_out_cottage_falls_rather_than_flying_up() {
     let mut first: std::collections::HashMap<u32, f64> = Default::default();
     let mut worst = (0.0f64, 0u32);
     let mut watch = |s: &Simulation| {
-        for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
+        for f in s.fragments.iter().filter(|f| f.structure.is_some()) {
             let y = f64::from(s.world.bodies[f.body].center_of_mass().y);
             let start = *first.entry(f.id).or_insert(y);
             if y - start > worst.0 {
@@ -1106,7 +1202,7 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
     place_tank(&mut s, 0, -10.0, -40.0, None);
     let house = s.add_cover(&CoverDef::house(45.0, -39.0, 5.0, 6.0, 6.8, 0xb87b4c));
     let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
-    assert_eq!(layout.design.storeys(), 2);
+    assert_eq!(layout.design().unwrap().storeys(), 2);
     // Its ground floor's walls blown out round it: all above them comes down.
     let c = s.covers[house].clone();
     let me = (s.tanks[0].id, s.tanks[0].team);
@@ -1129,12 +1225,12 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
         }
     }
     run(&mut s, 5.0);
-    for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
-        let parts = f.house_parts.unwrap();
+    for f in s.fragments.iter().filter(|f| f.structure.is_some()) {
+        let parts = f.structure_parts().unwrap();
         let floors = parts
             .iter()
-            .any(|p| layout.parts[p].kind == PartKind::Floor);
-        let walls = parts.iter().any(|p| layout.parts[p].wall.is_some());
+            .any(|p| layout.parts[p].house().kind == PartKind::Floor);
+        let walls = parts.iter().any(|p| layout.parts[p].house().wall.is_some());
         assert!(
             !(floors && walls),
             "a wall and a floor lie fused: {parts:?}"
@@ -1146,7 +1242,7 @@ fn a_levelled_two_storey_house_lies_in_pieces_not_one_propped_lump() {
             body.center_of_mass(),
             parts
                 .iter()
-                .map(|p| layout.parts[p].kind)
+                .map(|p| layout.parts[p].house().kind)
                 .collect::<Vec<_>>()
         );
     }
@@ -1173,7 +1269,13 @@ fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
     clear_arena(&mut s, &[human]);
     let house = s.add_cover(&CoverDef::house(x, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
     s.world.step();
-    let design = s.covers[house].structure.as_ref().unwrap().layout.design;
+    let design = *s.covers[house]
+        .structure
+        .as_ref()
+        .unwrap()
+        .layout
+        .design()
+        .unwrap();
     let (bed, _) = design.garden_bed().unwrap();
     let (a, b) = bed.bounds(&design, 0.3);
     let middle = design.to_world((a + b) / 2.0);
@@ -1188,7 +1290,7 @@ fn a_cottage_garden_bears_its_fallen_parts_but_not_tanks_or_shells() {
             .is_some()
     };
     assert!(
-        meets(&s, group::HOUSE_SHARD),
+        meets(&s, group::STRUCTURE_DEBRIS),
         "a fallen part rests on the bed"
     );
     assert!(!meets(&s, group::TANK), "a tank drives over it");
@@ -1216,8 +1318,9 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
         s.damage_cover(house, 65.0, me.0, me.1, None, Some(at));
         run(&mut s, 0.5);
     }
-    run(&mut s, 3.0);
-    for f in s.fragments.iter().filter(|f| f.house_parts.is_some()) {
+    // Time for the last pieces to come down off the gables and be laid down.
+    run(&mut s, 5.0);
+    for f in s.fragments.iter().filter(|f| f.structure.is_some()) {
         let body = &s.world.bodies[f.body];
         let (low, high) =
             body.colliders()
@@ -1232,14 +1335,14 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
             "piece {} stands {:.2} m tall: {:?} at {:?}, laying {}, wedged {:?}",
             f.id,
             high - low,
-            f.house_parts
+            f.structure_parts()
                 .unwrap()
                 .iter()
-                .map(|p| layout.parts[p].kind)
+                .map(|p| layout.parts[p].house().kind)
                 .collect::<Vec<_>>(),
             body.center_of_mass(),
-            f.house_laying,
-            f.house_wedged
+            f.structure.unwrap().laying,
+            f.structure.unwrap().wedged
         );
     }
 }
@@ -1299,7 +1402,7 @@ fn sixteen_shells_at_one_spot_of_any_wall_leave_the_roof_on() {
             let gone = gone(&s, house);
             let sheets: Vec<usize> = gone
                 .iter()
-                .filter(|&part| layout.parts[part].kind == PartKind::Sheet)
+                .filter(|&part| layout.parts[part].house().kind == PartKind::Sheet)
                 .collect();
             // A roof sheet may come down only once a corner is gone, or an eave wall's
             // plates have lost what they stand on over three bays together (a top
@@ -1309,18 +1412,18 @@ fn sixteen_shells_at_one_spot_of_any_wall_leave_the_roof_on() {
                 let mut plates: Vec<(f64, usize)> = (0..layout.parts.len())
                     .filter(|&index| {
                         let part = &layout.parts[index];
-                        part.wall == Some(wall)
-                            && part.kind == PartKind::Plate
-                            && !part.upper_storey
+                        part.house().wall == Some(wall)
+                            && part.house().kind == PartKind::Plate
+                            && !part.house().upper_storey
                     })
-                    .map(|index| (layout.parts[index].center().z, index))
+                    .map(|index| (layout.parts[index].middle().z, index))
                     .collect();
                 plates.sort_by(|a, b| a.0.total_cmp(&b.0));
                 let bare = |plate: usize| {
                     let over = &layout.parts[plate];
                     (0..layout.parts.len()).all(|below| {
                         let part = &layout.parts[below];
-                        part.wall != over.wall
+                        part.house().wall != over.house().wall
                             || (part.max.y - over.min.y).abs() > 0.05
                             || part.max.z <= over.min.z + 0.05
                             || part.min.z >= over.max.z - 0.05
@@ -1347,17 +1450,25 @@ fn a_falling_section_of_wall_and_roof_tips_out_without_lifting_its_roof() {
         // An eave wall's bottom course gone: the wall over it and the roof on it fall
         // together.
         let course: Vec<usize> = (0..layout.parts.len())
-            .filter(|&index| layout.parts[index].wall == Some(2) && layout.parts[index].grounded)
+            .filter(|&index| {
+                layout.parts[index].house().wall == Some(2) && layout.parts[index].grounded
+            })
             .chain(0..4)
             .collect();
-        s.break_house_parts(house, PartSet::from_indices(course), None, None);
+        s.break_structure(
+            house,
+            PartSet::from_indices(course),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
         let mut top: std::collections::HashMap<u32, f32> = Default::default();
         for _ in 0..90 {
             idle(&mut s);
             for f in s
                 .fragments
                 .iter()
-                .filter(|f| f.house_parts.is_some() && !f.house_broken)
+                .filter(|f| f.structure.is_some_and(|debris| !debris.landed))
             {
                 let high = s.world.bodies[f.body]
                     .colliders()

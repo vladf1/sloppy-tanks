@@ -5,11 +5,9 @@
 use super::*;
 use crate::geometry::reference_tests::fnv;
 use crate::scene::{Node, TextureSource};
-use crate::sim::house_structure::PartSet;
-use crate::sim::timber_layout::{
-    TimberHit, TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts,
-};
-use crate::sim::tower_structure::tower_structure;
+use crate::sim::structure::PartSet;
+use crate::sim::timber_layout::{TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts};
+use crate::sim::tower_structure::{piece_look, tower_structure};
 use crate::sim::tree_proportions::tree_proportions;
 use crate::sim::types::CoverKind;
 
@@ -31,7 +29,6 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
         d,
         h,
         color,
-        timber_hits: Vec::new(),
         timber_join: None,
         broken: PartSet::EMPTY,
         cracked: PartSet::EMPTY,
@@ -44,22 +41,9 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
 /// harbor, the water reflection.
 #[test]
 fn every_cover_model_stays_within_its_triangle_budget() {
-    let hits = [
-        TimberHit {
-            x: -1.3,
-            y: 0.35,
-            z: -0.45,
-            size: 1.0,
-        },
-        TimberHit {
-            x: 0.3,
-            y: 1.1,
-            z: 0.45,
-            size: 1.5,
-        },
-    ];
+    // A timber wall with a beam shot out, a crate with a wall blown out.
     let hit = |mut shape: CoverShape| {
-        shape.timber_hits = hits.to_vec();
+        shape.broken = PartSet::from_indices([1]);
         shape
     };
     let joined = |mut shape: CoverShape| {
@@ -81,7 +65,7 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         shape
     };
     let full = TreeDetail::Full;
-    // (label, shape, detail, last damage stage, triangle budget)
+    // (label, shape, detail, unused, triangle budget)
     #[rustfmt::skip]
     let cases = [
         ("village wall", cover(CoverKind::Boundary, [1.0, 122.0, 2.2], 0xa68c68), full, 0, 6_600),
@@ -92,13 +76,13 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("background tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), TreeDetail::Background, 0, 340),
         ("cottage", cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c), full, 0, 10_000),
         ("gapped cottage", gapped(cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c)), full, 0, 14_000),
-        ("timber", hit(joined(cover(CoverKind::Timber, [4.1, 0.9, 2.8], 0xb47a49))), full, 3, 630),
-        ("timber post", cover(CoverKind::Timber, [0.9, 0.9, 2.8], 0x805336), full, 3, 760),
+        ("timber", hit(joined(cover(CoverKind::Timber, [4.1, 0.9, 2.8], 0xb47a49))), full, 0, 630),
+        ("timber post", cover(CoverKind::Timber, [0.9, 0.9, 2.8], 0x805336), full, 0, 760),
         ("drum", cover(CoverKind::Drum, [1.2, 1.2, 1.7], 0xff5b24), full, 0, 1_400),
         ("tower", cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a), full, 0, 19_600),
         ("toppled tower", toppled(cover(CoverKind::Tower, [6.0, 5.0, 7.5], 0xbd864a)), full, 0, 3_200),
         ("container", cover(CoverKind::Container, [6.0, 14.0, 3.6], 0xd37c38), full, 0, 2_300),
-        ("cargo crate", hit(cover(CoverKind::Cargo, [2.4, 2.4, 2.0], 0x8a6a3c)), full, 2, 5_800),
+        ("cargo crate", hit(cover(CoverKind::Cargo, [2.4, 2.4, 2.0], 0x8a6a3c)), full, 0, 5_800),
         ("concrete barrier", cover(CoverKind::Concrete, [8.0, 1.1, 1.5], 0xb5b5a5), full, 0, 300),
         ("rock", cover(CoverKind::Rock, [14.0, 8.0, 4.6], 0xd2bd99), full, 0, 3_500),
         ("boulder", cover(CoverKind::Rock, [2.2, 1.8, 1.4], 0xd2bd99), full, 0, 600),
@@ -108,14 +92,12 @@ fn every_cover_model_stays_within_its_triangle_budget() {
     for kind in CoverKind::ALL {
         assert!(cases.iter().any(|case| case.1.kind == kind), "{kind:?}");
     }
-    for (label, shape, detail, last_stage, budget) in &cases {
-        for stage in 0..=*last_stage {
-            let triangles = drawn_triangles(&cover_model(shape, *detail, stage));
-            assert!(
-                (1..=*budget).contains(&triangles),
-                "{label} stage {stage}: {triangles} triangles, budget {budget}"
-            );
-        }
+    for (label, shape, detail, _, budget) in &cases {
+        let triangles = drawn_triangles(&cover_model(shape, *detail));
+        assert!(
+            (1..=*budget).contains(&triangles),
+            "{label}: {triangles} triangles, budget {budget}"
+        );
     }
 }
 
@@ -127,9 +109,7 @@ struct TimberCase {
     w: f64,
     d: f64,
     h: f64,
-    hits: &'static [TimberHit],
     join: Option<TimberJoin>,
-    stage: u32,
     /// Member count and [`timber_hash`].
     parts: (usize, u32),
 }
@@ -139,17 +119,14 @@ fn timber_hash(parts: &[TimberPart]) -> u32 {
         let mut words = vec![
             u32::from(p.kind == TimberPartKind::Post),
             p.index as u32,
-            p.damage,
-            p.marks.len() as u32,
-            p.damage_seed as u32,
+            p.seed as u32,
         ];
-        words.extend(p.marks.iter().map(|m| m.seed as u32));
-        words.extend([p.x, p.y, p.z, p.w, p.h, p.d, p.lean].map(|v| (v as f32).to_bits()));
+        words.extend([p.x, p.y, p.z, p.w, p.h, p.d].map(|v| (v as f32).to_bits()));
         words
     }))
 }
 
-/// Timber members (their places, damage and mark seeds) and tree families and
+/// Timber members (their places and seeds) and tree families and
 /// seeds are gameplay data: the members become fragment bodies and a tree's
 /// family sizes its stump collider. These values come from the TypeScript game and
 /// have not changed since; a deliberate change re-captures them.
@@ -163,17 +140,15 @@ fn timber_members_and_tree_seeds_are_fixed() {
             h: case.h,
             d: case.d,
             color: 0xb47a49,
-            hits: case.hits,
             join: case.join,
         };
-        let parts = timber_parts(&wall, case.stage);
+        let parts = timber_parts(&wall);
         assert_eq!(
             (parts.len(), timber_hash(&parts)),
             case.parts,
-            "timber ({}, {}) stage {}",
+            "timber ({}, {})",
             case.x,
             case.z,
-            case.stage
         );
     }
     let mut families = std::collections::BTreeSet::new();
@@ -223,12 +198,11 @@ fn a_toppled_towers_footings_wear_concrete_and_timber() {
         d: 5.0,
         h: 7.5,
         color: 0xbd8a4a,
-        timber_hits: Vec::new(),
         timber_join: None,
         broken,
         cracked: PartSet::EMPTY,
     };
-    let textures = |broken| node_textures(&cover_model(&shape(broken), TreeDetail::Full, 0));
+    let textures = |broken| node_textures(&cover_model(&shape(broken), TreeDetail::Full));
     let tower = textures(PartSet::EMPTY);
     assert!(tower.contains(&TextureSource::File(building_kit::CLAPBOARD_TEXTURE)));
     assert_eq!(
@@ -285,7 +259,7 @@ fn a_landed_roofs_underside_is_as_crumpled_as_its_sheet() {
     use crate::sim::tower_structure::{PART_COUNT, PieceLook};
     let structure = tower_structure();
     let roof = (PART_COUNT..PART_COUNT + 64)
-        .find(|&index| structure.look(index) == Some(PieceLook::Roof))
+        .find(|&index| piece_look(&structure, index) == Some(PieceLook::Roof))
         .unwrap();
     let mut triangles = Vec::new();
     world_triangles(
@@ -350,54 +324,18 @@ fn wreck_aging_darkens_over_two_and_a_half_seconds() {
 }
 #[rustfmt::skip]
 const TIMBER_CASES: &[TimberCase] = &[
-    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 0, parts: (5, 0x99ffff78) },
-    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.3284, y: 0.72, z: 0.45, size: 1.5 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 1, parts: (5, 0x8ed47585) },
-    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.49260000000000015, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.3284, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 2.1525000000000003, y: 1.46, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 2, parts: (5, 0x8a018b0f) },
-    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.7662666666666669, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.21893333333333348, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.3284, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.8757333333333333, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 2.1525000000000003, y: 2.2, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 3, parts: (5, 0xb3ab6651) },
-    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 0, parts: (6, 0xe655edc3) },
-    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.3284, y: 0.72, z: 0.45, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 1, parts: (6, 0xd33db945) },
-    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.49260000000000015, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.3284, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 2.1525000000000003, y: 1.46, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 2, parts: (6, 0xde038080) },
-    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.7662666666666669, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.21893333333333348, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.3284, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.8757333333333333, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 2.1525000000000003, y: 2.2, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 3, parts: (6, 0x0f889ca1) },
-    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: false, post: true }), stage: 0, parts: (1, 0xb90f5fd3) },
-    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.28800000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.072, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: false, post: true }), stage: 1, parts: (1, 0x954fb765) },
-    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.28800000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.10800000000000004, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.072, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.55, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: true }), stage: 2, parts: (1, 0x7576cc39) },
-    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.28800000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.16800000000000004, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.048000000000000036, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.072, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.19199999999999998, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -0.55, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: true }), stage: 3, parts: (1, 0x89bced13) },
-    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 0, parts: (5, 0xfb32fb69) },
-    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.24053333333333327, size: 1.5 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 1, parts: (5, 0x27e647f2) },
-    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.3608, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.24053333333333327, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 2, parts: (5, 0x7586be2b) },
-    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.5612444444444445, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.16035555555555564, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.24053333333333327, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.641422222222222, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: true, open_max: false, post: false }), stage: 3, parts: (5, 0x7c236fe8) },
-    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 0, parts: (6, 0xd0b6172f) },
-    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.24053333333333327, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 1, parts: (6, 0xf4c474a7) },
-    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.3608, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.24053333333333327, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 2, parts: (6, 0x6d7ad42a) },
-    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.5612444444444445, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.16035555555555564, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.24053333333333327, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.641422222222222, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 3, parts: (6, 0xd3bc87a1) },
-    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 0, parts: (5, 0x1fce39f2) },
-    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.24053333333333327, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 1, parts: (5, 0x9de6bebd) },
-    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.3608, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.24053333333333327, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 2, parts: (5, 0x84d19227) },
-    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 0.9621333333333333, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.5612444444444445, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.16035555555555564, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.24053333333333327, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.641422222222222, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -1.6033333333333333, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 3, parts: (5, 0x94bdb9cb) },
-    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, hits: &[], join: None, stage: 0, parts: (6, 0xe702eef3) },
-    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.1840000000000002, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.296, y: 0.72, z: 0.45, size: 1.5 }], join: None, stage: 1, parts: (6, 0x219afe4f) },
-    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.1840000000000002, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.4440000000000002, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.296, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 1.9500000000000002, y: 1.46, z: 0.45, size: 1.8 }], join: None, stage: 2, parts: (6, 0x861456f0) },
-    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.1840000000000002, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.6906666666666669, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.19733333333333347, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.296, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.7893333333333332, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 1.9500000000000002, y: 2.2, z: 0.45, size: 1.8 }], join: None, stage: 3, parts: (6, 0xf7371433) },
-    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 0, parts: (6, 0x01984a9b) },
-    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.3284, y: 0.72, z: 0.45, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 1, parts: (6, 0x7349bc65) },
-    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.49260000000000015, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.3284, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 2.1525000000000003, y: 1.46, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 2, parts: (6, 0x3b73f228) },
-    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.7662666666666669, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.21893333333333348, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.3284, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.8757333333333333, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 2.1525000000000003, y: 2.2, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: false, post: false }), stage: 3, parts: (6, 0x3666d305) },
-    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 0, parts: (5, 0xf9065ec5) },
-    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.3284, y: 0.72, z: 0.45, size: 1.5 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 1, parts: (5, 0x138d25f0) },
-    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.49260000000000015, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.3284, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 2.1525000000000003, y: 1.46, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 2, parts: (5, 0x716da465) },
-    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3136000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.7662666666666669, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.21893333333333348, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.3284, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.8757333333333333, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 2.1525000000000003, y: 2.2, z: 0.45, size: 1.8 }], join: Some(TimberJoin { open_min: false, open_max: true, post: false }), stage: 3, parts: (5, 0x1e920486) },
-    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, hits: &[], join: None, stage: 0, parts: (6, 0x091e14d3) },
-    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.1840000000000002, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.296, size: 1.5 }], join: None, stage: 1, parts: (6, 0xda630a27) },
-    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.1840000000000002, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.4440000000000002, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.296, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -1.9500000000000002, size: 1.8 }], join: None, stage: 2, parts: (6, 0x2dcd92e4) },
-    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.1840000000000002, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.6906666666666669, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.19733333333333347, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.296, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.7893333333333332, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -1.9500000000000002, size: 1.8 }], join: None, stage: 3, parts: (6, 0x2736c22f) },
-    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, hits: &[], join: None, stage: 0, parts: (6, 0xd3ce2333) },
-    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3440000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: 0.33599999999999997, y: 0.72, z: 0.45, size: 1.5 }], join: None, stage: 1, parts: (6, 0x1f895817) },
-    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3440000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.5040000000000001, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: 0.33599999999999997, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 2.2, y: 1.46, z: 0.45, size: 1.8 }], join: None, stage: 2, parts: (6, 0x8cef0658) },
-    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, hits: &[TimberHit { x: -1.3440000000000003, y: 0.35, z: -0.45, size: 1.0 }, TimberHit { x: -0.7840000000000003, y: 0.72, z: 0.45, size: 1.5 }, TimberHit { x: -0.22400000000000017, y: 1.0899999999999999, z: -0.45, size: 1.65 }, TimberHit { x: 0.33599999999999997, y: 1.46, z: 0.45, size: 1.8 }, TimberHit { x: 0.8959999999999999, y: 1.83, z: -0.45, size: 1.8 }, TimberHit { x: 2.2, y: 2.2, z: 0.45, size: 1.8 }], join: None, stage: 3, parts: (6, 0x8173519b) },
-    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, hits: &[], join: None, stage: 0, parts: (6, 0xdc0b1de3) },
-    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.3440000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: -0.33599999999999997, size: 1.5 }], join: None, stage: 1, parts: (6, 0xa4313197) },
-    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.3440000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.5040000000000001, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: -0.33599999999999997, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -2.2, size: 1.8 }], join: None, stage: 2, parts: (6, 0x14d00b64) },
-    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, hits: &[TimberHit { x: -0.45, y: 0.35, z: 1.3440000000000003, size: 1.0 }, TimberHit { x: 0.45, y: 0.72, z: 0.7840000000000003, size: 1.5 }, TimberHit { x: -0.45, y: 1.0899999999999999, z: 0.22400000000000017, size: 1.65 }, TimberHit { x: 0.45, y: 1.46, z: -0.33599999999999997, size: 1.8 }, TimberHit { x: -0.45, y: 1.83, z: -0.8959999999999999, size: 1.8 }, TimberHit { x: 0.45, y: 2.2, z: -2.2, size: 1.8 }], join: None, stage: 3, parts: (6, 0x91f6518f) },
+    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (5, 0xeabe98aa) },
+    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0x631959bf) },
+    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: true }), parts: (1, 0x8da234e1) },
+    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (5, 0x28ed5375) },
+    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0xfe966b2b) },
+    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (5, 0x8b42fd9c) },
+    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, join: None, parts: (6, 0x06ec1aaf) },
+    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0x73c47837) },
+    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (5, 0xea270415) },
+    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, join: None, parts: (6, 0x0af0536f) },
+    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, join: None, parts: (6, 0xa4cd2987) },
+    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, join: None, parts: (6, 0xdaa1262f) },
 ];
 
 /// Tree footprints `[x, z, w, d, h]` and their `(family, seed)`.

@@ -60,29 +60,15 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
 }
 
 #[test]
-fn shell_hits_chip_trees_timber_and_cargo_and_a_fatal_hit_bursts_once_and_leaves_debris() {
+fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
+    // Timber walls and crates break part by part (`timber_walls`, `cargo_crates`).
     let mut s = Simulation::with_seed(123.0);
     assert_eq!(s.map_mode, MapId::Village);
-    let covers = [
-        s.covers
-            .iter()
-            .position(|c| c.kind == CoverKind::Tree)
-            .unwrap(),
-        s.covers
-            .iter()
-            .position(|c| c.kind == CoverKind::Timber)
-            .unwrap(),
-        s.add_cover(&CoverDef::new(
-            CoverKind::Cargo,
-            0.0,
-            30.0,
-            4.0,
-            0.9,
-            1.5,
-            80.0,
-            0xb47a49,
-        )),
-    ];
+    let covers = [s
+        .covers
+        .iter()
+        .position(|c| c.kind == CoverKind::Tree)
+        .unwrap()];
     s.world.step();
     for cover in covers {
         let kind = s.covers[cover].kind;

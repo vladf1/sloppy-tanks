@@ -5,15 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::house_structure::PartSet;
-use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
 use super::map_options::MapId;
 use super::maps::GroundKind;
 use super::math::{Point3, Quat4, Vec2};
 use super::simulation::Simulation;
 use super::simulation_rules::SIMULATION_RULES;
-use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
+use super::structure::PartSet;
+use super::timber_layout::TimberJoin;
 use super::types::{
     AmmoInventory, CoverKind, CoverMotion, Fragment, FragmentShape, Match, Mine, Pickup, Shot,
     Tank, Team, VehicleKind, Weapon, WreckPart,
@@ -106,7 +105,7 @@ impl From<CoverMotion> for RenderCoverMotion {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderCover {
     pub id: u32,
@@ -123,38 +122,18 @@ pub struct RenderCover {
     pub alive: bool,
     pub destructible: bool,
     pub color: u32,
-    pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// A cottage's or a watchtower's parts broken or fallen from it.
+    /// A structure's parts broken or fallen from it.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub broken: PartSet,
-    /// A cottage's or a watchtower's standing parts that have taken damage, which a
-    /// client's own-shot prediction cannot tell the strength left of.
+    /// A structure's parts that have taken damage, which a client's own-shot prediction
+    /// cannot tell the strength left of.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub cracked: PartSet,
     pub motion: Option<RenderCoverMotion>,
     /// Body pose; destroyed cover without a body stays at its footprint.
     pub position: Point3,
     pub rotation: Quat4,
-}
-
-// Manual so a state refilled in place keeps each cover's timber hits allocation.
-impl Clone for RenderCover {
-    fn clone(&self) -> Self {
-        Self {
-            timber_hits: self.timber_hits.clone(),
-            ..*self
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        let mut timber_hits = std::mem::take(&mut self.timber_hits);
-        timber_hits.clone_from(&source.timber_hits);
-        *self = Self {
-            timber_hits,
-            ..*source
-        };
-    }
 }
 
 /// A projectile as presentation sees it.
@@ -190,7 +169,7 @@ impl From<&Shot> for RenderShot {
     }
 }
 
-#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RenderFragment {
     pub id: u32,
@@ -203,14 +182,13 @@ pub struct RenderFragment {
     pub dimensions: Option<Point3>,
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
-    pub timber_part: Option<TimberPart>,
-    pub tower_id: Option<u32>,
-    /// The parts of watchtower `tower_id` this body is.
-    pub tower_parts: Option<PartSet>,
-    pub crate_piece: Option<CratePiece>,
-    pub house_id: Option<u32>,
-    /// The parts of cottage `house_id` this body is.
-    pub house_parts: Option<PartSet>,
+    /// The structure (by cover id) whose fallen parts this body is.
+    pub structure_id: Option<u32>,
+    /// The parts of structure `structure_id` this body is.
+    pub structure_parts: Option<PartSet>,
+    /// A structure's piece come to rest for good: it no longer turns, and grips the pile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rested: bool,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub created_at: Option<f64>,
@@ -220,25 +198,6 @@ pub struct RenderFragment {
     pub team: Option<Team>,
     pub position: Point3,
     pub rotation: Quat4,
-}
-
-// Manual so a state refilled in place keeps each timber part's marks allocation.
-impl Clone for RenderFragment {
-    fn clone(&self) -> Self {
-        Self {
-            timber_part: self.timber_part.clone(),
-            ..*self
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        let mut timber_part = self.timber_part.take();
-        timber_part.clone_from(&source.timber_part);
-        *self = Self {
-            timber_part,
-            ..*source
-        };
-    }
 }
 
 /// Presentation reads values only. Network implementations contain no physics world.
@@ -353,12 +312,10 @@ impl Simulation {
             view.alive = cover.alive;
             view.destructible = cover.destructible;
             view.color = cover.color;
-            view.timber_hits.clone_from(&cover.timber_hits);
             view.timber_join = cover.timber_join;
-            (view.broken, view.cracked) = match (&cover.structure, &cover.tower) {
-                (Some(state), _) => (state.gone, state.cracked()),
-                (None, Some(state)) => (state.gone, state.cracked()),
-                (None, None) => (PartSet::EMPTY, PartSet::EMPTY),
+            (view.broken, view.cracked) = match &cover.structure {
+                Some(state) => (state.gone, state.cracked()),
+                None => (PartSet::EMPTY, PartSet::EMPTY),
             };
             view.motion = cover.motion.map(RenderCoverMotion::from);
             (view.position, view.rotation) = if self.world.bodies.contains(cover.body) {
@@ -449,12 +406,11 @@ impl Simulation {
         view.dimensions = fragment.dimensions;
         view.material = fragment.material;
         view.source_kind = fragment.source_kind;
-        view.timber_part.clone_from(&fragment.timber_part);
-        view.tower_id = fragment.tower_id;
-        view.tower_parts = fragment.tower_parts;
-        view.crate_piece = fragment.crate_piece;
-        view.house_id = fragment.house_id;
-        view.house_parts = fragment.house_parts;
+        view.structure_id = fragment
+            .structure
+            .map(|debris| self.covers[debris.cover].id);
+        view.structure_parts = fragment.structure.map(|debris| debris.parts);
+        view.rested = fragment.structure.is_some_and(|debris| debris.rested);
         view.tree_cover_id = fragment.tree_cover_id;
         view.tree_center_y = fragment.tree_center_y;
         view.created_at = fragment.created_at;

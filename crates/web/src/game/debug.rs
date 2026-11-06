@@ -660,7 +660,7 @@ impl Game {
                 "turretForwardInHull": v3(tank.turret_forward_in_hull),
             })).collect::<Vec<_>>(),
             "covers": inspection.covers.iter().map(|cover| json!({
-                "id": cover.id, "shown": cover.shown, "stage": cover.stage,
+                "id": cover.id, "shown": cover.shown,
                 "modelKey": cover.model_key, "crown": cover.crown, "cut": cover.cut,
             })).collect::<Vec<_>>(),
             "pickups": inspection.pickups.iter().map(|pickup| json!({
@@ -671,7 +671,7 @@ impl Game {
             "fragments": inspection.fragments.iter().map(|fragment| json!({
                 "id": fragment.id, "look": fragment.look, "shown": fragment.shown,
                 "opacity": fragment.opacity, "position": v3(fragment.position),
-                "scale": v3(fragment.scale), "timberMarks": fragment.timber_marks,
+                "scale": v3(fragment.scale),
             })).collect::<Vec<_>>(),
             "mines": inspection.mines,
             "laser": {

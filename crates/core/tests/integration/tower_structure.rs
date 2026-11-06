@@ -10,13 +10,13 @@ use std::collections::BTreeMap;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
-use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure_physics::part_box;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
-use sloppy_core::sim::tower_physics::tower_part_box;
 use sloppy_core::sim::tower_structure::{
     CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, ROOF, TowerPartKind,
-    tower_structure,
+    piece_look, tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -43,12 +43,16 @@ fn lone_tower_at(shift: f64) -> (Simulation, usize) {
 }
 
 fn gone(s: &Simulation, tower: usize) -> PartSet {
-    s.covers[tower].tower.as_ref().expect("a watchtower").gone
+    s.covers[tower]
+        .structure
+        .as_ref()
+        .expect("a watchtower")
+        .gone
 }
 
 fn damage(s: &Simulation, tower: usize) -> Vec<f64> {
     s.covers[tower]
-        .tower
+        .structure
         .as_ref()
         .expect("a watchtower")
         .damage
@@ -94,11 +98,10 @@ fn leg_at(s: &Simulation, tower: usize, corner: usize) -> Vec2 {
 
 /// The tower's falling or fallen bodies.
 fn bodies(s: &Simulation, tower: usize) -> Vec<(u32, PartSet)> {
-    let id = s.covers[tower].id;
     s.fragments
         .iter()
-        .filter(|f| f.tower_id == Some(id))
-        .map(|f| (f.id, f.tower_parts.expect("a tower body's parts")))
+        .filter(|f| f.of_structure(tower))
+        .map(|f| (f.id, f.structure_parts().expect("a tower body's parts")))
         .collect()
 }
 
@@ -176,7 +179,9 @@ fn a_shell_at_a_leg_strikes_that_leg_alone_and_the_second_breaks_it() {
     assert!(struck[leg] > 0.0, "the leg took the shell");
     assert!(gone(&s, tower).is_empty(), "one shell does not break a leg");
     let braces: Vec<usize> = (0..struck.len())
-        .filter(|&i| tower_structure().parts[i].kind == TowerPartKind::Brace && struck[i] > 0.0)
+        .filter(|&i| {
+            tower_structure().parts[i].tower_kind() == TowerPartKind::Brace && struck[i] > 0.0
+        })
         .collect();
     for &brace in &braces {
         assert!(
@@ -256,7 +261,7 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
         let bodies_before = s.world.bodies.len();
         let rng = s.rng.state;
         let c = s.covers[tower].clone();
-        s.break_tower_parts(
+        s.break_structure(
             tower,
             PartSet::from_indices([LOWER_LEGS[corner]]),
             PartSet::EMPTY,
@@ -294,7 +299,7 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
         let frame = s
             .fragments
             .iter()
-            .find(|f| f.tower_id == Some(c.id))
+            .find(|f| f.of_structure(tower))
             .unwrap()
             .id;
         let mut start: BTreeMap<u32, f64> = BTreeMap::new();
@@ -305,7 +310,7 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
         };
         for _ in 0..(6.0 / STEP) as usize {
             idle(&mut s);
-            for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(c.id)) {
+            for fragment in s.fragments.iter().filter(|f| f.of_structure(tower)) {
                 let y = f64::from(s.world.bodies[fragment.body].center_of_mass().y);
                 let first = *start.entry(fragment.id).or_insert(y);
                 let allowed = if fragment.id == frame { 0.05 } else { ROLL };
@@ -313,10 +318,10 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
                     y <= first + allowed,
                     "corner {corner}: a body rose {y} from {first} at {}: {:?}",
                     s.elapsed,
-                    fragment.tower_parts
+                    fragment.structure_parts()
                 );
                 if fragment
-                    .tower_parts
+                    .structure_parts()
                     .is_some_and(|parts| parts.contains(ROOF))
                 {
                     roof_end = Some(s.world.bodies[fragment.body].center_of_mass());
@@ -354,7 +359,7 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
             "corner {corner}: it broke into sections where it landed"
         );
         // Everything of it on the ground lies low; the footings stand.
-        for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(c.id)) {
+        for fragment in s.fragments.iter().filter(|f| f.of_structure(tower)) {
             let y = f64::from(s.world.bodies[fragment.body].center_of_mass().y);
             assert!(y < 3.0, "corner {corner}: a section left up at {y}");
         }
@@ -382,12 +387,12 @@ fn a_tower_missing_a_leg_tips_toward_it_and_comes_down_in_sections() {
 fn a_shot_out_brace_falls_alone_and_the_tower_stands() {
     let (mut s, tower) = lone_tower();
     let brace = (0..tower_structure().parts.len())
-        .find(|&i| tower_structure().parts[i].kind == TowerPartKind::Brace)
+        .find(|&i| tower_structure().parts[i].tower_kind() == TowerPartKind::Brace)
         .unwrap();
     let girt = (0..tower_structure().parts.len())
-        .find(|&i| tower_structure().parts[i].kind == TowerPartKind::Girt)
+        .find(|&i| tower_structure().parts[i].tower_kind() == TowerPartKind::Girt)
         .unwrap();
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([brace, girt]),
         PartSet::EMPTY,
@@ -397,7 +402,7 @@ fn a_shot_out_brace_falls_alone_and_the_tower_stands() {
     assert!(s.covers[tower].alive);
     assert_eq!(gone(&s, tower), PartSet::from_indices([brace, girt]));
     assert!(bodies(&s, tower).is_empty(), "nothing else comes down");
-    let (min, max) = tower_part_box(&s.covers[tower], brace).unwrap();
+    let (min, max) = part_box(&s.covers[tower], brace).unwrap();
     assert!(max.y > min.y);
 }
 
@@ -406,7 +411,7 @@ fn a_rebuilt_tower_stands_whole_again_and_clears_its_ruin() {
     let (mut s, tower) = lone_tower();
     let colliders = s.world.colliders.len();
     let bodies_before = s.world.bodies.len();
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[0]]),
         PartSet::EMPTY,
@@ -457,7 +462,7 @@ fn a_scrap_yard_tower_falls_and_rises_again_in_place() {
     sim.start();
     let (id, team) = (sim.human().id, sim.human().team);
     for (cycle, &leg) in LOWER_LEGS[..2].iter().enumerate() {
-        sim.break_tower_parts(
+        sim.break_structure(
             tower,
             PartSet::from_indices([leg]),
             PartSet::EMPTY,
@@ -541,11 +546,11 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
         .unwrap();
     // A brace, then a leg: the frame falls, a few ticks of it falling, then its landing.
     let brace = (0..tower_structure().parts.len())
-        .find(|&i| tower_structure().parts[i].kind == TowerPartKind::Brace)
+        .find(|&i| tower_structure().parts[i].tower_kind() == TowerPartKind::Brace)
         .unwrap();
     let mut tick = 0u64;
     for part in [brace, LOWER_LEGS[1]] {
-        s.break_tower_parts(
+        s.break_structure(
             tower,
             PartSet::from_indices([part]),
             PartSet::EMPTY,
@@ -562,14 +567,14 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
             let cover = shown.covers.iter().find(|cover| cover.id == id).unwrap();
             assert_eq!(cover.broken, gone(&s, tower), "tick {tick}");
             assert_eq!(cover.alive, s.covers[tower].alive, "tick {tick}");
-            for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
+            for fragment in s.fragments.iter().filter(|f| f.of_structure(tower)) {
                 let seen = shown
                     .fragments
                     .iter()
                     .find(|shown| shown.id == fragment.id)
                     .expect("each falling body reaches the client");
-                assert_eq!(seen.tower_parts, fragment.tower_parts);
-                assert_eq!(seen.tower_id, Some(id));
+                assert_eq!(seen.structure_parts, fragment.structure_parts());
+                assert_eq!(seen.structure_id, Some(id));
             }
         }
     }
@@ -586,8 +591,8 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
     let seen: Vec<_> = late
         .fragments
         .iter()
-        .filter(|f| f.tower_id == Some(id))
-        .map(|f| (f.id, f.tower_parts.unwrap()))
+        .filter(|f| f.structure_id == Some(id))
+        .map(|f| (f.id, f.structure_parts.unwrap()))
         .collect();
     assert_eq!(seen, bodies(&s, tower));
 }
@@ -596,7 +601,7 @@ fn broken_parts_and_falling_bodies_reach_room_clients_and_late_joiners() {
 fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
     let (mut s, tower) = lone_tower();
     let (mut mirror, mirrored) = lone_tower();
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[2]]),
         PartSet::EMPTY,
@@ -605,10 +610,10 @@ fn a_pilot_or_client_world_stands_the_tower_as_the_scene_shows_it() {
     );
     let shown = gone(&s, tower);
     mirror.covers[mirrored].alive = s.covers[tower].alive;
-    mirror.set_tower_gone(mirrored, shown);
+    mirror.set_structure_gone(mirrored, shown);
     assert_eq!(gone(&mirror, mirrored), shown);
     let standing = mirror.covers[mirrored]
-        .tower
+        .structure
         .as_ref()
         .unwrap()
         .colliders
@@ -648,8 +653,7 @@ fn settled_pieces_stay_as_they_lie() {
             .map(move |(c, l)| (c, l, shift))
     }) {
         let (mut s, tower) = lone_tower_at(shift);
-        let id = s.covers[tower].id;
-        s.break_tower_parts(
+        s.break_structure(
             tower,
             PartSet::from_indices([leg]),
             PartSet::EMPTY,
@@ -665,13 +669,13 @@ fn settled_pieces_stay_as_they_lie() {
             let all_resting = s
                 .fragments
                 .iter()
-                .filter(|f| f.tower_id == Some(id))
-                .all(|f| f.tower_landing.is_some_and(|landing| landing.rested));
+                .filter(|f| f.of_structure(tower))
+                .all(|f| f.structure.is_some_and(|landing| landing.rested));
             if all_resting {
                 came_to_rest.get_or_insert(s.elapsed);
             }
-            for fragment in s.fragments.iter().filter(|f| f.tower_id == Some(id)) {
-                let landing = fragment.tower_landing.unwrap_or_default();
+            for fragment in s.fragments.iter().filter(|f| f.of_structure(tower)) {
+                let landing = fragment.structure.unwrap_or_default();
                 let since = s.elapsed - landing.landed_at;
                 assert!(
                     !landing.landed || landing.rested || since < LANDED_STILL,
@@ -689,19 +693,19 @@ fn settled_pieces_stay_as_they_lie() {
                 assert!(
                     first_at.distance(at) < SETTLED_DRIFT,
                     "corner {corner} shift {shift}: a resting piece {:?} moved {}",
-                    fragment.tower_parts,
+                    fragment.structure_parts(),
                     first_at.distance(at)
                 );
                 assert!(
                     first.angle_between(turn) < 0.03,
                     "corner {corner} shift {shift}: a resting piece {:?} turned {}",
-                    fragment.tower_parts,
+                    fragment.structure_parts(),
                     first.angle_between(turn)
                 );
                 assert!(
                     y <= first_y + SETTLED_DRIFT,
                     "corner {corner} shift {shift}: a resting piece {:?} rose {}",
-                    fragment.tower_parts,
+                    fragment.structure_parts(),
                     y - first_y
                 );
             }
@@ -727,12 +731,11 @@ fn settled_pieces_stay_as_they_lie() {
 fn a_crumpled_roof_never_turns_whole_again() {
     let structure = tower_structure();
     let crumpled = (PART_COUNT..PART_COUNT + 64)
-        .find(|&index| structure.look(index) == Some(PieceLook::Roof))
+        .find(|&index| piece_look(&structure, index) == Some(PieceLook::Roof))
         .expect("the roof has a landed piece");
     for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
         let (mut s, tower) = lone_tower();
-        let id = s.covers[tower].id;
-        s.break_tower_parts(
+        s.break_structure(
             tower,
             PartSet::from_indices([leg]),
             PartSet::EMPTY,
@@ -745,8 +748,11 @@ fn a_crumpled_roof_never_turns_whole_again() {
             let carried = |index: usize| {
                 s.fragments
                     .iter()
-                    .filter(|f| f.tower_id == Some(id))
-                    .any(|f| f.tower_parts.is_some_and(|parts| parts.contains(index)))
+                    .filter(|f| f.of_structure(tower))
+                    .any(|f| {
+                        f.structure_parts()
+                            .is_some_and(|parts| parts.contains(index))
+                    })
             };
             let (whole, piece) = (carried(ROOF), carried(crumpled));
             if piece {
@@ -779,8 +785,7 @@ fn a_crumpled_roof_never_turns_whole_again() {
 #[test]
 fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
     let (mut s, tower) = lone_tower();
-    let id = s.covers[tower].id;
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[0]]),
         PartSet::EMPTY,
@@ -792,7 +797,7 @@ fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
     let looks: Vec<PieceLook> = bodies(&s, tower)
         .iter()
         .flat_map(|(_, parts)| parts.iter().collect::<Vec<_>>())
-        .filter_map(|index| layout.look(index))
+        .filter_map(|index| piece_look(&layout, index))
         .collect();
     let legs = looks
         .iter()
@@ -814,7 +819,7 @@ fn a_landing_snaps_the_legs_and_tears_the_cabin_apart() {
     assert!(
         s.fragments
             .iter()
-            .all(|f| f.tower_id != Some(id) || f.tower_parts.is_some())
+            .all(|f| !f.of_structure(tower) || f.structure.is_some())
     );
 }
 
@@ -840,7 +845,7 @@ fn a_falling_tower_breaks_the_crates_it_lands_on() {
         })
         .collect();
     s.nav.rebuild(&s.covers, None);
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[1]]),
         PartSet::EMPTY,
@@ -862,7 +867,7 @@ fn a_tower_crashes_with_a_full_debris_budget() {
     let id = s.covers[tower].id;
     // Room for the falling frame and its ladder, no more.
     s.max_fragments = 2;
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[1]]),
         PartSet::EMPTY,
@@ -900,7 +905,7 @@ fn a_tower_caught_on_a_wall_breaks_up_where_it_rests() {
         0xb5b5a5,
     ));
     s.nav.rebuild(&s.covers, None);
-    s.break_tower_parts(
+    s.break_structure(
         tower,
         PartSet::from_indices([LOWER_LEGS[1]]),
         PartSet::EMPTY,

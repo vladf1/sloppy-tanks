@@ -29,7 +29,7 @@ use super::timber_model::timber_member;
 use crate::geometry::Mesh;
 use crate::geometry::math::js_round;
 use crate::scene::Node;
-use crate::sim::house_structure::PartSet;
+use crate::sim::structure::PartSet;
 use crate::sim::math::Random;
 use crate::sim::tower_layout::{
     BEAM, BENT_BRACE_LOW, CABIN_TOP, CABIN_WALL, CABIN_X, CABIN_Z, DECK_TOP, DECK_X, DECK_Z,
@@ -40,7 +40,7 @@ use crate::sim::tower_layout::{
 use crate::sim::tower_structure::{
     CORNERS, DECK_CUT, DECKS, DOOR_HEIGHT, DOOR_U, DOOR_WIDTH, FACES, FOOTINGS, LADDER,
     LOWER_LEGS, Member, PieceLook, RAILINGS, ROOF, SHUTTER_X, STUB_REACH, UPPER_LEGS, WALLS,
-    face_members_of, knee_member, tower_structure,
+    face_members_of, knee_member, piece_look, tower_structure,
 };
 
 const TOWER_POST: u32 = 0x887454;
@@ -237,7 +237,7 @@ pub fn tower_debris(color: u32, parts: &PartSet) -> Node {
     let (low, high) = parts.iter().fold(
         (DVec3::INFINITY, DVec3::NEG_INFINITY),
         |(low, high), index| {
-            let part = layout.member(index);
+            let part = layout.part(index);
             (low.min(part.min), high.max(part.max))
         },
     );
@@ -262,7 +262,7 @@ fn uncast(node: &mut Node) {
 fn parts_model(group: &mut Node, color: u32, parts: impl Iterator<Item = usize>, scars: &Scars) {
     let mut kit = Kit::new();
     for part in parts {
-        match tower_structure().look(part) {
+        match piece_look(&tower_structure(), part) {
             Some(look) => piece_model(group, &mut kit, color, part, look),
             None => part_model(group, &mut kit, part, scars),
         }

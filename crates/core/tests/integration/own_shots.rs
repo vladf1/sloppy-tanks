@@ -440,9 +440,6 @@ fn through(structure: &CoverDef, weapon: Weapon, x: f64, crack: bool) -> (HostFl
         if let Some(state) = sim.covers[cover].structure.as_mut() {
             state.damage.iter_mut().for_each(|damage| *damage += 0.5);
         }
-        if let Some(state) = sim.covers[cover].tower.as_mut() {
-            state.damage.iter_mut().for_each(|damage| *damage += 0.5);
-        }
     }
     sim.world.step();
     let cover = predictor(&sim, viewer);

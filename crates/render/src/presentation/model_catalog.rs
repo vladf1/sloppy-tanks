@@ -1,7 +1,7 @@
 //! The adapter between presentation and the cover, tree and scenery model
 //! builders in `sloppy_core::models`.
 //!
-//! - [`cover_model`] ← `models::cover_model(cover, Full, stage)`, batched like
+//! - [`cover_model`] ← `models::cover_model(cover, Full)`, batched like
 //!   `physicalCoverModel` in `presentation.ts`; trees list their shedding boughs
 //!   ([`TreeParts`]).
 //! - [`scenery`] ← `models::build_scenery(theme)` (or the page's cached copy,
@@ -16,7 +16,7 @@ use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, HouseBuild, Scenery, SmokeCover,
-    TreeDetail, WATERWHEEL, batch, branch_drop_stage, cover_damage_stage, tree_part,
+    TreeDetail, WATERWHEEL, batch, branch_drop_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
@@ -77,14 +77,13 @@ impl TreeParts {
 /// look stay instanced, movable ones move). A lone static cover with a look of its own
 /// is not worth a combined model: it leads the rest instead.
 pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
-    let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
     let mut looks: HashMap<String, usize> = HashMap::new();
     for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
-        *looks.entry(cover_key(cover, stage(cover))).or_default() += 1;
+        *looks.entry(cover_key(cover)).or_default() += 1;
     }
     let (mut combined, mut own): (Vec<usize>, Vec<usize>) = (0..covers.len()).partition(|&index| {
         let cover = &covers[index];
-        cover.motion.is_none() && looks[&cover_key(cover, stage(cover))] == 1
+        cover.motion.is_none() && looks[&cover_key(cover)] == 1
     });
     if combined.len() < 2 {
         combined.append(&mut own);
@@ -93,7 +92,7 @@ pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
     (combined, own)
 }
 
-pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
+pub fn cover_key(cover: &RenderCover) -> String {
     let placement = match cover.kind {
         CoverKind::Drum
         | CoverKind::Hedgehog
@@ -105,20 +104,14 @@ pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
         CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
         _ => format!("@{}/{}", cover.x, cover.z),
     };
-    let hits: Vec<String> = cover
-        .timber_hits
-        .iter()
-        .map(|hit| format!("{hit:?}"))
-        .collect();
     format!(
-        "{:?}/{}/{}/{}/{:x}/{stage}/{placement}/{:?}/{}/{:x?}{}",
+        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:x?}{}",
         cover.kind,
         cover.w,
         cover.h,
         cover.d,
         cover.color,
         cover.timber_join,
-        hits.join(";"),
         cover.broken.0,
         tower_scars(cover),
     )
@@ -138,9 +131,9 @@ pub fn tower_scars(cover: &RenderCover) -> String {
 }
 
 /// `physicalCoverModel`'s model: the cover's full-detail model, batched.
-pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
+pub fn cover_model(cover: &RenderCover) -> CoverModel {
     let shape = CoverShape::from(cover);
-    let mut root = core_models::cover_model(&shape, TreeDetail::Full, stage);
+    let mut root = core_models::cover_model(&shape, TreeDetail::Full);
     batch(&mut root);
     let tree = (cover.kind == CoverKind::Tree).then(|| tree_parts(&root));
     CoverModel { root, tree }
@@ -572,11 +565,11 @@ mod tests {
             d: 1.2,
             ..RenderCover::default()
         };
-        assert_eq!(cover_key(&drum(0.0), 0), cover_key(&drum(5.0), 0));
+        assert_eq!(cover_key(&drum(0.0)), cover_key(&drum(5.0)));
         let house = |x: f64| RenderCover {
             kind: CoverKind::House,
             ..drum(x)
         };
-        assert_ne!(cover_key(&house(0.0), 0), cover_key(&house(5.0), 0));
+        assert_ne!(cover_key(&house(0.0)), cover_key(&house(5.0)));
     }
 }

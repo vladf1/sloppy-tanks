@@ -4,7 +4,6 @@
 
 use crate::support;
 
-use sloppy_core::models::cover_damage_stage;
 use sloppy_core::sim::arena::{CoverDef, spawn_positions};
 use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::debris_physics::DebrisMaterial;
@@ -13,16 +12,9 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
-use sloppy_core::sim::tower_structure::{FOOTINGS, tower_structure};
-use sloppy_core::sim::{
-    Cover, CoverKind, FragmentShape, Shot, SimEventType, Simulation, Team, Weapon,
-};
+use sloppy_core::sim::tower_structure::FOOTINGS;
+use sloppy_core::sim::{CoverKind, FragmentShape, Shot, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, cover_at, event_count};
-
-/// The damage stage the renderer draws for `cover`.
-fn stage(cover: &Cover) -> u32 {
-    cover_damage_stage(cover.kind, cover.hp, cover.max_hp)
-}
 
 /// A shell from x = -3 heading east into a 10 m concrete wall at the origin.
 fn wall_shot(hp: f64, kind: Weapon, bounces: Option<u32>) -> (Simulation, usize) {
@@ -87,14 +79,13 @@ fn cover_queries_ignore_tanks_and_debris_and_release_destroyed_collider_identiti
     assert!(!s.cover_by_collider.contains_key(&handle));
     assert!(s.visible(a, b));
     s.reset(None);
-    // One collider a cover, a cottage or a watchtower one for each of its parts.
+    // One collider a cover, a structure one for each of its parts.
     let colliders: usize = s
         .covers
         .iter()
-        .map(|cover| match (&cover.structure, &cover.tower) {
-            (Some(state), _) => state.layout.parts.len(),
-            (None, Some(_)) => tower_structure().parts.len(),
-            (None, None) => 1,
+        .map(|cover| match &cover.structure {
+            Some(state) => state.layout.parts.len(),
+            None => 1,
         })
         .sum();
     assert_eq!(s.cover_by_collider.len(), colliders);
@@ -151,7 +142,7 @@ fn tower_collapse_opens_center_route_and_keeps_its_footings() {
         let footing = Vec2::new(place.x + side * TOWER_BASE.offset, place.z);
         assert!(s.nav.is_blocked(footing), "its footings stay as low cover");
     }
-    let state = s.covers[tower].tower.as_ref().unwrap();
+    let state = s.covers[tower].structure.as_ref().unwrap();
     assert!(
         FOOTINGS
             .iter()
@@ -214,31 +205,41 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
         .iter()
         .position(|c| c.kind == CoverKind::Container)
         .unwrap();
-    let handle = sim.covers[cargo].collider;
+    let parts = sim.covers[cargo]
+        .structure
+        .as_ref()
+        .unwrap()
+        .layout
+        .parts
+        .len();
+    let colliders = |sim: &Simulation| {
+        sim.cover_by_collider
+            .values()
+            .filter(|&&index| index == cargo)
+            .count()
+    };
+    assert_eq!(colliders(&sim), parts);
     let cargo_at = cover_at(&sim, cargo);
     let (id, team) = (sim.human().id, sim.human_team);
-    assert_eq!(stage(&sim.covers[cargo]), 0);
     assert!(sim.nav.is_blocked(cargo_at));
-    sim.damage_cover(cargo, 40.0, id, team, None, None);
+    sim.damage_cover(cargo, 20.0, id, team, None, None);
     assert!(sim.covers[cargo].alive);
-    assert_eq!(stage(&sim.covers[cargo]), 1);
-    sim.damage_cover(cargo, 40.0, id, team, None, None);
-    assert_eq!(stage(&sim.covers[cargo]), 2);
-    assert!(sim.covers[cargo].alive);
-    assert!(
-        sim.cover_by_collider.contains_key(&handle),
-        "damaged crates still stop shells"
+    assert_eq!(
+        colliders(&sim),
+        parts,
+        "a crate's boards hold under light damage"
     );
     assert!(
         sim.nav.is_blocked(cargo_at),
         "damage does not open the route early"
     );
-    sim.damage_cover(cargo, 20.0, id, team, None, None);
+    sim.damage_cover(cargo, 100.0, id, team, None, None);
     assert!(!sim.covers[cargo].alive);
-    assert!(!sim.cover_by_collider.contains_key(&handle));
+    assert_eq!(colliders(&sim), 0);
     assert!(!sim.nav.is_blocked(cargo_at));
     assert!(sim.fragments.iter().any(|f| {
-        f.shape == Some(FragmentShape::Panel) && f.material == Some(DebrisMaterial::Wood)
+        f.structure.is_some_and(|debris| debris.cover == cargo)
+            && f.material == Some(DebrisMaterial::Wood)
     }));
     sim.damage_cover(container, 10000.0, id, team, None, None);
     assert!(sim.covers[container].alive);

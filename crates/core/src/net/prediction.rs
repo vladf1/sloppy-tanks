@@ -18,11 +18,9 @@ use super::own_shots::{CoverCast, CoverHit, PartHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
-use crate::sim::house_physics::{house_debris_colliders, house_debris_damping, house_structure};
-use crate::sim::house_structure::{HouseStructure, PartSet};
-use crate::sim::simulation::{house_parts, tower_parts};
-use crate::sim::tower_physics::tower_debris_colliders;
-use crate::sim::tower_structure::tower_structure;
+use crate::sim::simulation::structure_parts;
+use crate::sim::structure::{PartSet, Structure, structure_of};
+use crate::sim::structure_physics::{debris_colliders, falling_damping, rest_body, structural};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -248,7 +246,7 @@ impl MovingBody {
             }
         }
         for fragment in &simulation.fragments {
-            let loose_parts = fragment.house_parts.is_some() || fragment.tower_parts.is_some();
+            let loose_parts = fragment.structure.is_some();
             if fragment.wreck.is_some() || fragment.dimensions.is_some() || loose_parts {
                 near(BodyKind::Fragment, fragment.id, fragment.body, loose_parts);
             }
@@ -266,7 +264,7 @@ impl MovingBody {
                     .find(|fragment| fragment.id == body.id)
                     .map(|fragment| {
                         let loose_parts =
-                            fragment.house_parts.is_some() || fragment.tower_parts.is_some();
+                            fragment.structure.is_some();
                         (fragment.body, loose_parts)
                     }),
             };
@@ -353,8 +351,8 @@ struct CoverBody {
     movable: bool,
     /// What a shell striking it shows.
     struck: Struck,
-    /// A cottage's structure, and its standing parts that took damage.
-    house: Option<Arc<HouseStructure>>,
+    /// A structure's layout, and its parts that took damage.
+    layout: Option<Arc<Structure>>,
     cracked: PartSet,
     /// The scene sync that last found its record.
     seen: u64,
@@ -403,12 +401,10 @@ pub struct BodyPose {
 /// Debris this far from the viewer's hull (metres) joins the predicted world: farther
 /// than the hull can drive in a prediction window.
 const DEBRIS_REACH: f64 = 12.0;
-/// The farthest (m) a cottage's loose part reaches from the ground centre of the cottage
-/// it fell from, which its body is placed by: half the largest cottage's diagonal and its
-/// eaves.
-const HOUSE_DEBRIS_OFFSET: f64 = 6.0;
-/// The same for a watchtower's: its roof's corner over a footing.
-const TOWER_DEBRIS_OFFSET: f64 = 9.5;
+/// The farthest (m) a structure's fallen part reaches from the ground centre of the
+/// structure it fell from, which its body is placed by: a watchtower's roof corner over
+/// a footing, farther than a cottage's eaves.
+const STRUCTURE_DEBRIS_OFFSET: f64 = 9.5;
 /// A body slower than this (m/s and rad/s) counts as resting.
 const RESTING_SPEED: f64 = 0.05;
 
@@ -416,6 +412,8 @@ const RESTING_SPEED: f64 = 0.05;
 struct DebrisBody {
     body: RigidBodyHandle,
     seen: u64,
+    /// Held at rest for good, as the host holds a structure's piece.
+    rested: bool,
 }
 
 struct OtherTank {
@@ -481,19 +479,17 @@ impl TankPredictor {
             };
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
             if current != Some(form) {
-                let mut house = None;
+                let mut layout = None;
                 if let Some(old) = self.covers.remove(&cover.id) {
                     self.world.remove_body(old.body);
-                    house = old.house;
+                    layout = old.layout;
                 }
-                // A cottage's structure is built once; a break only changes its parts.
-                let house = house.or_else(|| {
-                    (cover.kind == CoverKind::House).then(|| {
-                        let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
-                        Arc::new(house_structure(x, z, w, d, cover.h))
-                    })
+                // A structure's layout is built once; a break only changes its parts.
+                let layout = layout.or_else(|| {
+                    let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
+                    structure_of(cover.kind, x, z, w, d, cover.h, cover.timber_join)
                 });
-                let body = self.insert_cover(cover, form, house.as_deref());
+                let body = self.insert_cover(cover, form, layout.as_deref());
                 let movable = cover.kind.movable();
                 self.covers.insert(
                     cover.id,
@@ -506,7 +502,7 @@ impl TankPredictor {
                             color: cover.color,
                             height: cover.h,
                         },
-                        house,
+                        layout,
                         cracked: PartSet::EMPTY,
                         seen: sync,
                     },
@@ -567,21 +563,19 @@ impl TankPredictor {
                 continue;
             }
             if !self.debris.contains_key(&fragment.id) {
-                let colliders = match (fragment.house_id, fragment.house_parts, fragment.tower_parts) {
-                    // A cottage's loose parts: the replicated set gives their shapes,
-                    // from the cottage's structure.
-                    (Some(house), Some(parts), _) => {
+                let colliders = match (fragment.structure_id, fragment.structure_parts) {
+                    // A structure's fallen parts: the replicated set gives their shapes,
+                    // from the structure's layout.
+                    (Some(structure), Some(parts)) => {
                         let Some(layout) = self
                             .covers
-                            .get(&house)
-                            .and_then(|cover| cover.house.as_deref())
+                            .get(&structure)
+                            .and_then(|cover| cover.layout.as_deref())
                         else {
                             continue;
                         };
-                        (house_debris_body(), house_debris_colliders(layout, &parts))
+                        (structure_debris_body(), debris_colliders(layout, &parts))
                     }
-                    // A watchtower's: every tower is built alike.
-                    (_, None, Some(parts)) => (house_debris_body(), tower_debris_colliders(&parts)),
                     _ => {
                         let Some((body, collider)) = debris_parts(fragment) else {
                             continue;
@@ -591,22 +585,26 @@ impl TankPredictor {
                 };
                 let body = self.world.insert_body(colliders.0);
                 // As the host steps it: its own pieces with two more solver iterations.
-                if fragment.house_parts.is_none() && fragment.tower_parts.is_none() {
+                if fragment.structure_parts.is_none() {
                     self.world.bodies[body].set_additional_solver_iterations(2);
                 }
                 for collider in colliders.1 {
                     self.world.insert_collider(collider, Some(body));
                 }
                 self.debris
-                    .insert(fragment.id, DebrisBody { body, seen: sync });
+                    .insert(fragment.id, DebrisBody { body, seen: sync, rested: false });
             }
             let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
             debris.seen = sync;
+            if fragment.rested && !debris.rested {
+                debris.rested = true;
+                rest_body(&mut self.world, debris.body);
+            }
             let body = &mut self.world.bodies[debris.body];
-            if fragment.house_parts.is_some() || fragment.tower_parts.is_some() {
-                // Damped as the host damps it at its age.
+            if fragment.structure_parts.is_some() && !fragment.rested {
+                // Damped as the host damps a falling body at its age.
                 let age = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
-                let (linear, angular) = house_debris_damping(age);
+                let (linear, angular) = falling_damping(age);
                 body.set_linear_damping(linear);
                 body.set_angular_damping(angular);
             }
@@ -664,18 +662,15 @@ impl TankPredictor {
         &mut self,
         cover: &RenderCover,
         form: CoverForm,
-        house: Option<&HouseStructure>,
+        layout: Option<&Structure>,
     ) -> RigidBodyHandle {
         // Movable cover keeps its authored shape; its replicated footprint follows the nav.
         let (x, z, w, d) = match cover.motion {
             Some(motion) => (motion.origin_x, motion.origin_z, motion.w, motion.d),
             None => (cover.x, cover.z, cover.w, cover.d),
         };
-        let parts = match (form, house) {
-            (CoverForm::Parts(broken), Some(layout)) => house_parts(layout, x, z, &broken),
-            (CoverForm::Parts(broken), None) if cover.kind == CoverKind::Tower => {
-                tower_parts(x, z, &broken)
-            }
+        let parts = match (form, layout) {
+            (CoverForm::Parts(broken), Some(layout)) => structure_parts(layout, x, z, &broken),
             _ => cover_parts(cover.kind, x, z, w, d, cover.h),
         };
         let body = self.world.insert_body(parts.body);
@@ -948,16 +943,10 @@ impl CoverCast for TankPredictor {
         let cover = self.covers.values().find(|cover| Some(cover.body) == body);
         let part = cover.and_then(|cover| {
             let index = self.world.colliders[collider].user_data as usize;
-            let cottage = cover.house.is_some();
-            let strength = match &cover.house {
-                Some(house) => house.parts.get(index)?.strength,
-                // A watchtower's footing takes a shell as other concrete does.
-                None if cover.struck.kind == CoverKind::Tower => {
-                    Some(tower_structure().parts.get(index)?.strength)
-                        .filter(|strength| strength.is_finite())?
-                }
-                None => return None,
-            };
+            let cottage = cover.struck.kind == CoverKind::House;
+            // A watchtower's footing takes a shell as other concrete does.
+            let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)
+                .filter(|strength| strength.is_finite())?;
             Some(PartHit {
                 cottage,
                 key: collider_key(collider),
@@ -980,19 +969,17 @@ fn collider_key(collider: ColliderHandle) -> u64 {
     (u64::from(generation) << 32) | u64::from(index)
 }
 
-/// The host's body for a cottage's loose parts (`drop_house_cluster`): its origin is the
-/// cottage's ground centre the parts fell from.
-fn house_debris_body() -> RigidBodyBuilder {
+/// The host's body for a structure's fallen parts (`drop_fall`): its origin is the
+/// structure's ground centre the parts fell from.
+fn structure_debris_body() -> RigidBodyBuilder {
     RigidBodyBuilder::dynamic().can_sleep(true)
 }
 
-/// How far a fragment's solid parts may lie from its replicated position: a cottage's
-/// loose parts hang off the ground centre of the cottage they fell from.
+/// How far a fragment's solid parts may lie from its replicated position: a structure's
+/// fallen parts hang off the ground centre of the structure they fell from.
 pub fn debris_offset(fragment: &RenderFragment) -> f64 {
-    if fragment.house_parts.is_some() {
-        HOUSE_DEBRIS_OFFSET
-    } else if fragment.tower_parts.is_some() {
-        TOWER_DEBRIS_OFFSET
+    if fragment.structure_parts.is_some() {
+        STRUCTURE_DEBRIS_OFFSET
     } else {
         0.0
     }
@@ -1000,7 +987,7 @@ pub fn debris_offset(fragment: &RenderFragment) -> f64 {
 
 /// How a cover record stands in the predicted world, or `None` when nothing is left of it.
 fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
-    if matches!(cover.kind, CoverKind::House | CoverKind::Tower) {
+    if structural(cover.kind) {
         Some(CoverForm::Parts(cover.broken))
     } else if cover.alive {
         Some(CoverForm::Standing)
@@ -1041,11 +1028,7 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
         0.35
     };
     let surface = debris_material(material);
-    let membership = if fragment.timber_part.is_some() {
-        group::TIMBER_DEBRIS
-    } else {
-        group::PUSHABLE_DEBRIS
-    };
+    let membership = group::PUSHABLE_DEBRIS;
     Some((
         RigidBodyBuilder::dynamic()
             .linear_damping(0.12)
@@ -1060,13 +1043,12 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
 }
 
 /// Whether a replicated fragment blocks tanks on the host: wreck parts and the authored
-/// pieces of broken scenery (timber, crate sections, tower and house pieces), which the
+/// pieces of broken scenery and the fallen parts of structures, which the
 /// predicted world leaves out. Small shards only touch the ground and cover.
 pub fn solid_debris(fragment: &RenderFragment) -> bool {
     fragment.wreck.is_some()
         || fragment.dimensions.is_some()
-        || fragment.house_parts.is_some()
-        || fragment.tower_parts.is_some()
+        || fragment.structure_parts.is_some()
 }
 
 /// The host's per-tick drive: the speed pickup runs down before the drive impulse.

@@ -6,16 +6,16 @@
 //! an arena comes out the same either way.
 
 use sloppy_core::models::round_texture_files;
-use sloppy_core::models::{house_debris, tower_debris};
-use sloppy_core::sim::house_structure::PartSet;
+use sloppy_core::models::{CoverShape, structure_debris};
 use sloppy_core::sim::render_state::RenderCover;
-use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
+use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure_physics::structural;
 use sloppy_core::sim::tower_structure::tower_structure;
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
 
 use super::{
     CoverPlan, DEBRIS_SHAPES, Lifetime, PendingScenery, Preparation, Presentation, SAMPLE_WRECK,
-    SceneryModel, cover_damage_stage, model_catalog, timber_part_model,
+    SceneryModel, model_catalog,
 };
 use crate::presentation::geometry_cache;
 use crate::presentation::theme::Theme;
@@ -227,8 +227,7 @@ impl Presentation {
     }
 
     /// Register one model per first-use look this round can show (the wrecks' looks,
-    /// damaged cargo and timber stages, timber beams, mines, pickup glows, debris
-    /// pieces), so `prepare_step` compiles their pipelines before combat instead of
+    /// broken structures and their fallen parts, mines, pickup glows, debris pieces), so `prepare_step` compiles their pipelines before combat instead of
     /// mid-fight, at once after [`Self::reset`]. Of the wrecks only the sample is built
     /// now (`wreck_library`); the page builds the rest once the arena is ready
     /// ([`Self::prebuild_step`]).
@@ -259,66 +258,34 @@ impl Presentation {
     fn add_cover_samples(&mut self, covers: &[RenderCover]) {
         let mut seen = std::collections::HashSet::new();
         for cover in covers {
-            for health in [0.6, 0.3, 0.1] {
-                let hp = cover.max_hp * health;
-                let stage = cover_damage_stage(cover.kind, hp, cover.max_hp);
-                if stage > 0 && seen.insert(format!("{:?}/{stage}", cover.kind)) {
-                    let damaged = RenderCover {
-                        hp,
-                        ..cover.clone()
-                    };
-                    let model = model_catalog::cover_model(&damaged, stage);
-                    self.sample_models
-                        .push(self.renderer.add_model(&model.root, Lifetime::Round));
-                }
+            if !structural(cover.kind) || !seen.insert(cover.kind) {
+                continue;
             }
-            // A cottage with gaps in its walls registers its torn edges and lining,
-            // and its fallen parts their fading look.
-            if cover.kind == CoverKind::House && seen.insert("house-parts".into()) {
-                // From the smallest cottage: the sample only registers the looks, and a
-                // bigger one's build raised the page's peak heap for good.
-                let cover = covers
-                    .iter()
-                    .filter(|cover| cover.kind == CoverKind::House)
-                    .min_by(|a, b| (a.w * a.d * a.h).total_cmp(&(b.w * b.d * b.h)))
-                    .unwrap_or(cover);
-                let broken = PartSet::from_indices(5..12);
-                let damaged = RenderCover {
-                    broken,
-                    ..cover.clone()
-                };
-                let model = model_catalog::cover_model(&damaged, 0);
+            // A structure with parts broken out registers its torn edges and lining, and
+            // its fallen parts their fading look. From the smallest of its kind: the
+            // sample only registers the looks, and a bigger cottage's build raised the
+            // page's peak heap for good.
+            let cover = covers
+                .iter()
+                .filter(|other| other.kind == cover.kind)
+                .min_by(|a, b| (a.w * a.d * a.h).total_cmp(&(b.w * b.d * b.h)))
+                .unwrap_or(cover);
+            let broken = match cover.kind {
+                CoverKind::House => PartSet::from_indices(5..12),
+                CoverKind::Tower => tower_structure().all(),
+                _ => PartSet::from_indices([0, 1]),
+            };
+            let damaged = RenderCover { broken, ..*cover };
+            if cover.kind != CoverKind::Tower {
+                let model = model_catalog::cover_model(&damaged);
                 self.sample_models
                     .push(self.renderer.add_model(&model.root, Lifetime::Round));
-                let debris = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, &broken);
-                self.sample_models
-                    .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
             }
-            // A watchtower's fallen parts register their fading look.
-            if cover.kind == CoverKind::Tower && seen.insert("tower-parts".into()) {
-                let debris = tower_debris(cover.color, &tower_structure().all());
-                self.sample_models
-                    .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
-            }
-            if cover.kind == CoverKind::Timber && seen.insert("timber-parts".into()) {
-                let wall = TimberWall {
-                    x: cover.x,
-                    z: cover.z,
-                    w: cover.w,
-                    h: cover.h,
-                    d: cover.d,
-                    color: cover.color,
-                    hits: &cover.timber_hits,
-                    join: cover.timber_join,
-                };
-                for part in timber_parts(&wall, 0) {
-                    let node = timber_part_model(&part);
-                    self.sample_models
-                        .push(self.renderer.add_model(&node, Lifetime::Round));
-                }
-            }
-            // Falling crowns and boughs reuse the live tree's materials, whose
-            // faded variants every movable model registers up front.
+            let debris = structure_debris(&CoverShape::from(cover), &broken);
+            self.sample_models
+                .push(self.renderer.add_fading_model(&debris, Lifetime::Round));
+            // Falling crowns and boughs reuse the live tree's materials, whose faded
+            // variants every movable model registers up front.
         }
     }
 }

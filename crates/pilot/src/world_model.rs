@@ -114,15 +114,9 @@ impl WorldModel {
                 None => self.add_cover(cover),
             };
             if self.simulation.covers[index].structure.is_some() {
-                // A cottage stands as far as its parts do, levelled or not.
-                self.simulation.set_house_gone(index, cover.broken);
+                // A structure stands as far as its parts do, levelled or not.
+                self.simulation.set_structure_gone(index, cover.broken);
                 self.simulation.covers[index].alive = cover.alive;
-                continue;
-            }
-            if self.simulation.covers[index].tower.is_some() {
-                // So does a watchtower, down to its footings.
-                self.simulation.covers[index].alive = cover.alive;
-                self.simulation.set_tower_gone(index, cover.broken);
                 continue;
             }
             let standing = self.simulation.covers[index].alive;

@@ -33,7 +33,7 @@ use std::collections::VecDeque;
 use super::network_timeline::{STRIKE_CONFIRM_TICKS, hull_gap, hull_strike};
 use super::replication::TimedEvent;
 use super::shot_paths::{PathEntry, ShotLaunch, ShotPath};
-use crate::sim::house_physics::{FUSE_DISTANCE, HE_BLAST_RADIUS};
+use crate::sim::structure_physics::{FUSE_DISTANCE, HE_BLAST_RADIUS};
 use crate::sim::veterancy::RANKS;
 use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::{STEP, TEAM_COLORS, weapon};
@@ -117,12 +117,12 @@ pub struct CoverHit {
     pub part: Option<PartHit>,
 }
 
-/// A cottage's or a watchtower's standing part a shell meets: what the client knows of
-/// how it takes the shell (`strike_house_part`, `strike_tower_part`).
+/// A structure's standing part a shell meets: what the client knows of how it takes the
+/// shell (`strike_structure_part`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PartHit {
     /// A cottage's: an HE round through it bursts inside, its flash and dust out of the
-    /// hole it came in by; one through a watchtower's member bursts in the open.
+    /// hole it came in by; one through another structure's part bursts in the open.
     pub cottage: bool,
     /// Names the part to [`CoverCast::cast_cover_past`].
     pub key: u64,
@@ -285,7 +285,6 @@ fn flight_ticks(path: &ShotPath, range: f64) -> f64 {
 /// there or bouncing off (`resolve_contact`'s world contact).
 fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> TimedEvent {
     let at = path.at(tick);
-    let speed = at.vx.hypot(at.vz);
     let launch = &path.launch;
     let event = if launch.weapon == Weapon::Rocket {
         let mut blast = SimEvent::at(SimEventType::Explosion, at.x, at.z);
@@ -298,23 +297,12 @@ fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> 
         ricochet.size = Some(0.6);
         ricochet
     } else {
-        let chipped = struck.filter(|struck| {
-            matches!(
-                struck.kind,
-                CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo
-            )
-        });
+        let chipped = struck.filter(|struck| struck.kind == CoverKind::Tree);
         let mut impact = SimEvent::at(SimEventType::Impact, at.x, at.z);
         impact.size = Some(0.6);
         impact.color = Some(chipped.map_or(weapon(launch.weapon).color, |struck| struck.color));
         impact.cover_kind = chipped.map(|struck| struck.kind);
         impact.height = chipped.map(|struck| struck.height);
-        // A crate's splinters burst from the struck face, back along the shell.
-        if chipped.is_some_and(|struck| struck.kind == CoverKind::Cargo) && speed > 0.0 {
-            let y = launch.y.unwrap_or(1.0);
-            impact.height = Some(y);
-            impact.from = Some(Point3::new(at.x - at.vx / speed, y, at.z - at.vz / speed));
-        }
         impact
     };
     TimedEvent {
@@ -325,7 +313,7 @@ fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> 
 }
 
 /// An HE shell's burst against a cottage's part, or inside it where its fuse ran out or
-/// it struck a second part, having come in at `entry` (`burst_in_house`).
+/// it struck a second part, having come in at `entry` (`burst`).
 fn burst(path: &ShotPath, tick: f64, entry: Option<f64>) -> TimedEvent {
     let at = path.at(tick);
     let mut explosion = SimEvent::at(SimEventType::Explosion, at.x, at.z);
@@ -364,7 +352,7 @@ fn end_leg(result: &mut Forecast, tick: f64) {
     }
 }
 
-/// What a shell does at a cottage's part, as `strike_house_part` decides it.
+/// What a shell does at a cottage's part, as `strike_structure_part` decides it.
 enum PartStrike {
     /// It breaks the part and flies on (armour-piercing, or an HE round that breaks it
     /// and lights its fuse).

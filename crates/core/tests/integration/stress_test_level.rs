@@ -179,7 +179,7 @@ fn stress_cottages_fall_within_the_fragment_budget() {
         fell_cottage(&mut sim, house);
     }
     assert!(sim.fragments.len() <= sim.max_fragments);
-    assert!(sim.fragments.iter().any(|f| f.house_parts.is_some()));
+    assert!(sim.fragments.iter().any(|f| f.structure.is_some()));
     assert_eq!(sim.covers.len(), covers, "no heap: the ruins are the parts");
     for &house in &houses {
         let c = &sim.covers[house];

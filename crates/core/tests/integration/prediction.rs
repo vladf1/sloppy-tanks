@@ -17,9 +17,9 @@ use sloppy_core::net::prediction::{HullContacts, HullState, Moved, MovingBody, T
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{
     CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
 };
@@ -717,7 +717,7 @@ fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them(
     let walls = PartSet::from_indices(
         (0..layout.parts.len()).filter(|&index| layout.parts[index].grounded),
     );
-    sim.break_house_parts(house, walls, None, None);
+    sim.break_structure(house, walls, PartSet::EMPTY, None, None);
     let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 240);
     let settled = run.len() - 1;
     let scene = run[settled].scene.clone().expect("a snapshot");
@@ -728,7 +728,7 @@ fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them(
     let loose: Vec<_> = scene
         .fragments
         .iter()
-        .filter(|fragment| fragment.house_parts.is_some())
+        .filter(|fragment| fragment.structure_parts.is_some())
         // Within a hull's reach of the debris it keeps, by their bodies' origins.
         .filter(|fragment| distance(fragment.position.planar(), hull.position.planar()) < 12.0)
         .collect();

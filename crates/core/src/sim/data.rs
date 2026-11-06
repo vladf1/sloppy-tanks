@@ -309,12 +309,12 @@ pub mod group {
     pub const PUSHABLE_DEBRIS: u32 = SOLID_DEBRIS;
     pub const TIMBER_DEBRIS: u32 = SOLID_DEBRIS;
     pub const WRECK: u32 = SOLID_DEBRIS;
-    /// A collapsing cottage's shards: solid debris that also rests on its rubble
-    /// mound.
-    pub const HOUSE_SHARD: u32 = 0x0108_0307;
-    /// A cottage's loose part wedged on its remains, dropping through them: it skips
+    /// A structure's fallen parts: solid debris that also rests on a cottage garden's
+    /// poles and plants.
+    pub const STRUCTURE_DEBRIS: u32 = 0x0108_0307;
+    /// A structure's fallen part wedged on its remains, dropping through them: it skips
     /// standing cover.
-    pub const HOUSE_SHARD_THROUGH: u32 = 0x0108_0305;
+    pub const STRUCTURE_DEBRIS_THROUGH: u32 = 0x0108_0305;
     /// A cottage garden's poles and plants: met by its fallen parts alone.
     pub const GARDEN_PROPS: u32 = 0x0200_0100;
 }

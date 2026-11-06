@@ -4,11 +4,11 @@ use rapier3d::prelude::{ActiveEvents, ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Serialize};
 
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
-use super::house_physics::{BLAST_HEIGHT, blast_house_debris};
 use super::math::{Point3, Vec2, hypot3};
 use super::physics::{from_vector, vector};
 use super::simulation::Simulation;
-use super::types::{CoverKind, Fragment, Shot, SimEvent, SimEventType, Weapon};
+use super::structure_physics::{BLAST_HEIGHT, blast_structure_debris, crush_structure_parts};
+use super::types::{CoverKind, Shot, SimEvent, SimEventType, Weapon};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -81,21 +81,21 @@ pub fn track_debris_contacts(
     collider.set_contact_force_event_threshold((mass * IMPACT_FORCE_PER_MASS) as f32);
 }
 
-/// A blast on the ground at `origin` throwing the debris round it, a cottage's loose
+/// A blast on the ground at `origin` throwing the debris round it, a structure's fallen
 /// parts as a blast at [`BLAST_HEIGHT`] breaks and throws them.
 pub fn blast_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, power: f64) {
     blast_loose_debris(simulation, origin, radius, power);
     let point = Point3::new(origin.x, BLAST_HEIGHT, origin.z);
-    blast_house_debris(simulation, point, radius, power);
+    blast_structure_debris(simulation, point, radius, power);
 }
 
-/// [`blast_debris`] on every piece but a cottage's loose parts.
+/// [`blast_debris`] on every piece but a structure's fallen parts.
 /// Fixed-size fragment pool + a short movable-cover list; no all-pairs debris work.
 /// Sleeping bodies are deliberately included, and this never consumes combat RNG.
 pub fn blast_loose_debris(simulation: &mut Simulation, origin: Vec2, radius: f64, power: f64) {
     for i in 0..simulation.fragments.len() {
         let fragment = &simulation.fragments[i];
-        if fragment.life <= DEBRIS_CLEANUP_SECONDS || fragment.house_parts.is_some() {
+        if fragment.life <= DEBRIS_CLEANUP_SECONDS || fragment.structure.is_some() {
             continue;
         }
         let lever = if fragment.wreck.is_some() {
@@ -228,35 +228,6 @@ pub fn hit_movable_cover(simulation: &mut Simulation, cover_index: usize, shot: 
     );
 }
 
-/// Whether a shell bursts this piece and flies on: loose crate sections are thin
-/// boards. Timber wall beams and wreckage stop it.
-pub fn shatters(fragment: &Fragment) -> bool {
-    fragment.crate_piece.is_some()
-}
-
-/// A shell bursts a loose crate section: the piece and its body
-/// go at once, so it never shields what lies behind it, and a `Shatter` event
-/// throws its splinters on along the shell.
-pub fn shatter_debris(simulation: &mut Simulation, fragment_index: usize, shot: &Shot) {
-    let fragment = simulation.fragments.remove(fragment_index);
-    let at = simulation.body_translation(fragment.body);
-    simulation.remove_body(fragment.body);
-    let mut event = SimEvent::at(SimEventType::Shatter, at.x, at.z);
-    event.height = Some(at.y);
-    event.size = Some(fragment.dimensions.map_or(1.0, |d| d.x.max(d.y).max(d.z)));
-    event.color = Some(fragment.color);
-    event.cover_kind = fragment.source_kind;
-    let speed = shot.vx.hypot(shot.vz);
-    if speed > 0.0 {
-        event.from = Some(Point3::new(
-            at.x - shot.vx / speed,
-            at.y,
-            at.z - shot.vz / speed,
-        ));
-    }
-    simulation.events.push(event);
-}
-
 /// Substantial debris absorbs the round and takes only physical impulse.
 pub fn hit_projectile_debris(
     simulation: &mut Simulation,
@@ -289,8 +260,7 @@ pub fn hit_projectile_debris(
 pub fn drain_debris_contacts(simulation: &mut Simulation) {
     let mut count = 0;
     let contacts = simulation.contact_forces.drain();
-    super::house_physics::crush_house_parts(simulation, &contacts);
-    super::tower_physics::crush_tower_parts(simulation, &contacts);
+    crush_structure_parts(simulation, &contacts);
     for event in &contacts {
         if count >= IMPACTS_PER_TICK {
             continue;

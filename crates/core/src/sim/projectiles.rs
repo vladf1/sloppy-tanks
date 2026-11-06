@@ -11,24 +11,22 @@ use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
     weapon,
 };
-use super::debris_physics::{
-    blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
-};
+use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debris};
 use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
-use super::house_physics::{FUSE_DISTANCE, HE_BLAST_RADIUS, fragment_with_collider, house_debris};
-use super::tower_physics::tower_debris;
-use super::tower_structure::tower_structure;
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
 use super::shooter_rewind::{ShooterRewind, target_ticks};
 use super::simulation::{ProjectileMove, Simulation};
+use super::structure_physics::{
+    FUSE_DISTANCE, HE_BLAST_RADIUS, fragment_with_collider, structure_debris,
+};
 use super::tank_dimensions::tank_muzzle;
 use super::types::{
     CoverKind, DamageCause, DamageSource, Mine, PickupKind, Shot, SimEvent, SimEventType, Weapon,
 };
 
-/// A shell meets a cottage's loose part lying under its path when the part's top
+/// A shell meets a structure's fallen part lying under its path when the part's top
 /// reaches within this far (m) below the shell's flight height, as a slightly plunging
 /// shot would: a level shell at one metre passes over a slab lying flat on the ground.
 const LOW_DEBRIS_REACH: f64 = 0.7;
@@ -38,8 +36,6 @@ const ROOM_PLASTER: u32 = 0xc9b48f;
 /// How hard an armour-piercing round throws the pieces of a loose part it breaks, as a
 /// share of a burst's.
 const PIERCING_THROW: f64 = 0.4;
-/// The most a shell shoves a watchtower's fallen piece (an impulse).
-const TOWER_DEBRIS_SHOVE: f64 = 6.0;
 
 /// Impact flash colour for a shell striking a friendly hull.
 const FRIENDLY_IMPACT_COLOR: u32 = 0xb9d7e5;
@@ -310,14 +306,14 @@ fn find_next_contact(
     // down to [`LOW_DEBRIS_REACH`] under it.
     let low_half = ((LOW_DEBRIS_REACH - SHELL_HIT_RADIUS) / 2.0) as f32;
     let low_shape = Capsule::new_y(low_half, SHELL_HIT_RADIUS as f32);
-    let house_bodies: Vec<RigidBodyHandle> = simulation
+    let structure_bodies: Vec<RigidBodyHandle> = simulation
         .fragments
         .iter()
-        .filter(|fragment| house_debris(fragment))
+        .filter(|fragment| structure_debris(fragment))
         .map(|fragment| fragment.body)
         .collect();
-    let in_house_debris = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
-        collider.parent().is_some_and(|body| house_bodies.contains(&body))
+    let in_structure_debris = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
+        collider.parent().is_some_and(|body| structure_bodies.contains(&body))
     };
     for (si, shot) in simulation.shots.iter().enumerate() {
         if shot.life <= time {
@@ -372,7 +368,7 @@ fn find_next_contact(
             }
             // The capsule's top is the shell's own ball; its foot the low reach.
             let low = shot.combat_y() - f64::from(low_half);
-            if !house_bodies.is_empty()
+            if !structure_bodies.is_empty()
                 && let Some((collider, hit)) = simulation.world.cast_shape(
                     &Pose::from_translation(vector(shot.x, low, shot.z)),
                     vector(shot.vx, 0.0, shot.vz),
@@ -381,7 +377,7 @@ fn find_next_contact(
                         max_time_of_impact: time as f32,
                         ..options
                     },
-                    query_filter(group::DEBRIS_QUERY).predicate(&in_house_debris),
+                    query_filter(group::DEBRIS_QUERY).predicate(&in_structure_debris),
                 )
                 && (hit.time_of_impact as f64) < time
                 && let Some(fragment) = fragment_with_collider(simulation, collider)
@@ -602,36 +598,11 @@ fn resolve_contact(
             let mine = simulation.mines.remove(mi);
             simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
         }
-        Contact::Debris { fragment: fi, .. } if tower_debris(&simulation.fragments[fi]) => {
-            // A watchtower's fallen pieces: the shell shoves them and bursts (a rocket
-            // goes off), an armour-piercing round shoves them and stops.
-            let body = simulation.fragments[fi].body;
-            let color = simulation.fragments[fi].color;
-            let along = shell_heading(&shot);
-            let point = Point3::new(shot.x, shot.combat_y(), shot.z);
-            let rigid_body = &mut simulation.world.bodies[body];
-            let shove = TOWER_DEBRIS_SHOVE.min(rigid_body.mass() as f64 * 5.0);
-            rigid_body.apply_impulse_at_point(
-                vector(along.x * shove, shove * 0.3, along.z * shove),
-                vector(point.x, point.y, point.z),
-                true,
-            );
-            let mut impact = impact_event(point.x, point.z, 0.6, color);
-            impact.height = Some(point.y);
-            // A hit in a pile of fallen timber, as on a cottage's.
-            impact.cover_kind = Some(CoverKind::House);
-            simulation.events.push(impact);
-            match shot.weapon {
-                Weapon::Rocket => rocket_blast(simulation, &shot),
-                Weapon::Piercing => {}
-                _ => burst_in_house(simulation, &shot),
-            }
-        }
         Contact::Debris {
             fragment: fi,
             collider,
-        } if house_debris(&simulation.fragments[fi]) => {
-            // A cottage's fallen part breaks where the shell meets it: an HE round
+        } if structure_debris(&simulation.fragments[fi]) => {
+            // A structure's fallen part breaks where the shell meets it: an HE round
             // bursts on it, an armour-piercing round breaks the part it strikes and
             // flies on, a rocket goes off.
             let color = simulation.fragments[fi].color;
@@ -647,32 +618,22 @@ fn resolve_contact(
                     (from_vector(on.point), struck.user_data as usize)
                 },
             );
+            let kind = simulation.fragments[fi].source_kind;
             let mut impact = impact_event(point.x, point.z, 0.6, color);
             impact.height = Some(point.y);
-            impact.cover_kind = Some(CoverKind::House);
+            impact.cover_kind = kind;
             simulation.events.push(impact);
             match shot.weapon {
                 Weapon::Rocket => rocket_blast(simulation, &shot),
                 Weapon::Piercing => {
-                    simulation.break_loose_house_body(fi, part, point, PIERCING_THROW);
+                    simulation.break_loose_body(fi, part, point, PIERCING_THROW);
                     remove = false;
                 }
                 _ => burst_at(simulation, &shot, point),
             }
         }
-        Contact::Debris { fragment: fi, .. } if shatters(&simulation.fragments[fi]) => {
-            // The board bursts; a shell flies on to what lies behind, a rocket goes off.
-            shatter_debris(simulation, fi, &shot);
-            if shot.weapon == Weapon::Rocket {
-                rocket_blast(simulation, &shot);
-            } else {
-                remove = false;
-            }
-        }
         Contact::Debris { fragment: fi, .. } => {
             let fragment = &simulation.fragments[fi];
-            let timber = fragment.timber_part.is_some();
-            let fragment_color = fragment.color;
             let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
             let body = &simulation.world.bodies[fragment.body];
             let point = body
@@ -697,14 +658,8 @@ fn resolve_contact(
             } else {
                 hit_projectile_debris(simulation, fi, &shot, point);
             }
-            let mut impact = impact_event(
-                point.x,
-                point.z,
-                0.6,
-                if timber { fragment_color } else { shot_color },
-            );
+            let mut impact = impact_event(point.x, point.z, 0.6, shot_color);
             impact.height = Some(point.y);
-            impact.cover_kind = timber.then_some(CoverKind::Timber);
             simulation.events.push(impact);
         }
         Contact::Tank { tank: ti } => {
@@ -758,30 +713,23 @@ fn resolve_contact(
             impact.height = Some(1.0);
             simulation.events.push(impact);
         }
-        Contact::World { collider, .. } if simulation.house_part(collider).is_some() => {
-            let (cover, part) = simulation.house_part(collider).expect("checked by the guard");
-            remove = strike_house_part(simulation, si, cover, part);
-        }
-        // A watchtower's timber and ladder; its concrete footings take a shell like
-        // other concrete.
+        // A structure's breakable part; a watchtower's concrete footings take a shell
+        // like other concrete.
         Contact::World { collider, .. }
             if simulation
-                .tower_part(collider)
-                .is_some_and(|(_, part)| tower_structure().parts[part].strength.is_finite()) =>
+                .structure_part(collider)
+                .is_some_and(|(cover, part)| {
+                    simulation.covers[cover].structure.as_ref().is_some_and(|state| {
+                        state.layout.parts[part].strength.is_finite()
+                    })
+                }) =>
         {
-            let (cover, part) = simulation.tower_part(collider).expect("checked by the guard");
-            remove = strike_tower_part(simulation, si, cover, part);
+            let (cover, part) = simulation.structure_part(collider).expect("checked by the guard");
+            remove = strike_structure_part(simulation, si, cover, part);
         }
         Contact::World { collider, normal } => {
             let cover = simulation.cover_by_collider.get(&collider).copied();
             if let Some(ci) = cover {
-                if matches!(simulation.covers[ci].kind, CoverKind::Timber | CoverKind::Cargo) {
-                    let speed = shot.vx.hypot(shot.vz);
-                    if speed > 0.0 {
-                        simulation.covers[ci].kick =
-                            Some(Vec2::new(shot.vx / speed, shot.vz / speed));
-                    }
-                }
                 hit_movable_cover(simulation, ci, &shot);
             }
             if shot.weapon == Weapon::Rocket {
@@ -816,13 +764,9 @@ fn resolve_contact(
                 }
             }
             let shot = &simulation.shots[si];
-            let chipped = cover.map(|ci| &simulation.covers[ci]).filter(|cover| {
-                cover.alive
-                    && matches!(
-                        cover.kind,
-                        CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo
-                    )
-            });
+            let chipped = cover
+                .map(|ci| &simulation.covers[ci])
+                .filter(|cover| cover.alive && cover.kind == CoverKind::Tree);
             let mut impact = impact_event(
                 shot.x,
                 shot.z,
@@ -831,17 +775,9 @@ fn resolve_contact(
             );
             impact.cover_kind = chipped.map(|cover| cover.kind);
             impact.height = chipped.map(|cover| cover.h);
-            // A crate's splinters burst from the struck face, back along the shell.
-            if let Some(cover) = chipped.filter(|cover| cover.kind == CoverKind::Cargo) {
-                let y = shot.combat_y();
-                impact.height = Some(y);
-                impact.from = cover
-                    .kick
-                    .map(|kick| Point3::new(shot.x - kick.x, y, shot.z - kick.z));
-            }
             simulation.events.push(impact);
         }
-        Contact::Fuse => burst_in_house(simulation, &shot),
+        Contact::Fuse => burst(simulation, &shot),
         Contact::Expiry => {}
     }
     remove
@@ -850,18 +786,20 @@ fn resolve_contact(
 /// An HE shell bursting where its fuse ran out (or where it struck again): the parts
 /// round it take the blast; tanks are hit only by what strikes them. A burst inside a
 /// cottage names the hole the shell came in by, which its flash and dust escape through.
-fn burst_in_house(simulation: &mut Simulation, shot: &Shot) {
+fn burst(simulation: &mut Simulation, shot: &Shot) {
     burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z));
 }
 
-/// [`burst_in_house`] at `point`: on a cottage's loose part, where the shell met it.
+/// [`burst`] at `point`: on a structure's fallen part, where the shell met it.
 fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
     let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = Some(point.y);
-    // A shell fused by a watchtower's member bursts in the open, not in a room.
+    // A shell fused in a cottage bursts in a room; one fused by a watchtower's member, a
+    // timber wall or a crate bursts in the open.
     let in_cottage = simulation.covers.iter().any(|cover| {
-        cover.structure.is_some()
+        cover.kind == CoverKind::House
+            && cover.structure.is_some()
             && (point.x - cover.x).abs() < cover.w / 2.0
             && (point.z - cover.z).abs() < cover.d / 2.0
     });
@@ -889,13 +827,7 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
     } else {
         simulation.events.push(explosion);
     }
-    simulation.house_blast(
-        point,
-        HE_BLAST_RADIUS,
-        shot.damage,
-        Some((shot.owner, shot.team)),
-    );
-    simulation.tower_blast(
+    simulation.structure_blast(
         point,
         HE_BLAST_RADIUS,
         shot.damage,
@@ -903,12 +835,13 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
     );
 }
 
-/// A shell striking a standing part of a watchtower, as [`strike_house_part`] has it at
-/// a cottage's: a rocket breaks it and bursts, an armour-piercing round breaks it and
-/// flies on, an HE round breaks a part it can and flies on [`FUSE_DISTANCE`] (bursting
-/// at once against one it cannot, such as a leg, or on a second strike). Returns
-/// whether the shell is spent.
-fn strike_tower_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
+/// A shell striking a standing part of a structure. A rocket breaks it and bursts; an
+/// armour-piercing round breaks it and flies on; an HE round breaks a part it can and
+/// flies on [`FUSE_DISTANCE`] (bursting at once against one it cannot, such as a
+/// watchtower's leg, or on a second strike). A shell that ends there flashes on the part;
+/// one that flies on through shows only the part breaking, and a fused round striking a
+/// wall from inside shows no hit on its outer face. Returns whether the shell is spent.
+fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
     let shot = simulation.shots[si].clone();
     let point = Point3::new(shot.x, shot.combat_y(), shot.z);
     let along = shell_heading(&shot);
@@ -919,63 +852,24 @@ fn strike_tower_part(simulation: &mut Simulation, si: usize, cover: usize, part:
     match shot.weapon {
         Weapon::Rocket => {
             simulation.events.push(impact);
-            simulation.strike_tower(cover, part, shot.damage, true, point, along, by);
+            simulation.strike_structure(cover, part, shot.damage, true, point, along, by);
             rocket_blast(simulation, &shot);
             true
         }
         Weapon::Piercing => {
-            simulation.strike_tower(cover, part, shot.damage, true, point, along, by);
+            simulation.strike_structure(cover, part, shot.damage, true, point, along, by);
             false
         }
         _ => {
-            let broke = simulation.strike_tower(cover, part, shot.damage, false, point, along, by);
+            let broke = simulation.strike_structure(cover, part, shot.damage, false, point, along, by);
             if broke && shot.fuse.is_none() {
                 simulation.shots[si].fuse = Some(FUSE_DISTANCE);
                 false
             } else {
-                simulation.events.push(impact);
-                burst_in_house(simulation, &shot);
-                true
-            }
-        }
-    }
-}
-
-/// A shell striking a standing part of a cottage. A rocket breaks it and bursts; an
-/// armour-piercing round breaks it and flies on; an HE round breaks a part it can and
-/// flies on [`FUSE_DISTANCE`] (bursting at once against one it cannot, or on a second
-/// strike). A shell that ends there flashes on the part; one that flies on through
-/// shows only the part breaking. Returns whether the shell is spent.
-fn strike_house_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
-    let shot = simulation.shots[si].clone();
-    let point = Point3::new(shot.x, shot.combat_y(), shot.z);
-    let along = shell_heading(&shot);
-    let by = Some((shot.owner, shot.team));
-    let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
-    impact.id = Some(simulation.covers[cover].id);
-    match shot.weapon {
-        Weapon::Rocket => {
-            simulation.events.push(impact);
-            simulation.strike_house(cover, part, shot.damage, true, point, along, by);
-            rocket_blast(simulation, &shot);
-            true
-        }
-        Weapon::Piercing => {
-            simulation.strike_house(cover, part, shot.damage, true, point, along, by);
-            false
-        }
-        _ => {
-            let broke = simulation.strike_house(cover, part, shot.damage, false, point, along, by);
-            if broke && shot.fuse.is_none() {
-                simulation.shots[si].fuse = Some(FUSE_DISTANCE);
-                false
-            } else {
-                // A fused round striking a wall from inside bursts in the room: the
-                // wall's outer face shows no hit.
                 if shot.fuse.is_none() {
                     simulation.events.push(impact);
                 }
-                burst_in_house(simulation, &shot);
+                burst(simulation, &shot);
                 true
             }
         }

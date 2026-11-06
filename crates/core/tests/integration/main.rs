@@ -10,6 +10,7 @@ mod support;
 
 mod ammunition;
 mod bot_movement;
+mod cargo_crates;
 mod cover_destruction;
 mod cover_hit_effects;
 mod debris_cleanup;

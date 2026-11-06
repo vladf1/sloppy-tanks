@@ -1,4 +1,5 @@
-//! Timber wall members, shared by the standing wall model and its physical debris.
+//! Timber wall members, shared by the standing wall model, its structure
+//! (`timber_structure`) and its fallen members.
 
 use std::f64::consts::PI;
 
@@ -6,8 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use super::math::{js_round, to_int32};
 
+/// What a timber wall counts for in its cover's health, for the bots that weigh cover.
 pub const TIMBER_HEALTH: f64 = 80.0;
-const BEAM_COUNT: usize = 4;
+/// The beams stacked between a wall's posts.
+pub const BEAM_COUNT: usize = 4;
 
 /// Ends use the increasing world X/Z axis, independent of the model's yaw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,35 +21,6 @@ pub struct TimberJoin {
     pub post: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TimberHit {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-    pub size: f64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TimberFace {
-    Front,
-    Back,
-    Left,
-    Right,
-    /// The upper and lower faces, which only loose debris boards expose to fire.
-    Top,
-    Bottom,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct TimberMark {
-    pub x: f64,
-    pub y: f64,
-    pub face: TimberFace,
-    pub size: f64,
-    pub seed: i32,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TimberPartKind {
@@ -54,7 +28,10 @@ pub enum TimberPartKind {
     Post,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+/// One member of a timber wall: a beam or a post, centred at `x, y, z` relative to the
+/// wall's ground centre, `w` along its grain (`h` up, `d` through), turned `yaw` about
+/// y. `seed` varies its grain and weathering.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimberPart {
     pub kind: TimberPartKind,
@@ -66,102 +43,31 @@ pub struct TimberPart {
     pub h: f64,
     pub d: f64,
     pub yaw: f64,
-    pub lean: f64,
     pub color: u32,
-    pub damage: u32,
-    pub damage_seed: i32,
-    pub marks: Vec<TimberMark>,
-}
-
-// Manual so render views can refresh a part in place without reallocating its marks.
-impl Clone for TimberPart {
-    fn clone(&self) -> Self {
-        Self {
-            marks: self.marks.clone(),
-            ..*self
-        }
-    }
-
-    fn clone_from(&mut self, source: &Self) {
-        let mut marks = std::mem::take(&mut self.marks);
-        marks.clone_from(&source.marks);
-        *self = Self { marks, ..*source };
-    }
-}
-
-impl TimberPart {
-    /// The scar a hit at `(x, y, z)` in the member's own frame (centred, unrotated)
-    /// leaves on a loose member: on the face whose plane it lies nearest, in that
-    /// face's coordinates. Its seed follows the marks already there, so repeated
-    /// hits on one board each look different.
-    pub fn loose_mark(&self, x: f64, y: f64, z: f64, size: f64) -> TimberMark {
-        let reach = |value: f64, extent: f64| value.abs() / (extent / 2.0).max(1e-6);
-        let (along, up, across) = (reach(x, self.w), reach(y, self.h), reach(z, self.d));
-        let (face, mark_x, mark_y) = if along >= up && along >= across {
-            let face = if x < 0.0 {
-                TimberFace::Left
-            } else {
-                TimberFace::Right
-            };
-            (face, z, y)
-        } else if up >= across {
-            let face = if y < 0.0 {
-                TimberFace::Bottom
-            } else {
-                TimberFace::Top
-            };
-            (face, x, z)
-        } else {
-            let face = if z < 0.0 {
-                TimberFace::Back
-            } else {
-                TimberFace::Front
-            };
-            (face, x, y)
-        };
-        TimberMark {
-            x: mark_x,
-            y: mark_y,
-            face,
-            size,
-            seed: self.damage_seed ^ (self.marks.len() as i32 + 101).wrapping_mul(0x45d9f3b),
-        }
-    }
+    pub seed: i32,
 }
 
 /// The wall footprint the members are laid out in. Position only seeds cosmetic variation.
 #[derive(Clone, Copy, Debug)]
-pub struct TimberWall<'a> {
+pub struct TimberWall {
     pub x: f64,
     pub z: f64,
     pub w: f64,
     pub h: f64,
     pub d: f64,
     pub color: u32,
-    pub hits: &'a [TimberHit],
     pub join: Option<TimberJoin>,
 }
 
-pub fn timber_damage_stage(hp: f64, max_hp: f64) -> u32 {
-    if hp >= max_hp {
-        0
-    } else if hp > max_hp * 0.5 {
-        1
-    } else if hp > max_hp * 0.2 {
-        2
-    } else {
-        3
-    }
-}
-
-/// The same members are used by the standing wall and its physical debris.
-pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
+/// The members of a wall, beams first (bottom up) then posts, as the structure numbers
+/// its parts.
+pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
     let along = wall.w > wall.d;
     let length = wall.w.max(wall.d);
     let depth = wall.w.min(wall.d);
     let yaw = if along { 0.0 } else { PI / 2.0 };
     let post_width = 0.32f64.min(length * 0.12);
-    // Separate physical members must start clear of the posts, even in the loosened pose.
+    // Separate physical members must start clear of the posts.
     let end_clearance = 0.04 + wall.h * 0.02;
     let join = wall.join.unwrap_or_default();
     let post = join.post;
@@ -180,11 +86,6 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
     let mut parts = Vec::new();
     let beams = if post { 0 } else { BEAM_COUNT };
     for index in 0..beams {
-        let damage = if index == 1 {
-            stage
-        } else {
-            stage.saturating_sub(if index == 2 { 1 } else { 2 })
-        };
         parts.push(TimberPart {
             kind: TimberPartKind::Beam,
             index,
@@ -195,15 +96,8 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
             h: pitch - 0.025,
             d: 0.66f64.min(depth * 0.75),
             yaw,
-            lean: if index == BEAM_COUNT - 1 {
-                stage as f64 * 0.006
-            } else {
-                0.0
-            },
             color: colors[index % colors.len()],
-            damage,
-            marks: Vec::new(),
-            damage_seed: seed ^ (index as i32 + 1).wrapping_mul(83_492_791),
+            seed: seed ^ (index as i32 + 1).wrapping_mul(83_492_791),
         });
     }
     let sides: &[i32] = if post { &[0] } else { &[-1, 1] };
@@ -226,69 +120,9 @@ pub fn timber_parts(wall: &TimberWall, stage: u32) -> Vec<TimberPart> {
             h: wall.h,
             d: depth,
             yaw,
-            lean: if stage == 3 { side as f64 * 0.028 } else { 0.0 },
             color: 0x805336,
-            damage: stage,
-            marks: Vec::new(),
-            damage_seed: seed ^ (side + 7).wrapping_mul(83_492_791),
+            seed: seed ^ (side + 7).wrapping_mul(83_492_791),
         });
-    }
-    // Attach each hit to its nearest actual beam/post and only the struck face.
-    for (hit_index, hit) in wall.hits.iter().enumerate() {
-        let local = |part: &TimberPart| {
-            let dx = hit.x - part.x;
-            let dz = hit.z - part.z;
-            let x = dx * yaw.cos() - dz * yaw.sin();
-            let z = dx * yaw.sin() + dz * yaw.cos();
-            let y = hit.y - part.y;
-            let distance = (x.abs() - part.w / 2.0).max(0.0).powi(2)
-                + (y.abs() - part.h / 2.0).max(0.0).powi(2)
-                + (z.abs() - part.d / 2.0).max(0.0).powi(2);
-            (x, y, z, distance)
-        };
-        // The first of equally near members wins, like the stable sort it replaces.
-        let Some((nearest, (x, y, z, _))) = parts
-            .iter()
-            .enumerate()
-            .map(|(i, part)| (i, local(part)))
-            .min_by(|a, b| {
-                a.1.3
-                    .partial_cmp(&b.1.3)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        else {
-            continue;
-        };
-        let part = &mut parts[nearest];
-        let end = x.abs() > part.w / 2.0 - 0.015;
-        part.marks.push(TimberMark {
-            x: if end { z } else { x },
-            y,
-            face: if end {
-                if x < 0.0 {
-                    TimberFace::Left
-                } else {
-                    TimberFace::Right
-                }
-            } else if z < 0.0 {
-                TimberFace::Back
-            } else {
-                TimberFace::Front
-            },
-            size: hit.size,
-            seed: part.damage_seed ^ (hit_index as i32 + 1).wrapping_mul(0x45d9f3b),
-        });
-    }
-    // Marks attach in the original piece coordinates, then move with a loosened beam.
-    let shift = if stage >= 2 && !open_negative && !open_positive {
-        0.02 * (stage as f64 - 1.0)
-    } else {
-        0.0
-    };
-    if !post {
-        let beam = &mut parts[BEAM_COUNT - 1];
-        beam.x += if along { shift } else { 0.0 };
-        beam.z -= if along { 0.0 } else { shift };
     }
     parts
 }

@@ -3,11 +3,8 @@
 //! boarded lid inside a frame, a floor on skids and two steel straps, around a
 //! dark hold.
 //!
-//! Each recorded shell hit breaches the face it struck: the planks, battens and
-//! brace inside the breach break away, leaving stepped, grain-split ends with
-//! splinters bent into the hole, and the boards beside it crack along the grain.
-//! Below 35% health a strap snaps and curls, a lid board springs up where it held,
-//! and the most damaged wall's brace gives way. A broken crate's sections
+//! A crate stands as a structure (`crate_structure`): a wall or the lid blown out
+//! leaves the model without it, looking into the dark hold. A broken crate's sections
 //! ([`crate_piece_model`]) are drawn from the same boards with torn edges.
 
 use std::f64::consts::{FRAC_PI_2, PI};
@@ -25,8 +22,9 @@ use crate::sim::crate_layout::{
     CRATE_BASE, CRATE_BATTEN, CRATE_BATTEN_WIDTH, CRATE_BOARD_PITCH, CRATE_LID, CRATE_PLANK,
     CRATE_SKID_WIDTH, CratePiece,
 };
-use crate::sim::math::{Random, clamp, js_round, to_int32};
-use crate::sim::timber_layout::TimberHit;
+use crate::sim::math::{Random, js_round, to_int32};
+use crate::sim::crate_structure::{CRATE_BASE_PART, CRATE_LID_PART, CRATE_WALLS, WIDE_CRATE};
+use crate::sim::structure::PartSet;
 
 /// `Pick<Cover, "x" | "z" | "w" | "d" | "h" | "color">`: crates also seed their
 /// cosmetic randomness from their position.
@@ -66,8 +64,6 @@ const SCRAP_TEXEL: [f32; 2] = [0.3, 0.875];
 
 /// Decals sit this far over the board they mark, enough to win the depth test.
 const DECAL_LIFT: f64 = 0.003;
-/// Splinters on the ground rest this far up, over the floors and the harbor paving.
-const LITTER_LIFT: f64 = 0.035;
 
 /// One crate face (or a loose section's own frame): the plane's origin, the
 /// direction its boards run (`u`), up the face (`v`) and out of it (`n`).
@@ -114,16 +110,6 @@ struct Board {
     seed: i32,
 }
 
-/// A shell's hole in a face: centre, half-extent along the boards and across them.
-#[derive(Clone, Copy, Debug)]
-struct Breach {
-    u: f64,
-    v: f64,
-    along: f64,
-    across: f64,
-    seed: i32,
-}
-
 /// Part of a board that springs out of its face: everything on `side` (+1 or -1
 /// along the board) of `at` turns about the board's width axis through `at` until
 /// its far end stands `angle` radians out of the face.
@@ -134,14 +120,13 @@ struct Bend {
     angle: f64,
 }
 
-/// What breaks a board: the face's breaches, extra torn spans and cracks along it
+/// What breaks a board: torn spans and cracks along it
 /// (board coordinates: a span, or a centre, half-length and seed) and an optional
 /// bend. `skin` marks a board over the hold whose outer face alone can show, so
 /// its unbroken lengths are drawn as that face; `coarse` a loose, tumbling one,
 /// whose breaks carry only their stepped strip and a splinter or two.
 #[derive(Default)]
-struct Damage<'a> {
-    breaches: &'a [Breach],
+struct Damage {
     gaps: Vec<(f64, f64)>,
     cracks: Vec<(f64, f64, i32)>,
     bend: Option<Bend>,
@@ -212,55 +197,13 @@ fn spike(length: f64, width: f64, thickness: f64) -> Mesh {
     Mesh::from_f64(&positions, &normals, &uvs, None)
 }
 
-/// A flat chip lying on the ground: its upper face only, in two triangles.
-fn flake(length: f64, width: f64) -> Mesh {
-    let (x, z) = (length / 2.0, width / 2.0);
-    let positions = [-x, 0.0, -z, x, 0.0, -z, x, 0.0, z, -x, 0.0, z];
-    let normals = [0.0, 1.0, 0.0].repeat(4);
-    Mesh::from_f64(
-        &positions,
-        &normals,
-        &[0.0; 8],
-        Some(vec![0, 2, 1, 0, 3, 2]),
-    )
-}
-
-/// Lay `board` on `face`, broken by `damage`: the spans breaches and gaps remove,
-/// stepped and splintered ends where it broke, cracks along the grain beside
-/// breaches, and its far part bent out of the face.
+/// Lay `board` on `face`, broken by `damage`: the spans its gaps remove, stepped and
+/// splintered ends where it broke, cracks along the grain, and its far part bent out of
+/// the face.
 fn lay_board(group: &mut Node, face: &Face, board: &Board, damage: &Damage) {
     let half = board.length / 2.0;
-    let dir = DVec2::new(board.angle.cos(), board.angle.sin());
-    let perp = DVec2::new(-dir.y, dir.x);
     let mut removed: Vec<(f64, f64)> = damage.gaps.clone();
-    let mut cracks = damage.cracks.clone();
-    for breach in damage.breaches {
-        let offset = DVec2::new(breach.u - board.u, breach.v - board.v);
-        let (t, s) = (offset.dot(dir), offset.dot(perp));
-        // The ellipse's reach along the board and across it.
-        let reach =
-            |d: DVec2| 1.0 / ((d.x / breach.along).powi(2) + (d.y / breach.across).powi(2)).sqrt();
-        let (along, across) = (reach(dir), reach(perp));
-        let near = (s.abs() - board.width / 2.0).max(0.0);
-        let mut rng = random(breach.seed, board.seed);
-        if near < across {
-            let gap = along * (1.0 - (near / across).powi(2)).sqrt();
-            if gap > 0.035 {
-                removed.push((
-                    t - gap * rng.range(0.7, 1.15),
-                    t + gap * rng.range(0.7, 1.15),
-                ));
-                continue;
-            }
-        }
-        if near < across * 1.9 {
-            cracks.push((
-                t,
-                along * rng.range(0.9, 1.6),
-                hash(breach.seed, board.seed),
-            ));
-        }
-    }
+    let cracks = damage.cracks.clone();
     removed.sort_by(|a, b| a.0.total_cmp(&b.0));
     // Keep what the removed spans leave; scraps too short to hold a nail fall out.
     let mut kept = Vec::new();
@@ -547,74 +490,33 @@ fn crate_faces(c: &CrateShape) -> [Face; 5] {
 
 const LID: usize = 4;
 
-/// The face a hit relative to the crate struck: the lid if it landed on top,
-/// otherwise the wall it is nearest relative to the crate's footprint.
-fn struck_face(c: &CrateShape, hit: &TimberHit) -> usize {
-    if hit.y > c.h - 0.08 && hit.x.abs() < c.w / 2.0 - 0.06 && hit.z.abs() < c.d / 2.0 - 0.06 {
-        return LID;
-    }
-    let (across, deep) = (hit.x.abs() / (c.w / 2.0), hit.z.abs() / (c.d / 2.0));
-    match (deep >= across, hit.z >= 0.0, hit.x >= 0.0) {
-        (true, true, _) => 0,
-        (true, false, _) => 1,
-        (false, _, true) => 2,
-        (false, _, false) => 3,
-    }
-}
-
-/// Each face's breaches. A heavier hit (`size` grows with each one) tears a
-/// larger hole, longer along the boards than across them.
-fn crate_breaches(
-    c: &CrateShape,
-    faces: &[Face; 5],
-    hits: &[TimberHit],
-    seed: i32,
-) -> [Vec<Breach>; 5] {
-    let mut breaches: [Vec<Breach>; 5] = Default::default();
-    let top = c.h - CRATE_LID;
-    for (index, hit) in hits.iter().enumerate() {
-        let face_index = struck_face(c, hit);
-        let face = &faces[face_index];
-        let relative = DVec3::new(hit.x, hit.y, hit.z) - face.origin;
-        let (u, v) = (relative.dot(face.u), relative.dot(face.v));
-        let seed = hash(seed, index as i32 + 100);
-        let mut rng = Random::new(f64::from(seed));
-        let radius = 0.17 + 0.11 * hit.size;
-        let (v_low, v_high) = if face_index == LID {
-            (-c.d / 2.0 + 0.12, c.d / 2.0 - 0.12)
-        } else {
-            (CRATE_BASE + 0.15, top - 0.1)
-        };
-        breaches[face_index].push(Breach {
-            u: clamp(u, -face.half + 0.12, face.half - 0.12),
-            v: clamp(v, v_low, v_high),
-            along: radius * rng.range(1.15, 1.45),
-            across: radius * rng.range(0.7, 0.9),
-            seed,
-        });
-    }
-    breaches
-}
-
 /// `cargoStack(group, c, damageStage)`'s replacement: a framed, strapped crate of
-/// boards on skids, breached where `hits` struck. Stage 2 (35% health or less)
-/// adds a snapped strap, a sprung lid board and a failed brace.
-pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_stage: u32) {
+/// boards on skids, drawn without the parts of its structure in `broken`
+/// (`crate_structure`: the four walls, the lid with the straps over it, and the base of
+/// skids, floor and hold). Every part draws the same whatever else is gone.
+pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
     let seed = crate_seed(&c);
     let mut rng = random(seed, 1);
     let faces = crate_faces(&c);
-    let breaches = crate_breaches(&c, &faces, hits, seed);
     let top = c.h - CRATE_LID;
-    let worn = damage_stage >= 2;
-    // The wall that took the most hits gives way first.
-    let weakest = (0..4)
-        .max_by_key(|&i| (breaches[i].len(), usize::from(i == 0)))
-        .unwrap_or(0);
-    let snapped = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+    // Each node goes into the model only while the part it belongs to stands.
+    let standing = |part: usize| !broken.contains(part);
+    let add = |group: &mut Node, part: usize, node: Node| {
+        if standing(part) {
+            group.children.push(node);
+        }
+    };
+    let lay = |group: &mut Node, part: usize, face: &Face, board: &Board, damage: &Damage| {
+        if standing(part) {
+            lay_board(group, face, board, damage);
+        }
+    };
+    // Once drawn for a snapped strap; still drawn so every crate's boards keep their tones.
+    let _snapped = rng.next();
     let tone = |rng: &mut Random| board_tone(c.color, rng);
 
     // Skids under the crate.
-    let skids: &[f64] = if c.w >= 2.6 {
+    let skids: &[f64] = if c.w >= WIDE_CRATE {
         &[-0.36, 0.0, 0.36]
     } else {
         &[-0.34, 0.34]
@@ -627,10 +529,10 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
         );
         skid.rotation = DQuat::from_rotation_y(FRAC_PI_2);
         skid.position = DVec3::new(c.w * share, CRATE_BASE / 2.0, 0.0);
-        group.children.push(skid);
+        add(group, CRATE_BASE_PART, skid);
     }
-    // The floor; through a breach the walls' and lid's own inner faces show,
-    // shaded by the lid.
+    // The floor; through a gone wall the walls' and lid's own inner faces show, shaded by
+    // the lid.
     let mut floor = timber_member(
         DVec3::new(
             c.w - 2.0 * CRATE_PLANK,
@@ -641,10 +543,9 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
         scale_hex_color(c.color, 0.7),
     );
     floor.position = DVec3::new(0.0, CRATE_BASE + FLOOR_THICKNESS / 2.0, 0.0);
-    group.children.push(floor);
-    // A liner turned inside out just within the walls: only its far side shows,
-    // so seams and breaches look into the crate's dark hold, not out of the other
-    // side.
+    add(group, CRATE_BASE_PART, floor);
+    // A liner turned inside out just within the walls: only its far side shows, so seams
+    // and a gone wall look into the crate's dark hold, not out of the other side.
     let mut liner = box_geometry(
         c.w - 2.0 * CRATE_PLANK - 0.006,
         top - CRATE_BASE - FLOOR_THICKNESS,
@@ -660,15 +561,11 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     }
     let mut hold = scrap(liner, HOLD_COLOR);
     hold.position = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
-    group.children.push(hold);
+    add(group, CRATE_BASE_PART, hold);
 
     // Walls: sheathing planks, then the frame and brace over them.
     for (index, face) in faces[..4].iter().enumerate() {
-        let damage = |bend: Option<Bend>| Damage {
-            breaches: &breaches[index],
-            bend,
-            ..Damage::default()
-        };
+        let wall = CRATE_WALLS[index];
         // Long walls cover the ends' plank edges and frames at the corners.
         let long = index < 2;
         let plank_half = if long {
@@ -694,9 +591,9 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             };
             let skin = Damage {
                 skin: true,
-                ..damage(None)
+                ..Damage::default()
             };
-            lay_board(group, face, &board, &skin);
+            lay(group, wall, face, &board, &skin);
         }
         let reach = if long {
             face.half + CRATE_BATTEN
@@ -721,15 +618,9 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             reach * 2.0,
             0,
         );
-        // A worn crate's weakest wall loses the nails at one end of its bottom batten.
-        let popped = (worn && index == weakest).then_some(Bend {
-            at: reach * snapped,
-            side: -snapped,
-            angle: 0.045,
-        });
-        lay_board(group, face, &bottom, &damage(popped));
+        lay(group, wall, face, &bottom, &Damage::default());
         let top_batten = frame(0.0, c.h - CRATE_BATTEN_WIDTH / 2.0, 0.0, reach * 2.0, 1);
-        lay_board(group, face, &top_batten, &damage(None));
+        lay(group, wall, face, &top_batten, &Damage::default());
         let post = c.h - CRATE_BASE - 2.0 * CRATE_BATTEN_WIDTH;
         for (salt, side) in [(2, -1.0), (3, 1.0)] {
             let edge = frame(
@@ -739,7 +630,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
                 post,
                 salt,
             );
-            lay_board(group, face, &edge, &damage(None));
+            lay(group, wall, face, &edge, &Damage::default());
         }
         // The brace rises corner to corner inside the frame, tucked under it.
         let (run, rise) = (2.0 * (reach - CRATE_BATTEN_WIDTH), post);
@@ -756,52 +647,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
                 4,
             )
         };
-        if worn && index == weakest {
-            // It snaps near the middle and its lower half swings out of the frame.
-            let at = rng.range(-0.15, 0.15) * brace.length;
-            let mut failed = damage(Some(Bend {
-                at,
-                side: -lean,
-                angle: 0.16,
-            }));
-            failed.gaps.push((at - 0.03, at + 0.03));
-            lay_board(group, face, &brace, &failed);
-        } else {
-            lay_board(group, face, &brace, &damage(None));
-        }
-    }
-
-    // Splinters blown out of each breach lie on the ground at the wall's foot.
-    for (wall, face) in faces[..4].iter().enumerate() {
-        for breach in &breaches[wall] {
-            let mut rng = random(breach.seed, 600);
-            let count = 5 + (rng.next() * 5.0) as usize;
-            for _ in 0..count {
-                let (length, width, thickness) = (
-                    rng.range(0.07, 0.38),
-                    rng.range(0.025, 0.08),
-                    rng.range(0.012, 0.02),
-                );
-                let color = match (rng.next() * 3.0) as usize {
-                    0 => RAW_WOOD,
-                    1 => TORN_WOOD,
-                    _ => tone(&mut rng),
-                };
-                let mut chip = scrap(flake(length, width), color);
-                chip.position = face.at(
-                    clamp(
-                        breach.u + rng.range(-0.7, 0.7),
-                        -face.half - 0.4,
-                        face.half + 0.4,
-                    ),
-                    thickness + LITTER_LIFT,
-                    rng.range(CRATE_BATTEN + 0.08, 1.1),
-                );
-                chip.rotation = DQuat::from_rotation_y(rng.range(0.0, PI))
-                    * DQuat::from_rotation_z(rng.range(-0.08, 0.08));
-                group.children.push(chip);
-            }
-        }
+        lay(group, wall, face, &brace, &Damage::default());
     }
 
     // The lid: boards across the top inside a frame along its long edges.
@@ -809,39 +655,9 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
     let rows = (c.d / CRATE_BOARD_PITCH).round().clamp(4.0, 12.0);
     let pitch = c.d / rows;
     let strap_x = c.w * STRAP_SPREAD;
-    // The snapped strap no longer holds its end of the lid; one or two boards
-    // inside the frame spring up there, pivoting at the strap that still holds.
-    let sprung = 1 + (rng.next() * (rows - 2.0).max(1.0)) as usize;
-    // Hits on the walls shake the lid: its boards along a struck wall split along
-    // the grain, and a worn crate loses a piece of one by its weakest wall, a dark
-    // slot that shows from above. In lid coordinates x runs along the boards and
-    // y towards -z.
-    let mut shaken: Vec<Damage> = (0..rows as usize).map(|_| Damage::default()).collect();
-    let edge_row =
-        |v: f64| (((v + c.d / 2.0) / pitch).floor() as usize).clamp(1, rows as usize - 2);
-    for (wall, struck) in breaches[..4].iter().enumerate() {
-        for (index, breach) in struck.iter().enumerate() {
-            let mut rng = random(breach.seed, 500);
-            let (row, t) = match wall {
-                0 => (1, breach.u),
-                1 => (rows as usize - 2, -breach.u),
-                2 => (edge_row(breach.u), c.w / 2.0 - rng.range(0.2, 0.45)),
-                _ => (edge_row(-breach.u), -c.w / 2.0 + rng.range(0.2, 0.45)),
-            };
-            shaken[row]
-                .cracks
-                .push((t, rng.range(0.22, 0.45), hash(breach.seed, 501)));
-            if worn && wall == weakest && index == 0 {
-                let open = rng.range(0.22, 0.4);
-                shaken[row].gaps.push(match wall {
-                    2 => (c.w / 2.0 - open * 2.2, c.w),
-                    3 => (-c.w, -c.w / 2.0 + open * 2.2),
-                    _ => (t - open, t + open * rng.range(0.8, 1.3)),
-                });
-            }
-        }
-    }
-    for (row, shock) in shaken.into_iter().enumerate() {
+    // Once drawn for a sprung board; still drawn so the lid's boards keep their tones.
+    let _sprung = rng.next();
+    for row in 0..rows as usize {
         let v = -c.d / 2.0 + pitch * (row as f64 + 0.5);
         let board = Board {
             u: 0.0,
@@ -854,23 +670,11 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             color: tone(&mut rng),
             seed: hash(seed, 300 + row as i32),
         };
-        let inside = v.abs() < c.d / 2.0 - CRATE_BATTEN_WIDTH - pitch / 2.0;
-        let bend = (worn && inside && (row == sprung || row == sprung + 1)).then(|| Bend {
-            at: -snapped * (strap_x - STRAP_WIDTH),
-            side: snapped,
-            angle: if row == sprung { 0.11 } else { 0.05 },
-        });
-        lay_board(
-            group,
-            lid,
-            &board,
-            &Damage {
-                breaches: &breaches[LID],
-                bend,
-                skin: true,
-                ..shock
-            },
-        );
+        let skin = Damage {
+            skin: true,
+            ..Damage::default()
+        };
+        lay(group, CRATE_LID_PART, lid, &board, &skin);
     }
     for (salt, side) in [(0, -1.0), (1, 1.0)] {
         let board = Board {
@@ -884,67 +688,31 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, hits: &[TimberHit], damage_s
             color: BATTEN_COLOR,
             seed: hash(seed, 350 + salt),
         };
-        lay_board(
-            group,
-            lid,
-            &board,
-            &Damage {
-                breaches: &breaches[LID],
-                ..Damage::default()
-            },
-        );
+        lay(group, CRATE_LID_PART, lid, &board, &Damage::default());
     }
 
     // Two steel straps over the lid and down the long walls, bridging between the
-    // battens like tensioned bands. A worn crate's strap on one side has snapped
-    // and its ends curl up off the lid.
+    // battens like tensioned bands: each length goes with the wall or lid it lies on.
     let band = |size: DVec3| scrap(box_geometry(size.x, size.y, size.z), STRAP_COLOR);
     let over = c.h + CRATE_BATTEN + STRAP_THICKNESS / 2.0;
     let wrap = c.d / 2.0 + CRATE_BATTEN + STRAP_THICKNESS / 2.0;
     let rise = over + STRAP_THICKNESS / 2.0 - CRATE_BASE;
     for side in [-1.0, 1.0] {
         let x = side * strap_x;
-        let broken = worn && side == snapped;
         for wall in [-1.0, 1.0] {
             let mut down = band(DVec3::new(STRAP_WIDTH, rise, STRAP_THICKNESS));
             down.position = DVec3::new(x, CRATE_BASE + rise / 2.0, wall * wrap);
-            if broken {
-                // Slack now, it sags away from the wall from where it is still held.
-                let sag = DQuat::from_rotation_x(wall * 0.05);
-                let foot = DVec3::new(x, CRATE_BASE, wall * wrap);
-                down.position = foot + sag * (down.position - foot);
-                down.rotation = sag;
-            }
-            group.children.push(down);
+            // The front wall faces +z, the back -z.
+            let part = if wall > 0.0 { CRATE_WALLS[0] } else { CRATE_WALLS[1] };
+            add(group, part, down);
         }
         let span = 2.0 * wrap + STRAP_THICKNESS;
-        if !broken {
-            let mut across = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, span));
-            across.position = DVec3::new(x, over, 0.0);
-            group.children.push(across);
-            let mut buckle = band(DVec3::new(STRAP_WIDTH + 0.025, 0.014, 0.1));
-            buckle.position = DVec3::new(x, over + STRAP_THICKNESS, rng.range(-0.2, 0.2) * c.d);
-            group.children.push(buckle);
-            continue;
-        }
-        let cut = rng.range(-0.25, 0.25) * c.d;
-        for wall in [-1.0, 1.0] {
-            // Each end still lies over the lid from its wall, then springs up and
-            // curls where it parted.
-            let length = (wall * wrap - cut).abs() - 0.03;
-            let curled = rng.range(0.22, 0.38).min(length * 0.5);
-            let flat = length - curled;
-            let edge = wall * (wrap + STRAP_THICKNESS / 2.0);
-            let mut lying = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, flat));
-            lying.position = DVec3::new(x, over, edge - wall * flat / 2.0);
-            group.children.push(lying);
-            let mut tip = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, curled));
-            let bend = DVec3::new(x, over, edge - wall * flat);
-            let curl = DQuat::from_rotation_x(wall * rng.range(0.6, 1.1));
-            tip.position = bend + curl * DVec3::new(0.0, 0.0, -wall * curled / 2.0);
-            tip.rotation = curl;
-            group.children.push(tip);
-        }
+        let mut across = band(DVec3::new(STRAP_WIDTH, STRAP_THICKNESS, span));
+        across.position = DVec3::new(x, over, 0.0);
+        add(group, CRATE_LID_PART, across);
+        let mut buckle = band(DVec3::new(STRAP_WIDTH + 0.025, 0.014, 0.1));
+        buckle.position = DVec3::new(x, over + STRAP_THICKNESS, rng.range(-0.2, 0.2) * c.d);
+        add(group, CRATE_LID_PART, buckle);
     }
 }
 
@@ -1265,7 +1033,8 @@ pub fn crate_piece_model(piece: CratePiece, size: DVec3, color: u32, look: u32) 
 mod tests {
     use super::*;
     use crate::geometry::node_bounds;
-    use crate::sim::crate_layout::crate_section_looks;
+    use crate::sim::crate_structure::crate_structure;
+    use crate::sim::structure::Role;
 
     /// The nearest front-facing wood a ray from `origin` along `dir` meets, as the
     /// distance along it (Möller–Trumbore over the batched triangles).
@@ -1301,7 +1070,7 @@ mod tests {
     }
 
     #[test]
-    fn a_hit_opens_a_hole_in_the_face_it_struck() {
+    fn a_blown_out_wall_opens_the_crate_to_its_far_wall() {
         let c = CrateShape {
             x: 4.0,
             z: -20.0,
@@ -1310,39 +1079,33 @@ mod tests {
             h: 2.6,
             color: 0xb88b53,
         };
-        let hit = TimberHit {
-            x: 0.3,
-            y: 1.1,
-            z: c.d / 2.0,
-            size: 1.0,
-        };
-        // Looking straight into the front at the hit, and into the back opposite it.
-        let front = DVec3::new(hit.x, hit.y, c.d);
-        let back = DVec3::new(hit.x, hit.y, -c.d);
+        // Looking straight into the front, and into the back opposite it.
+        let front = DVec3::new(0.3, 1.1, c.d);
+        let back = DVec3::new(0.3, 1.1, -c.d);
         let mut intact = Node::default();
-        cargo_crate(&mut intact, c, &[], 0);
+        cargo_crate(&mut intact, c, &PartSet::EMPTY);
         let wall = first_board(&intact, front, -DVec3::Z).expect("the front is boarded");
         assert!((wall - c.d / 2.0).abs() < 1e-3, "the sheathing: {wall}");
-        let mut struck = Node::default();
-        cargo_crate(&mut struck, c, &[hit], 1);
-        let through = first_board(&struck, front, -DVec3::Z).expect("the back wall");
-        assert!(
-            through > c.d,
-            "the shell broke through the front: {through}"
-        );
-        let far = first_board(&struck, back, DVec3::Z).expect("the back is boarded");
-        assert!(
-            (far - c.d / 2.0).abs() < 1e-3,
-            "the back wall is whole: {far}"
-        );
+        let mut blown = Node::default();
+        cargo_crate(&mut blown, c, &PartSet::from_indices([CRATE_WALLS[0]]));
+        let through = first_board(&blown, front, -DVec3::Z).expect("the back wall");
+        assert!(through > c.d, "the front is gone: {through}");
+        let far = first_board(&blown, back, DVec3::Z).expect("the back is boarded");
+        assert!((far - c.d / 2.0).abs() < 1e-3, "the back wall is whole: {far}");
     }
 
     #[test]
     fn every_section_look_fits_the_body_it_rides() {
         for (w, d, h) in [(3.1, 3.0, 2.6), (2.4, 2.8, 2.1), (2.0, 2.0, 2.0)] {
-            for (piece, size) in crate_section_looks(w, d, h) {
+            let layout = crate_structure(w, d, h);
+            let sections = layout.parts.iter().chain(&layout.pieces).filter_map(|part| match part.role {
+                Role::Crate(crate_part) => crate_part.section,
+                _ => None,
+            });
+            for section in sections {
+                let piece = section.piece;
                 for look in 0..3 {
-                    let size = DVec3::from_array(size);
+                    let size = DVec3::from_array(section.size);
                     let node = crate_piece_model(piece, size, 0xb47a49, look);
                     let bounds = node_bounds(&node, glam::DMat4::IDENTITY);
                     // Splinters and a curled strap end may poke a little past the box.

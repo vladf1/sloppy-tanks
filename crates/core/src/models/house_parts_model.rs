@@ -1,5 +1,5 @@
 //! A structural cottage's model: the cottage's own walls, roof and chimney cut into
-//! its parts ([`HouseStructure`]), drawn from the parts that stand (or, for a fallen
+//! its parts ([`Structure`]), drawn from the parts that stand (or, for a fallen
 //! body, from the parts that fell together). Each part is its cells of the model
 //! clipped from the part of the cottage they lie in; where a neighbour is gone the
 //! cut edge is torn timber bristling with splinters (a wall's siding, sheathing and
@@ -20,9 +20,10 @@ use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
 use crate::sim::house_layout::{HouseDesign, PLINTH, WALL_DEPTH};
 use crate::sim::house_structure::{
-    HouseStructure, PartCell, PartKind, PartSet, part_outline, part_plane,
+    PartCell, PartKind, house_structure, part_outline, part_plane,
 };
 use crate::sim::math::Random;
+use crate::sim::structure::{PartSet, Structure};
 
 /// Cells reach this far or further past their part to its outer edges.
 const OUTER: f64 = 25.0;
@@ -57,7 +58,7 @@ pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64
 pub struct HouseBuild {
     x: f64,
     z: f64,
-    layout: HouseStructure,
+    layout: Structure,
     standing: PartSet,
     /// Whether a gap shows its rooms.
     open: bool,
@@ -68,7 +69,7 @@ pub struct HouseBuild {
 
 impl HouseBuild {
     pub fn new(x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) -> Self {
-        let layout = HouseStructure::new(&HouseDesign::of(x, z, w, d, h));
+        let layout = house_structure(&HouseDesign::of(x, z, w, d, h));
         let standing = PartSet::from_indices(
             (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
         );
@@ -91,13 +92,13 @@ impl HouseBuild {
         if !self.open {
             // A whole cottage is the standing model, built in one step.
             if self.next == 0 {
-                self.group = standing_house(&self.layout.design, self.x, self.z);
+                self.group = standing_house(self.layout.design().expect("a cottage"), self.x, self.z);
                 self.next = 1;
             }
             return true;
         }
         let Some(pieces) = &self.pieces else {
-            self.pieces = Some(cottage_pieces(&self.layout.design, self.x, self.z));
+            self.pieces = Some(cottage_pieces(self.layout.design().expect("a cottage"), self.x, self.z));
             return false;
         };
         if let Some(piece) = pieces.parts.get(self.next) {
@@ -121,7 +122,7 @@ impl HouseBuild {
             ..
         } = self;
         let pieces = pieces.expect("built");
-        let design = &layout.design;
+        let design = layout.design().expect("a cottage");
         rooms_into(&mut group, &layout, &pieces, &standing, true);
         // The ground floor's boards laid on the ground inside the footing, which a
         // gutted cottage shows and a tank driving in rolls over, and the footing under
@@ -156,11 +157,11 @@ impl HouseBuild {
 /// The fieldstone footing under each of `standing`'s parts on the ground (the outer walls'
 /// lowest parts and the corner posts), from the ground to the plinth's top and a little
 /// proud of the wall's face: one course of the plinth that goes with its part.
-fn footings(kit: &mut Kit<Surface>, layout: &HouseStructure, standing: &PartSet) {
-    let half = DVec2::new(layout.design.w / 2.0, layout.design.d / 2.0);
+fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
+    let half = DVec2::new(layout.design().expect("a cottage").w / 2.0, layout.design().expect("a cottage").d / 2.0);
     for index in standing.iter() {
         let part = &layout.parts[index];
-        if !part.grounded || !(part.wall.is_some() || part.kind == PartKind::Post) {
+        if !part.grounded || !(part.house().wall.is_some() || part.house().kind == PartKind::Post) {
             continue;
         }
         let (mut min, mut max) = (part.min, part.max);
@@ -181,7 +182,7 @@ fn footings(kit: &mut Kit<Surface>, layout: &HouseStructure, standing: &PartSet)
 /// cottage's ground centre, turned into the world as the cottage stood.
 pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> Node {
     let design = HouseDesign::of(x, z, w, d, h);
-    let layout = HouseStructure::new(&design);
+    let layout = house_structure(&design);
     let pieces = cottage_pieces(&design, x, z);
     let mut node = parts_node(&layout, &pieces, parts, true);
     batch(&mut node);
@@ -213,7 +214,7 @@ fn uncast(node: &mut Node) {
 }
 
 /// The model of `draw`'s parts in the build frame, to batch.
-fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, inside: bool) -> Node {
+fn parts_node(layout: &Structure, pieces: &CottagePieces, draw: &PartSet, inside: bool) -> Node {
     let mut group = Node::group("");
     for piece in &pieces.parts {
         piece_into(&mut group, layout, pieces, piece, draw);
@@ -226,18 +227,18 @@ fn parts_node(layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, i
 /// are drawn, else cut to them with torn edges where their neighbours are gone.
 fn piece_into(
     group: &mut Node,
-    layout: &HouseStructure,
+    layout: &Structure,
     pieces: &CottagePieces,
     piece: &CottagePiece,
     draw: &PartSet,
 ) {
-    let design = &layout.design;
+    let design = layout.design().expect("a cottage");
     let cells: Vec<(usize, PartCell)> = layout
         .parts
         .iter()
         .enumerate()
         .flat_map(|(index, part)| {
-            part.cells
+            part.house().cells
                 .iter()
                 .filter(|cell| cell.part == piece.part)
                 .map(move |cell| (index, *cell))
@@ -317,16 +318,16 @@ fn piece_into(
 
 /// The rooms of `draw`'s parts (attic floor strips and the partition) into `group`,
 /// when `inside` shows them.
-fn rooms_into(group: &mut Node, layout: &HouseStructure, pieces: &CottagePieces, draw: &PartSet, inside: bool) {
-    let design = &layout.design;
+fn rooms_into(group: &mut Node, layout: &Structure, pieces: &CottagePieces, draw: &PartSet, inside: bool) {
+    let design = layout.design().expect("a cottage");
     let mut rooms = Kit::new();
     for index in draw.iter().filter(|_| inside) {
         let Some(part) = layout.parts.get(index) else {
             continue;
         };
         let size = part.max - part.min;
-        let middle = part.center();
-        match part.kind {
+        let middle = part.middle();
+        match part.house().kind {
             // Boards over a plastered ceiling, their seams dark between them.
             PartKind::Floor => {
                 let boards = DVec3::new(size.x, FLOOR_BOARDS, size.z);

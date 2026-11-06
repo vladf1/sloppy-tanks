@@ -29,9 +29,7 @@ use sloppy_core::sim::data::{INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, we
 use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
 use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::render_state::{RenderFragment, RenderShot, RenderState};
-use sloppy_core::sim::timber_layout::{
-    TimberFace, TimberHit, TimberMark, TimberPart, TimberPartKind,
-};
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{
     CoverKind, Mine, Shot, SimEvent, SimEventType, Team, VehicleCommand, Weapon,
 };
@@ -697,47 +695,22 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
     assert!(first.tanks.len() > 2 && !first.covers.is_empty());
     let remote = first.tanks[1].id;
     let start_x = first.tanks[1].position.x;
-    let beam = TimberPart {
-        kind: TimberPartKind::Beam,
-        index: 0,
-        x: 0.0,
-        y: 0.5,
-        z: 0.0,
-        w: 2.0,
-        h: 0.2,
-        d: 0.2,
-        yaw: 0.0,
-        lean: 0.0,
-        color: 0x8b5a2b,
-        damage: 1,
-        damage_seed: 7,
-        marks: vec![TimberMark {
-            x: 0.1,
-            y: 0.1,
-            face: TimberFace::Front,
-            size: 0.2,
-            seed: 3,
-        }],
-    };
     let fragment = |id: u32, timber: bool| RenderFragment {
         id,
         life: 5.0,
-        timber_part: timber.then(|| beam.clone()),
+        structure_id: timber.then_some(7),
+        structure_parts: timber.then(|| PartSet::from_indices([1])),
         position: Point3::new(f64::from(id), 1.0, 0.0),
         ..RenderFragment::default()
     };
     // Ticks 0 → 3: the remote hull moves 3 m and is renamed, the last tank leaves, a cover
-    // is hit and timber debris appears; tick 6 brings the tank back and swaps the debris.
+    // loses a part and a structure's debris appears; tick 6 brings the tank back and swaps
+    // the debris.
     let mut moved = first.clone();
     moved.tanks[1].position.x += 3.0;
     moved.tanks[1].name = "A much longer replacement name".into();
     moved.tanks.pop();
-    moved.covers[0].timber_hits.push(TimberHit {
-        x: 0.0,
-        y: 1.0,
-        z: 0.0,
-        size: 0.3,
-    });
+    moved.covers[0].broken = PartSet::from_indices([0]);
     moved.fragments = vec![fragment(1, true), fragment(2, false)];
     let mut later = first.clone();
     later.fragments = vec![fragment(2, false), fragment(3, true)];
@@ -777,11 +750,11 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
     assert!(interpolated > 0);
     assert!(timeline.display_tick() > 6.0);
     assert_eq!(shown.tanks.len(), first.tanks.len());
-    assert_eq!(shown.covers[0].timber_hits, first.covers[0].timber_hits);
+    assert_eq!(shown.covers[0].broken, first.covers[0].broken);
     let debris: Vec<_> = shown
         .fragments
         .iter()
-        .map(|fragment| (fragment.id, fragment.timber_part.is_some()))
+        .map(|fragment| (fragment.id, fragment.structure_parts.is_some()))
         .collect();
     assert_eq!(debris, [(2, false), (3, true)]);
 }

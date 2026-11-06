@@ -2,8 +2,8 @@
 //!
 //! `cover_model` returns the unbatched tree like the TypeScript: a group at the
 //! cover's x/z whose direct mesh children presentation batches (`batch`) before
-//! drawing. Trees are delegated to [`tree_model`]; timber walls and cargo crates
-//! are rebuilt when their damage stage or marks change.
+//! drawing. Trees are delegated to [`tree_model`]; a structure (a cottage, a
+//! watchtower, a timber wall or a cargo crate) is drawn without its broken parts.
 
 use std::f64::consts::PI;
 
@@ -12,27 +12,26 @@ use glam::DVec3;
 use super::barrel_surfaces::{LID_DROP, explosive_barrel};
 use super::building_kit::fieldstone_wall;
 use super::concrete_surfaces::{concrete_barrier, concrete_wall};
-use super::crate_model::{CrateShape, cargo_crate};
+use super::crate_model::{CrateShape, cargo_crate, crate_piece_model};
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
-use super::house_parts_model::structural_house;
+use super::house_parts_model::{house_debris, structural_house};
 use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
 };
-use super::timber_model::add_timber_parts;
-use super::tower_model::tower;
+use super::timber_model::{add_timber_parts, timber_debris_model};
+use super::tower_model::{tower, tower_debris};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
-use crate::sim::house_structure::PartSet;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
-use crate::sim::timber_layout::{
-    TimberHit, TimberJoin, TimberWall, timber_damage_stage, timber_parts,
-};
+use crate::sim::crate_structure::{CratePart, crate_structure};
+use crate::sim::structure::{PartSet, Role};
+use crate::sim::timber_layout::{TimberJoin, TimberWall, timber_parts};
 use crate::sim::types::CoverKind;
 
 /// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
@@ -54,9 +53,8 @@ pub struct CoverShape {
     pub d: f64,
     pub h: f64,
     pub color: u32,
-    pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// A cottage's or a watchtower's parts broken or fallen from it.
+    /// A structure's parts broken or fallen from it.
     pub broken: PartSet,
     /// A watchtower's parts that have been struck, standing or not (a cottage's look
     /// ignores it).
@@ -73,7 +71,6 @@ impl From<&RenderCover> for CoverShape {
             d: cover.d,
             h: cover.h,
             color: cover.color,
-            timber_hits: cover.timber_hits.clone(),
             timber_join: cover.timber_join,
             broken: cover.broken,
             cracked: cover.cracked,
@@ -81,28 +78,8 @@ impl From<&RenderCover> for CoverShape {
     }
 }
 
-/// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
-/// timber uses [`timber_damage_stage`]. A cottage's look follows its broken parts
-/// alone, and other kinds have one look.
-pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
-    match kind {
-        CoverKind::Cargo => {
-            if hp >= max_hp {
-                0
-            } else if hp > max_hp * 0.35 {
-                1
-            } else {
-                2
-            }
-        }
-        CoverKind::Timber => timber_damage_stage(hp, max_hp),
-        _ => 0,
-    }
-}
-
-/// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`], the
-/// timber or crate marks or a cottage's broken parts change.
-pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
+/// `coverModel(c, detail)`: rebuild it when a structure's broken parts change.
+pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
     if c.kind == CoverKind::Tree {
         return tree_model(
             &TreeShape {
@@ -134,25 +111,27 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
                 color: c.color,
             },
         ),
-        CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
+        CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.broken),
         // The parts of a cottage that still stand; an untouched one keeps its place
         // in the static covers' draws.
         CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
         CoverKind::Timber => {
-            let parts = timber_parts(
-                &TimberWall {
-                    x: c.x,
-                    z: c.z,
-                    w: c.w,
-                    d: c.d,
-                    h: c.h,
-                    color: c.color,
-                    hits: &c.timber_hits,
-                    join: c.timber_join,
-                },
-                damage_stage,
-            );
-            add_timber_parts(group, &parts);
+            let parts = timber_parts(&TimberWall {
+                x: c.x,
+                z: c.z,
+                w: c.w,
+                d: c.d,
+                h: c.h,
+                color: c.color,
+                join: c.timber_join,
+            });
+            // The members that stand, numbered as the wall's structure numbers them.
+            let standing = parts
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| !c.broken.contains(*index))
+                .map(|(_, part)| part);
+            add_timber_parts(group, standing);
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
@@ -235,4 +214,57 @@ fn rock(group: &mut Node, c: &CoverShape) {
         })
         .collect();
     put(group, sandstone_rubble(&chips), 0.0, 0.0, 0.0);
+}
+
+/// The model of a structure's fallen `parts` (or the pieces a landing broke them into),
+/// drawn as they stood about its ground centre, where their body started, batched.
+pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
+    match c.kind {
+        CoverKind::House => house_debris(c.x, c.z, c.w, c.d, c.h, parts),
+        CoverKind::Tower => tower_debris(c.color, parts),
+        CoverKind::Timber => {
+            let members = timber_parts(&TimberWall {
+                x: c.x,
+                z: c.z,
+                w: c.w,
+                d: c.d,
+                h: c.h,
+                color: c.color,
+                join: c.timber_join,
+            });
+            let mut group = Node::default();
+            for member in parts.iter().filter_map(|index| members.get(index)) {
+                let mut node = timber_debris_model(member);
+                node.position = DVec3::new(member.x, member.y, member.z);
+                node.rotation = glam::DQuat::from_rotation_y(member.yaw);
+                group.children.push(node);
+            }
+            let mut root = Node::group("timber-debris");
+            root.children.push(group);
+            root
+        }
+        CoverKind::Cargo => {
+            let layout = crate_structure(c.w, c.d, c.h);
+            let mut group = Node::default();
+            for index in parts.iter() {
+                let Role::Crate(CratePart {
+                    section: Some(section),
+                    ..
+                }) = layout.part(index).role
+                else {
+                    continue;
+                };
+                let size = DVec3::from_array(section.size);
+                let mut node = crate_piece_model(section.piece, size, c.color, index as u32);
+                let [rx, ry, rz] = section.rotation;
+                node.position = DVec3::from_array(section.center);
+                node.rotation = glam::DQuat::from_euler(glam::EulerRot::XYZ, rx, ry, rz);
+                group.children.push(node);
+            }
+            let mut root = Node::group("crate-debris");
+            root.children.push(group);
+            root
+        }
+        _ => Node::default(),
+    }
 }

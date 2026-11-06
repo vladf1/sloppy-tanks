@@ -161,7 +161,12 @@ fn destroyed_cover_rises_with_its_identity_once_the_rebuild_delay_passes_and_it_
         let cover = &sim.covers[c];
         assert!(cover.alive);
         assert_eq!(cover.hp, cover.max_hp);
-        assert!(cover.timber_hits.is_empty());
+        assert!(
+            cover
+                .structure
+                .as_ref()
+                .is_none_or(|state| state.gone.is_empty())
+        );
         assert_eq!(cover.id, id, "{:?} keeps its record", cover.kind);
         assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&c));
         let at = Vec2::new(cover.x, cover.z);
@@ -293,7 +298,7 @@ fn a_fallen_cottage_rebuilds_whole_each_time_it_falls() {
             !sim.nav.is_blocked(Vec2::new(x, z)),
             "cycle {cycle}: it opens"
         );
-        assert!(sim.fragments.iter().any(|f| f.house_id == Some(id)));
+        assert!(sim.fragments.iter().any(|f| f.of_structure(house)));
         assert!(sim.fragments.len() <= sim.max_fragments);
         assert_eq!(sim.covers.len(), covers);
 
@@ -319,7 +324,7 @@ fn a_fallen_cottage_rebuilds_whole_each_time_it_falls() {
         );
         assert_eq!(sim.cover_by_collider.get(&cover.collider), Some(&house));
         assert!(
-            sim.fragments.iter().all(|f| f.house_id != Some(id)),
+            sim.fragments.iter().all(|f| !f.of_structure(house)),
             "its fallen parts are cleared"
         );
         assert!(

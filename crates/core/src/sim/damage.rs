@@ -10,7 +10,6 @@ use super::combat_rules::{COMBAT, MINE};
 use super::data::group;
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
-use super::house_physics::{BLAST_HEIGHT, HE_BLAST_RADIUS, STRUCTURE_BLAST_REACH};
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
@@ -18,8 +17,8 @@ use super::physics::{from_rotation, from_vector, interaction_groups, vector};
 use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
+use super::structure_physics::{BLAST_HEIGHT, HE_BLAST_RADIUS, STRUCTURE_BLAST_REACH};
 use super::tank_destruction::tank_burnout;
-use super::timber_layout::TimberHit;
 use super::tree_proportions::tree_proportions;
 use super::types::{
     CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
@@ -28,8 +27,6 @@ use super::types::{
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
 
-/// Remembered impact marks per timber wall or cargo crate.
-const MAX_TIMBER_MARKS: usize = 6;
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and
 /// its offset from the body origin (the trunk's mid-height).
 pub struct TreeStump {
@@ -192,25 +189,14 @@ impl Simulation {
         if let Some(cover) = self.covers.get(cover_index)
             && cover.structure.is_some()
         {
-            // A cottage takes damage where it lands, a burst on its parts there; with
-            // no point every part takes it.
+            // A structure takes damage where it lands, a burst on its parts there; with no
+            // point every part takes it.
             let by = Some((owner, team));
             match impact {
-                Some(point) => self.house_blast_on(cover_index, point, HE_BLAST_RADIUS, amount, by),
-                None => self.damage_every_house_part(cover_index, amount, by),
-            }
-            let _ = owner_life;
-            return;
-        }
-        if let Some(cover) = self.covers.get(cover_index)
-            && cover.tower.is_some()
-        {
-            // A watchtower too: a burst on the parts where the damage lands, or every
-            // part with no point.
-            let by = Some((owner, team));
-            match impact {
-                Some(point) => self.tower_blast_on(cover_index, point, HE_BLAST_RADIUS, amount, by),
-                None => self.damage_every_tower_part(cover_index, amount, by),
+                Some(point) => {
+                    self.structure_blast_on(cover_index, point, HE_BLAST_RADIUS, amount, by)
+                }
+                None => self.damage_every_part(cover_index, amount, by),
             }
             return;
         }
@@ -218,25 +204,8 @@ impl Simulation {
         if !cover.alive || !cover.destructible {
             return;
         }
-        let previous_hp = cover.hp;
         cover.hp -= amount;
         if cover.hp > 0.0 {
-            if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) && amount > 0.0 {
-                let marks = &mut cover.timber_hits;
-                if marks.len() < MAX_TIMBER_MARKS {
-                    let size = if marks.is_empty() {
-                        1.0
-                    } else {
-                        1.8f64.min(1.5 + (marks.len() as f64 - 1.0) * 0.15)
-                    };
-                    marks.push(TimberHit {
-                        x: impact.map_or(0.0, |point| point.x - cover.x),
-                        y: impact.map_or_else(|| 1f64.min(cover.h * 0.5), |point| point.y),
-                        z: impact.map_or(-cover.d / 2.0, |point| point.z - cover.z),
-                        size,
-                    });
-                }
-            }
             return;
         }
         let body = cover.body;
@@ -295,13 +264,8 @@ impl Simulation {
         destroy.id = Some(id);
         destroy.size = Some(2.0);
         destroy.color = Some(color);
-        if kind == CoverKind::Cargo {
-            destroy.from = self.covers[cover_index]
-                .kick
-                .map(|kick| Point3::new(x - kick.x, h * 0.5, z - kick.z));
-        }
         self.events.push(destroy);
-        if !break_scenery(self, cover_index, pose, previous_hp) {
+        if !break_scenery(self, cover_index, pose) {
             for _ in 0..3 {
                 let fx = x + self.rng.range(-w / 2.0, w / 2.0);
                 let fz = z + self.rng.range(-d / 2.0, d / 2.0);
@@ -385,12 +349,11 @@ impl Simulation {
         // original owner.
         let count = self.covers.len();
         for i in 0..count {
-            if self.covers[i].structure.is_some() || self.covers[i].tower.is_some() {
-                // A cottage's or watchtower's parts in reach of the blast's lower share.
+            if self.covers[i].structure.is_some() {
+                // A structure's parts in reach of the blast's lower share.
                 let point = Point3::new(position.x, BLAST_HEIGHT, position.z);
                 let reach = radius * STRUCTURE_BLAST_REACH;
-                self.house_blast_on(i, point, reach, damage, Some((owner, team)));
-                self.tower_blast_on(i, point, reach, damage, Some((owner, team)));
+                self.structure_blast_on(i, point, reach, damage, Some((owner, team)));
                 continue;
             }
             let cover = &mut self.covers[i];
@@ -399,12 +362,6 @@ impl Simulation {
                 && distance(position, Vec2::new(cover.x, cover.z))
                     < radius + cover.w.max(cover.d) * COMBAT.cover_blast_allowance
             {
-                if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) {
-                    let dx = cover.x - position.x;
-                    let dz = cover.z - position.z;
-                    let length = dx.hypot(dz);
-                    cover.kick = (length > 0.001).then(|| Vec2::new(dx / length, dz / length));
-                }
                 self.damage_cover(
                     i,
                     damage,

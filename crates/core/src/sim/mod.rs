@@ -32,6 +32,7 @@ beyond_geometry! {
     pub mod combat_record;
     pub mod combat_rules;
     pub mod crate_layout;
+    pub mod crate_structure;
     pub mod damage;
     pub mod data;
     pub mod debris_cleanup;
@@ -41,7 +42,6 @@ beyond_geometry! {
     pub mod fragments;
     pub mod game_options;
     pub mod hitboxes;
-    pub mod house_physics;
     pub mod house_structure;
     pub mod humvee_tactics;
     pub mod laser_defense;
@@ -60,13 +60,15 @@ beyond_geometry! {
     pub mod simulation;
     pub mod simulation_rules;
     pub mod stress_test_level;
+    pub mod structure;
+    pub mod structure_physics;
     pub mod superstress_level;
     pub mod tank_destruction;
     pub mod tank_dimensions;
     pub mod tank_driving;
     pub mod tank_lifecycle;
+    pub mod timber_structure;
     pub mod tower_layout;
-    pub mod tower_physics;
     pub mod tower_structure;
     pub mod types;
     pub mod veterancy;

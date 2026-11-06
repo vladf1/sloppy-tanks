@@ -1,33 +1,63 @@
-//! Timber walls (the former `tests/timber-walls.test.ts`): authored colliders never overlap,
-//! bays breach independently and restore on reset, corner posts break into one physical post,
-//! blasts destroy each bay once, and loose beams keep their pose and stack.
+//! Timber walls as structures: authored walls never overlap, one shell knocks the beam it
+//! strikes out of its posts and leaves a gap the next shell and a line of sight pass
+//! through, the posts carry the beams (one shot out drops what it held), clients and late
+//! joiners see it all, the Scrap Yard rebuilds a wall in place and the fallen members
+//! clear away.
 
 use crate::support;
 
-use std::f64::consts::FRAC_1_SQRT_2;
-
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{STEP, group};
 use sloppy_core::sim::maps::{ArenaMap, MAPS};
-use sloppy_core::sim::math::{Point3, Quat4, Vec2};
-use sloppy_core::sim::physics::{to_rotation, vector};
-use sloppy_core::sim::projectiles::step_projectiles;
+use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::stress_test_level::STRESS_TEST_MAP;
+use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure::Role;
+use sloppy_core::sim::structure_physics::breach_point;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
-use sloppy_core::sim::timber_layout::{
-    TimberFace, TimberPartKind, TimberWall, timber_damage_stage, timber_parts,
-};
-use sloppy_core::sim::{CoverKind, DamageCause, Shot, SimEventType, Simulation, Team};
-use support::{clear_arena, collider_groups};
+use sloppy_core::sim::timber_layout::{BEAM_COUNT, TIMBER_HEALTH, TimberPartKind};
+use sloppy_core::sim::timber_structure::TimberRole;
+use sloppy_core::sim::{CoverKind, DamageCause, SimEventType, Simulation, Team, Weapon};
+use support::{clear_arena, fire_at, place_tank, run};
 
-fn timber(x: f64, z: f64, w: f64, d: f64) -> CoverDef {
-    CoverDef::new(CoverKind::Timber, x, z, w, d, 2.8, 120.0, 0xb47a49)
+/// A 3.7 m timber wall alone along x at z = 10, the human parked far off.
+fn lone_wall() -> (Simulation, usize) {
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().expect("a human tank");
+    clear_arena(&mut s, &[human]);
+    place_tank(&mut s, 0, -40.0, -40.0, None);
+    s.tanks[0].protection = 999.0;
+    let wall = s.add_cover(&CoverDef::new(
+        CoverKind::Timber,
+        0.0,
+        10.0,
+        3.7,
+        0.9,
+        2.8,
+        TIMBER_HEALTH,
+        0xb47a49,
+    ));
+    s.nav.rebuild(&s.covers, None);
+    s.world.step();
+    (s, wall)
+}
+
+fn gone(s: &Simulation, wall: usize) -> PartSet {
+    s.covers[wall].structure.as_ref().expect("a structure").gone
+}
+
+/// The wall's member of `kind` numbered `index` (beams bottom up, posts -x then +x).
+fn member(s: &Simulation, wall: usize, kind: TimberPartKind, index: usize) -> usize {
+    let layout = &s.covers[wall].structure.as_ref().unwrap().layout;
+    (0..layout.parts.len())
+        .find(|&part| {
+            matches!(layout.parts[part].role, Role::Timber(TimberRole { kind: k, index: i }) if k == kind && i == index)
+        })
+        .expect("the member")
 }
 
 #[test]
 fn timber_barriers_meet_without_overlapping_colliders_across_every_map() {
-    // The TS test also compared Three.js part-model bounds for every damage pose; that
-    // rendering check was not ported.
     let maps: Vec<&ArenaMap> = MAPS
         .iter()
         .chain([&STRESS_TEST_MAP, &SUPERSTRESS_MAP])
@@ -38,10 +68,6 @@ fn timber_barriers_meet_without_overlapping_colliders_across_every_map() {
             .into_iter()
             .filter(|c| c.kind == CoverKind::Timber)
             .collect();
-        assert!(
-            walls.iter().all(|wall| wall.hp == 80.0),
-            "{id}: timber takes two standard hits"
-        );
         for i in 0..walls.len() {
             for j in i + 1..walls.len() {
                 let (a, b) = (&walls[i], &walls[j]);
@@ -60,60 +86,108 @@ fn timber_barriers_meet_without_overlapping_colliders_across_every_map() {
 }
 
 #[test]
-fn two_shells_breach_one_timber_bay_clearing_physics_and_bot_navigation_and_reset_restores_it() {
-    let mut s = Simulation::with_seed(123.0);
-    let bodies: Vec<_> = s.tanks.iter().map(|t| t.body).collect();
-    for body in bodies {
-        s.remove_body(body);
+fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
+    let (mut s, wall) = lone_wall();
+    let rng = s.rng.state;
+    let (front, back) = (Vec2::new(0.3, 6.0), Vec2::new(0.3, 14.0));
+    assert!(!s.visible(front, back), "a whole wall blocks the line");
+    fire_at(
+        &mut s,
+        Vec2::new(0.3, 0.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    run(&mut s, 1.0);
+    let beam = member(&s, wall, TimberPartKind::Beam, 1);
+    assert!(gone(&s, wall).contains(beam), "the struck beam is out");
+    for post in [BEAM_COUNT, BEAM_COUNT + 1] {
+        assert!(!gone(&s, wall).contains(post), "post {post} stands");
     }
-    s.tanks.clear();
-    let wall = s
-        .covers
-        .iter()
-        .position(|c| c.kind == CoverKind::Timber && c.x == -2.0 && c.z == 13.0)
-        .unwrap();
-    let neighbor = s
-        .covers
-        .iter()
-        .position(|c| c.kind == CoverKind::Timber && c.x == 2.0 && c.z == 13.0)
-        .unwrap();
-    let (wx, wz) = (s.covers[wall].x, s.covers[wall].z);
-    let handle = s.covers[wall].collider;
-    let version = s.nav.version;
-    assert!(s.nav.is_blocked(Vec2::new(wx, wz)));
-    for hit in 1..=2 {
-        let id = s.allocate_id();
-        s.shots = vec![Shot {
-            id,
-            x: wx,
-            z: wz - 5.0,
-            vx: 0.0,
-            vz: 600.0,
-            owner: 999,
-            team: Team::Blue,
-            damage: 40.0,
-            life: 2.0,
-            ..Shot::default()
-        }];
-        step_projectiles(&mut s, STEP, false);
-        assert_eq!(s.covers[wall].hp, 80.0 - hit as f64 * 40.0);
-        assert_eq!(s.covers[wall].alive, hit < 2);
-        assert_eq!(s.shots.len(), 0);
-    }
-    assert_eq!(s.covers[neighbor].hp, 80.0);
-    assert!(s.covers[neighbor].alive);
-    assert!(!s.cover_by_collider.contains_key(&handle));
-    assert!(s.nav.version > version);
-    assert!(!s.nav.is_blocked(Vec2::new(wx, wz)));
-    s.world.step();
-    assert!(s.visible(Vec2::new(wx, wz - 3.0), Vec2::new(wx, wz + 3.0)));
-    assert!(!s.fragments.is_empty());
-    s.reset(None);
+    assert!(s.covers[wall].alive, "one beam does not level the wall");
     assert!(
-        s.covers
+        s.events
             .iter()
-            .filter(|c| c.kind == CoverKind::Timber)
-            .all(|c| c.alive && c.hp == 80.0)
+            .any(|e| e.kind == SimEventType::Shatter && e.cover_kind == Some(CoverKind::Timber)),
+        "the beam splinters"
+    );
+    assert!(s.visible(front, back), "sight passes through the gap");
+    // The next shell along the same line flies through and on.
+    let before = gone(&s, wall);
+    let id = fire_at(
+        &mut s,
+        Vec2::new(0.3, 0.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    while s.shots.iter().any(|shot| shot.id == id && shot.z < 11.0) {
+        run(&mut s, 1.0 / 60.0);
+    }
+    let shell = s
+        .shots
+        .iter()
+        .find(|shot| shot.id == id)
+        .expect("the shell flies on");
+    assert!(shell.z > 11.0, "past the wall: {}", shell.z);
+    assert_eq!(gone(&s, wall), before, "it breaks nothing on its way");
+    assert_eq!(s.rng.state, rng, "breaking a beam draws nothing");
+}
+
+#[test]
+fn the_posts_carry_the_beams_and_one_shot_out_drops_what_it_held() {
+    let (mut s, wall) = lone_wall();
+    let post = member(&s, wall, TimberPartKind::Post, BEAM_COUNT);
+    let x = s.covers[wall].structure.as_ref().unwrap().layout.parts[post]
+        .middle()
+        .x;
+    // A level shell finds something to break: a post or the beam at its height.
+    assert!(breach_point(&s.covers[wall], Vec2::new(0.0, 0.0)).is_some());
+    fire_at(
+        &mut s,
+        Vec2::new(x, 0.0),
+        Vec2::new(x, 20.0),
+        1.0,
+        Weapon::Piercing,
+    );
+    run(&mut s, 1.0);
+    let down = gone(&s, wall);
+    assert!(down.contains(post), "the post is shot out");
+    for index in 1..BEAM_COUNT {
+        let beam = member(&s, wall, TimberPartKind::Beam, index);
+        assert!(down.contains(beam), "beam {index} it held comes down");
+    }
+    let bottom = member(&s, wall, TimberPartKind::Beam, 0);
+    assert!(!down.contains(bottom), "the beam lying on the ground stays");
+    assert!(
+        s.fragments.iter().any(|f| f.of_structure(wall)),
+        "the beams fall as bodies"
+    );
+    // The other post planted in the ground stands alone.
+    assert!(!down.contains(member(&s, wall, TimberPartKind::Post, BEAM_COUNT + 1)));
+    let bodies = s.world.bodies.len();
+    let falling = s.fragments.iter().filter(|f| f.of_structure(wall)).count();
+    run(&mut s, 25.0);
+    assert!(
+        !s.fragments.iter().any(|f| f.of_structure(wall)),
+        "the fallen beams clear"
+    );
+    assert_eq!(
+        s.world.bodies.len(),
+        bodies - falling,
+        "no body is left behind"
+    );
+}
+
+#[test]
+fn a_walls_breaks_and_falling_members_reach_room_clients_and_late_joiners() {
+    let (mut s, wall) = lone_wall();
+    let beam = member(&s, wall, TimberPartKind::Beam, 1);
+    let post = member(&s, wall, TimberPartKind::Post, BEAM_COUNT);
+    support::assert_structure_replicates(
+        &mut s,
+        wall,
+        &[PartSet::from_indices([beam]), PartSet::from_indices([post])],
     );
 }
 
@@ -124,12 +198,17 @@ fn all_eight_garden_corners_share_one_upright_and_adjoining_runs_break_independe
         .filter(|&i| s.covers[i].timber_join.is_some_and(|join| join.post))
         .collect();
     assert_eq!(posts.len(), 8);
+    let parts = |s: &Simulation, cover: usize| {
+        s.covers[cover]
+            .structure
+            .as_ref()
+            .unwrap()
+            .layout
+            .parts
+            .len()
+    };
     for post in posts {
-        let parts = timber_parts(&TimberWall::of(&s.covers[post]), 0);
-        assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].kind, TimberPartKind::Post);
-        assert_eq!(parts[0].w, s.covers[post].w);
-        assert_eq!(parts[0].d, s.covers[post].d);
+        assert_eq!(parts(&s, post), 1, "a corner is one post");
         let p = s.covers[post].clone();
         let neighbors: Vec<usize> = (0..s.covers.len())
             .filter(|&i| {
@@ -150,50 +229,24 @@ fn all_eight_garden_corners_share_one_upright_and_adjoining_runs_break_independe
         );
         for &neighbor in &neighbors {
             assert_eq!(
-                timber_parts(&TimberWall::of(&s.covers[neighbor]), 0).len(),
-                5,
+                parts(&s, neighbor),
+                BEAM_COUNT + 1,
                 "no duplicate corner post on the run"
             );
         }
-        s.damage_cover(neighbors[0], 80.0, 999, Team::Blue, None, None);
+        s.damage_cover(neighbors[0], 1000.0, 999, Team::Blue, None, None);
+        assert!(!s.covers[neighbors[0]].alive);
         assert!(s.covers[post].alive);
-        assert_eq!(s.covers[neighbors[1]].hp, 80.0);
-        let count = s.fragments.len();
-        s.damage_cover(
-            post,
-            40.0,
-            999,
-            Team::Blue,
-            None,
-            Some(Point3::new(p.x, 1.0, p.z - 0.45)),
-        );
-        assert!(s.covers[post].alive);
-        assert_eq!(
-            timber_parts(&TimberWall::of(&s.covers[post]), 2)[0]
-                .marks
-                .len(),
-            1
-        );
-        s.damage_cover(post, 40.0, 999, Team::Blue, None, None);
+        assert!(s.covers[neighbors[1]].alive);
+        assert!(gone(&s, neighbors[1]).is_empty());
+        s.damage_cover(post, 1000.0, 999, Team::Blue, None, None);
         assert!(!s.covers[post].alive);
         assert!(s.covers[neighbors[1]].alive);
-        assert_eq!(
-            s.fragments.len(),
-            count + 1,
-            "connector becomes exactly one physical post"
-        );
-        let fragment = s.fragments.last().unwrap();
-        assert_eq!(
-            fragment.timber_part.as_ref().map(|part| part.kind),
-            Some(TimberPartKind::Post)
-        );
-        assert_eq!(fragment.dimensions, Some(Point3::new(p.w, p.h, p.d)));
-        assert_eq!(collider_groups(&s, fragment.body), group::TIMBER_DEBRIS);
     }
 }
 
 #[test]
-fn blast_can_destroy_adjacent_timber_bays_without_duplicate_destruction() {
+fn a_blast_can_level_adjacent_bays_each_exactly_once() {
     let mut s = Simulation::with_seed(123.0);
     let bays: Vec<usize> = (0..s.covers.len())
         .filter(|&i| {
@@ -202,18 +255,21 @@ fn blast_can_destroy_adjacent_timber_bays_without_duplicate_destruction() {
         })
         .collect();
     let (id, team) = (s.human().id, s.human_team);
-    s.explode(
-        Vec2::new(0.0, 13.0),
-        5.0,
-        120.0,
-        id,
-        team,
-        None,
-        DamageCause::Explosion,
-    );
+    for _ in 0..3 {
+        s.explode(
+            Vec2::new(0.0, 13.0),
+            5.0,
+            120.0,
+            id,
+            team,
+            None,
+            DamageCause::Explosion,
+        );
+    }
     for bay in bays {
+        assert!(!gone(&s, bay).is_empty(), "the blast reached bay {bay}");
+        s.damage_cover(bay, 9999.0, id, team, None, None);
         assert!(!s.covers[bay].alive);
-        s.damage_cover(bay, 999.0, id, team, None, None);
         let bay_id = s.covers[bay].id;
         assert_eq!(
             s.events
@@ -226,149 +282,63 @@ fn blast_can_destroy_adjacent_timber_bays_without_duplicate_destruction() {
 }
 
 #[test]
-fn timber_uses_four_beams_and_two_posts_retaining_their_damage_and_pose_on_breakup() {
-    for along in [true, false] {
-        let mut s = Simulation::with_seed(123.0);
-        let (w, d) = if along { (4.2, 0.9) } else { (0.9, 4.2) };
-        let wall = s.add_cover(&timber(0.0, 0.0, w, d));
-        s.damage_cover(
-            wall,
-            105.0,
-            999,
-            Team::Blue,
-            None,
-            Some(Point3::new(0.7, 1.0, -0.45)),
-        );
-        let body = s.covers[wall].body;
-        assert_eq!(s.world.bodies[body].colliders().len(), 1);
-        assert!(s.world.bodies[body].is_fixed());
-        let stage = timber_damage_stage(s.covers[wall].hp, s.covers[wall].max_hp);
-        assert_eq!(stage, 3);
-        let parts = timber_parts(&TimberWall::of(&s.covers[wall]), stage);
-        assert_eq!(
-            parts
-                .iter()
-                .filter(|p| p.kind == TimberPartKind::Beam)
-                .count(),
-            4
-        );
-        assert_eq!(
-            parts
-                .iter()
-                .filter(|p| p.kind == TimberPartKind::Post)
-                .count(),
-            2
-        );
-        let (wx, wz) = (s.covers[wall].x, s.covers[wall].z);
-        s.damage_cover(wall, 15.0, 999, Team::Blue, None, None);
-        assert_eq!(s.fragments.len(), 6);
-        for (fragment, part) in s.fragments.iter().zip(&parts) {
-            assert_eq!(fragment.timber_part.as_ref(), Some(part));
-            let p = s.body_translation(fragment.body);
-            assert!((p.x - (wx + part.x)).abs() < 1e-5);
-            assert!((p.y - part.y).abs() < 1e-5);
-            assert!((p.z - (wz + part.z)).abs() < 1e-5);
-            assert_eq!(
-                fragment.dimensions,
-                Some(Point3::new(part.w, part.h, part.d))
-            );
-            let expected = Quat4::from_euler_xyz(0.0, part.yaw, part.lean);
-            let q = s.body_rotation(fragment.body);
-            let dot = expected.x * q.x + expected.y * q.y + expected.z * q.z + expected.w * q.w;
-            assert!(dot.abs() > 0.99999, "pose dot {dot}");
-            assert_eq!(s.world.bodies[fragment.body].colliders().len(), 1);
-            assert_eq!(collider_groups(&s, fragment.body), group::TIMBER_DEBRIS);
-        }
-    }
-}
-
-#[test]
-fn detached_timber_beams_land_across_one_another_and_remain_stacked() {
-    let mut s = Simulation::with_seed(123.0);
-    clear_arena(&mut s, &[]);
-    let wall = s.add_cover(&timber(0.0, 0.0, 4.2, 0.9));
-    s.damage_cover(wall, 120.0, 999, Team::Blue, None, None);
-    let extra: Vec<_> = s.fragments[2..].iter().map(|piece| piece.body).collect();
-    for body in extra {
-        s.remove_body(body);
-    }
-    s.fragments.truncate(2);
-    for (i, piece) in s.fragments.iter().enumerate() {
-        let body = &mut s.world.bodies[piece.body];
-        body.set_translation(vector(0.0, 1.0 + i as f64 * 2.0, 0.0), true);
-        let turn = if i > 0 { FRAC_1_SQRT_2 } else { 0.0 };
-        let w = if i > 0 { FRAC_1_SQRT_2 } else { 1.0 };
-        body.set_rotation(
-            to_rotation(Quat4 {
-                x: 0.0,
-                y: turn,
-                z: 0.0,
-                w,
-            }),
-            true,
-        );
-        body.set_linvel(vector(0.0, 0.0, 0.0), true);
-        body.set_angvel(vector(0.0, 0.0, 0.0), true);
-    }
-    for _ in 0..480 {
-        s.world.step();
-    }
-    let (lower, upper) = (s.fragments[0].body, s.fragments[1].body);
-    let a = s.body_translation(lower);
-    let b = s.body_translation(upper);
-    let thickness = s.fragments[0].dimensions.unwrap().y;
-    assert!(
-        (a.y - thickness / 2.0).abs() < 0.03,
-        "lower beam rests on the ground: {}",
-        a.y
-    );
-    assert!(
-        b.y - a.y > thickness - 0.03,
-        "upper beam rests on the lower beam, not through it: {} {}",
-        a.y,
-        b.y
-    );
-    assert!(
-        b.x.abs() < 0.1 && b.z.abs() < 0.1,
-        "crossed beams keep their support"
-    );
-    assert!(
-        s.world.bodies[lower].is_sleeping() && s.world.bodies[upper].is_sleeping(),
-        "the pile settles"
-    );
-}
-
-#[test]
-fn a_loose_member_takes_each_hit_on_the_face_it_struck_with_a_fresh_seed() {
-    let wall = TimberWall {
-        x: -2.0,
-        z: 13.0,
-        w: 4.0,
-        d: 0.9,
-        h: 2.8,
-        color: 0xa66f46,
-        hits: &[],
-        join: None,
+fn a_scrap_yard_wall_falls_and_rises_again_in_place() {
+    use sloppy_core::sim::SimulationSetup;
+    use sloppy_core::sim::level_rules::single_player_rules;
+    use sloppy_core::sim::superstress_level::{
+        REBUILD_SECONDS, superstress_level, superstress_rules,
     };
-    let mut beam = timber_parts(&wall, 0)
-        .into_iter()
-        .find(|part| part.kind == TimberPartKind::Beam)
+    let mut sim = Simulation::new(
+        731.0,
+        single_player_rules(superstress_level()).merged(SimulationSetup {
+            round: Some(3),
+            ..SimulationSetup::default()
+        }),
+    );
+    let wall = sim
+        .covers
+        .iter()
+        .position(|c| c.kind == CoverKind::Timber && c.timber_join.is_none())
         .unwrap();
-    let (w, h, d) = (beam.w, beam.h, beam.d);
-    let cases = [
-        ((0.3, 0.05, d / 2.0), TimberFace::Front, (0.3, 0.05)),
-        ((-0.4, -0.1, -d / 2.0), TimberFace::Back, (-0.4, -0.1)),
-        ((0.2, h / 2.0, 0.1), TimberFace::Top, (0.2, 0.1)),
-        ((0.2, -h / 2.0, -0.1), TimberFace::Bottom, (0.2, -0.1)),
-        ((w / 2.0, 0.1, 0.2), TimberFace::Right, (0.2, 0.1)),
-        ((-w / 2.0, 0.1, 0.2), TimberFace::Left, (0.2, 0.1)),
-    ];
-    let mut seeds = Vec::new();
-    for ((x, y, z), face, (mark_x, mark_y)) in cases {
-        let mark = beam.loose_mark(x, y, z, 0.8);
-        assert_eq!((mark.face, mark.x, mark.y), (face, mark_x, mark_y));
-        assert!(!seeds.contains(&mark.seed), "each scar looks different");
-        seeds.push(mark.seed);
-        beam.marks.push(mark);
+    for tank in 0..sim.tanks.len() {
+        support::set_translation(&mut sim, tank, -30.0, 0.0);
+    }
+    let (x, z) = (sim.covers[wall].x, sim.covers[wall].z);
+    let parts = sim.covers[wall]
+        .structure
+        .as_ref()
+        .unwrap()
+        .layout
+        .parts
+        .len();
+    sim.start();
+    let (id, team) = (sim.human().id, sim.human().team);
+    for cycle in 0..2 {
+        sim.damage_cover(wall, 1000.0, id, team, None, None);
+        assert!(!sim.covers[wall].alive, "cycle {cycle}: it fell");
+        for _ in 0..(1.0 / sloppy_core::sim::data::STEP) as usize {
+            sim.step(sloppy_core::sim::VehicleCommand::idle(), false);
+        }
+        superstress_rules(&mut sim);
+        sim.elapsed += REBUILD_SECONDS;
+        superstress_rules(&mut sim);
+        assert!(sim.covers[wall].alive, "cycle {cycle}: the wall rebuilt");
+        assert!(gone(&sim, wall).is_empty());
+        assert!(
+            !sim.fragments.iter().any(|f| f.of_structure(wall)),
+            "cycle {cycle}: its members are cleared"
+        );
+        assert_eq!(
+            sim.cover_by_collider
+                .values()
+                .filter(|&&index| index == wall)
+                .count(),
+            parts,
+            "cycle {cycle}: every member stands again"
+        );
+        assert!(
+            sim.nav.is_blocked(Vec2::new(x, z)),
+            "it blocks routes again"
+        );
     }
 }

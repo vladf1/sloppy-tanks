@@ -6,16 +6,14 @@ use std::f64::consts::PI;
 
 use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
 
-use super::crate_layout::{CrateBreak, CratePiece, CrateSection, crate_sections};
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
-use super::math::{Point3, Quat4, Random, Vec2};
+use super::math::{Point3, Quat4, Random};
 use super::physics::{
     from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
 };
 use super::simulation::Simulation;
-use super::timber_layout::{TimberWall, timber_damage_stage, timber_parts};
 use super::tree_proportions::tree_proportions;
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
@@ -128,91 +126,6 @@ impl Breakup<'_> {
         self.pieces.push(id);
         simulation.fragments.len() - 1
     }
-
-    /// A section of a broken crate where it stood, thrown away from the shot that
-    /// broke it: the struck wall caves in and is carried through, the far wall and
-    /// lid blow out, the sides spread, and every section tumbles, all the harder for
-    /// a larger `force` (the crate's, about 1). Without a known direction the crate
-    /// bursts outwards.
-    fn crate_section(
-        &mut self,
-        simulation: &mut Simulation,
-        section: &CrateSection,
-        kick: Option<Vec2>,
-        force: f64,
-    ) {
-        let shape = match section.piece {
-            CratePiece::Skid | CratePiece::Plank => FragmentShape::Beam,
-            _ => FragmentShape::Panel,
-        };
-        let index = self.piece(
-            simulation,
-            shape,
-            section.center,
-            section.size,
-            None,
-            DebrisMaterial::Wood,
-        );
-        simulation.fragments[index].crate_piece = Some(section.piece);
-        let [nx, ny, nz] = section.normal;
-        let rng = &mut self.rng;
-        let lid = matches!(
-            section.piece,
-            CratePiece::Lid | CratePiece::LidFront | CratePiece::LidMiddle | CratePiece::LidBack
-        );
-        // (speed along the shot, speed out of the section's face, lift, spin)
-        let (carried, outward, lift, spin) = match section.piece {
-            CratePiece::Skid => (rng.range(1.0, 2.0), 0.0, rng.range(1.5, 2.5), 3.0),
-            CratePiece::Plank => (rng.range(9.0, 12.0), 0.0, rng.range(4.0, 6.0), 12.0),
-            _ if lid => (rng.range(2.0, 4.0), 0.0, rng.range(5.0, 8.0), 6.0),
-            _ => {
-                let lift = rng.range(3.0, 6.0);
-                match kick.map(|kick| nx * kick.x + nz * kick.z) {
-                    // The struck wall caves in and is carried through.
-                    Some(facing) if facing < -0.5 => (rng.range(6.0, 9.0), 0.5, lift, 8.0),
-                    // The far wall blows out ahead of it.
-                    Some(facing) if facing > 0.5 => {
-                        (rng.range(5.0, 8.0), rng.range(1.0, 2.0), lift, 8.0)
-                    }
-                    // The sides spread.
-                    Some(_) => (rng.range(2.5, 4.5), rng.range(2.5, 4.5), lift, 8.0),
-                    None => (0.0, rng.range(4.0, 7.0), lift, 8.0),
-                }
-            }
-        };
-        let (carried, outward, lift, spin) =
-            (carried * force, outward * force, lift * force, spin * force);
-        let (vx, vz) = match kick {
-            Some(kick) => (
-                kick.x * carried + nx * outward,
-                kick.z * carried + nz * outward,
-            ),
-            None => {
-                // Without a direction the crate bursts outwards; the lid, skid and
-                // plank scatter at random.
-                let angle = rng.range(0.0, PI * 2.0);
-                let speed = carried.max(outward).max(2.0);
-                if ny == 0.0 && section.piece != CratePiece::Plank {
-                    (nx * outward, nz * outward)
-                } else {
-                    (angle.cos() * speed, angle.sin() * speed)
-                }
-            }
-        };
-        let angular = [
-            rng.range(-spin, spin),
-            rng.range(-spin, spin) * 0.6,
-            rng.range(-spin, spin),
-        ];
-        let [rx, ry, rz] = section.rotation;
-        let body = simulation.fragments[index].body;
-        let rigid_body = &mut simulation.world.bodies[body];
-        rigid_body.set_rotation(to_rotation(Quat4::from_euler_xyz(rx, ry, rz)), true);
-        rigid_body.set_linvel(vector(vx, lift, vz), true);
-        rigid_body.set_angvel(vector(angular[0], angular[1], angular[2]), true);
-        // Thin boards thrown hard would otherwise tunnel through each other.
-        rigid_body.enable_ccd(true);
-    }
 }
 
 /// Break destroyed scenery into physical pieces. Returns false for kinds without authored
@@ -221,7 +134,6 @@ pub fn break_scenery(
     simulation: &mut Simulation,
     cover_index: usize,
     pose: Option<CoverPose>,
-    previous_hp: f64,
 ) -> bool {
     let mut cover = simulation.covers[cover_index].clone();
     // Navigation bounds expand as a barrel tips; fragments keep its original dimensions.
@@ -231,8 +143,7 @@ pub fn break_scenery(
     }
     let legacy_count = match cover.kind {
         CoverKind::Tree => 9,
-        CoverKind::Timber => 7,
-        CoverKind::Cargo | CoverKind::Drum => 3,
+        CoverKind::Drum => 3,
         _ => return false,
     };
     // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
@@ -247,53 +158,6 @@ pub fn break_scenery(
     };
     let wood = DebrisMaterial::Wood;
     match cover.kind {
-        CoverKind::Cargo => {
-            // Each wall and the lid come away whole or in pieces, with a plank or
-            // two and maybe a skid (5 to 18 bodies, about 11), each drawn as its
-            // section of the crate, every crate differently and with its own force.
-            // Also seeded by how many covers have fallen, so a crate that rebuilds
-            // in place breaks differently each time.
-            breakup.rng.state += f64::from(simulation.destroyed) * 19_349_663.0;
-            let how = CrateBreak::random(|| breakup.rng.next());
-            let force = breakup.rng.range(0.75, 1.3);
-            for section in crate_sections(cover.w, cover.d, cover.h, &how) {
-                breakup.crate_section(simulation, &section, cover.kick, force);
-            }
-        }
-        CoverKind::Timber => {
-            let stage = timber_damage_stage(previous_hp, cover.max_hp);
-            for part in timber_parts(&TimberWall::of(&cover), stage) {
-                let index = breakup.piece(
-                    simulation,
-                    FragmentShape::Beam,
-                    [part.x, part.y, part.z],
-                    [part.w, part.h, part.d],
-                    Some(part.color),
-                    wood,
-                );
-                let body = simulation.fragments[index].body;
-                let rotation = Quat4::from_euler_xyz(0.0, part.yaw, part.lean);
-                simulation.fragments[index].timber_part = Some(part);
-                let collider = simulation.world.bodies[body].colliders()[0];
-                simulation.world.colliders[collider]
-                    .set_collision_groups(interaction_groups(group::TIMBER_DEBRIS));
-                let rigid_body = &mut simulation.world.bodies[body];
-                rigid_body.enable_ccd(true);
-                rigid_body.set_additional_solver_iterations(2);
-                if let Some(kick) = cover.kick {
-                    let velocity = from_vector(rigid_body.linvel());
-                    rigid_body.set_linvel(
-                        vector(
-                            velocity.x * 0.45 + kick.x * 3.0,
-                            velocity.y * 0.65,
-                            velocity.z * 0.45 + kick.z * 3.0,
-                        ),
-                        true,
-                    );
-                }
-                rigid_body.set_rotation(to_rotation(rotation), true);
-            }
-        }
         CoverKind::Tree => {
             let proportions = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h);
             let (family, height, radius, stump) = (

@@ -6,12 +6,11 @@ use rapier3d::prelude::{ColliderHandle, RigidBodyHandle};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::bot_personalities::BotPersonality;
-use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
 use super::humvee_tactics::HumveeTactics;
 pub use super::kinds::{CoverKind, FragmentShape, PickupKind, Team, VehicleKind, WreckPart};
 pub use super::math::{Point3, Quat4, Vec2};
-use super::timber_layout::{TimberHit, TimberJoin, TimberPart, TimberWall};
+use super::timber_layout::{TimberJoin, TimberWall};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -353,20 +352,13 @@ pub struct Cover {
     pub body: RigidBodyHandle,
     pub collider: ColliderHandle,
     pub color: u32,
-    /// Bounded, persistent impact marks of a timber wall or a cargo crate, in
-    /// coordinates relative to the cover.
-    pub timber_hits: Vec<TimberHit>,
     pub timber_join: Option<TimberJoin>,
-    /// Direction of the last hit on a timber wall or a cargo crate, which its pieces
-    /// are thrown along when it breaks.
-    pub kick: Option<Vec2>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
     pub fallen_at: Option<f64>,
-    /// A cottage's structure: its parts, which of them are gone and their colliders.
-    pub structure: Option<super::house_physics::StructureState>,
-    /// A watchtower's structure: which of its parts are gone and their colliders.
-    pub tower: Option<super::tower_physics::TowerState>,
+    /// A cottage's, a watchtower's, a timber wall's or a crate's structure: its parts,
+    /// which of them are gone and their colliders.
+    pub structure: Option<super::structure_physics::StructureState>,
 }
 
 /// Planar projectile state. vx/vz are metres per second; life is remaining seconds.
@@ -454,28 +446,9 @@ pub struct Fragment {
     pub dimensions: Option<Point3>,
     pub material: Option<DebrisMaterial>,
     pub source_kind: Option<CoverKind>,
-    pub timber_part: Option<TimberPart>,
-    /// The watchtower whose parts this body is.
-    pub tower_id: Option<u32>,
-    /// The parts of a watchtower this body is (they fell together).
-    pub tower_parts: Option<super::house_structure::PartSet>,
-    /// How a falling watchtower body is landing and settling.
-    pub tower_landing: Option<super::tower_physics::TowerLanding>,
-    /// The section of a broken cargo crate this piece is drawn as.
-    pub crate_piece: Option<CratePiece>,
-    /// The cottage whose parts this body is.
-    pub house_id: Option<u32>,
-    /// The parts of a cottage's structure this body is (they fell together).
-    pub house_parts: Option<super::house_structure::PartSet>,
-    /// Its velocity last tick, to tell a hard landing.
-    pub house_velocity: Option<Point3>,
-    /// When it came to rest up on its cottage's remains, while it is shoved off them.
-    pub house_wedged: Option<f64>,
-    /// A piece of a body that already broke (on landing or under fire): it lands on
-    /// without breaking up again, and breaks only where it is struck.
-    pub house_broken: bool,
-    /// Being laid down off the thin edge it came to rest on.
-    pub house_laying: bool,
+    /// The parts of a structure this body is (they fell together), and how it is
+    /// landing and settling.
+    pub structure: Option<super::structure_physics::StructureDebris>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
@@ -487,6 +460,16 @@ pub struct Fragment {
 }
 
 impl Fragment {
+    /// The parts of a structure this body is, if it is one's.
+    pub fn structure_parts(&self) -> Option<super::structure::PartSet> {
+        self.structure.map(|debris| debris.parts)
+    }
+
+    /// Whether this body is fallen parts of the structure of cover `cover` (by index).
+    pub fn of_structure(&self, cover: usize) -> bool {
+        self.structure.is_some_and(|debris| debris.cover == cover)
+    }
+
     /// A plain fragment record for `body`; callers set the optional fields they need.
     pub fn new(id: u32, body: RigidBodyHandle, life: f64, size: f64, color: u32) -> Self {
         Self {
@@ -687,9 +670,9 @@ pub struct Match {
     pub round: u32,
 }
 
-impl<'a> TimberWall<'a> {
+impl TimberWall {
     /// A timber cover's wall.
-    pub fn of(cover: &'a Cover) -> Self {
+    pub fn of(cover: &Cover) -> Self {
         Self {
             x: cover.x,
             z: cover.z,
@@ -697,7 +680,6 @@ impl<'a> TimberWall<'a> {
             h: cover.h,
             d: cover.d,
             color: cover.color,
-            hits: &cover.timber_hits,
             join: cover.timber_join,
         }
     }

@@ -1,7 +1,6 @@
 //! The authoritative fixed-step simulation: one Rapier world, the entity records, and the
 //! tick order that seeded matches depend on.
 
-use std::sync::Arc;
 use std::collections::{BTreeMap, HashMap};
 
 use rapier3d::prelude::*;
@@ -21,10 +20,6 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
-use super::house_physics::{
-    StructureState, house_structure, settle_house_debris, standing_colliders,
-};
-use super::house_structure::{HouseStructure, PartSet};
 
 use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
@@ -41,10 +36,11 @@ use super::projectiles::step_projectiles;
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::shooter_rewind::ShooterRewind;
+use super::structure::{PartSet, Structure, structure_of};
+use super::structure_physics::{StructureState, settle_structure_debris, standing_colliders};
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
-use super::tower_physics::{TowerState, settle_tower_debris, standing_tower_colliders};
 use super::types::{
     Cover, CoverKind, CoverMotion, Driver, Fragment, Match, MatchPhase, Mine, Pickup,
     PlayerAssignment, Shot, SimEvent, SimEventType, Tank, Team, VehicleCommand, VehicleKind,
@@ -476,20 +472,10 @@ impl Simulation {
 
     /// Create a cover record and its physics body from an authored placement.
     pub fn add_cover(&mut self, def: &CoverDef) -> usize {
-        let structure = (def.kind == CoverKind::House).then(|| {
-            StructureState::new(Arc::new(house_structure(def.x, def.z, def.w, def.d, def.h)))
-        });
-        let tower = (def.kind == CoverKind::Tower).then(TowerState::default);
-        let (body, colliders) = self.cover_body(
-            def.kind,
-            def.x,
-            def.z,
-            def.w,
-            def.d,
-            def.h,
-            structure.as_ref(),
-            tower.as_ref(),
-        );
+        let structure = structure_of(def.kind, def.x, def.z, def.w, def.d, def.h, def.timber_join)
+            .map(StructureState::new);
+        let (body, colliders) =
+            self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h, structure.as_ref());
         let cover = Cover {
             id: self.allocate_id(),
             kind: def.kind,
@@ -505,13 +491,10 @@ impl Simulation {
             body,
             collider: colliders[0],
             color: def.color,
-            timber_hits: Vec::new(),
             timber_join: def.timber_join,
-            kick: None,
             motion: None,
             fallen_at: None,
             structure,
-            tower,
         };
         let index = self.covers.len();
         if cover.kind.movable() {
@@ -528,12 +511,11 @@ impl Simulation {
         if self.covers[index].alive {
             return;
         }
-        if matches!(self.covers[index].kind, CoverKind::House | CoverKind::Tower) {
-            // A rebuilt cottage or watchtower clears its parts still lying about and any
-            // other debris inside its walls: the new walls would throw it out over the
-            // roof.
+        if self.covers[index].structure.is_some() {
+            // A rebuilt structure clears its parts still lying about and any other
+            // debris inside its walls: the new walls would throw it out over the roof.
             let cover = &self.covers[index];
-            let (id, x, z, w, d) = (cover.id, cover.x, cover.z, cover.w, cover.d);
+            let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
             let inside = |body: RigidBodyHandle| {
                 let at = from_vector(self.world.bodies[body].center_of_mass());
                 (at.x - x).abs() < w / 2.0 + REBUILD_CLEARANCE
@@ -543,8 +525,7 @@ impl Simulation {
                 .fragments
                 .iter()
                 .map(|fragment| {
-                    fragment.house_id == Some(id)
-                        || fragment.tower_id == Some(id)
+                    fragment.structure.is_some_and(|debris| debris.cover == index)
                         || inside(fragment.body)
                 })
                 .collect();
@@ -566,12 +547,6 @@ impl Simulation {
                 }
                 *state = StructureState::new(state.layout.clone());
             }
-            if let Some(state) = &mut self.covers[index].tower {
-                for handle in state.colliders.iter().flatten() {
-                    self.cover_by_collider.remove(handle);
-                }
-                *state = TowerState::default();
-            }
         }
         // A felled tree keeps its body as the stump footprint.
         let old_body = self.covers[index].body;
@@ -587,15 +562,10 @@ impl Simulation {
         }
         cover.hp = cover.max_hp;
         cover.alive = true;
-        cover.timber_hits.clear();
-        cover.kick = None;
         let (kind, x, z, w, d, h) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
         let structure = cover.structure.take();
-        let tower = cover.tower.take();
-        let (body, colliders) =
-            self.cover_body(kind, x, z, w, d, h, structure.as_ref(), tower.as_ref());
+        let (body, colliders) = self.cover_body(kind, x, z, w, d, h, structure.as_ref());
         self.covers[index].structure = structure;
-        self.covers[index].tower = tower;
         self.covers[index].body = body;
         self.covers[index].collider = colliders[0];
         self.register_cover(index, &colliders);
@@ -613,12 +583,10 @@ impl Simulation {
         d: f64,
         h: f64,
         structure: Option<&StructureState>,
-        tower: Option<&TowerState>,
     ) -> (RigidBodyHandle, Vec<ColliderHandle>) {
-        let parts = match (structure, tower) {
-            (Some(state), _) => house_parts(&state.layout, x, z, &state.gone),
-            (None, Some(state)) => tower_parts(x, z, &state.gone),
-            (None, None) => cover_parts(kind, x, z, w, d, h),
+        let parts = match structure {
+            Some(state) => structure_parts(&state.layout, x, z, &state.gone),
+            None => cover_parts(kind, x, z, w, d, h),
         };
         let body = self.world.insert_body(parts.body);
         let colliders = parts
@@ -633,17 +601,17 @@ impl Simulation {
     }
 
     fn register_cover(&mut self, index: usize, colliders: &[ColliderHandle]) {
-        // A cottage's or a watchtower's colliders are its standing parts, each marked
-        // with its index.
+        // A structure's colliders are its standing parts, each marked with its index.
         if let Some(state) = &mut self.covers[index].structure {
             for &handle in colliders {
                 let part = self.world.colliders[handle].user_data as usize;
                 state.colliders[part] = Some(handle);
             }
-            // Its garden's bean poles and cabbages bear what falls on them: only its
+            // A cottage garden's bean poles and cabbages bear what falls on them: only its
             // loose parts meet them, which come to rest on them rather than through them.
-            let design = state.layout.design;
-            if let Some((bed, _)) = design.garden_bed() {
+            if let Some(design) = state.layout.design().copied()
+                && let Some((bed, _)) = design.garden_bed()
+            {
                 let (a, b) = bed.bounds(&design, GARDEN_PROPS_HEIGHT);
                 let (a, b) = (design.to_world(a), design.to_world(b));
                 let (min, max) = (a.min(b), a.max(b));
@@ -654,12 +622,6 @@ impl Simulation {
                     .friction(0.6);
                 let body = self.covers[index].body;
                 self.world.insert_collider(collider, Some(body));
-            }
-        }
-        if let Some(state) = &mut self.covers[index].tower {
-            for &handle in colliders {
-                let part = self.world.colliders[handle].user_data as usize;
-                state.colliders[part] = Some(handle);
             }
         }
         let cover = &mut self.covers[index];
@@ -859,8 +821,7 @@ impl Simulation {
             }
         }
         prepare_debris_cleanup(self);
-        settle_house_debris(self);
-        settle_tower_debris(self);
+        settle_structure_debris(self);
         let mut i = self.fragments.len();
         while i > 0 {
             i -= 1;
@@ -878,9 +839,9 @@ impl Simulation {
             }
             if fragment.life <= DEBRIS_CLEANUP_SECONDS {
                 let body = fragment.body;
-                // A cottage's or a tower's loose parts fade through everything, all
-                // their colliders.
-                let colliders = if fragment.house_parts.is_some() || fragment.tower_parts.is_some() {
+                // A structure's fallen parts fade through everything, all their
+                // colliders.
+                let colliders = if fragment.structure.is_some() {
                     self.world.bodies[body].colliders().len()
                 } else {
                     1
@@ -1272,22 +1233,12 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
 /// How high (m) a cottage garden's poles and plants bear a fallen part.
 const GARDEN_PROPS_HEIGHT: f64 = 0.6;
 
-/// A cottage's fixed body at its ground centre with a collider for each of its
+/// A structure's fixed body at its ground centre with a collider for each of its
 /// standing parts (those not in `gone`), shared with client prediction.
-pub fn house_parts(layout: &HouseStructure, x: f64, z: f64, gone: &PartSet) -> CoverParts {
+pub fn structure_parts(layout: &Structure, x: f64, z: f64, gone: &PartSet) -> CoverParts {
     CoverParts {
         body: RigidBodyBuilder::fixed().translation(vector(x, 0.0, z)),
         colliders: standing_colliders(layout, gone),
-        tank_footprint: None,
-    }
-}
-
-/// A watchtower's fixed body at its ground centre with a collider for each of its
-/// standing parts (those not in `gone`), shared with client prediction.
-pub fn tower_parts(x: f64, z: f64, gone: &PartSet) -> CoverParts {
-    CoverParts {
-        body: RigidBodyBuilder::fixed().translation(vector(x, 0.0, z)),
-        colliders: standing_tower_colliders(gone),
         tank_footprint: None,
     }
 }

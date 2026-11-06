@@ -483,7 +483,7 @@ fn a_protruding_barrel_cannot_spawn_shots_beyond_nearby_cover_or_an_enemy() {
         s.tanks[t].aim = 0.0;
         if obstruction == "cover" {
             s.add_cover(&CoverDef::new(
-                CoverKind::Timber,
+                CoverKind::Concrete,
                 0.0,
                 1.0,
                 3.0,

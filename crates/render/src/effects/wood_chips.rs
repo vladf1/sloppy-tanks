@@ -703,9 +703,10 @@ impl WoodChips {
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
             (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
             (SimEventType::Shatter, Some(CoverKind::House)) => self.house_shatter(event, random),
-            (SimEventType::Shatter, Some(CoverKind::Cargo | CoverKind::Tower)) => {
-                self.shatter(event, random)
-            }
+            (
+                SimEventType::Shatter,
+                Some(CoverKind::Cargo | CoverKind::Tower | CoverKind::Timber),
+            ) => self.shatter(event, random),
             _ => {}
         }
     }

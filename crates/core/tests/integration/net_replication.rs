@@ -23,8 +23,8 @@ use sloppy_core::sim::Simulation;
 use sloppy_core::sim::debris_cleanup::{
     DEBRIS_CLEANUP_SECONDS, WRECK_FIRE_DIE_DOWN_SECONDS, replicated_life,
 };
-use sloppy_core::sim::house_structure::PartSet;
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::types::{
     CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
 };
@@ -842,9 +842,8 @@ fn find_fields(scene: &Value, missing: &mut BTreeSet<&str>) {
     });
 }
 
-const EXPECTED_FIELDS: [&str; 18] = [
+const EXPECTED_FIELDS: [&str; 15] = [
     "covers.broken",
-    "covers.timberHits",
     "covers.timberJoin",
     "covers.motion",
     "covers.hp=null",
@@ -852,9 +851,7 @@ const EXPECTED_FIELDS: [&str; 18] = [
     "fragments.dimensions",
     "fragments.material",
     "fragments.sourceKind",
-    "fragments.timberPart",
-    "fragments.houseParts",
-    "fragments.towerParts",
+    "fragments.structureParts",
     "fragments.createdAt",
     "fragments.wreck",
     "fragments.part",
@@ -983,7 +980,7 @@ fn optional_fields_can_appear_and_disappear_between_unchanged_fields() {
     let mut stream = StateStream::new("room", 1);
     let mut view = view_from(&full(&mut stream, &Scene::capture(&sim), 0));
     for (index, broken) in [Some(12), None, Some(31)].into_iter().enumerate() {
-        sim.covers[tower].tower.as_mut().unwrap().gone = PartSet::from_indices(broken);
+        sim.covers[tower].structure.as_mut().unwrap().gone = PartSet::from_indices(broken);
         let mut scene = Scene::capture(&sim);
         let message = frame(&mut stream, &mut scene, index as u64 + 1);
         let frame = frame_json(&mut view, &message);
