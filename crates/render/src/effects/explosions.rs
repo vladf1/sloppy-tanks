@@ -232,6 +232,13 @@ const ENCLOSED_LIGHT: f64 = 0.12;
 const ENCLOSED_SCALE: f64 = 0.3;
 /// The height of a fireball's middle over its foot, at scale 1 (m).
 const ENCLOSED_FIRE_MIDDLE: f64 = 1.0;
+/// How far (m) a burst's fire and soot in a room keep inside the wall it came in through.
+const ROOM_CLEARANCE: f64 = 0.08;
+/// How far toward a wall a puff's card reaches, in radii: pulled toward the eye by
+/// most of a radius, and a radius (to its corner, √2) across.
+const CARD_REACH: f64 = 2.05;
+/// The share of the way to the wall a lobe in a room may be wide.
+const ROOM_PUFF_SHARE: f64 = 0.9;
 /// How far (m) a burst in a room is drawn back toward the hole it came in by.
 const ENCLOSED_SETBACK: f64 = 0.2;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
@@ -596,6 +603,9 @@ struct Blast {
     direction: [f64; 2],
     /// Gone off inside a cottage: its walls hold in most of its light.
     enclosed: bool,
+    /// Inside a cottage, the unit direction to the wall it came in through and how far
+    /// that wall is (m): its fire and soot stay on the room's side of it.
+    room: Option<([f64; 2], f64)>,
     /// What its fireball, column and skirt puffs draw from its phase.
     draws: BlastDraws,
 }
@@ -1213,6 +1223,7 @@ impl ExplosionEffects {
                     let back = (length * 0.5).min(ENCLOSED_SETBACK);
                     blast.x += dx / length * back;
                     blast.z += dz / length * back;
+                    blast.room = Some(([dx / length, dz / length], length - back));
                 }
             }
         }
@@ -1977,8 +1988,25 @@ impl ExplosionEffects {
                 + (0.35 + 0.3 * r2) * soot_age * s.sqrt();
             let pale = smoothstep(soot_age, 0.1, 0.1 + SOOT_SECONDS);
             let carry = soot_age * soot_age * 0.5;
-            let x = b.x + draw.cos * reach + phase_cos * age * look.drift * 0.5 + WIND[0] * carry;
-            let z = b.z + draw.sin * reach + phase_sin * age * look.drift * 0.5 + WIND[1] * carry;
+            let mut x =
+                b.x + draw.cos * reach + phase_cos * age * look.drift * 0.5 + WIND[0] * carry;
+            let mut z =
+                b.z + draw.sin * reach + phase_sin * age * look.drift * 0.5 + WIND[1] * carry;
+            // In a room, a lobe stays its whole size short of the wall the shell came in
+            // through: a ball reaching past it bloomed on the outside of the siding.
+            let mut size = size;
+            if let Some(([ux, uz], wall)) = b.room {
+                // Its card stands toward the eye and spans its radius each way
+                // (`puff_vertex.wgsl`): seen at a slant through the hole, a card
+                // nearer the wall than that drew over the siding beside it.
+                size = size.min(ROOM_PUFF_SHARE * wall / CARD_REACH);
+                let along = (x - b.x) * ux + (z - b.z) * uz;
+                let limit = wall - size * CARD_REACH - ROOM_CLEARANCE;
+                if along > limit {
+                    x -= ux * (along - limit);
+                    z -= uz * (along - limit);
+                }
+            }
             // Each seam glows white-hot round the hull for the flash's first frames,
             // outlining the hull rather than hiding it.
             if vehicle && seam && age < SEAM_FLASH_SECONDS {
@@ -2977,6 +3005,34 @@ mod tests {
 
     fn rings_of(pool: &PoolBuffer, kind: f32) -> usize {
         pool.records().iter().filter(|r| r.data[2] == kind).count()
+    }
+
+    #[test]
+    fn a_burst_in_a_room_keeps_its_fire_and_soot_inside_the_wall_it_came_through() {
+        let mut random = CosmeticRandom::default();
+        let mut effects = ExplosionEffects::default();
+        let mut streaks = PoolBuffer::new(16);
+        // A shell through the wall at z = 1 bursting a metre inside.
+        let mut event = SimEvent::at(SimEventType::Explosion, 0.0, 0.0);
+        event.size = Some(1.4);
+        event.height = Some(1.0);
+        event.cover_kind = Some(CoverKind::House);
+        event.from = Some(Point3::new(0.0, 1.0, 1.0));
+        effects.event(&event, &mut random);
+        for _ in 0..40 {
+            effects.update(0.05, &mut streaks);
+            // Its fire, that is: the dust it blows out of the hole is meant to be outside.
+            for record in effects.puffs.records().iter().filter(|r| r.data[1] > 0.05) {
+                let (z, size) = (record.world_rows[2][3], record.world_rows[0][0]);
+                let card = z + size * CARD_REACH as f32;
+                assert!(
+                    card <= 1.0,
+                    "its card reaches {:.2} m past the wall",
+                    card - 1.0
+                );
+            }
+            streaks.clear();
+        }
     }
 
     #[test]
