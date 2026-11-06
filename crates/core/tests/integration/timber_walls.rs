@@ -110,8 +110,8 @@ fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
     assert!(gone(&s, wall).contains(beam), "the struck beam is out");
     assert_eq!(
         colliders(&s),
-        BEAM_COUNT + 1,
-        "the members left stand each by its own collider"
+        BEAM_COUNT + 3,
+        "the members left (the posts over their stumps) stand each by its own collider"
     );
     for post in [BEAM_COUNT, BEAM_COUNT + 1] {
         assert!(!gone(&s, wall).contains(post), "post {post} stands");
@@ -235,7 +235,9 @@ fn the_posts_carry_the_beams_and_one_shot_out_drops_what_it_held() {
         s.fragments.iter().any(|f| f.of_structure(wall)),
         "the beams fall as bodies"
     );
-    // The other post planted in the ground stands alone.
+    // The post snaps over its stump, which stands on in the ground; the other post
+    // stands alone.
+    assert!(!down.contains(member(&s, wall, TimberPartKind::Stump, BEAM_COUNT + 2)));
     assert!(!down.contains(member(&s, wall, TimberPartKind::Post, BEAM_COUNT + 1)));
     let bodies = s.world.bodies.len();
     let falling = s.fragments.iter().filter(|f| f.of_structure(wall)).count();
@@ -248,6 +250,36 @@ fn the_posts_carry_the_beams_and_one_shot_out_drops_what_it_held() {
         s.world.bodies.len(),
         bodies - falling,
         "no body is left behind"
+    );
+}
+
+#[test]
+fn standard_shells_take_a_post_and_leave_its_stump() {
+    let (mut s, wall) = lone_wall();
+    let post = member(&s, wall, TimberPartKind::Post, BEAM_COUNT);
+    let stump = member(&s, wall, TimberPartKind::Stump, BEAM_COUNT + 2);
+    let x = s.covers[wall].structure.as_ref().unwrap().layout.parts[post]
+        .middle()
+        .x;
+    for _ in 0..3 {
+        if gone(&s, wall).contains(post) {
+            break;
+        }
+        fire_at(
+            &mut s,
+            Vec2::new(x, 0.0),
+            Vec2::new(x, 20.0),
+            1.0,
+            Weapon::Standard,
+        );
+        run(&mut s, 1.0);
+    }
+    let down = gone(&s, wall);
+    assert!(down.contains(post), "the post is shot out");
+    assert!(!down.contains(stump), "its stump stands in the ground");
+    assert!(
+        s.covers[wall].alive,
+        "the wall stands on its beam on the ground and other post"
     );
 }
 
@@ -280,7 +312,7 @@ fn all_eight_garden_corners_share_one_upright_and_adjoining_runs_break_independe
             .len()
     };
     for post in posts {
-        assert_eq!(parts(&s, post), 1, "a corner is one post");
+        assert_eq!(parts(&s, post), 2, "a corner is one post over its stump");
         let p = s.covers[post].clone();
         let neighbors: Vec<usize> = (0..s.covers.len())
             .filter(|&i| {
@@ -302,7 +334,7 @@ fn all_eight_garden_corners_share_one_upright_and_adjoining_runs_break_independe
         for &neighbor in &neighbors {
             assert_eq!(
                 parts(&s, neighbor),
-                BEAM_COUNT + 1,
+                BEAM_COUNT + 2,
                 "no duplicate corner post on the run"
             );
         }

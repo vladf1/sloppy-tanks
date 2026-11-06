@@ -3,10 +3,10 @@
 //! for the structure engine ([`super::structure`]).
 //!
 //! One shell knocks a beam out and leaves a gap that shells and sight pass through; the
-//! beams over it stay up, held by the posts. A post shot out drops the beams it held
-//! (all but the one lying on the ground); a beam whose wall ends open against the
-//! neighbouring corner post sits in that post's slot at its open end and hangs from its
-//! own post at the other.
+//! beams over it stay up, held by the posts. A post shot out snaps over its stump, which
+//! stands on in the ground, and drops the beams it held (all but the one lying on the
+//! ground); a beam whose wall ends open against the neighbouring corner post sits in that
+//! post's slot at its open end and hangs from its own post at the other.
 //!
 //! Members are laid out along the build frame's x ([`timber_parts`]); a wall running
 //! along z turns its build frame a quarter turn.
@@ -21,10 +21,10 @@ use super::structure::{
     Breaking, Build, DebrisRules, End, Levelling, Lie, Material, Part, PartSet, PartShape, Role,
     Structure, Support, Tipping,
 };
-use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, timber_parts};
+use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, post_partner, timber_parts};
 
 /// What a part of a timber wall is: its member's kind and index among the wall's beams
-/// (bottom up) or posts.
+/// (bottom up), posts or stumps ([`timber_parts`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TimberRole {
     pub kind: TimberPartKind,
@@ -48,6 +48,8 @@ const POST: Material = Material {
 const TIMBER_DENSITY: f64 = 0.35;
 /// The share of a post's support a beam's end in its slot takes.
 const SLOT: f32 = 0.9;
+/// A post rests on its stump: all of the stump's support.
+const ON_STUMP: f32 = 1.0;
 /// What is left of a wall stands while its weight lies this far inside its footing per
 /// metre up; a post planted in the ground stands on its own.
 const WALL_TIPPING: Tipping = Tipping {
@@ -107,10 +109,9 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
             let half = DVec3::new(member.w, member.h, member.d) / 2.0;
             let center = DVec3::new(member.x, member.y, member.z);
             let (material, role) = (
-                if member.kind == TimberPartKind::Post {
-                    POST
-                } else {
-                    BEAM
+                match member.kind {
+                    TimberPartKind::Beam => BEAM,
+                    TimberPartKind::Post | TimberPartKind::Stump => POST,
                 },
                 Role::Timber(TimberRole {
                     kind: member.kind,
@@ -122,9 +123,10 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
                 material,
                 role,
             );
-            if member.kind == TimberPartKind::Post {
-                part.grounded = true;
-                part.anchor = true;
+            if member.kind != TimberPartKind::Beam {
+                // A stump planted in the ground holds its post upright, and the wall with it.
+                part.grounded = member.kind == TimberPartKind::Stump;
+                part.anchor = part.grounded;
                 part.upright = true;
                 part.lie = Lie::Length(DVec3::Y);
                 part.paint = Some(member.color);
@@ -148,9 +150,18 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
     let posts: Vec<usize> = (0..count)
         .filter(|&index| is(&structure.parts[index], TimberPartKind::Post))
         .collect();
+    for &post in &posts {
+        let stump = post_partner(&members, &members[post]).expect("a post's stump");
+        structure.supports[post].push(Support {
+            by: stump as u16,
+            share: ON_STUMP,
+            seat: 0.0,
+            end: End::Any,
+        });
+    }
     for index in 0..count {
         let part = &structure.parts[index];
-        if part.grounded {
+        if part.grounded || !is(part, TimberPartKind::Beam) {
             continue;
         }
         // A beam sits in a slot of each post it reaches; with one end open it sits in
@@ -209,7 +220,7 @@ mod tests {
     #[test]
     fn a_whole_wall_stands_and_a_beam_shot_out_leaves_the_rest_up() {
         let wall = wall();
-        assert_eq!(wall.parts.len(), BEAM_COUNT + 2);
+        assert_eq!(wall.parts.len(), BEAM_COUNT + 4);
         assert!(wall.unsupported(&PartSet::EMPTY).is_empty());
         for beam in 0..BEAM_COUNT {
             let falling = wall.unsupported(&PartSet::from_indices([beam]));
@@ -229,13 +240,30 @@ mod tests {
     }
 
     #[test]
+    fn a_post_snaps_over_its_stump_and_a_stump_shot_out_drops_its_post() {
+        let wall = wall();
+        for (post, stump) in [(BEAM_COUNT, BEAM_COUNT + 2), (BEAM_COUNT + 1, BEAM_COUNT + 3)] {
+            let (post_part, stump_part) = (&wall.parts[post], &wall.parts[stump]);
+            assert!(stump_part.grounded && stump_part.anchor && !post_part.grounded);
+            assert!((post_part.min.y - stump_part.max.y).abs() < 1e-9, "post {post} on its stump");
+            // Under a shell at hull height, which takes the post over it.
+            assert!(stump_part.max.y < 0.5 && post_part.min.y < 1.0);
+            assert!(!wall.unsupported(&PartSet::from_indices([post])).contains(stump));
+            let falling = wall.unsupported(&PartSet::from_indices([stump]));
+            assert!(falling.contains(post), "stump {stump} out drops its post");
+            assert!(PartSet::from_indices(1..BEAM_COUNT).iter().all(|beam| falling.contains(beam)));
+            assert!(!falling.contains(0), "the beam on the ground stays");
+        }
+    }
+
+    #[test]
     fn a_wall_open_at_an_end_hangs_its_beams_from_its_one_post() {
         let join = TimberJoin {
             open_min: true,
             ..TimberJoin::default()
         };
         let wall = timber_structure(4.1, 0.9, 2.8, Some(join));
-        assert_eq!(wall.parts.len(), BEAM_COUNT + 1);
+        assert_eq!(wall.parts.len(), BEAM_COUNT + 2);
         assert!(wall.unsupported(&PartSet::EMPTY).is_empty());
         let post = BEAM_COUNT;
         assert_eq!(
@@ -251,7 +279,7 @@ mod tests {
                 ..TimberJoin::default()
             }),
         );
-        assert_eq!(lone.parts.len(), 1);
+        assert_eq!(lone.parts.len(), 2);
         assert!(lone.unsupported(&PartSet::EMPTY).is_empty());
     }
 

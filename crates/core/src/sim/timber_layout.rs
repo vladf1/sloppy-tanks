@@ -11,6 +11,11 @@ use super::math::{js_round, to_int32};
 pub const TIMBER_HEALTH: f64 = 80.0;
 /// The beams stacked between a wall's posts.
 pub const BEAM_COUNT: usize = 4;
+/// A post snaps over its stump, planted in the ground this high (m): under the post's
+/// lower iron band and the top of the bottom beam, so a shell at hull height takes the
+/// post and leaves the stump, and low enough that the post's foot counts as on the
+/// ground (a post broken along with its stump shatters as the whole post did).
+pub const STUMP_HEIGHT: f64 = 0.28;
 
 /// Ends use the increasing world X/Z axis, independent of the model's yaw.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,7 +30,10 @@ pub struct TimberJoin {
 #[serde(rename_all = "lowercase")]
 pub enum TimberPartKind {
     Beam,
+    /// A post over its stump.
     Post,
+    /// The foot of a post, planted in the ground.
+    Stump,
 }
 
 /// One member of a timber wall: a beam or a post, centred at `x, y, z` relative to the
@@ -59,8 +67,10 @@ pub struct TimberWall {
     pub join: Option<TimberJoin>,
 }
 
-/// The members of a wall, beams first (bottom up) then posts, as the structure numbers
-/// its parts.
+/// The members of a wall, beams first (bottom up), then posts, then the posts' stumps in
+/// the same order, as the structure numbers its parts. Beams are numbered bottom up,
+/// posts by side (a lone post 0, the -x post [`BEAM_COUNT`], the +x one after it) and
+/// stumps by their place in the list.
 pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
     let along = wall.w > wall.d;
     let length = wall.w.max(wall.d);
@@ -101,12 +111,14 @@ pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
         });
     }
     let sides: &[i32] = if post { &[0] } else { &[-1, 1] };
+    let stump = STUMP_HEIGHT.min(wall.h / 4.0);
+    let mut stumps = Vec::new();
     for &side in sides {
         if (side < 0 && open_negative) || (side > 0 && open_positive) {
             continue;
         }
         let offset = side as f64 * (length / 2.0 - 0.18);
-        parts.push(TimberPart {
+        let member = TimberPart {
             kind: TimberPartKind::Post,
             index: match side {
                 0 => 0,
@@ -114,15 +126,50 @@ pub fn timber_parts(wall: &TimberWall) -> Vec<TimberPart> {
                 _ => BEAM_COUNT + 1,
             },
             x: if along { offset } else { 0.0 },
-            y: wall.h / 2.0,
+            y: (stump + wall.h) / 2.0,
             z: if along { 0.0 } else { -offset },
             w: if post { length } else { post_width },
-            h: wall.h,
+            h: wall.h - stump,
             d: depth,
             yaw,
             color: 0x805336,
             seed: seed ^ (side + 7).wrapping_mul(83_492_791),
+        };
+        stumps.push(TimberPart {
+            kind: TimberPartKind::Stump,
+            y: stump / 2.0,
+            h: stump,
+            seed: seed ^ (side + 13).wrapping_mul(83_492_791),
+            ..member
         });
+        parts.push(member);
+    }
+    for mut member in stumps {
+        member.index = parts.len();
+        parts.push(member);
     }
     parts
+}
+
+/// The whole post a standing post over its standing stump draws as: the member from the
+/// ground to its top, as the wall was built.
+pub fn whole_post(post: &TimberPart) -> TimberPart {
+    let top = post.y + post.h / 2.0;
+    TimberPart {
+        y: top / 2.0,
+        h: top,
+        ..*post
+    }
+}
+
+/// Where among a wall's `members` the stump under a post is, or the post over a stump.
+pub fn post_partner(members: &[TimberPart], member: &TimberPart) -> Option<usize> {
+    let kind = match member.kind {
+        TimberPartKind::Post => TimberPartKind::Stump,
+        TimberPartKind::Stump => TimberPartKind::Post,
+        TimberPartKind::Beam => return None,
+    };
+    members
+        .iter()
+        .position(|other| other.kind == kind && other.x == member.x && other.z == member.z)
 }

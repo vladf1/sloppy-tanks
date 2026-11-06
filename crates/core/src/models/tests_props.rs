@@ -6,7 +6,7 @@ use super::*;
 use crate::geometry::reference_tests::fnv;
 use crate::scene::{Node, TextureSource};
 use crate::sim::structure::PartSet;
-use crate::sim::timber_layout::{TimberJoin, TimberPart, TimberPartKind, TimberWall, timber_parts};
+use crate::sim::timber_layout::{TimberJoin, TimberPart, TimberWall, timber_parts};
 use crate::sim::tower_structure::{piece_look, tower_structure};
 use crate::sim::tree_proportions::tree_proportions;
 use crate::sim::types::CoverKind;
@@ -116,11 +116,7 @@ struct TimberCase {
 
 fn timber_hash(parts: &[TimberPart]) -> u32 {
     fnv(parts.iter().flat_map(|p| {
-        let mut words = vec![
-            u32::from(p.kind == TimberPartKind::Post),
-            p.index as u32,
-            p.seed as u32,
-        ];
+        let mut words = vec![p.kind as u32, p.index as u32, p.seed as u32];
         words.extend([p.x, p.y, p.z, p.w, p.h, p.d].map(|v| (v as f32).to_bits()));
         words
     }))
@@ -324,18 +320,18 @@ fn wreck_aging_darkens_over_two_and_a_half_seconds() {
 }
 #[rustfmt::skip]
 const TIMBER_CASES: &[TimberCase] = &[
-    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (5, 0xeabe98aa) },
-    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0x631959bf) },
-    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: true }), parts: (1, 0x8da234e1) },
-    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (5, 0x28ed5375) },
-    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0xfe966b2b) },
-    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (5, 0x8b42fd9c) },
-    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, join: None, parts: (6, 0x06ec1aaf) },
-    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (6, 0x73c47837) },
-    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (5, 0xea270415) },
-    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, join: None, parts: (6, 0x0af0536f) },
-    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, join: None, parts: (6, 0xa4cd2987) },
-    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, join: None, parts: (6, 0xdaa1262f) },
+    TimberCase { x: -30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (6, 0x14afe757) },
+    TimberCase { x: -26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (8, 0x29916c62) },
+    TimberCase { x: -33.2, z: -33.0, w: 0.9, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: true }), parts: (2, 0x3ef762f3) },
+    TimberCase { x: -33.2, z: -31.006666666666668, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: true, open_max: false, post: false }), parts: (6, 0x7e60c7e0) },
+    TimberCase { x: -33.2, z: -28.0, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (8, 0x00cc270e) },
+    TimberCase { x: -33.2, z: -24.993333333333332, w: 0.9, d: 3.0066666666666664, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (6, 0x12c469ff) },
+    TimberCase { x: -6.0, z: -13.0, w: 3.7, d: 0.9, h: 2.8, join: None, parts: (8, 0xcae49bbe) },
+    TimberCase { x: 26.552500000000002, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: false, post: false }), parts: (8, 0x0e1a1162) },
+    TimberCase { x: 30.6575, z: -33.0, w: 4.105, d: 0.9, h: 2.8, join: Some(TimberJoin { open_min: false, open_max: true, post: false }), parts: (6, 0x27e99e30) },
+    TimberCase { x: -42.0, z: -18.0, w: 0.9, d: 3.7, h: 2.8, join: None, parts: (8, 0x144a4d46) },
+    TimberCase { x: -12.0, z: -22.0, w: 4.2, d: 0.9, h: 2.8, join: None, parts: (8, 0xb308afe6) },
+    TimberCase { x: -22.0, z: -12.0, w: 0.9, d: 4.2, h: 2.8, join: None, parts: (8, 0x0e052ec6) },
 ];
 
 /// Tree footprints `[x, z, w, d, h]` and their `(family, seed)`.

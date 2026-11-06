@@ -31,7 +31,9 @@ use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
 use crate::sim::structure::{PartSet, Role};
-use crate::sim::timber_layout::{TimberJoin, TimberWall, timber_parts};
+use crate::sim::timber_layout::{
+    TimberJoin, TimberPart, TimberPartKind, TimberWall, post_partner, timber_parts, whole_post,
+};
 use crate::sim::types::CoverKind;
 
 /// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
@@ -125,13 +127,23 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 color: c.color,
                 join: c.timber_join,
             });
-            // The members that stand, numbered as the wall's structure numbers them.
-            let standing = parts
+            // The members that stand, numbered as the wall's structure numbers them: a
+            // post over its stump draws whole, as it was built.
+            let stands = |index: usize| !c.broken.contains(index);
+            let standing: Vec<TimberPart> = parts
                 .iter()
                 .enumerate()
-                .filter(|(index, _)| !c.broken.contains(*index))
-                .map(|(_, part)| part);
-            add_timber_parts(group, standing);
+                .filter(|&(index, _)| stands(index))
+                .filter_map(|(_, member)| {
+                    let partner = post_partner(&parts, member).is_some_and(stands);
+                    match member.kind {
+                        TimberPartKind::Post if partner => Some(whole_post(member)),
+                        TimberPartKind::Stump if partner => None,
+                        _ => Some(*member),
+                    }
+                })
+                .collect();
+            add_timber_parts(group, &standing);
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);

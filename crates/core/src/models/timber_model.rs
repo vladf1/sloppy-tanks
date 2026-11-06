@@ -28,6 +28,20 @@ const STRAP_HEIGHT: f64 = 0.085;
 const BOLT_RADIUS: f64 = 0.032;
 /// How much paler a member's worn chamfers are than its faces.
 const EDGE_WEAR: f64 = 1.32;
+/// A post's iron bands, as shares of the height of its top over the ground.
+const BAND_HEIGHTS: [f64; 2] = [0.22, 0.78];
+/// Where a post snapped: its fibres torn in bundles about [`TORN_BUNDLE`] across, the
+/// break running from [`TORN_LOW`] out of the member's end on one face up to
+/// [`TORN_HIGH`] on the other (the face that was pulled apart), ragged by
+/// [`TORN_RAGGED`]; the end is cut back [`TORN_BACK`] under them. Long splinters stand
+/// out of the high side. Fresh-broken wood inside is paler than the weathered faces.
+const TORN_BUNDLE: f64 = 0.075;
+const TORN_LOW: f64 = 0.02;
+const TORN_HIGH: f64 = 0.17;
+const TORN_RAGGED: f64 = 0.05;
+const TORN_BACK: f64 = 0.05;
+const TORN_SPLINTERS: usize = 5;
+const FRESH_WOOD: u32 = 0xb98a5a;
 
 /// The timber atlas (`scripts/generate-wood-texture.ts`): [`GRAIN_ROWS`] rows of
 /// flat-sawn plank faces, each tileable along the grain, over a row of
@@ -276,13 +290,32 @@ pub(super) fn timber_member_face(size: DVec3, seed: i32, color: u32) -> Node {
 /// a hex-headed through bolt.
 pub fn timber_part_model(p: &TimberPart) -> Node {
     let mut group = Node::default();
-    group.children.push(timber_member(
-        DVec3::new(p.w, p.h, p.d),
-        p.seed,
-        p.color,
-    ));
+    // A stump's top and a post's foot off the ground are where the post snapped.
+    let torn = match p.kind {
+        TimberPartKind::Stump => Some(1.0),
+        TimberPartKind::Post if p.y - p.h / 2.0 > 1e-6 => Some(-1.0),
+        _ => None,
+    };
+    let body = match torn {
+        Some(end) => {
+            let body = p.h - TORN_BACK;
+            put(
+                &mut group,
+                timber_member(DVec3::new(p.w, body, p.d), p.seed, p.color),
+                0.0,
+                -end * TORN_BACK / 2.0,
+                0.0,
+            );
+            torn_end(&mut group, p, end);
+            None
+        }
+        None => Some(timber_member(DVec3::new(p.w, p.h, p.d), p.seed, p.color)),
+    };
+    group.children.extend(body);
     if p.kind == TimberPartKind::Post {
-        for fraction in [-0.28, 0.28] {
+        // The bands stay where they were on the whole post, however it snapped.
+        let top = p.y + p.h / 2.0;
+        for height in BAND_HEIGHTS {
             let mut band = Node::group("");
             band.children.push(box_part(
                 p.w + 0.024,
@@ -296,7 +329,7 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
                 head.set_rotation_euler(PI / 2.0, 0.0, 0.0);
                 put(&mut band, head, 0.0, 0.0, side * (p.d / 2.0 + 0.0125));
             }
-            band.position = DVec3::new(0.0, p.h * fraction, 0.0);
+            band.position = DVec3::new(0.0, top * height - p.y, 0.0);
             // Flatten the band into the member's frame so it batches with it.
             let transform = compose(band.position, band.rotation, band.scale);
             for mut part in band.children {
@@ -313,6 +346,58 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
     batch(&mut group);
     weather_wood(&mut group, p.y, p.seed);
     group
+}
+
+/// The end of upright member `p` where it snapped, at its top (`end` 1) or foot (-1):
+/// its fibres in bundles torn off along a slanting, ragged break, the inner ones fresh,
+/// and long splinters leaning out of the high side.
+fn torn_end(group: &mut Node, p: &TimberPart, end: f64) {
+    let mut rng = Random::new(f64::from(p.seed) * 0.73 + 5.0);
+    let base = end * (p.h / 2.0 - TORN_BACK);
+    // The break slants across the member's depth, its high side either way.
+    let rise = if rng.next() < 0.5 { 1.0 } else { -1.0 };
+    let across = ((p.w / TORN_BUNDLE).round() as usize).max(3);
+    let through = ((p.d / TORN_BUNDLE).round() as usize).max(3);
+    let (cell_w, cell_d) = (p.w / across as f64, p.d / through as f64);
+    let height = |z: f64, rng: &mut Random| {
+        let t = 0.5 + rise * z / p.d;
+        (TORN_BACK + TORN_LOW + (TORN_HIGH - TORN_LOW) * t + rng.range(-TORN_RAGGED, TORN_RAGGED)).max(0.01)
+    };
+    for i in 0..across {
+        for k in 0..through {
+            let x = -p.w / 2.0 + cell_w * (i as f64 + 0.5);
+            let z = -p.d / 2.0 + cell_d * (k as f64 + 0.5);
+            let reach = height(z, &mut rng);
+            let inner = i > 0 && i + 1 < across && k > 0 && k + 1 < through;
+            put(
+                group,
+                timber_member(
+                    DVec3::new(cell_w - 0.003, reach, cell_d - 0.003),
+                    p.seed ^ (i * through + k + 1) as i32,
+                    if inner { FRESH_WOOD } else { p.color },
+                ),
+                x,
+                base + end * reach / 2.0,
+                z,
+            );
+        }
+    }
+    for n in 0..TORN_SPLINTERS {
+        let length = rng.range(0.14, 0.3);
+        // On the high side of the break, out of its top.
+        let z = rise * p.d * rng.range(0.15, 0.45);
+        let x = rng.range(-0.4, 0.4) * p.w;
+        let root = height(z, &mut rng) - 0.03;
+        let mut splinter = timber_member(
+            DVec3::new(rng.range(0.025, 0.045), length, rng.range(0.012, 0.02)),
+            p.seed ^ (40 + n as i32),
+            FRESH_WOOD,
+        );
+        // Leaning out over the high face, and a little to one side.
+        let lean = rng.range(0.12, 0.45);
+        splinter.set_rotation_euler(rise * lean * end, 0.0, rng.range(-0.25, 0.25));
+        put(group, splinter, x, base + end * (root + length * 0.45), z);
+    }
 }
 
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers
