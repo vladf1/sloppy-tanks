@@ -88,9 +88,11 @@ fn a_hunter_takes_the_other_side_and_goes_after_its_player() {
         0
     );
     // The hunter closes in on its player wherever they are, and shoots them: the only
-    // other player in the room.
+    // other player in the room. A minute was a coin toss on how the round's fights went
+    // (three of nine seeds missed it after a change to how crates break); two minutes is
+    // what a hunt takes.
     let mut closest = f64::INFINITY;
-    room.run_until(60.0 * SECOND, |room| {
+    room.run_until(120.0 * SECOND, |room| {
         if let Some(gap) = room.host_distance("hunter", "vlad") {
             closest = closest.min(gap);
         }

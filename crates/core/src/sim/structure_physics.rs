@@ -1732,10 +1732,11 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
         (ground - height * CLEAR_TOP_FIRST).max(DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST);
 }
 
-/// Pieces that fell within this many seconds of each other (by their clearing deadlines)
-/// are one ruin, which clears top first and as a whole; a later fall onto an older ruin
-/// keeps its own time, or the new pile faded seconds after it came down.
-const FELL_TOGETHER: f64 = 4.0;
+/// Pieces that fell within this many seconds of each other (by their clearing deadlines,
+/// which a landing's pieces keep from their body) are one ruin, which clears top first
+/// and as a whole; a later fall onto an older ruin keeps its own time, or a collapse a
+/// few shells after earlier hits faded seconds after it came down.
+const FELL_TOGETHER: f64 = 0.5;
 
 fn fell_together(a: Option<f64>, b: Option<f64>) -> bool {
     match (a, b) {

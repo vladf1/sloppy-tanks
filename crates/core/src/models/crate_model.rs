@@ -55,6 +55,9 @@ const STRAP_COLOR: u32 = 0x3b4044;
 /// Fresh wood where boards tore, and the darker fibres under it.
 /// The inside of the walls, out of the sun.
 const HOLD_COLOR: u32 = 0x2b1f14;
+/// The inside of an opened crate's walls in the daylight let in: the boards' backs,
+/// darker than their faces but lit, not a black void.
+const OPENED_HOLD_COLOR: u32 = 0x6a4f35;
 const RAW_WOOD: u32 = 0xe4c899;
 const TORN_WOOD: u32 = 0xc9a26e;
 const CRACK_LIP_COLOR: u32 = 0xb98a55;
@@ -589,7 +592,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
                     .copied()
                     .collect()
             });
-            let mut hold = scrap(side, HOLD_COLOR);
+            let mut hold = scrap(side, OPENED_HOLD_COLOR);
             hold.position = middle;
             add(group, part, hold);
         }

@@ -1611,3 +1611,81 @@ fn a_collapse_onto_older_pieces_lies_its_own_time() {
         );
     }
 }
+
+/// The critic's one-wall run: sixteen shells at one spot, eight across the walls, then
+/// heavy bursts bring the cottage down. The collapse lands on and beside the pieces the
+/// shells knocked down seconds before, and lies its own time: none of it fades by 3 s.
+#[test]
+fn a_collapse_after_shells_lies_solid_seconds_later() {
+    let (mut s, house) = cottage_alone((24.0, 0.0, 5.0, 7.0, 4.9));
+    let (cx, cz, w, d) = (24.0, 0.0, 5.0, 7.0);
+    let fly = |s: &mut Simulation, from: (f64, f64), to: (f64, f64)| {
+        support::fire_at(
+            s,
+            Vec2::new(from.0, from.1),
+            Vec2::new(to.0, to.1),
+            1.0,
+            Weapon::Standard,
+        );
+        for _ in 0..70 {
+            idle(s);
+        }
+    };
+    for _ in 0..16 {
+        fly(
+            &mut s,
+            (cx - 1.0, cz + d / 2.0 + 21.0),
+            (cx + 0.6, cz + d / 2.0),
+        );
+    }
+    let along = |length: f64, spacing: f64| {
+        let reach: f64 = length / 2.0 - 0.4;
+        let count = ((2.0 * reach) / spacing).floor() as usize + 1;
+        (0..count)
+            .map(move |i| -reach + 2.0 * reach * i as f64 / (count - 1) as f64)
+            .collect::<Vec<_>>()
+    };
+    let mut lanes: Vec<((f64, f64), (f64, f64))> = along(w, 1.1)
+        .into_iter()
+        .map(|u| ((cx + u, cz + d / 2.0 + 18.0), (cx + u, cz + d / 2.0)))
+        .collect();
+    lanes.extend(
+        along(d, 1.2)
+            .into_iter()
+            .map(|u| ((cx - w / 2.0 - 18.0, cz - u), (cx - w / 2.0, cz - u))),
+    );
+    for (from, to) in lanes.into_iter().take(8) {
+        fly(&mut s, from, to);
+    }
+    let id = s.tanks[0].id;
+    let fell = s.elapsed;
+    for u in along(w, 1.25) {
+        for y in [1.0, 2.6] {
+            s.damage_cover(
+                house,
+                150.0,
+                id,
+                Team::Blue,
+                None,
+                Some(Point3::new(cx - u, y, cz - d / 2.0)),
+            );
+        }
+    }
+    assert!(!s.covers[house].alive, "the cottage comes down");
+    for _ in 0..(3.0 / STEP) as usize {
+        idle(&mut s);
+    }
+    let collapse: Vec<f64> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(house) && f.created_at.is_some_and(|at| at >= fell))
+        .map(|f| f.life)
+        .collect();
+    assert!(collapse.len() > 5, "{}", collapse.len());
+    for life in collapse {
+        assert!(
+            life > 4.0,
+            "3 s after the collapse a piece of it clears in {life:.1} s"
+        );
+    }
+}
