@@ -138,7 +138,7 @@ const FALLEN_HOLD: f64 = 1.5;
 const MAX_FALLEN: usize = 4;
 
 /// A wall box in the puffs' single precision: centre x and z, half width and depth,
-/// height.
+/// height, and whether it is a standing cottage, whose rooms hold smoke of their own.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct PuffBox {
     x: f32,
@@ -146,6 +146,20 @@ struct PuffBox {
     half_w: f32,
     half_d: f32,
     height: f32,
+    rooms: bool,
+}
+
+impl PuffBox {
+    fn of(wall: &WallBox) -> Self {
+        Self {
+            x: wall.x as f32,
+            z: wall.z as f32,
+            half_w: wall.half_w as f32,
+            half_d: wall.half_d as f32,
+            height: wall.height as f32,
+            rooms: wall.material == Some(WallMaterial::Siding),
+        }
+    }
 }
 
 /// Square ground cells holding the boxes that overlap them (`WALL_CELL` metres, at
@@ -178,13 +192,7 @@ impl WallGrid {
         self.source.clear();
         self.source.extend_from_slice(boxes);
         self.boxes.clear();
-        self.boxes.extend(boxes.iter().map(|wall| PuffBox {
-            x: wall.x as f32,
-            z: wall.z as f32,
-            half_w: wall.half_w as f32,
-            half_d: wall.half_d as f32,
-            height: wall.height as f32,
-        }));
+        self.boxes.extend(boxes.iter().map(PuffBox::of));
         let (mut min, mut max) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
         for b in &self.boxes {
             min = [min[0].min(b.x - b.half_w), min[1].min(b.z - b.half_d)];
@@ -289,6 +297,12 @@ fn push_puff(
         let (hw, hd, h) = (wall.half_w, wall.half_d, wall.height);
         let local = Vec3::new(center.x - wall.x, center.y, center.z - wall.z);
         if local.x.abs() >= hw + reach || local.z.abs() >= hd + reach || local.y >= h + reach {
+            continue;
+        }
+        // A burst in a cottage's room keeps its fire and the room's dust in the room:
+        // pushed out through the nearest wall, a shell's fireball a metre inside stood
+        // at the wall's face, outside.
+        if wall.rooms && local.x.abs() < hw && local.z.abs() < hd && local.y < h {
             continue;
         }
         let nearest = Vec3::new(
@@ -664,8 +678,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_blast_behind_a_cottage_finds_the_cottage_hiding_its_shadow() {
+    /// The village cottage the structure checks shoot, standing.
+    fn cottage() -> Walls {
         let mut walls = Walls::default();
         walls.sync(&RenderState {
             covers: vec![sloppy_core::sim::render_state::RenderCover {
@@ -679,6 +693,12 @@ mod tests {
             }],
             ..RenderState::default()
         });
+        walls
+    }
+
+    #[test]
+    fn a_blast_behind_a_cottage_finds_the_cottage_hiding_its_shadow() {
+        let walls = cottage();
         // Just behind its back wall: the box, inset from the faces the light falls on.
         let blocker = walls
             .light_blocker(Vec3::new(25.2, 3.1, -4.3))
@@ -689,6 +709,30 @@ mod tests {
         // In its room the walls already hold the light; far off, nothing is near.
         assert!(walls.light_blocker(Vec3::new(24.5, 1.0, 2.0)).is_none());
         assert!(walls.light_blocker(Vec3::new(40.0, 1.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn a_burst_in_a_cottage_room_keeps_its_fire_in_the_room() {
+        let mut walls = cottage();
+        let mut puffs = PoolBuffer::new(2);
+        // A fireball's lobe 0.8 m inside the +z wall, and one just outside it.
+        let lobe = |z: f32| {
+            record(
+                Mat4::from_translation(Vec3::new(22.6, 1.0, z)),
+                [1.0; 4],
+                [0.0; 4],
+            )
+        };
+        puffs.push(lobe(2.7));
+        puffs.push(lobe(3.6));
+        walls.keep_puffs_clear(&mut puffs);
+        let [inside, outside] = [0, 1].map(|i| puffs.records()[i].translation());
+        assert_eq!(
+            inside,
+            Vec3::new(22.6, 1.0, 2.7),
+            "pushed out through the wall"
+        );
+        assert!(outside.z >= 3.5 + CLEARANCE - 1e-4, "{outside}");
     }
 
     #[test]
@@ -759,17 +803,7 @@ mod tests {
     /// Every puff pushed against every wall in order, as before the grid.
     fn pushed_against_every_wall(walls: &Walls, puffs: &mut PoolBuffer) -> Vec<f32> {
         let mut smoke = vec![0.0; walls.boxes.len()];
-        let boxes: Vec<PuffBox> = walls
-            .boxes
-            .iter()
-            .map(|wall| PuffBox {
-                x: wall.x as f32,
-                z: wall.z as f32,
-                half_w: wall.half_w as f32,
-                half_d: wall.half_d as f32,
-                height: wall.height as f32,
-            })
-            .collect();
+        let boxes: Vec<PuffBox> = walls.boxes.iter().map(PuffBox::of).collect();
         for puff in puffs.records_mut() {
             let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
             let weight = puff.tint[3] * radius * radius;
