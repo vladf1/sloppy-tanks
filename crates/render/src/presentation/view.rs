@@ -1582,7 +1582,7 @@ impl Presentation {
                 z: motion.origin_z,
                 w: motion.w,
                 d: motion.d,
-                ..cover.clone()
+                ..*cover
             }),
             None => std::borrow::Cow::Borrowed(cover),
         }

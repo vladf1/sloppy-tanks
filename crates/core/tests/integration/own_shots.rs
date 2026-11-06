@@ -436,10 +436,8 @@ fn through(structure: &CoverDef, weapon: Weapon, x: f64, crack: bool) -> (HostFl
     let (mut sim, viewer) = alone(VehicleKind::Balanced);
     let cover = sim.add_cover(structure);
     place_tank(&mut sim, 0, x, 0.0, Some(0.0));
-    if crack {
-        if let Some(state) = sim.covers[cover].structure.as_mut() {
-            state.damage.iter_mut().for_each(|damage| *damage += 0.5);
-        }
+    if crack && let Some(state) = sim.covers[cover].structure.as_mut() {
+        state.damage.iter_mut().for_each(|damage| *damage += 0.5);
     }
     sim.world.step();
     let cover = predictor(&sim, viewer);

@@ -11,9 +11,11 @@ use std::time::Instant;
 
 use sloppy_core::models::{HouseBuild, house_debris, structural_house};
 use sloppy_core::scene::Node;
-use sloppy_core::sim::house_physics::{HE_BLAST_RADIUS, house_structure};
-use sloppy_core::sim::house_structure::{PartKind, PartSet};
+use sloppy_core::sim::house_layout::HouseDesign;
+use sloppy_core::sim::house_structure::{PartKind, house_structure};
 use sloppy_core::sim::math::Point3;
+use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure_physics::HE_BLAST_RADIUS;
 use sloppy_core::sim::{CoverKind, Simulation};
 
 const ROUNDS: usize = 200;
@@ -60,7 +62,7 @@ fn main() {
         .map(|k| {
             let c = &s.covers[houses[k % houses.len()]];
             let start = Instant::now();
-            let layout = house_structure(c.x, c.z, c.w, c.d, c.h);
+            let layout = house_structure(&HouseDesign::of(c.x, c.z, c.w, c.d, c.h));
             std::hint::black_box(layout);
             start.elapsed().as_secs_f64() * 1e3
         })
@@ -76,11 +78,11 @@ fn main() {
     let c = s.covers[biggest].clone();
     let layout = c.structure.as_ref().unwrap().layout.clone();
     let panel = (0..layout.parts.len())
-        .find(|&i| layout.parts[i].kind == PartKind::Panel && layout.parts[i].grounded)
+        .find(|&i| layout.parts[i].house().kind == PartKind::Panel && layout.parts[i].grounded)
         .unwrap();
     let third = PartSet::from_indices((0..layout.parts.len()).filter(|i| i % 3 == 0));
     let slope = PartSet::from_indices(
-        (0..layout.parts.len()).filter(|&i| layout.parts[i].kind == PartKind::Sheet),
+        (0..layout.parts.len()).filter(|&i| layout.parts[i].house().kind == PartKind::Sheet),
     );
     for (what, broken) in [
         ("whole", PartSet::EMPTY),
@@ -135,27 +137,34 @@ fn main() {
         let house = houses[k % houses.len()];
         let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
         let panels: Vec<usize> = (0..layout.parts.len())
-            .filter(|&i| layout.parts[i].kind == PartKind::Panel && layout.parts[i].grounded)
+            .filter(|&i| {
+                layout.parts[i].house().kind == PartKind::Panel && layout.parts[i].grounded
+            })
             .collect();
         let panel = panels[k % panels.len()];
         let start = Instant::now();
-        s.break_house_parts(house, PartSet::from_indices([panel]), None, None);
+        s.break_structure(
+            house,
+            PartSet::from_indices([panel]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
         break_ms.push(start.elapsed().as_secs_f64() * 1e3);
         // An HE burst a metre inside that hole.
         let c = &s.covers[house];
         let part = &layout.parts[panel];
-        let inside = layout.design.to_world(part.center() * 0.6);
+        let inside = layout.to_world(part.middle() * 0.6);
         let point = Point3::new(c.x + inside.x, 1.0, c.z + inside.z);
         let start = Instant::now();
-        s.house_blast(point, HE_BLAST_RADIUS, 40.0, None);
+        s.structure_blast(point, HE_BLAST_RADIUS, 40.0, None);
         blast_ms.push(start.elapsed().as_secs_f64() * 1e3);
         // Its footing gone: everything above falls as bodies.
-        let footing =
-            PartSet::from_indices((0..layout.parts.len()).filter(|&i| {
-                layout.parts[i].grounded && layout.parts[i].kind != PartKind::Chimney
-            }));
+        let footing = PartSet::from_indices((0..layout.parts.len()).filter(|&i| {
+            layout.parts[i].grounded && layout.parts[i].house().kind != PartKind::Chimney
+        }));
         let start = Instant::now();
-        s.break_house_parts(house, footing, None, None);
+        s.break_structure(house, footing, PartSet::EMPTY, None, None);
         fell_ms.push(start.elapsed().as_secs_f64() * 1e3);
         // Rebuild it for the next round, with its fallen bodies cleared.
         s.covers[house].alive = false;

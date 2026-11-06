@@ -140,7 +140,7 @@ fn fallen_cover_opens_sight_lines_and_routes_and_rebuilt_cover_closes_them() {
                 && alone(cover)
         })
         .expect("the harbor has destructible cover");
-    let cover = scene.covers[index].clone();
+    let cover = scene.covers[index];
     let reach = cover.w.max(cover.d) / 2.0 + 2.0;
     let (a, b) = (
         Vec2::new(cover.x - reach, cover.z),
@@ -187,7 +187,7 @@ fn a_watchtower_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
         .iter()
         .position(|cover| cover.kind == CoverKind::Tower)
         .expect("the village has watchtowers");
-    let cover = scene.covers[index].clone();
+    let cover = scene.covers[index];
     let middle = Vec2::new(cover.x, cover.z);
     model.sync(&scene, Perspective::default());
     assert!(
@@ -239,7 +239,7 @@ fn a_cottage_stands_in_the_model_as_far_as_its_parts_do_in_the_scene() {
         .iter()
         .position(|cover| cover.kind == CoverKind::House)
         .expect("the village has cottages");
-    let cover = scene.covers[index].clone();
+    let cover = scene.covers[index];
     let reach = cover.w.max(cover.d) / 2.0 + 2.0;
     let (a, b) = (
         Vec2::new(cover.x - reach, cover.z),

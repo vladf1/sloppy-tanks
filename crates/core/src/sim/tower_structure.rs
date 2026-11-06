@@ -709,7 +709,7 @@ fn add_pieces(structure: &mut Structure) {
             pieces: made,
         });
     }
-    for face in 0..4 {
+    for (face, members) in FACES.iter().enumerate() {
         let [outer, inner, girt] = face_members_of(face);
         let middle = outer.from.lerp(outer.to, 0.5);
         let lower = Member { to: middle, ..outer };
@@ -738,7 +738,7 @@ fn add_pieces(structure: &mut Structure) {
             vec![panel, add(piece(Brace, look, vec![upper.shape()], upper.mass()))]
         };
         breakups.push(Breakup {
-            needs: PartSet::from_indices(FACES[face]),
+            needs: PartSet::from_indices(*members),
             pieces: made,
         });
     }

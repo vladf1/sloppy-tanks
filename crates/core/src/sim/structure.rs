@@ -778,9 +778,8 @@ impl Structure {
             let mut more = PartSet::EMPTY;
             if self.shares {
                 let stability = self.stability(&standing);
-                for index in 0..self.parts.len() {
-                    if standing(index) && !self.parts[index].footing && stability[index] < FALL_BELOW
-                    {
+                for (index, (part, support)) in self.parts.iter().zip(&stability).enumerate() {
+                    if standing(index) && !part.footing && *support < FALL_BELOW {
                         more.insert(index);
                     }
                 }

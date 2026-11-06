@@ -37,7 +37,7 @@ fn covers(map: MapId) -> impl FnOnce() {
     simulation.fill_render_state(&mut view, None);
     move || {
         for cover in &view.covers {
-            let mut root = cover_model(&CoverShape::from(cover), TreeDetail::Full, 0);
+            let mut root = cover_model(&CoverShape::from(cover), TreeDetail::Full);
             batch(&mut root);
             std::hint::black_box(&root);
         }

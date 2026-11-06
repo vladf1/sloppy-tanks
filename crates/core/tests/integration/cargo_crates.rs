@@ -90,7 +90,8 @@ fn the_lid_comes_down_once_too_little_wall_is_left_and_breaks_along_its_boards()
     let pieces: Vec<PartSet> = s
         .fragments
         .iter()
-        .filter_map(|f| f.of_structure(crate_).then(|| f.structure_parts().unwrap()))
+        .filter(|f| f.of_structure(crate_))
+        .filter_map(|f| f.structure_parts())
         .collect();
     let layout = s.covers[crate_].structure.as_ref().unwrap().layout.clone();
     assert!(
