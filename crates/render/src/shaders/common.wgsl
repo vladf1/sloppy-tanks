@@ -104,6 +104,9 @@ struct Frame {
     // The cloud shadows' tiles (`cloud_shadow`): xy the ground's shift per metre of
     // height along the sun's ray, zw the drift's offset in tiles (wrapped).
     cloud_tiles: vec4f,
+    // Each point light's blocking wall box (`walls::LightBlocker`), one light per
+    // lane: its west, south, east and north sides, then its top, zero for none.
+    light_blocks: array<vec4f, 5>,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is

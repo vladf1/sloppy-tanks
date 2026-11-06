@@ -1480,10 +1480,14 @@ impl ExplosionEffects {
                 Kind::Hit(_) => (HIT_LIGHT * (-t * HIT_LIGHT_DECAY).exp(), blast.y + 0.6),
                 _ => continue,
             };
+            if intensity as f32 <= super::LIGHT_CUTOFF {
+                continue;
+            }
+            let position = Vec3::new(blast.x as f32, height as f32, blast.z as f32);
             super::offer_light(
                 lights,
                 Flash {
-                    position: Vec3::new(blast.x as f32, height as f32, blast.z as f32),
+                    position,
                     intensity: intensity as f32,
                     color: if t < 0.07 {
                         FLASH_LIGHT_COLOR
@@ -1491,6 +1495,7 @@ impl ExplosionEffects {
                         FIRE_LIGHT_COLOR
                     },
                     point: matches!(blast.kind, Kind::Hit(_)),
+                    blocker: self.walls.light_blocker(position),
                 },
             );
         }

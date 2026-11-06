@@ -206,35 +206,24 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             MAX_LEAVES,
         )
     });
-    // Crate splinters, faceted and lit like the boards they came from; the
-    // instance tint is the wood's color.
-    pools.push(PoolDesc {
-        receive_shadow: true,
-        ..PoolDesc::new(
-            "wood chips",
-            splinter_mesh(),
-            Material {
-                flat_shading: true,
-                ..Material::standard(0xffffff, 0.0, 0.85)
-            },
-            MAX_WOOD_CHIPS,
-        )
-    });
-    // A cottage's boards, plaster and roofing: the board's vertex colors darken
-    // its back and edges under the paint's tint, and the bent scraps show both
+    // Splinters and boards of sawn wood, faceted and lit like the wood they came
+    // from: the instance tint is its faces' color, the struck wood's or paint's, and
+    // the chip effect shows its own pale wood on the faces its vertex colors mark bare
+    // (end grain, split sides, a board's back). The bent roofing scraps show both
     // sides.
+    let sawn = Material {
+        flat_shading: true,
+        vertex_colors: true,
+        effect: custom(DEBRIS_CHIP.name),
+        ..Material::standard(0xffffff, 0.0, 0.85)
+    };
     pools.push(PoolDesc {
         receive_shadow: true,
-        ..PoolDesc::new(
-            "wood boards",
-            board_mesh(),
-            Material {
-                flat_shading: true,
-                vertex_colors: true,
-                ..Material::standard(0xffffff, 0.0, 0.85)
-            },
-            MAX_BOARDS,
-        )
+        ..PoolDesc::new("wood chips", splinter_mesh(), sawn.clone(), MAX_WOOD_CHIPS)
+    });
+    pools.push(PoolDesc {
+        receive_shadow: true,
+        ..PoolDesc::new("wood boards", board_mesh(), sawn, MAX_BOARDS)
     });
     pools.push(PoolDesc {
         receive_shadow: true,

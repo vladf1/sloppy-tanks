@@ -42,6 +42,23 @@ pub enum WallMaterial {
     Siding,
 }
 
+/// A blast's light finds the wall that hides ground from it within this distance (m)
+/// of the light, and the shader tests its box this far inside the wall's faces, so the
+/// faces turned to the light stay lit by it.
+const BLOCKER_REACH: f64 = 6.0;
+const BLOCKER_INSET: f64 = 0.15;
+
+/// A wall box that hides what lies behind it from a point light (`standard.wgsl`): the
+/// lights cast no shadow map, so a blast just behind a cottage lit the ground in the
+/// cottage's sun shadow as brightly as the sunlit ground round it, and the shadow
+/// vanished while the blast burned. Corners on the ground plane (m) and its top.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightBlocker {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+    pub top: f32,
+}
+
 /// A brick cottage's walls, for the chips a hit knocks off them.
 const BRICK: u32 = 0x8e5240;
 
@@ -111,7 +128,14 @@ pub struct Walls {
     /// The footprints of the cottages lying fallen, as `[x, z, half width, half
     /// depth]`, where landing debris raises the wreck's dust, not the ground's.
     ruins: Vec<[f64; 4]>,
-    /// The fallen cottages that stood again at the last sync (rebuilt), as `ruins`.
+    /// The footprints of the standing crates and timber walls, as `ruins`: a shell
+    /// bursting in or against one throws its wood, not the ground's clods.
+    wooden: Vec<[f64; 4]>,
+    /// The cover that splinters (cottages, timber walls, crates, watchtowers) lying
+    /// destroyed at the last sync, by id, with footprints as `ruins`.
+    down: Vec<(u32, [f64; 4])>,
+    /// Those that stood again at the last sync (rebuilt: a new round's map, or the
+    /// Scrap Yard's cover rising in place), as `ruins`.
     pub rebuilt: Vec<[f64; 4]>,
 }
 
@@ -121,7 +145,7 @@ const FALLEN_HOLD: f64 = 1.5;
 const MAX_FALLEN: usize = 4;
 
 /// A wall box in the puffs' single precision: centre x and z, half width and depth,
-/// height.
+/// height, and whether it is a standing cottage, whose rooms hold smoke of their own.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct PuffBox {
     x: f32,
@@ -129,6 +153,20 @@ struct PuffBox {
     half_w: f32,
     half_d: f32,
     height: f32,
+    rooms: bool,
+}
+
+impl PuffBox {
+    fn of(wall: &WallBox) -> Self {
+        Self {
+            x: wall.x as f32,
+            z: wall.z as f32,
+            half_w: wall.half_w as f32,
+            half_d: wall.half_d as f32,
+            height: wall.height as f32,
+            rooms: wall.material == Some(WallMaterial::Siding),
+        }
+    }
 }
 
 /// Square ground cells holding the boxes that overlap them (`WALL_CELL` metres, at
@@ -161,13 +199,7 @@ impl WallGrid {
         self.source.clear();
         self.source.extend_from_slice(boxes);
         self.boxes.clear();
-        self.boxes.extend(boxes.iter().map(|wall| PuffBox {
-            x: wall.x as f32,
-            z: wall.z as f32,
-            half_w: wall.half_w as f32,
-            half_d: wall.half_d as f32,
-            height: wall.height as f32,
-        }));
+        self.boxes.extend(boxes.iter().map(PuffBox::of));
         let (mut min, mut max) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
         for b in &self.boxes {
             min = [min[0].min(b.x - b.half_w), min[1].min(b.z - b.half_d)];
@@ -274,6 +306,12 @@ fn push_puff(
         if local.x.abs() >= hw + reach || local.z.abs() >= hd + reach || local.y >= h + reach {
             continue;
         }
+        // A burst in a cottage's room keeps its fire and the room's dust in the room:
+        // pushed out through the nearest wall, a shell's fireball a metre inside stood
+        // at the wall's face, outside.
+        if wall.rooms && local.x.abs() < hw && local.z.abs() < hd && local.y < h {
+            continue;
+        }
         let nearest = Vec3::new(
             local.x.clamp(-hw, hw),
             local.y.clamp(0.0, h),
@@ -336,7 +374,7 @@ impl Walls {
                 self.fallen.push((box_, now + FALLEN_HOLD));
             }
         }
-        let was: Vec<[f64; 4]> = std::mem::take(&mut self.ruins);
+        self.ruins.clear();
         self.ruins.extend(
             state
                 .covers
@@ -344,15 +382,39 @@ impl Walls {
                 .filter(|cover| cover.kind == CoverKind::House && !cover.alive)
                 .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
         );
+        self.wooden.clear();
+        self.wooden.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| {
+                    cover.alive && matches!(cover.kind, CoverKind::Cargo | CoverKind::Timber)
+                })
+                .map(|cover| [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5]),
+        );
+        let was = std::mem::take(&mut self.down);
+        let splinters = |kind| {
+            matches!(
+                kind,
+                CoverKind::House | CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
+            )
+        };
+        self.down.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| splinters(cover.kind) && !cover.alive)
+                .map(|cover| (cover.id, [cover.x, cover.z, cover.w * 0.5, cover.d * 0.5])),
+        );
         self.rebuilt.clear();
-        self.rebuilt.extend(was.into_iter().filter(|ruin| {
-            state.covers.iter().any(|cover| {
-                cover.kind == CoverKind::House
-                    && cover.alive
-                    && cover.x == ruin[0]
-                    && cover.z == ruin[1]
-            })
-        }));
+        self.rebuilt
+            .extend(was.into_iter().filter_map(|(id, ruin)| {
+                state
+                    .covers
+                    .iter()
+                    .any(|cover| cover.id == id && cover.alive)
+                    .then_some(ruin)
+            }));
         self.standing.clear();
         self.standing.extend(
             state
@@ -401,6 +463,8 @@ impl Walls {
         self.standing.clear();
         self.fallen.clear();
         self.ruins.clear();
+        self.wooden.clear();
+        self.down.clear();
         self.rebuilt.clear();
         self.soft = [[0.0; 4]; 4];
     }
@@ -408,6 +472,43 @@ impl Walls {
     /// The walls the puff shader softens smoke against this frame.
     pub fn soft_boxes(&self) -> [[f32; 4]; 4] {
         self.soft
+    }
+
+    /// The standing wall nearest a blast's or hit's light at `light`, within
+    /// [`BLOCKER_REACH`], that hides what lies behind it from that light; `None` when
+    /// the light is inside a wall's box (a burst in a cottage's room) or none is near.
+    pub fn light_blocker(&self, light: Vec3) -> Option<LightBlocker> {
+        let (x, z) = (f64::from(light.x), f64::from(light.z));
+        let mut nearest: Option<(f64, &WallBox)> = None;
+        for wall in self.boxes.iter().filter(|wall| wall.material.is_some()) {
+            let (dx, dz) = (
+                (x - wall.x).abs() - wall.half_w,
+                (z - wall.z).abs() - wall.half_d,
+            );
+            if dx < BLOCKER_INSET && dz < BLOCKER_INSET {
+                return None;
+            }
+            let distance = dx.max(0.0).hypot(dz.max(0.0));
+            if distance <= BLOCKER_REACH && nearest.is_none_or(|(best, _)| distance < best) {
+                nearest = Some((distance, wall));
+            }
+        }
+        nearest.map(|(_, wall)| {
+            let (half_w, half_d) = (wall.half_w - BLOCKER_INSET, wall.half_d - BLOCKER_INSET);
+            LightBlocker {
+                min: [(wall.x - half_w) as f32, (wall.z - half_d) as f32],
+                max: [(wall.x + half_w) as f32, (wall.z + half_d) as f32],
+                top: wall.height as f32,
+            }
+        })
+    }
+
+    /// Whether `(x, z)` lies on a standing crate's or timber wall's footprint or
+    /// within `reach` (m) of it, as of the last sync.
+    pub fn wooden_near(&self, x: f64, z: f64, reach: f64) -> bool {
+        self.wooden.iter().any(|&[cx, cz, half_w, half_d]| {
+            (x - cx).abs() <= half_w + reach && (z - cz).abs() <= half_d + reach
+        })
     }
 
     /// Whether `(x, z)` lies on a fallen cottage's footprint or within `reach` (m) of
@@ -618,6 +719,63 @@ mod tests {
         }
     }
 
+    /// The village cottage the structure checks shoot, standing.
+    fn cottage() -> Walls {
+        let mut walls = Walls::default();
+        walls.sync(&RenderState {
+            covers: vec![sloppy_core::sim::render_state::RenderCover {
+                kind: CoverKind::House,
+                x: 24.0,
+                w: 5.0,
+                d: 7.0,
+                h: 4.9,
+                alive: true,
+                ..Default::default()
+            }],
+            ..RenderState::default()
+        });
+        walls
+    }
+
+    #[test]
+    fn a_blast_behind_a_cottage_finds_the_cottage_hiding_its_shadow() {
+        let walls = cottage();
+        // Just behind its back wall: the box, inset from the faces the light falls on.
+        let blocker = walls
+            .light_blocker(Vec3::new(25.2, 3.1, -4.3))
+            .expect("the cottage");
+        assert_eq!(blocker.min, [21.65, -3.35]);
+        assert_eq!(blocker.max, [26.35, 3.35]);
+        assert_eq!(blocker.top, 4.9);
+        // In its room the walls already hold the light; far off, nothing is near.
+        assert!(walls.light_blocker(Vec3::new(24.5, 1.0, 2.0)).is_none());
+        assert!(walls.light_blocker(Vec3::new(40.0, 1.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn a_burst_in_a_cottage_room_keeps_its_fire_in_the_room() {
+        let mut walls = cottage();
+        let mut puffs = PoolBuffer::new(2);
+        // A fireball's lobe 0.8 m inside the +z wall, and one just outside it.
+        let lobe = |z: f32| {
+            record(
+                Mat4::from_translation(Vec3::new(22.6, 1.0, z)),
+                [1.0; 4],
+                [0.0; 4],
+            )
+        };
+        puffs.push(lobe(2.7));
+        puffs.push(lobe(3.6));
+        walls.keep_puffs_clear(&mut puffs);
+        let [inside, outside] = [0, 1].map(|i| puffs.records()[i].translation());
+        assert_eq!(
+            inside,
+            Vec3::new(22.6, 1.0, 2.7),
+            "pushed out through the wall"
+        );
+        assert!(outside.z >= 3.5 + CLEARANCE - 1e-4, "{outside}");
+    }
+
     #[test]
     fn a_strike_finds_the_face_its_point_lies_on() {
         let walls = container();
@@ -686,17 +844,7 @@ mod tests {
     /// Every puff pushed against every wall in order, as before the grid.
     fn pushed_against_every_wall(walls: &Walls, puffs: &mut PoolBuffer) -> Vec<f32> {
         let mut smoke = vec![0.0; walls.boxes.len()];
-        let boxes: Vec<PuffBox> = walls
-            .boxes
-            .iter()
-            .map(|wall| PuffBox {
-                x: wall.x as f32,
-                z: wall.z as f32,
-                half_w: wall.half_w as f32,
-                half_d: wall.half_d as f32,
-                height: wall.height as f32,
-            })
-            .collect();
+        let boxes: Vec<PuffBox> = walls.boxes.iter().map(PuffBox::of).collect();
         for puff in puffs.records_mut() {
             let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
             let weight = puff.tint[3] * radius * radius;

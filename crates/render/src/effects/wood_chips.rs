@@ -88,11 +88,17 @@ const HIGH_ARC: f64 = 0.2;
 const STRAW_TUFTS: usize = 6;
 const STRAW_FIBRES: [usize; 2] = [7, 4];
 
-/// Wood colors: split-open fresh wood, its darker heart and end grain, and a crate's
-/// weathered boards when the event names none.
+/// Wood colors: split-open fresh wood, and a crate's weathered boards when the event
+/// names none.
 const FRESH_WOOD: [u32; 2] = [0xe2c596, 0xd2ad78];
-const INNER_WOOD: u32 = 0x8a6440;
 const CRATE_WOOD: u32 = 0xb47a49;
+/// Sawn and split wood's bare grain, and how far a piece's bare wood (its end grain,
+/// split sides and a board's back) turns from its own wood's color toward it: a piece
+/// keeps its wood's hue with pale ends, never a grey shard.
+const END_GRAIN: u32 = 0xead6ae;
+const END_GRAIN_SHARE: f32 = 0.6;
+/// How much darker a piece's broken heart is than its faces.
+const HEART_SHADE: f64 = 0.8;
 const STRAW_COLORS: [u32; 2] = [0xd8b45a, 0xe6c97a];
 
 /// What a piece is shaped like, which picks the pool that draws it.
@@ -135,10 +141,12 @@ const SLIVER: Cut = Cut {
     thickness: [0.018, 0.012],
     shape: Shape::Splinter,
 };
+/// Wood splits along its grain: a shard is a short, broad splinter, never a lump
+/// as wide as it is long (those read as stone).
 const SHARD: Cut = Cut {
-    length: [0.14, 0.16],
-    width: [0.08, 0.1],
-    thickness: [0.028, 0.02],
+    length: [0.2, 0.25],
+    width: [0.05, 0.06],
+    thickness: [0.02, 0.015],
     shape: Shape::Splinter,
 };
 const BOARD: Cut = Cut {
@@ -148,10 +156,18 @@ const BOARD: Cut = Cut {
     shape: Shape::Splinter,
 };
 const CHIP: Cut = Cut {
-    length: [0.06, 0.06],
-    width: [0.05, 0.05],
-    thickness: [0.02, 0.014],
+    length: [0.08, 0.08],
+    width: [0.03, 0.03],
+    thickness: [0.012, 0.01],
     shape: Shape::Splinter,
+};
+/// A sawn-off length of plank: the struck wood's face, bare back and edges, and
+/// end grain at its sawn and broken ends.
+const OFFCUT: Cut = Cut {
+    length: [0.25, 0.45],
+    width: [0.08, 0.06],
+    thickness: [0.025, 0.012],
+    shape: Shape::Board,
 };
 
 /// A shell through a cottage's wall tears out [minimum, random span] pieces: the
@@ -235,7 +251,7 @@ const STUD: Cut = Cut {
 
 /// Which pieces a hit or burst is made of: slivers below `slivers`, shards below
 /// `shards`, chips above; and its colors: fresh wood below `fresh`, the crate's
-/// boards below `boards`, inner wood above.
+/// boards below `boards`, their darker heart above.
 #[derive(Clone, Copy, Debug)]
 struct Mix {
     slivers: f64,
@@ -244,18 +260,20 @@ struct Mix {
     boards: f64,
 }
 
-/// A struck face mostly shows freshly split wood.
+/// A struck face's pieces mostly keep the boards' own wood on their faces, their split
+/// sides and ends pale; a few split right through show fresh wood all over (with most
+/// fresh, splinters in shade read as grey stone).
 const HIT_MIX: Mix = Mix {
     slivers: 0.35,
     shards: 0.6,
-    fresh: 0.6,
+    fresh: 0.15,
     boards: 0.9,
 };
 const BURST_MIX: Mix = Mix {
     slivers: 0.45,
     shards: 0.8,
-    fresh: 0.4,
-    boards: 0.8,
+    fresh: 0.12,
+    boards: 0.85,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -297,8 +315,9 @@ pub struct Piece {
     /// The tilt it lands with.
     lean: f32,
     stage: Stage,
-    /// Linear RGB.
+    /// Linear RGB: its faces (paint or the struck wood) and its bare wood.
     color: [f32; 3],
+    bare: [f32; 3],
     shape: Shape,
 }
 
@@ -383,8 +402,19 @@ fn shade(color: [f32; 3], light: f64) -> [f32; 3] {
     color.map(|channel| channel * light as f32)
 }
 
+/// The vertex colors of sawn wood under the chip effect (`debris_chip.wgsl`): red
+/// shades the face, green is how much of its bare wood shows instead of its tint.
+/// A splinter's broad faces keep the wood's skin; its split sides and the broken
+/// taper show the fibres; its two ends are bare end grain.
+const SKIN: [f32; 3] = [1.0, 0.0, 0.0];
+const SPLIT: [f32; 3] = [0.92, 0.65, 0.0];
+const TAPER: [f32; 3] = [0.97, 0.4, 0.0];
+const END: [f32; 3] = [1.0, 1.0, 0.0];
+
 /// A splinter along local X, inside the unit cube: a full board section that
 /// breaks off at a slant at one end and tapers to an off-centre point at the other.
+/// Its vertex colors mark its broad faces (local ±Y) skin, its sides and taper split
+/// and its ends end grain.
 pub fn splinter_mesh() -> Mesh {
     // Rings around the grain, counter-clockwise seen from +X: (y-, z-), (y+, z-),
     // (y+, z+), (y-, z+).
@@ -402,23 +432,33 @@ pub fn splinter_mesh() -> Mesh {
         ring([0.5, 0.4], 0.28, [-0.36, 0.02]),
     ];
     let mut positions = Vec::new();
-    let mut triangle = |a: [f64; 3], b: [f64; 3], c: [f64; 3]| {
+    let mut colors = Vec::new();
+    let mut triangle = |a: [f64; 3], b: [f64; 3], c: [f64; 3], color: [f32; 3]| {
         positions.extend(a.into_iter().chain(b).chain(c));
+        colors.extend([color; 3]);
     };
-    for pair in rings.windows(2) {
+    for (section, pair) in rings.windows(2).enumerate() {
         let (back, front) = (pair[0], pair[1]);
         for i in 0..4 {
             let j = (i + 1) % 4;
-            triangle(back[i], back[j], front[j]);
-            triangle(back[i], front[j], front[i]);
+            // Sides 1 and 3 run across the width (the broad faces), 0 and 2 across
+            // the thickness.
+            let color = match (section, i % 2) {
+                (0, 1) => SKIN,
+                (_, 1) => TAPER,
+                _ => SPLIT,
+            };
+            triangle(back[i], back[j], front[j], color);
+            triangle(back[i], front[j], front[i], color);
         }
     }
     let [back, _, tip] = rings;
-    triangle(back[3], back[2], back[1]);
-    triangle(back[3], back[1], back[0]);
-    triangle(tip[0], tip[1], tip[2]);
-    triangle(tip[0], tip[2], tip[3]);
+    triangle(back[3], back[2], back[1], END);
+    triangle(back[3], back[1], back[0], END);
+    triangle(tip[0], tip[1], tip[2], END);
+    triangle(tip[0], tip[2], tip[3], END);
     let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
+    mesh.colors = colors;
     mesh.compute_vertex_normals();
     mesh
 }
@@ -434,14 +474,16 @@ const BOARD_OUTLINE: [[f64; 2]; 6] = [
     [0.2, 0.5],
     [-0.5, 0.5],
 ];
-/// The vertex shades of a board's back and edges against its face (the instance
-/// tint): weathered, unpainted wood.
-const BOARD_BACK: [f32; 3] = [0.6, 0.52, 0.43];
-const BOARD_EDGE: [f32; 3] = [0.74, 0.66, 0.56];
+/// A board's back and long edges, bare weathered wood darker than its ends.
+const BOARD_BACK: [f32; 3] = [0.72, 1.0, 0.0];
+const BOARD_EDGE: [f32; 3] = [0.86, 1.0, 0.0];
+/// Which edges of [`BOARD_OUTLINE`] (from point `i` to `i + 1`) run along the grain;
+/// the rest are its sawn and broken ends.
+const BOARD_SIDES: [usize; 2] = [0, 4];
 
 /// A length of board along local X inside the unit cube, its face up (+Y): square
-/// at one end, broken jagged at the other. Vertex colors shade its back and edges
-/// darker than its face.
+/// at one end, broken jagged at the other. Vertex colors (`SKIN`) mark its face
+/// painted or weathered, its back and long edges bare wood, its ends end grain.
 pub fn board_mesh() -> Mesh {
     let mut positions = Vec::new();
     let mut colors = Vec::new();
@@ -453,10 +495,15 @@ pub fn board_mesh() -> Mesh {
     let n = BOARD_OUTLINE.len();
     for i in 0..n {
         let (a, b) = (BOARD_OUTLINE[i], BOARD_OUTLINE[(i + 1) % n]);
-        triangle([[0.0, 0.5, 0.0], at(b, 0.5), at(a, 0.5)], [1.0; 3]);
+        let edge = if BOARD_SIDES.contains(&i) {
+            BOARD_EDGE
+        } else {
+            END
+        };
+        triangle([[0.0, 0.5, 0.0], at(b, 0.5), at(a, 0.5)], SKIN);
         triangle([[0.0, -0.5, 0.0], at(a, -0.5), at(b, -0.5)], BOARD_BACK);
-        triangle([at(a, -0.5), at(b, 0.5), at(b, -0.5)], BOARD_EDGE);
-        triangle([at(a, -0.5), at(a, 0.5), at(b, 0.5)], BOARD_EDGE);
+        triangle([at(a, -0.5), at(b, 0.5), at(b, -0.5)], edge);
+        triangle([at(a, -0.5), at(a, 0.5), at(b, 0.5)], edge);
     }
     let mut mesh = Mesh::from_f64(&positions, &[], &[], None);
     mesh.colors = colors;
@@ -694,12 +741,14 @@ impl WoodChips {
         self.straw.iter()
     }
 
-    /// Splinter a crate's struck face, burst a destroyed crate, or shatter a loose
+    /// Splinter a crate's or a fallen timber's struck face, burst a destroyed crate, or shatter a loose
     /// crate board a shell flew through or a watchtower part that broke; other events
     /// throw nothing.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
         match (event.kind, event.cover_kind) {
-            (SimEventType::Impact, Some(CoverKind::Cargo)) => self.splinter_face(event, random),
+            (SimEventType::Impact, Some(CoverKind::Cargo | CoverKind::Timber)) => {
+                self.splinter_face(event, random)
+            }
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => self.burst(event, random),
             (SimEventType::Impact, Some(CoverKind::House)) => self.rubble_hit(event, random),
             (SimEventType::Shatter, Some(CoverKind::House)) => self.house_shatter(event, random),
@@ -771,7 +820,7 @@ impl WoodChips {
                 speed * elevation.sin(),
                 direction[1] * speed * elevation.cos(),
             );
-            let piece = wood_piece(random, cut, position, velocity, color);
+            let piece = wood_piece(random, cut, position, velocity, color, under_paint());
             self.add(piece);
         }
         self.changed = true;
@@ -806,9 +855,7 @@ impl WoodChips {
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let dust = hex_to_linear(RUBBLE_DUST);
-            let shaded = shade(color, 0.66 + random.next_f64() * 0.22);
-            let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * RUBBLE_DUST_BLEND);
+            let color = dusted(shade(color, 0.66 + random.next_f64() * 0.22));
             let out = heading(random);
             // Burst up out of the pile round the hit, so they are already in the
             // air in the frames after it.
@@ -821,7 +868,8 @@ impl WoodChips {
             // Up more than out, so most land within a couple of metres.
             let speed = between(random, RUBBLE_SPEED);
             let velocity = DVec3::new(out[0] * speed, between(random, RUBBLE_LIFT), out[1] * speed);
-            let piece = wood_piece(random, cut, position, velocity, color);
+            let bare = dusted(under_paint());
+            let piece = wood_piece(random, cut, position, velocity, color, bare);
             self.add(piece);
         }
         self.changed = true;
@@ -872,7 +920,7 @@ impl WoodChips {
                     shade(hex_to_linear(PLASTER[(i / 4) % PLASTER.len()]), 1.0),
                 ),
             };
-            let piece = wood_piece(random, cut, position, velocity, color);
+            let piece = wood_piece(random, cut, position, velocity, color, under_paint());
             self.add(piece);
         }
         self.changed = true;
@@ -907,13 +955,20 @@ impl WoodChips {
                 0.8 + random.next_f64() * 3.2,
                 spread[1] * speed,
             );
-            let cut = if i < 2 {
-                BOARD
-            } else {
-                pick_cut(random, BURST_MIX)
+            let cut = match i {
+                0 => OFFCUT,
+                1 => BOARD,
+                _ => pick_cut(random, BURST_MIX),
             };
             let color = wood_color(random, BURST_MIX, boards);
-            let piece = wood_piece(random, cut, position, velocity, color);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                velocity,
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
             self.add(piece);
         }
         self.changed = true;
@@ -933,6 +988,8 @@ impl WoodChips {
         for i in 0..count {
             let cut = if i < HIT_LONG_SLIVERS {
                 LONG_SLIVER
+            } else if i == HIT_LONG_SLIVERS {
+                OFFCUT
             } else {
                 pick_cut(random, HIT_MIX)
             };
@@ -958,7 +1015,14 @@ impl WoodChips {
                 direction[1] * speed * elevation.cos(),
             );
             let color = wood_color(random, HIT_MIX, boards);
-            let piece = wood_piece(random, cut, position, velocity, color);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                velocity,
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
             self.add(piece);
         }
         self.changed = true;
@@ -1012,16 +1076,25 @@ impl WoodChips {
             };
             let position = DVec3::new(event.x + dx, y, event.z + dz);
             let (cut, color) = if i < BURST_BOARDS {
-                // Weathered outside, a board's faces show the crate's color.
+                // Weathered outside, a board's faces show the crate's color: long
+                // splinters of it and sawn-off lengths.
                 let light = 0.85 + random.next_f64() * 0.25;
-                (BOARD, shade(hex_to_linear(boards), light))
+                let cut = if i % 2 == 0 { BOARD } else { OFFCUT };
+                (cut, shade(hex_to_linear(boards), light))
             } else {
                 (
                     pick_cut(random, BURST_MIX),
                     wood_color(random, BURST_MIX, boards),
                 )
             };
-            let piece = wood_piece(random, cut, position, DVec3::new(vx, vy, vz), color);
+            let piece = wood_piece(
+                random,
+                cut,
+                position,
+                DVec3::new(vx, vy, vz),
+                color,
+                end_grain(hex_to_linear(boards)),
+            );
             self.add(piece);
         }
         for _ in 0..STRAW_TUFTS {
@@ -1098,7 +1171,9 @@ fn write(records: &mut PoolBuffer, pieces: &VecDeque<Piece>) {
     records.clear();
     for piece in pieces {
         let [r, g, b] = piece.color;
-        records.push(record(piece.world(), [r, g, b, 1.0], [0.0; 4]));
+        let [br, bg, bb] = piece.bare;
+        // The chip effect's sawn wood (`debris_chip.wgsl`); straw draws plain.
+        records.push(record(piece.world(), [r, g, b, 1.0], [br, bg, bb, 1.0]));
     }
 }
 
@@ -1123,7 +1198,7 @@ fn wood_color(random: &mut CosmeticRandom, mix: Mix, boards: u32) -> [f32; 3] {
     } else if roll < mix.boards {
         hex_to_linear(boards)
     } else {
-        hex_to_linear(INNER_WOOD)
+        shade(hex_to_linear(boards), HEART_SHADE)
     };
     shade(base, light)
 }
@@ -1135,12 +1210,31 @@ fn fresh_wood(random: &mut CosmeticRandom) -> [f32; 3] {
     [0, 1, 2].map(|i| pale[i] + (warm[i] - pale[i]) * k)
 }
 
+/// The pale end grain of wood this color.
+fn end_grain(wood: [f32; 3]) -> [f32; 3] {
+    let pale = hex_to_linear(END_GRAIN);
+    [0, 1, 2].map(|c| wood[c] + (pale[c] - wood[c]) * END_GRAIN_SHARE)
+}
+
+/// The bare wood under a cottage's paint: its framing's end grain.
+fn under_paint() -> [f32; 3] {
+    end_grain(hex_to_linear(FRESH_WOOD[1]))
+}
+
+/// `color` dulled by a fallen cottage's dust.
+fn dusted(color: [f32; 3]) -> [f32; 3] {
+    let dust = hex_to_linear(RUBBLE_DUST);
+    [0, 1, 2].map(|c| color[c] + (dust[c] - color[c]) * RUBBLE_DUST_BLEND)
+}
+
+/// A piece of `cut` with faces `color` and bare wood `bare` (linear RGB).
 fn wood_piece(
     random: &mut CosmeticRandom,
     cut: Cut,
     position: DVec3,
     velocity: DVec3,
     color: [f32; 3],
+    bare: [f32; 3],
 ) -> Piece {
     let length = between(random, cut.length) as f32;
     let width = between(random, cut.width) as f32;
@@ -1166,6 +1260,7 @@ fn wood_piece(
         lean: ((random.next_f64() - 0.5) * 2.0 * MAX_LEAN) as f32,
         stage: Stage::Flying { bounces: 0 },
         color,
+        bare,
         shape: cut.shape,
     }
 }
@@ -1199,6 +1294,7 @@ fn straw_piece(random: &mut CosmeticRandom, position: DVec3, velocity: DVec3) ->
         lean: 0.0,
         stage: Stage::Flying { bounces: 0 },
         color,
+        bare: color,
         shape: Shape::Splinter,
     }
 }
@@ -1318,6 +1414,48 @@ mod tests {
     fn run(chips: &mut WoodChips, random: &mut CosmeticRandom, seconds: f64) {
         for _ in 0..(seconds / DT).round() as usize {
             chips.update(DT, random);
+        }
+    }
+
+    #[test]
+    fn a_timber_hit_throws_its_own_wood_with_pale_ends() {
+        let mut random = CosmeticRandom::seeded(7);
+        let mut chips = WoodChips::default();
+        // A shell into a fallen timber post, painted darker than a crate.
+        let post = 0x6e4a30;
+        chips.event(
+            &SimEvent {
+                cover_kind: Some(CoverKind::Timber),
+                color: Some(post),
+                height: Some(0.6),
+                from: Some(Point3::new(2.0, 1.0, 9.0)),
+                ..SimEvent::at(SimEventType::Impact, 2.0, -1.0)
+            },
+            &mut random,
+        );
+        assert!(chips.wood().count() >= HIT_PIECES[0]);
+        assert!(
+            chips.boards.len() == 1,
+            "a sawn-off length among the splinters"
+        );
+        let wood = hex_to_linear(post);
+        let luma = |c: [f32; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        for piece in chips.wood() {
+            assert!(luma(piece.bare) > luma(wood), "pale end grain");
+            // Its hue is the post's: redder than green, greener than blue.
+            assert!(piece.bare[0] > piece.bare[1] && piece.bare[1] > piece.bare[2]);
+        }
+        chips.update(DT, &mut random);
+        for records in [&chips.wood_records, &chips.board_records] {
+            assert!(
+                records.records().iter().all(|r| r.data[3] == 1.0),
+                "sawn wood"
+            );
+        }
+        // Both meshes mark their skin, bare sides and end grain.
+        for mesh in [splinter_mesh(), board_mesh()] {
+            assert_eq!(mesh.colors.len(), mesh.positions.len());
+            assert!(mesh.colors.contains(&SKIN) && mesh.colors.contains(&END));
         }
     }
 
@@ -1515,7 +1653,10 @@ mod tests {
             assert!((piece.position.y - rest).abs() < 1e-6);
             assert!(piece.position.y < 0.2);
         }
-        assert_eq!(chips.wood_records.len(), chips.wood().count());
+        assert_eq!(
+            chips.wood_records.len() + chips.board_records.len(),
+            chips.wood().count()
+        );
         assert_eq!(chips.straw_records.len(), chips.straw().count());
         run(
             &mut chips,
@@ -1541,9 +1682,13 @@ mod tests {
                 .all(|piece| piece.landed() && piece.velocity == DVec3::ZERO)
         );
         chips.wood_records.take_dirty(|_, _| {});
+        chips.board_records.take_dirty(|_, _| {});
         chips.update(DT, &mut random);
-        assert!(chips.wood_records.dirty().is_empty());
-        assert_eq!(chips.wood_records.len(), chips.len());
+        assert!(chips.wood_records.dirty().is_empty() && chips.board_records.dirty().is_empty());
+        assert_eq!(
+            chips.wood_records.len() + chips.board_records.len(),
+            chips.len()
+        );
     }
 
     #[test]
@@ -1559,7 +1704,8 @@ mod tests {
             chips.event(&crate_event(kind, None), &mut random);
             chips.update(DT, &mut random);
         }
-        assert_eq!(chips.wood().count(), MAX_WOOD_CHIPS);
+        assert_eq!(chips.wood.len(), MAX_WOOD_CHIPS);
+        assert!(chips.boards.len() <= MAX_BOARDS);
         assert_eq!(chips.straw().count(), MAX_STRAW);
         assert_eq!(chips.wood_records.len(), MAX_WOOD_CHIPS);
         assert!(chips.wood_records.records().iter().all(|r| {
