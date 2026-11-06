@@ -785,7 +785,7 @@ impl Simulation {
     pub fn break_structure(
         &mut self,
         cover: usize,
-        broken: PartSet,
+        broken_parts: PartSet,
         loose: PartSet,
         from: Option<Point3>,
         by: Option<(u32, Team)>,
@@ -798,10 +798,19 @@ impl Simulation {
         let layout = state.layout.clone();
         let breakable =
             |index: usize| state.standing(index) && layout.parts[index].strength.is_finite();
-        let mut broken = PartSet::from_indices(broken.iter().filter(|&index| breakable(index)));
+        // Brick does not splinter away where it stands: a broken chimney stack comes
+        // loose and bursts into bricks where it lands.
+        let brick = |index: usize| layout.parts[index].material.breaking == Breaking::Bricks;
+        let mut broken = PartSet::from_indices(
+            broken_parts
+                .iter()
+                .filter(|&index| breakable(index) && !brick(index)),
+        );
+        let asked = broken_parts;
         let loose = PartSet::from_indices(
             loose
                 .iter()
+                .chain(asked.iter().filter(|&index| brick(index)))
                 .filter(|&index| breakable(index) && !broken.contains(index)),
         );
         if broken.is_empty() && loose.is_empty() {
@@ -1249,10 +1258,16 @@ pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius
     let strength = (damage / LOOSE_THROW_DAMAGE).min(LOOSE_THROW_MOST);
     let at = vector(point.x, point.y, point.z);
     // The bodies there before the blast: the pieces it breaks off are thrown already.
+    // A section still coming down as a structure falls as it was: a blast breaks or throws
+    // only what has landed (the burst that shot out a tower's leg would otherwise have
+    // crumpled the whole tower before it tipped).
     let ids: Vec<u32> = simulation
         .fragments
         .iter()
-        .filter(|fragment| fragment.structure.is_some() && fragment.life > DEBRIS_CLEANUP_SECONDS)
+        .filter(|fragment| {
+            fragment.structure.is_some_and(|debris| debris.landed || debris.rested)
+                && fragment.life > DEBRIS_CLEANUP_SECONDS
+        })
         .map(|fragment| fragment.id)
         .collect();
     for id in ids {
@@ -1751,27 +1766,37 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
         simulation.fragments[index].life = (ground - height * CLEAR_TOP_FIRST).max(floor);
         return;
     }
-    // A moment before what it lies on, and after what lies on it.
+    // Before what it lies on, after what lies on it: each piece keeps one of the ruin's
+    // own staggered times, and resting only swaps times with a piece it lies on or under
+    // when they are the wrong way round. Pulling each piece a moment before what it lay
+    // on chained a whole heap's times together, and it went in one batch.
+    // Its own time in the ruin's schedule, from when the ruin fell: the pieces a landing
+    // breaks a body into all start from that body's time, so a heap would go at once.
+    if let (Some(expires), Some(state)) = (fragment.expires_at, &simulation.covers[cover].structure) {
+        let rules = state.layout.debris;
+        let first = debris.parts.iter().next().unwrap_or(0);
+        let stagger = ((first * 7 + fragment.id as usize * 5) % 13) as f64 / 12.0;
+        let fell = expires - rules.deadline;
+        let at = fell + rules.life + rules.life_spread * stagger + DEBRIS_CLEANUP_SECONDS;
+        simulation.fragments[index].life = (at - simulation.elapsed).min(expires - simulation.elapsed);
+    }
+    let fragment = &simulation.fragments[index];
     let mine = plan_box(simulation, fragment.body);
-    let mut life = fragment.life;
-    let mut over: Vec<usize> = Vec::new();
     for &other in &ruin {
         let piece = &simulation.fragments[other];
         if !plan_box(simulation, piece.body).overlaps(&mine) {
             continue;
         }
-        if middle_height(simulation, piece.body) < height {
-            life = life.min(piece.life - CLEAR_GAP);
-        } else {
-            over.push(other);
+        let above = middle_height(simulation, piece.body) > height;
+        let (my_life, its_life) = (simulation.fragments[index].life, piece.life);
+        let wrong_way = if above { its_life > my_life } else { my_life > its_life };
+        if wrong_way {
+            simulation.fragments[index].life = its_life;
+            simulation.fragments[other].life = my_life;
         }
     }
-    let life = life.max(floor);
-    simulation.fragments[index].life = life;
-    for other in over {
-        let piece = &mut simulation.fragments[other];
-        piece.life = piece.life.min(life - CLEAR_GAP).max(DEBRIS_CLEANUP_SECONDS + CLEAR_GAP);
-    }
+    let life = simulation.fragments[index].life;
+    simulation.fragments[index].life = life.max(floor);
 }
 
 /// A body's footprint on the ground plane, a little grown so pieces lying edge to edge
@@ -1802,8 +1827,6 @@ impl PlanBox {
 
 /// Pieces whose footprints come this near (m) count as lying on each other.
 const ON_EACH_OTHER: f32 = 0.05;
-/// The time (s) between a piece clearing and what it lies on.
-const CLEAR_GAP: f64 = 0.4;
 
 /// Pieces that fell within this many seconds of each other (by their clearing deadlines,
 /// which a landing's pieces keep from their body) are one ruin, which clears top first

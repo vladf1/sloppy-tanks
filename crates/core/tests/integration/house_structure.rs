@@ -1771,3 +1771,81 @@ fn no_roof_sheet_lies_whole_on_its_own() {
         }
     }
 }
+
+/// A burst beside a cottage section that has just come loose (the HE shell that shot
+/// out its support goes off a metre on) leaves it falling whole: it is neither broken
+/// nor thrown before it lands. A blast breaks or throws only what has landed.
+#[test]
+fn an_he_burst_never_breaks_a_falling_section() {
+    let (mut s, house) = cottage_alone(VILLAGE_DESIGNS[6]);
+    let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
+    let walls =
+        PartSet::from_indices((0..layout.parts.len()).filter(|&i| layout.parts[i].grounded));
+    s.break_structure(house, walls, PartSet::EMPTY, None, None);
+    idle(&mut s);
+    let falling: Vec<(u32, PartSet, glam::Vec3)> = s
+        .fragments
+        .iter()
+        .filter(|f| f.of_structure(house) && f.structure.is_some_and(|debris| !debris.landed))
+        .map(|f| {
+            (
+                f.id,
+                f.structure_parts().unwrap(),
+                s.world.bodies[f.body].linvel(),
+            )
+        })
+        .collect();
+    assert!(!falling.is_empty(), "the roof comes down");
+    for (id, parts, velocity) in &falling {
+        let f = s.fragments.iter().find(|f| f.id == *id).unwrap();
+        let m = s.world.bodies[f.body].center_of_mass();
+        s.structure_blast(
+            Point3::new(f64::from(m.x), f64::from(m.y), f64::from(m.z)),
+            1.4,
+            40.0,
+            None,
+        );
+        let f = s
+            .fragments
+            .iter()
+            .find(|f| f.id == *id)
+            .expect("still falling whole");
+        assert_eq!(f.structure_parts(), Some(*parts));
+        let now = s.world.bodies[f.body].linvel();
+        assert!(
+            (now - *velocity).length() < 1e-4,
+            "thrown: {velocity:?} -> {now:?}"
+        );
+    }
+}
+
+/// A chimney shattered where it stands does not vanish into splinters: brick comes loose,
+/// falls and bursts into bricks where it lands.
+#[test]
+fn a_broken_chimney_falls_and_lands_as_bricks() {
+    let (mut s, house) = cottage_alone(VILLAGE_DESIGNS[6]);
+    s.break_structure(
+        house,
+        PartSet::from_indices([CHIMNEY_PART]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    assert!(
+        s.fragments.iter().any(|f| f.of_structure(house)
+            && f.structure_parts()
+                .is_some_and(|p| p.contains(CHIMNEY_PART))),
+        "the stack comes down as a body"
+    );
+    let mut bricks = false;
+    for _ in 0..(3.0 / STEP) as usize {
+        s.events.clear();
+        idle(&mut s);
+        bricks |= s.events.iter().any(|e| {
+            e.kind == SimEventType::Shatter
+                && e.cover_kind == Some(CoverKind::House)
+                && e.color == Some(0x9c4a32)
+        });
+    }
+    assert!(bricks, "it burst into bricks where it landed");
+}

@@ -1024,3 +1024,86 @@ fn a_tower_falling_on_a_timber_wall_breaks_there_and_then() {
     let beams = s.covers[wall].structure.as_ref().unwrap().gone.len();
     assert!(beams > 0, "it smashed the beams it came down on");
 }
+
+/// The burst of the HE shell that breaks a leg leaves the tower falling whole: its frame
+/// and ladder, turning over toward the missing leg until the frame reaches the ground.
+/// The village tower under the critics' shots: two between its legs, then at its
+/// front-west leg from the west along the front legs' line. (A blast threw and broke
+/// pieces in its reach as loose rubble, the falling frame too, which crumpled into 28
+/// bodies standing over its footprint.)
+#[test]
+fn an_he_shell_that_breaks_a_leg_leaves_the_tower_whole_until_it_lands() {
+    let mut s = Simulation::with_seed(731.0);
+    s.start();
+    let human = s.human_index().unwrap();
+    for i in 0..s.tanks.len() {
+        if i != human {
+            place_tank(&mut s, i, 60.0 + i as f64 * 6.0, 60.0, None);
+            s.tanks[i].protection = 999.0;
+        }
+    }
+    place_tank(&mut s, human, -40.0, -40.0, None);
+    let tower = (0..s.covers.len())
+        .find(|&i| {
+            s.covers[i].kind == CoverKind::Tower
+                && (s.covers[i].x - 12.75).abs() < 0.5
+                && (s.covers[i].z + 28.0).abs() < 0.5
+        })
+        .expect("the village tower");
+    let c = s.covers[tower].clone();
+    for (from, to) in [
+        ((c.x, c.z + 22.0), (c.x, c.z - 22.0)),
+        ((c.x - 22.0, c.z + 0.2), (c.x + 22.0, c.z + 0.2)),
+    ] {
+        fire(
+            &mut s,
+            Vec2::new(from.0, from.1),
+            Vec2::new(to.0, to.1),
+            1.0,
+            Weapon::Standard,
+        );
+        run(&mut s, 1.5);
+    }
+    let mut landed_at = None;
+    for _ in 0..4 {
+        fire(
+            &mut s,
+            Vec2::new(c.x - 20.0, c.z + 1.05),
+            Vec2::new(c.x + 20.0, c.z + 1.05),
+            1.0,
+            Weapon::Standard,
+        );
+        // Where the falling frame's middle was last seen whole.
+        let mut last = None;
+        for tick in 0..(4.0 / STEP) as usize {
+            idle(&mut s);
+            let frame = s.fragments.iter().find(|f| {
+                f.of_structure(tower) && f.structure_parts().is_some_and(|p| p.contains(ROOF))
+            });
+            match frame {
+                Some(frame) if !frame.structure.is_some_and(|debris| debris.landed) => {
+                    let m = s.world.bodies[frame.body].center_of_mass();
+                    last = Some(Vec2::new(f64::from(m.x) - c.x, f64::from(m.z) - c.z));
+                    let count = bodies(&s, tower).len();
+                    assert!(
+                        count <= 2,
+                        "tick {tick}: the falling tower is {count} bodies before it lands"
+                    );
+                }
+                // Landed, whole or broken up where it struck.
+                _ if last.is_some() => {
+                    landed_at = last;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if landed_at.is_some() {
+            break;
+        }
+    }
+    let at = landed_at.expect("the frame came down and landed");
+    // The front-west corner lies at -x, +z.
+    let toward = (-at.x + at.z) / 2f64.sqrt();
+    assert!(toward > 1.5, "it went over toward the missing leg: {at:?}");
+}
