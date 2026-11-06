@@ -161,6 +161,51 @@ fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
     assert_eq!(s.rng.state, rng, "breaking a beam draws nothing");
 }
 
+/// The first shell to strike an intact wall gives each member its own collider; a shell
+/// meeting the wall from the far side in that same tick strikes the member it reaches,
+/// not the gap the wall's one collider left until the next physics step.
+#[test]
+fn shells_striking_a_whole_wall_in_one_tick_both_meet_its_members() {
+    let (mut s, wall) = lone_wall();
+    // The two arrive in the same tick, at different beams.
+    let front = fire_at(
+        &mut s,
+        Vec2::new(0.3, 4.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    let back = fire_at(
+        &mut s,
+        Vec2::new(-0.6, 16.0),
+        Vec2::new(-0.6, 0.0),
+        2.0,
+        Weapon::Standard,
+    );
+    let back_face = 10.0 + 0.9 / 2.0;
+    for _ in 0..90 {
+        run(&mut s, 1.0 / 60.0);
+        if let Some(shell) = s.shots.iter().find(|shot| shot.id == back)
+            && shell.z < back_face - 0.05
+        {
+            assert!(
+                shell.fuse.is_some(),
+                "the far shell is inside the wall at z = {} without striking a member",
+                shell.z
+            );
+        }
+    }
+    assert!(
+        !s.shots
+            .iter()
+            .any(|shot| shot.id == front || shot.id == back)
+    );
+    let beams = (0..BEAM_COUNT)
+        .filter(|&index| gone(&s, wall).contains(member(&s, wall, TimberPartKind::Beam, index)))
+        .count();
+    assert!(beams >= 2, "each shell knocks out a beam: {beams} out");
+}
+
 #[test]
 fn the_posts_carry_the_beams_and_one_shot_out_drops_what_it_held() {
     let (mut s, wall) = lone_wall();

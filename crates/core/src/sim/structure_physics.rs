@@ -635,17 +635,31 @@ impl Simulation {
         }
         state.colliders.iter_mut().for_each(|collider| *collider = None);
         let layout = state.layout.clone();
-        self.cover_by_collider.remove(&handle);
-        self.world.remove_collider(handle);
+        // The parts go in before the whole comes out: a part taking the whole's freed
+        // slot would share its broad-phase leaf, which the next step drops with the
+        // whole.
+        let whole = handle;
         for index in (0..layout.parts.len()).filter(|&index| !going.contains(index)) {
             let handle = self
                 .world
                 .insert_collider(standing_collider(&layout, index), Some(body));
+            // Scene queries see a collider once the broad phase has it, which a step
+            // does; the shells still flying this tick (one from the far side, an armour-
+            // piercing round flying on) must meet the parts left standing, not the gap
+            // the whole collider left. Only the new boxes go in, not a whole pass.
+            let world = &mut self.world;
+            let aabb = world.colliders[handle]
+                .compute_broad_phase_aabb(&world.integration_parameters, &world.bodies);
+            world
+                .broad_phase
+                .set_aabb(&world.integration_parameters, handle, aabb);
             self.cover_by_collider.insert(handle, cover);
             if let Some(state) = &mut self.covers[cover].structure {
                 state.colliders[index] = Some(handle);
             }
         }
+        self.cover_by_collider.remove(&whole);
+        self.world.remove_collider(whole);
     }
 
     /// Hit structure `cover`'s `part` for `amount` at `point`, from `along` (the way the
