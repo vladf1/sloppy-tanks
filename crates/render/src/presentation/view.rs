@@ -782,9 +782,25 @@ enum FragmentLook {
     Wreck(VehicleKind, Team, WreckPart),
     Owned(ModelId, Aabb),
     /// A shared structure debris model ([`shared_debris_key`]), which every fragment
-    /// of its look shares this round.
-    Shared(Aabb),
+    /// of its look shares while any shows it.
+    Shared(Aabb, String),
 }
+
+/// A structure debris look shared by every fragment that looks the same
+/// ([`shared_debris_key`]), with the parts' model the piles merge.
+struct SharedDebris {
+    look: BoundedModel,
+    node: Arc<Node>,
+    /// The fragments showing it.
+    users: usize,
+    /// Built ahead (a crate's walls, lid and landing pieces): kept for the round.
+    ahead: bool,
+}
+
+/// How many shared debris looks no fragment shows any more are kept for the next
+/// fragment that looks the same; older ones are released. A Scrap Yard that keeps
+/// felling and rebuilding towers otherwise kept a model for every way one came down.
+const IDLE_SHARED_DEBRIS: usize = 12;
 
 /// The key a structure's fallen parts' look is shared under for the round: a crate's
 /// (by its size and paint) or a watchtower's (by its cabin's paint) parts look alike on
@@ -1024,9 +1040,11 @@ pub struct Presentation {
     fragments: HashMap<u32, FragmentView>,
     /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
     piles: HousePiles<(ModelId, InstanceId)>,
-    /// Structure debris models built this round, shared by every fragment that looks
-    /// the same ([`shared_debris_key`]), with the parts' model the piles merge.
-    shared_debris: HashMap<String, (BoundedModel, Arc<Node>)>,
+    /// Structure debris looks shared by every fragment that looks the same.
+    shared_debris: HashMap<String, SharedDebris>,
+    /// Shared looks no fragment showed any more, oldest first (one may have come back
+    /// into use since).
+    idle_debris: VecDeque<String>,
     /// Debris looks this round's crates can break into, still to build; one is built a
     /// frame, so a crate breaking builds none.
     debris_warmups: Vec<(CoverShape, PartSet)>,
@@ -1123,6 +1141,7 @@ impl Presentation {
             fragments: HashMap::new(),
             piles: HousePiles::default(),
             shared_debris: HashMap::new(),
+            idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
@@ -1730,28 +1749,60 @@ impl Presentation {
         if self.busy {
             return;
         }
-        if let Some((shape, parts)) = self.debris_warmups.pop() {
-            self.shared_structure_debris(&shape, &parts);
+        if let Some((shape, parts)) = self.debris_warmups.pop()
+            && let Some(key) = shared_debris_key(&shape, &parts)
+        {
+            self.shared_structure_debris(&shape, &parts, &key).ahead = true;
         }
     }
 
-    /// The shared model of a structure's fallen parts ([`shared_debris_key`]), built on
-    /// first use, or none for a look of its own.
+    /// The shared look of a structure's fallen parts under `key`
+    /// ([`shared_debris_key`]), built on first use.
     fn shared_structure_debris(
         &mut self,
         shape: &CoverShape,
         parts: &PartSet,
-    ) -> Option<&(BoundedModel, Arc<Node>)> {
-        let key = shared_debris_key(shape, parts)?;
+        key: &str,
+    ) -> &mut SharedDebris {
         let renderer = &mut self.renderer;
-        Some(self.shared_debris.entry(key).or_insert_with(|| {
+        self.shared_debris.entry(key.to_owned()).or_insert_with(|| {
             let node = structure_debris(shape, parts);
-            let bounded = BoundedModel {
+            let look = BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
                 model: renderer.add_falling_debris_model(&node, Lifetime::Round),
             };
-            (bounded, Arc::new(node))
-        }))
+            SharedDebris {
+                look,
+                node: Arc::new(node),
+                users: 0,
+                ahead: false,
+            }
+        })
+    }
+
+    /// A fragment showing shared look `key` left: once no fragment shows it, it waits
+    /// among the idle looks, and the oldest idle ones beyond [`IDLE_SHARED_DEBRIS`]
+    /// release their models.
+    fn release_shared_debris(&mut self, key: String) {
+        let Some(shared) = self.shared_debris.get_mut(&key) else {
+            return;
+        };
+        shared.users -= 1;
+        if shared.users > 0 || shared.ahead {
+            return;
+        }
+        self.idle_debris.push_back(key);
+        while self.idle_debris.len() > IDLE_SHARED_DEBRIS {
+            let oldest = self.idle_debris.pop_front().expect("over the bound");
+            if self
+                .shared_debris
+                .get(&oldest)
+                .is_some_and(|shared| shared.users == 0)
+            {
+                let shared = self.shared_debris.remove(&oldest).expect("looked up");
+                self.renderer.remove_model(shared.look.model);
+            }
+        }
     }
 
     /// Build the next of `plan`'s combined covers' models into its root; false once
@@ -3144,13 +3195,19 @@ impl Presentation {
     }
 
     fn update_fragments(&mut self, state: &RenderState) {
+        let mut gone_shared = Vec::new();
         self.live.clear();
         self.live.extend(state.fragments.iter().map(|f| f.id));
         for (_, view) in self.fragments.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.instance);
-            if let FragmentLook::Owned(model, _) = view.look {
-                self.renderer.remove_model(model);
+            match view.look {
+                FragmentLook::Owned(model, _) => self.renderer.remove_model(model),
+                FragmentLook::Shared(_, key) => gone_shared.push(key),
+                _ => {}
             }
+        }
+        for key in gone_shared.drain(..) {
+            self.release_shared_debris(key);
         }
         for (model, instance) in self.piles.retain(&self.live) {
             self.renderer.remove_instance(instance);
@@ -3215,7 +3272,7 @@ impl Presentation {
                             vehicle(*kind).scale as f32,
                             self.library.wrecks[&(*kind, *team, *part)].bounds,
                         ),
-                        FragmentLook::Owned(_, bounds) | FragmentLook::Shared(bounds) => {
+                        FragmentLook::Owned(_, bounds) | FragmentLook::Shared(bounds, _) => {
                             (1.0, *bounds)
                         }
                         FragmentLook::Piece => unreachable!("handled above"),
@@ -3297,10 +3354,13 @@ impl Presentation {
             // ground centre, where the body started.
             let cover = covers.iter().find(|cover| cover.id == structure)?;
             let shape = CoverShape::from(cover);
-            if let Some((bounded, node)) = self.shared_structure_debris(&shape, &parts) {
-                let (model, bounds, node) = (bounded.model, bounded.bounds, node.clone());
+            if let Some(key) = shared_debris_key(&shape, &parts) {
+                let shared = self.shared_structure_debris(&shape, &parts, &key);
+                shared.users += 1;
+                let (model, bounds, node) =
+                    (shared.look.model, shared.look.bounds, shared.node.clone());
                 self.piles.track(fragment.id, structure, node, self.time);
-                (model, FragmentLook::Shared(bounds))
+                (model, FragmentLook::Shared(bounds, key))
             } else {
                 let node = structure_debris(&shape, &parts);
                 let look = structure_debris_look(&mut self.renderer, &node);

@@ -80,6 +80,7 @@ impl Presentation {
         // Their chunks' models are the round's; `reset_round` frees them.
         self.piles.clear();
         self.shared_debris.clear();
+        self.idle_debris.clear();
         self.pickups.clear();
         self.supply_pieces.clear();
         self.mines.clear();
