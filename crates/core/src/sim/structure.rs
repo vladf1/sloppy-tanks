@@ -32,6 +32,7 @@ use super::debris_physics::DebrisMaterial;
 use super::house_layout::{HouseDesign, Roof};
 use super::house_structure::{HouseRole, house_structure};
 use super::kinds::CoverKind;
+use super::structure_physics::ShapeCache;
 use super::timber_layout::TimberJoin;
 use super::timber_structure::{TimberRole, timber_structure};
 use super::tower_structure::{PieceLook, TowerPartKind, tower_structure};
@@ -86,12 +87,16 @@ impl PartSet {
     }
 
     /// The indices in the set, lowest first.
-    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.iter().enumerate().flat_map(|(word, &bits)| {
-            (0..64)
-                .filter(move |bit| bits & (1 << bit) != 0)
-                .map(move |bit| word * 64 + bit)
-        })
+    pub fn iter(&self) -> PartIndices {
+        PartIndices {
+            words: self.0,
+            word: 0,
+        }
+    }
+
+    /// The lowest index in the set.
+    pub fn first(&self) -> Option<usize> {
+        self.iter().next()
     }
 
     pub fn union(&self, other: &Self) -> Self {
@@ -108,6 +113,31 @@ impl PartSet {
             set.insert(index);
         }
         set
+    }
+}
+
+/// A [`PartSet`]'s indices, lowest first: each word's set bits by their trailing zeros
+/// rather than a test of every bit.
+#[derive(Clone, Debug)]
+pub struct PartIndices {
+    words: [u64; MAX_PARTS / 64],
+    word: usize,
+}
+
+impl Iterator for PartIndices {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        while self.word < self.words.len() {
+            let bits = self.words[self.word];
+            if bits != 0 {
+                let bit = bits.trailing_zeros() as usize;
+                self.words[self.word] = bits & (bits - 1);
+                return Some(self.word * 64 + bit);
+            }
+            self.word += 1;
+        }
+        None
     }
 }
 
@@ -194,8 +224,9 @@ pub struct Material {
     pub density: f64,
     pub surface: DebrisMaterial,
     pub breaking: Breaking,
-    /// A strike that breaks the part tears the parts of the same material within this
-    /// reach (m) of where it struck along with it (a crate board's neighbours).
+    /// A strike that breaks the part tears the parts of the same material, held by the
+    /// same parts, within this reach (m) of where it struck along with it (the boards
+    /// nailed to a crate wall's frame).
     pub tear: f64,
 }
 
@@ -577,6 +608,8 @@ pub struct Structure {
     /// Whether a bot shoots its way through it: a crate's frame of battens blocks a
     /// tank until it breaks, which takes several shells, so bots drive round a crate.
     pub breachable: bool,
+    /// Its parts' collider shapes, each built the first time a collider asks for it.
+    pub shapes: ShapeCache,
 }
 
 /// A body of a structure's parts coming down together: its parts, and for a group that
@@ -632,6 +665,7 @@ impl Structure {
             whole: false,
             hinges: false,
             breachable: true,
+            shapes: ShapeCache::default(),
         }
     }
 
@@ -757,13 +791,22 @@ impl Structure {
     /// standing), a span holding by the weaker of its ends. What a part rests on passes
     /// less once less than its seat share still stands firmly held: a part held by less
     /// than [`FIRM`] seats nothing, so this settles until the firm parts no longer change.
-    pub fn stability(&self, standing: &dyn Fn(usize) -> bool) -> Vec<f32> {
-        let mut firm: Vec<bool> = (0..self.parts.len()).map(standing).collect();
+    /// Indexed by part; the entries past the structure's parts are 0.
+    pub fn stability(&self, standing: &dyn Fn(usize) -> bool) -> [f32; MAX_PARTS] {
+        self.stability_with(&Holds::of(self), standing)
+    }
+
+    /// [`Self::stability`] over the structure's [`Holds`], built once for every run of
+    /// the rule that a break makes.
+    fn stability_with(&self, holds: &Holds, standing: &dyn Fn(usize) -> bool) -> [f32; MAX_PARTS] {
+        let count = self.parts.len();
+        let mut firm = PartSet::from_indices((0..count).filter(|&index| standing(index)));
+        let mut support = [0.0f32; MAX_PARTS];
         loop {
-            let support = self.settle(standing, &firm);
-            let next: Vec<bool> = (0..self.parts.len())
-                .map(|index| standing(index) && support[index] >= FIRM)
-                .collect();
+            self.settle(holds, standing, &firm, &mut support);
+            let next = PartSet::from_indices(
+                (0..count).filter(|&index| standing(index) && support[index] >= FIRM),
+            );
             if next == firm {
                 return support;
             }
@@ -771,16 +814,17 @@ impl Structure {
         }
     }
 
-    /// [`Self::stability`] with the parts that seat others given.
-    fn settle(&self, standing: &dyn Fn(usize) -> bool, firm: &[bool]) -> Vec<f32> {
+    /// [`Self::stability`] into `support` with the parts that seat others given.
+    fn settle(
+        &self,
+        holds: &Holds,
+        standing: &dyn Fn(usize) -> bool,
+        firm: &PartSet,
+        support: &mut [f32; MAX_PARTS],
+    ) {
         let count = self.parts.len();
-        // Each part's best offer at each end (in [`end_rank`] order), and whether it spans.
-        let mut best = vec![[0.0f32; 3]; count];
-        let spans: Vec<bool> = self
-            .supports
-            .iter()
-            .map(|supports| supports.iter().any(|support| support.end != End::Any))
-            .collect();
+        // Each part's best offer at each end (in [`end_rank`] order).
+        let mut best = [[0.0f32; 3]; MAX_PARTS];
         let held_by = |best: &[f32; 3], spans: bool, beam: Option<f32>| {
             let ends = match beam {
                 Some(tie) => best[1].min(best[2]).min(best[1] * best[2] / tie),
@@ -788,23 +832,23 @@ impl Structure {
             };
             if spans { best[0].max(ends) } else { best[0] }
         };
-        let mut support = vec![0.0f32; count];
-        let mut settled = vec![false; count];
+        support[..count].fill(0.0);
+        let mut settled = [false; MAX_PARTS];
         for (index, part) in self.parts.iter().enumerate() {
             if part.grounded && standing(index) {
                 support[index] = 1.0;
             }
         }
-        // The parts each part holds, at which end and the share it passes them, so a
-        // settled part offers them its support.
-        let mut holds: Vec<Vec<(u16, usize, f32)>> = vec![Vec::new(); count];
+        // How much of the share each part's seats at each end pass on, from what still
+        // stands firmly under it.
+        let mut seating = [[1.0f32; 3]; MAX_PARTS];
         for (index, supports) in self.supports.iter().enumerate() {
             for end in [End::Any, End::A, End::B] {
                 let (seated, seat) = supports
                     .iter()
                     .filter(|support| support.end == end && support.seat > 0.0)
                     .fold((0.0f32, 0.0f32), |(seated, seat), support| {
-                        let left = if firm[support.by as usize] {
+                        let left = if firm.contains(support.by as usize) {
                             support.seat
                         } else {
                             0.0
@@ -813,21 +857,13 @@ impl Structure {
                     });
                 // Short of the seat it needs a part loses its hold fast: a sheet seated
                 // on a corner post alone is not a sheet held at a sixth of its eave.
-                let seating = if seat > 0.0 {
+                seating[index][end_rank(end)] = if seat > 0.0 {
                     (seated / seat / self.parts[index].seat_needed)
                         .min(1.0)
                         .powi(2)
                 } else {
                     1.0
                 };
-                for support in supports.iter().filter(|support| support.end == end) {
-                    let share = if support.seat > 0.0 {
-                        support.share * seating
-                    } else {
-                        support.share
-                    };
-                    holds[support.by as usize].push((index as u16, end_rank(end), share));
-                }
             }
         }
         // Dijkstra on the best product of shares: every share is at most 1 and a span
@@ -848,37 +884,43 @@ impl Structure {
                 break;
             };
             settled[index] = true;
-            for &(held, end, share) in &holds[index] {
-                let held = held as usize;
+            for hold in holds.of_part(index) {
+                let held = hold.held as usize;
                 if !settled[held] && standing(held) {
+                    let end = hold.end as usize;
+                    let share = if hold.seated {
+                        hold.share * seating[held][end]
+                    } else {
+                        hold.share
+                    };
                     let offered = value * share;
                     if offered > best[held][end] {
                         best[held][end] = offered;
-                        support[held] =
-                            support[held].max(held_by(&best[held], spans[held], self.parts[held].beam));
+                        support[held] = support[held].max(held_by(
+                            &best[held],
+                            holds.spans.contains(held),
+                            self.parts[held].beam,
+                        ));
                     }
                 }
             }
         }
-        support
     }
 
     /// The standing parts (not in `gone`) that can no longer stand, and the groups among
-    /// them that tipped over with where they turn.
-    #[allow(clippy::type_complexity)]
-    fn giving_way(
-        &self,
-        gone: &PartSet,
-        toward: DVec3,
-    ) -> (PartSet, Vec<(PartSet, (DVec3, DVec2))>) {
+    /// them that tipped over with where they turn. Whether a part falls does not depend
+    /// on `toward`, only which way a group tips.
+    pub fn giving_way(&self, gone: &PartSet, toward: DVec3) -> GivingWay {
+        let holds = self.shares.then(|| Holds::of(self));
         let mut falling = PartSet::EMPTY;
         let mut tips = Vec::new();
+        let (mut contacts, mut hull) = (Vec::new(), Hull::default());
         loop {
             let down = gone.union(&falling);
             let standing = |index: usize| !down.contains(index);
             let mut more = PartSet::EMPTY;
-            if self.shares {
-                let stability = self.stability(&standing);
+            if let Some(holds) = &holds {
+                let stability = self.stability_with(holds, &standing);
                 for (index, (part, support)) in self.parts.iter().zip(&stability).enumerate() {
                     if standing(index) && !part.footing && *support < FALL_BELOW {
                         more.insert(index);
@@ -894,11 +936,13 @@ impl Structure {
                 && let Some(rule) = self.tipping
             {
                 let up = PartSet::from_indices((0..self.parts.len()).filter(|&index| standing(index)));
-                for group in self.joined(&up) {
-                    let contacts: Vec<DVec2> = group
-                        .iter()
-                        .flat_map(|index| self.parts[index].contacts.iter().copied())
-                        .collect();
+                for group in self.groups(&up, true) {
+                    contacts.clear();
+                    contacts.extend(
+                        group
+                            .iter()
+                            .flat_map(|index| self.parts[index].contacts.iter().copied()),
+                    );
                     let anchored = group.iter().any(|index| self.parts[index].anchor);
                     let loaded = group.iter().any(|index| self.parts[index].load);
                     // Off the ground a group stands on what the share rule found holding
@@ -907,7 +951,7 @@ impl Structure {
                         continue;
                     }
                     let (_, weight) = self.balance(&group);
-                    let Some(tip) = tipping(&contacts, weight, toward, rule) else {
+                    let Some(tip) = tipping_with(&contacts, weight, toward, rule, &mut hull) else {
                         continue;
                     };
                     // A strip of wall alone that tips over snaps off its stubs on the
@@ -931,7 +975,7 @@ impl Structure {
                 }
             }
             if more.is_empty() {
-                return (falling, tips);
+                return GivingWay { falling, tips };
             }
             falling = falling.union(&more);
         }
@@ -939,7 +983,7 @@ impl Structure {
 
     /// The standing parts (not in `gone`) the structure no longer holds up.
     pub fn unsupported(&self, gone: &PartSet) -> PartSet {
-        self.giving_way(gone, DVec3::ZERO).0
+        self.giving_way(gone, DVec3::ZERO).falling
     }
 
     /// What comes down once the parts in `gone` are out (broken or fallen) and those in
@@ -949,23 +993,29 @@ impl Structure {
     /// (build frame) when its weight lies on the line of its contacts; a part that
     /// detaches from it goes over the same way about its own foot.
     pub fn falls(&self, gone: &PartSet, loose: &PartSet, toward: DVec3) -> Vec<Fall> {
-        let (falling, tips) = self.giving_way(&gone.union(loose), toward);
+        self.falls_after(gone, loose, self.giving_way(&gone.union(loose), toward))
+    }
+
+    /// [`Self::falls`] from what gives way with `gone` and `loose` out, `way`
+    /// ([`Self::giving_way`] of their union).
+    pub fn falls_after(&self, gone: &PartSet, loose: &PartSet, way: GivingWay) -> Vec<Fall> {
+        let GivingWay { falling, tips } = way;
         let mut falling = falling.union(loose);
         let way = tips.first().map(|(_, (_, way))| *way);
-        let detached: Vec<usize> = match way {
-            Some(_) => falling
-                .iter()
-                .filter(|&index| index < self.parts.len() && self.parts[index].detaches)
-                .collect(),
-            None => Vec::new(),
+        let detached = match way {
+            Some(_) => PartSet::from_indices(
+                falling
+                    .iter()
+                    .filter(|&index| index < self.parts.len() && self.parts[index].detaches),
+            ),
+            None => PartSet::EMPTY,
         };
-        for &index in &detached {
+        for index in detached.iter() {
             falling.remove(index);
         }
         let down = gone.union(&falling);
         let mut falls: Vec<Fall> = self
-            .joined(&falling)
-            .into_iter()
+            .groups(&falling, true)
             .map(|parts| {
                 let tip = tips
                     .iter()
@@ -976,7 +1026,7 @@ impl Structure {
             })
             .collect();
         if let Some(way) = way {
-            for index in detached {
+            for index in detached.iter() {
                 let middle = self.parts[index].middle();
                 falls.push(Fall {
                     parts: PartSet::from_indices([index]),
@@ -1018,37 +1068,19 @@ impl Structure {
     /// The groups of `parts` fastened to each other through `parts` alone, each in order
     /// of its lowest part. Footings belong to none: they are the ground.
     pub fn joined(&self, parts: &PartSet) -> Vec<PartSet> {
-        self.groups(parts, true)
+        self.groups(parts, true).collect()
     }
 
-    fn groups(&self, parts: &PartSet, skip_footings: bool) -> Vec<PartSet> {
-        let footing =
-            |index: usize| skip_footings && index < self.parts.len() && self.parts[index].footing;
-        let mut seen = PartSet::EMPTY;
-        let mut groups = Vec::new();
-        for start in parts.iter() {
-            if seen.contains(start) || footing(start) {
-                continue;
-            }
-            let mut group = PartSet::EMPTY;
-            let mut open = vec![start];
-            seen.insert(start);
-            while let Some(index) = open.pop() {
-                group.insert(index);
-                let Some(joints) = self.joints.get(index) else {
-                    continue;
-                };
-                for &next in joints {
-                    let next = next as usize;
-                    if parts.contains(next) && !seen.contains(next) && !footing(next) {
-                        seen.insert(next);
-                        open.push(next);
-                    }
-                }
-            }
-            groups.push(group);
+    /// The groups of `parts` fastened together, as [`Self::joined`] finds them, footings
+    /// left out with `skip_footings`, found one at a time.
+    fn groups(&self, parts: &PartSet, skip_footings: bool) -> Groups<'_> {
+        Groups {
+            structure: self,
+            parts: *parts,
+            starts: parts.iter(),
+            seen: PartSet::EMPTY,
+            skip_footings,
         }
-        groups
     }
 
     /// The weight of `parts` and the point it acts at.
@@ -1086,8 +1118,8 @@ impl Structure {
                 }
             }
         }
-        let pieces: Vec<usize> = rest.iter().filter(|&index| index >= self.parts.len()).collect();
-        for index in pieces {
+        let landed = rest;
+        for index in landed.iter().filter(|&index| index >= self.parts.len()) {
             bodies.push(PartSet::from_indices([index]));
             rest.remove(index);
         }
@@ -1099,15 +1131,17 @@ impl Structure {
                 None => elements.push((key, PartSet::from_indices([index]))),
             }
         }
+        let mut members: Vec<usize> = Vec::new();
         for group in elements.iter().flat_map(|(_, set)| self.groups(set, false)) {
             if coarse {
                 bodies.push(group);
                 continue;
             }
-            let mut members: Vec<usize> = group.iter().collect();
+            members.clear();
+            members.extend(group.iter());
             let count = members.len();
             if count <= 2 {
-                bodies.extend(members.into_iter().map(|part| PartSet::from_indices([part])));
+                bodies.extend(members.iter().map(|&part| PartSet::from_indices([part])));
                 continue;
             }
             let seed = members[0] + self.variant as usize;
@@ -1120,7 +1154,8 @@ impl Structure {
                 at(a).total_cmp(&at(b)).then(a.cmp(&b))
             });
             // Unequal shares, the largest first or last as the seed has it.
-            let mut weights: Vec<f64> = [4.0, 2.5, 1.5, 1.0][..pieces].to_vec();
+            let mut shares = [4.0, 2.5, 1.5, 1.0];
+            let weights = &mut shares[..pieces];
             if seed % 2 == 1 {
                 weights.reverse();
             }
@@ -1139,25 +1174,174 @@ impl Structure {
                 start += size;
             }
         }
-        if !coarse {
-            // A part a landing left on its own breaks along its own pieces.
-            bodies = bodies
-                .into_iter()
-                .flat_map(|body| {
-                    match self.breakups.iter().find(|breakup| breakup.alone && breakup.needs == body) {
-                        Some(breakup) => breakup
+        // A part a landing left on its own breaks along its own pieces.
+        let alone = |body: &PartSet| {
+            self.breakups
+                .iter()
+                .find(|breakup| breakup.alone && breakup.needs == *body)
+        };
+        if !coarse && bodies.iter().any(|body| alone(body).is_some()) {
+            let mut split = Vec::with_capacity(bodies.len());
+            for body in bodies {
+                match alone(&body) {
+                    Some(breakup) => split.extend(
+                        breakup
                             .pieces
                             .iter()
-                            .map(|&piece| PartSet::from_indices([piece as usize]))
-                            .collect(),
-                        None => vec![body],
-                    }
-                })
-                .collect();
+                            .map(|&piece| PartSet::from_indices([piece as usize])),
+                    ),
+                    None => split.push(body),
+                }
+            }
+            bodies = split;
         }
         bodies.sort_by_key(|body| body.iter().next().unwrap_or(0));
         bodies
     }
+}
+
+/// What gives way once some parts are out ([`Structure::giving_way`]): the standing
+/// parts that can no longer stand, and the groups among them that tipped over with where
+/// they turn.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GivingWay {
+    pub falling: PartSet,
+    pub tips: Vec<(PartSet, (DVec3, DVec2))>,
+}
+
+/// The share rule's supports turned round: for each part, the parts it holds up, at
+/// which end and the share it passes them (before its seats are counted), so a settled
+/// part offers them its support. They follow from the supports alone, so one break builds
+/// them once for every pass of the rule.
+struct Holds {
+    /// Where each part's holds start in `links`, and past the last the end of them.
+    start: Vec<u32>,
+    links: Vec<Hold>,
+    /// The parts that span between two ends.
+    spans: PartSet,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Hold {
+    held: u16,
+    end: u8,
+    share: f32,
+    /// It seats the part it holds: the share falls with what still stands firmly there.
+    seated: bool,
+}
+
+impl Holds {
+    /// Each holder's holds in the order a list per holder had them: by the part held,
+    /// then its end in [`end_rank`] order, then its supports' order.
+    fn of(structure: &Structure) -> Self {
+        let count = structure.parts.len();
+        debug_assert!(count <= MAX_PARTS);
+        let ends = [End::Any, End::A, End::B];
+        let mut start = vec![0u32; count + 1];
+        for supports in &structure.supports {
+            for support in supports {
+                start[support.by as usize + 1] += 1;
+            }
+        }
+        for index in 0..count {
+            start[index + 1] += start[index];
+        }
+        let mut links = vec![Hold::default(); start[count] as usize];
+        // Fill each holder's run with its start as a cursor, which ends at the next
+        // holder's start; shifted back, the starts are restored.
+        for (index, supports) in structure.supports.iter().enumerate() {
+            for end in ends {
+                for support in supports.iter().filter(|support| support.end == end) {
+                    let cursor = &mut start[support.by as usize];
+                    links[*cursor as usize] = Hold {
+                        held: index as u16,
+                        end: end_rank(end) as u8,
+                        share: support.share,
+                        seated: support.seat > 0.0,
+                    };
+                    *cursor += 1;
+                }
+            }
+        }
+        for index in (1..=count).rev() {
+            start[index] = start[index - 1];
+        }
+        start[0] = 0;
+        let spans = PartSet::from_indices(
+            structure
+                .supports
+                .iter()
+                .enumerate()
+                .filter(|(_, supports)| supports.iter().any(|support| support.end != End::Any))
+                .map(|(index, _)| index),
+        );
+        Self {
+            start,
+            links,
+            spans,
+        }
+    }
+
+    /// The parts `holder` holds.
+    fn of_part(&self, holder: usize) -> &[Hold] {
+        &self.links[self.start[holder] as usize..self.start[holder + 1] as usize]
+    }
+}
+
+/// The groups of a set of parts fastened together, each in order of its lowest part
+/// ([`Structure::joined`]).
+struct Groups<'a> {
+    structure: &'a Structure,
+    parts: PartSet,
+    starts: PartIndices,
+    seen: PartSet,
+    skip_footings: bool,
+}
+
+impl Iterator for Groups<'_> {
+    type Item = PartSet;
+
+    fn next(&mut self) -> Option<PartSet> {
+        let structure = self.structure;
+        let skip_footings = self.skip_footings;
+        let footing = |index: usize| {
+            skip_footings && index < structure.parts.len() && structure.parts[index].footing
+        };
+        for start in self.starts.by_ref() {
+            if self.seen.contains(start) || footing(start) {
+                continue;
+            }
+            // What `start` reaches through the parts no group has taken: the same set
+            // whatever order the open parts are taken in.
+            let mut group = PartSet::EMPTY;
+            let mut open = PartSet::from_indices([start]);
+            self.seen.insert(start);
+            while let Some(index) = open.first() {
+                open.remove(index);
+                group.insert(index);
+                let Some(joints) = structure.joints.get(index) else {
+                    continue;
+                };
+                for &next in joints {
+                    let next = next as usize;
+                    if self.parts.contains(next) && !self.seen.contains(next) && !footing(next) {
+                        self.seen.insert(next);
+                        open.insert(next);
+                    }
+                }
+            }
+            return Some(group);
+        }
+        None
+    }
+}
+
+/// Room for a convex hull and the sorted points it is taken from, kept across the groups
+/// one break tests for tipping.
+#[derive(Default)]
+struct Hull {
+    sorted: Vec<DVec2>,
+    points: Vec<DVec2>,
 }
 
 /// Whether a group resting on `contacts` with its weight at `weight` tips under `rule`,
@@ -1171,6 +1355,17 @@ pub fn tipping(
     toward: DVec3,
     rule: Tipping,
 ) -> Option<(DVec3, DVec2)> {
+    tipping_with(contacts, weight, toward, rule, &mut Hull::default())
+}
+
+/// [`tipping`] with room for its hull.
+fn tipping_with(
+    contacts: &[DVec2],
+    weight: DVec3,
+    toward: DVec3,
+    rule: Tipping,
+    room: &mut Hull,
+) -> Option<(DVec3, DVec2)> {
     let at = DVec2::new(weight.x, weight.z);
     let fallback = {
         let toward = DVec2::new(toward.x, toward.z) - at;
@@ -1181,7 +1376,8 @@ pub fn tipping(
         }
     };
     let ground = |p: DVec2| DVec3::new(p.x, 0.0, p.y);
-    let hull = convex_hull(contacts);
+    convex_hull(contacts, room);
+    let hull = &room.points;
     match hull.len() {
         0 => Some((ground(at), fallback)),
         1 => {
@@ -1236,17 +1432,20 @@ pub fn tipping(
     }
 }
 
-/// The convex hull of `points`, counter-clockwise, without collinear points: the two ends
-/// of a line of them, or the one place they all are.
-fn convex_hull(points: &[DVec2]) -> Vec<DVec2> {
-    let mut sorted: Vec<DVec2> = points.to_vec();
+/// The convex hull of `points` into `room.points`, counter-clockwise, without collinear
+/// points: the two ends of a line of them, or the one place they all are.
+fn convex_hull(points: &[DVec2], room: &mut Hull) {
+    let Hull { sorted, points: hull } = room;
+    sorted.clear();
+    sorted.extend_from_slice(points);
     sorted.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     sorted.dedup_by(|a, b| a.distance(*b) < 1e-9);
+    hull.clear();
     if sorted.len() < 3 {
-        return sorted;
+        hull.extend_from_slice(sorted);
+        return;
     }
     let turns_left = |o: DVec2, a: DVec2, b: DVec2| (a - o).perp_dot(b - o) > 1e-9;
-    let mut hull: Vec<DVec2> = Vec::new();
     // Andrew's monotone chain: the lower hull left to right, then the upper back.
     for pass in [false, true] {
         let start = hull.len();
@@ -1259,19 +1458,19 @@ fn convex_hull(points: &[DVec2]) -> Vec<DVec2> {
         };
         if pass {
             for &p in sorted.iter().rev() {
-                chain(p, &mut hull);
+                chain(p, hull);
             }
         } else {
-            for &p in &sorted {
-                chain(p, &mut hull);
+            for &p in sorted.iter() {
+                chain(p, hull);
             }
         }
         hull.pop();
     }
     if hull.len() < 3 {
-        return vec![sorted[0], sorted[sorted.len() - 1]];
+        hull.clear();
+        hull.extend([sorted[0], sorted[sorted.len() - 1]]);
     }
-    hull
 }
 
 #[cfg(test)]

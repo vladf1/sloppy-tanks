@@ -228,6 +228,8 @@ pub struct RoomSession<F: HostFactory, S: RoomSocket> {
     load: Load,
     /// The host's input lapses at the previous sample.
     sampled_lapses: u64,
+    /// What host calls queue, kept between calls (a nested call starts its own).
+    output: HostOutput,
 }
 
 impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
@@ -251,6 +253,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             ended: false,
             load: Load::default(),
             sampled_lapses: 0,
+            output: HostOutput::default(),
         }
     }
 
@@ -447,9 +450,10 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         let Some(host) = self.host.as_mut() else {
             return;
         };
-        let mut out = HostOutput::default();
+        let mut out = std::mem::take(&mut self.output);
         let result = catch_unwind(AssertUnwindSafe(|| call(host, &mut out)));
-        self.apply(out.take());
+        self.apply(&mut out);
+        self.output = out;
         if result.is_err() {
             self.host_failed();
         }
@@ -464,7 +468,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         let disposed = catch_unwind(AssertUnwindSafe(|| {
             host.dispose("simulation-error", &mut out)
         }));
-        self.apply(out.take());
+        self.apply(&mut out);
         if disposed.is_err() {
             // The host cannot even end cleanly: drop it and release its sockets here.
             self.host = None;
@@ -473,8 +477,8 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         }
     }
 
-    fn apply(&mut self, events: Vec<HostEvent>) {
-        for event in events {
+    fn apply(&mut self, out: &mut HostOutput) {
+        for event in out.drain() {
             match event {
                 HostEvent::Send {
                     connection,

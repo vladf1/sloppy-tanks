@@ -253,6 +253,7 @@ impl MovingBody {
                 near(BodyKind::Fragment, fragment.id, fragment.body, loose_parts);
             }
         }
+        // Nearest first: each body's distance found once, as its search is a scan.
         let gap = |body: &MovingBody| {
             let handle = match body.kind {
                 BodyKind::Cover => simulation
@@ -275,7 +276,9 @@ impl MovingBody {
             })
         };
         if out.len() > MAX_MOVING_BODIES {
-            out.sort_by(|a, b| gap(a).total_cmp(&gap(b)));
+            // Distances are never negative, and such doubles order as their bits do; the
+            // sort keeps equal ones in order, as a stable sort by distance does.
+            out.sort_by_cached_key(|body| gap(body).to_bits());
             out.truncate(MAX_MOVING_BODIES);
         }
     }
@@ -358,6 +361,40 @@ struct CoverBody {
     cracked: PartSet,
     /// The scene sync that last found its record.
     seen: u64,
+}
+
+/// What a body of the predicted world stands for, kept in its user data, so a contact or
+/// a query finds the record behind a body without searching for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Owner {
+    Tank(u32),
+    Cover(u32),
+    Debris(u32),
+}
+
+const TANK_BODY: u128 = 1 << 64;
+const COVER_BODY: u128 = 2 << 64;
+const DEBRIS_BODY: u128 = 3 << 64;
+
+impl Owner {
+    fn user_data(self) -> u128 {
+        match self {
+            Owner::Tank(id) => TANK_BODY | u128::from(id),
+            Owner::Cover(id) => COVER_BODY | u128::from(id),
+            Owner::Debris(id) => DEBRIS_BODY | u128::from(id),
+        }
+    }
+
+    /// The owner a body's user data names; none for the viewer's hull and the ground.
+    fn of(user_data: u128) -> Option<Owner> {
+        let id = user_data as u32;
+        match user_data & !u128::from(u32::MAX) {
+            TANK_BODY => Some(Owner::Tank(id)),
+            COVER_BODY => Some(Owner::Cover(id)),
+            DEBRIS_BODY => Some(Owner::Debris(id)),
+            _ => None,
+        }
+    }
 }
 
 /// What the viewer's hull touched in a predicted step, for the correction statistics.
@@ -445,6 +482,8 @@ pub struct TankPredictor {
     sync: u64,
     /// Storage reused for their ids.
     gone: Vec<u32>,
+    /// Storage reused for the colliders of a structure's parts that broke.
+    broken: Vec<ColliderHandle>,
 }
 
 impl Default for TankPredictor {
@@ -457,6 +496,7 @@ impl Default for TankPredictor {
             debris: BTreeMap::new(),
             sync: 0,
             gone: Vec::new(),
+            broken: Vec::new(),
         }
     }
 }
@@ -485,7 +525,7 @@ impl TankPredictor {
                 continue;
             };
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
-            if current != Some(form) {
+            if current != Some(form) && !self.break_parts(cover.id, form) {
                 let mut layout = None;
                 if let Some(old) = self.covers.remove(&cover.id) {
                     self.world.remove_body(old.body);
@@ -497,6 +537,7 @@ impl TankPredictor {
                     structure_of(cover.kind, x, z, w, d, cover.h, cover.timber_join)
                 });
                 let body = self.insert_cover(cover, form, layout.as_deref());
+                self.world.bodies[body].user_data = Owner::Cover(cover.id).user_data();
                 let movable = cover.kind.movable();
                 self.covers.insert(
                     cover.id,
@@ -539,6 +580,41 @@ impl TankPredictor {
                 self.world.remove_body(old.body);
             }
         }
+    }
+
+    /// Takes the parts that broke out of a structure standing as its parts, as the host
+    /// takes their colliders out, when `form` only adds broken parts to the ones it had.
+    /// Returns false, changing nothing, when the structure needs building again: it stood
+    /// whole (one collider) or a rebuild restored parts.
+    fn break_parts(&mut self, id: u32, form: CoverForm) -> bool {
+        let Some(existing) = self.covers.get_mut(&id) else {
+            return false;
+        };
+        let (CoverForm::Parts(held), CoverForm::Parts(broken)) = (existing.form, form) else {
+            return false;
+        };
+        let Some(layout) = existing.layout.as_deref() else {
+            return false;
+        };
+        if (layout.whole && held.is_empty()) || held.union(&broken) != broken {
+            return false;
+        }
+        self.broken.clear();
+        self.broken.extend(
+            self.world.bodies[existing.body]
+                .colliders()
+                .iter()
+                .copied()
+                .filter(|&collider| {
+                    let part = self.world.colliders[collider].user_data as usize;
+                    broken.contains(part) && !held.contains(part)
+                }),
+        );
+        for collider in self.broken.drain(..) {
+            self.world.remove_collider(collider);
+        }
+        existing.form = form;
+        true
     }
 
     /// Matches what moves to a received scene: the bodies the host reported moving near the
@@ -591,6 +667,7 @@ impl TankPredictor {
                     }
                 };
                 let body = self.world.insert_body(colliders.0);
+                self.world.bodies[body].user_data = Owner::Debris(fragment.id).user_data();
                 // As the host steps it: its own pieces with two more solver iterations.
                 if fragment.structure_parts.is_none() {
                     self.world.bodies[body].set_additional_solver_iterations(2);
@@ -741,6 +818,7 @@ impl TankPredictor {
                 self.world.remove_body(old.body);
             }
             let body = self.insert_tank(tank.kind, tank.position);
+            self.world.bodies[body].user_data = Owner::Tank(tank.id).user_data();
             self.tanks.insert(
                 tank.id,
                 OtherTank {
@@ -874,16 +952,14 @@ impl TankPredictor {
                 let Some(body) = self.world.colliders[other].parent() else {
                     continue;
                 };
-                if let Some((&id, _)) = self.tanks.iter().find(|(_, tank)| tank.body == body) {
-                    touched(Some(Moved::Tank(id)));
-                } else if let Some((&id, cover)) =
-                    self.covers.iter().find(|(_, cover)| cover.body == body)
-                {
-                    touched(cover.movable.then_some(Moved::Cover(id)));
-                } else if let Some((&id, _)) =
-                    self.debris.iter().find(|(_, debris)| debris.body == body)
-                {
-                    touched(Some(Moved::Fragment(id)));
+                match Owner::of(self.world.bodies[body].user_data) {
+                    Some(Owner::Tank(id)) => touched(Some(Moved::Tank(id))),
+                    Some(Owner::Cover(id)) => {
+                        let movable = self.covers.get(&id).is_some_and(|cover| cover.movable);
+                        touched(movable.then_some(Moved::Cover(id)));
+                    }
+                    Some(Owner::Debris(id)) => touched(Some(Moved::Fragment(id))),
+                    None => {}
                 }
             }
         }
@@ -957,10 +1033,10 @@ impl CoverCast for TankPredictor {
         // An intact crate or timber wall stands as one collider; a part of it the shell
         // broke through is named with its collider. Past one, the structure is queried by
         // the shapes of the parts still standing, as the host splits it and re-queries.
-        let breached: Vec<(u64, usize)> = past.iter().filter_map(|&key| whole_part(key)).collect();
+        let breached = past.iter().filter_map(|&key| whole_part(key));
         let through = |collider: ColliderHandle, _: &Collider| {
             let key = collider_key(collider);
-            !past.contains(&key) && !breached.iter().any(|&(whole, _)| whole == key)
+            !past.contains(&key) && !breached.clone().any(|(whole, _)| whole == key)
         };
         let mut filter = query_filter(group::COVER_QUERY);
         if !past.is_empty() {
@@ -970,31 +1046,40 @@ impl CoverCast for TankPredictor {
             .world
             .cast_ray_and_get_normal(&ray, distance as f32, true, filter)
             .map(|(collider, hit)| (collider, hit, None));
-        for whole in breached.iter().map(|&(whole, _)| whole).collect::<std::collections::BTreeSet<_>>() {
-            let Some((collider, _)) = self.world.colliders.iter().find(|(handle, _)| collider_key(*handle) == whole) else {
+        // Each breached structure once, in the order of its collider's key.
+        let mut last = None;
+        while let Some(whole) = breached
+            .clone()
+            .map(|(whole, _)| whole)
+            .filter(|&whole| last.is_none_or(|last| whole > last))
+            .min()
+        {
+            last = Some(whole);
+            let Some(collider) = collider_of_key(whole).filter(|&collider| {
+                self.world.colliders.get(collider).is_some()
+            }) else {
                 continue;
             };
-            let Some(cover) = self.covers.values().find(|cover| Some(cover.body) == self.world.colliders[collider].parent())
-            else {
+            let Some(cover) = self.cover_of(Some(collider)) else {
                 continue;
             };
             let Some(layout) = cover.layout.as_deref() else {
                 continue;
             };
-            let gone: Vec<usize> = breached.iter().filter(|&&(key, _)| key == whole).map(|&(_, part)| part).collect();
+            let gone = |index: usize| breached.clone().any(|part| part == (whole, index));
             let body = *self.world.bodies[cover.body].position();
-            for index in (0..layout.parts.len()).filter(|index| !gone.contains(index)) {
-                let shape = part_collider(layout, index, -layout.debris.seam).build();
-                let pose = body * *shape.position_wrt_parent().unwrap_or(&Pose::IDENTITY);
+            for index in (0..layout.parts.len()).filter(|&index| !gone(index)) {
+                // The layout keeps each part's shape once built (`ShapeCache`).
+                let part = part_collider(layout, index, -layout.debris.seam);
+                let pose = body * part.position;
                 let reach = nearest.as_ref().map_or(distance as f32, |(_, hit, _)| hit.time_of_impact);
-                if let Some(hit) = shape.shape().cast_ray_and_get_normal(&pose, &ray, reach, true) {
+                if let Some(hit) = part.shape.cast_ray_and_get_normal(&pose, &ray, reach, true) {
                     nearest = Some((collider, hit, Some(index)));
                 }
             }
         }
         let (collider, hit, breached_part) = nearest?;
-        let body = self.world.colliders[collider].parent();
-        let cover = self.covers.values().find(|cover| Some(cover.body) == body);
+        let cover = self.cover_of(Some(collider));
         let part = cover.and_then(|cover| {
             let user = self.world.colliders[collider].user_data;
             let index = match (breached_part, user) {
@@ -1036,6 +1121,26 @@ impl CoverCast for TankPredictor {
             part,
         })
     }
+}
+
+impl TankPredictor {
+    /// The replicated cover a collider of the predicted world belongs to.
+    fn cover_of(&self, collider: Option<ColliderHandle>) -> Option<&CoverBody> {
+        let body = self.world.colliders.get(collider?)?.parent()?;
+        match Owner::of(self.world.bodies[body].user_data)? {
+            Owner::Cover(id) => self.covers.get(&id),
+            _ => None,
+        }
+    }
+}
+
+
+/// The collider a key names ([`collider_key`]).
+fn collider_of_key(key: u64) -> Option<ColliderHandle> {
+    Some(ColliderHandle::from_raw_parts(
+        u32::try_from(key & u64::from(u32::MAX)).ok()?,
+        u32::try_from(key >> 32).ok()?,
+    ))
 }
 
 /// Marks a key naming a part of an intact structure's one collider.
@@ -1199,6 +1304,43 @@ mod tests {
             next.distance - first.distance
         );
         assert!(next.part.is_some_and(|hit| hit.key != part.key));
+    }
+
+    #[test]
+    fn a_shell_past_a_breached_board_strikes_a_part_where_the_part_stands() {
+        // Past a board of an intact crate, each shell meets a standing part where that
+        // part stands, as the host's split crate would have it, not at the crate's middle.
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        let crate_index =
+            sim.add_cover(&CoverDef::new(CoverKind::Cargo, 0.0, 40.0, 3.0, 3.0, 2.6, 80.0, 0xb47a49));
+        let scene = mirrored(&sim);
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.world.step();
+        let direction = Vec2::new(0.0, -1.0);
+        for x in [-1.2, -0.6, 0.0, 0.4, 0.9, 1.3] {
+            let origin = Point3::new(x, 1.1, 50.0);
+            let first = predictor.cast_cover(origin, direction, 20.0).expect("the crate");
+            let Some(part) = first.part else {
+                continue;
+            };
+            let Some(next) = predictor.cast_cover_past(origin, direction, 20.0, &[part.key]) else {
+                continue;
+            };
+            let (_, index) = whole_part(next.part.expect("a part of the crate").key)
+                .expect("a part of the intact crate");
+            let (min, max) = crate::sim::structure_physics::part_box(&sim.covers[crate_index], index)
+                .expect("a standing part");
+            let at = Point3::new(origin.x, origin.y, origin.z - next.distance);
+            let slack = 0.02;
+            assert!(
+                (min.x - slack..=max.x + slack).contains(&at.x)
+                    && (min.y - slack..=max.y + slack).contains(&at.y)
+                    && (min.z - slack..=max.z + slack).contains(&at.z),
+                "x {x}: struck part {index} at {at:?}, which stands within {min:?}..{max:?}"
+            );
+        }
     }
 
     #[test]

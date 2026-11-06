@@ -410,10 +410,13 @@ pub(super) fn forecast(
             .map_or(speed, |thrust| thrust.top_speed.max(speed));
         let origin = Point3::new(current.x, current.launch.y.unwrap_or(1.0), current.z);
         let range = top_speed * COMBAT.projectile_lifetime;
-        let mut past: Vec<u64> = Vec::new();
+        // The parts the shell broke through on this leg, in order.
+        let mut through = [0u64; MAX_PARTS_PAST];
+        let mut passed = 0;
         let hit = loop {
             let reach = fuse.map_or(range, |fuse| fuse.min(range));
-            let hit = cover.cast_cover_past(origin, direction, reach, &past);
+            let past = &through[..passed];
+            let hit = cover.cast_cover_past(origin, direction, reach, past);
             let Some(part) = hit.and_then(|hit| hit.part) else {
                 break hit;
             };
@@ -421,8 +424,9 @@ pub(super) fn forecast(
             let hit_tick = current.tick + flight_ticks(&current, hit.distance);
             let impact = impact_at(&current, hit_tick);
             match part_strike(&current.launch, &part, damage, fuse.is_some()) {
-                PartStrike::Through if !past.contains(&part.key) && past.len() < MAX_PARTS_PAST => {
-                    past.push(part.key);
+                PartStrike::Through if !past.contains(&part.key) && passed < MAX_PARTS_PAST => {
+                    through[passed] = part.key;
+                    passed += 1;
                     if current.launch.weapon != Weapon::Piercing {
                         fuse = Some(hit.distance + FUSE_DISTANCE);
                         entry = part.cottage.then_some(hit_tick);

@@ -229,6 +229,14 @@ pub struct MatchHost {
     lifecycle: Vec<Note>,
     /// Frames captured since the last batch: tick, stream seq and body.
     frames: Vec<(u64, u64, Vec<u8>)>,
+    /// Bodies of frames already sent, for the next captures to write into.
+    spare_frames: Vec<Vec<u8>>,
+    /// Each tick's seat commands, kept so a tick with the same seats allocates nothing.
+    commands: BTreeMap<u32, VehicleCommand>,
+    /// The tanks that gave a command this tick.
+    commanded: Vec<u32>,
+    /// The bodies moving near one seat's hull, while its batch is written.
+    moving: Vec<MovingBody>,
     empty_since_ms: Option<u64>,
     active_ms: u64,
     scene: Scene,
@@ -267,6 +275,10 @@ impl MatchHost {
             cursor: 0,
             lifecycle: Vec::new(),
             frames: Vec::new(),
+            spare_frames: Vec::new(),
+            commands: BTreeMap::new(),
+            commanded: Vec::new(),
+            moving: Vec::new(),
             empty_since_ms: Some(options.now_ms),
             active_ms: options.now_ms,
             scene: Scene::default(),
@@ -308,6 +320,11 @@ impl MatchHost {
     /// The events produced since the last call, in order.
     pub fn take_events(&mut self) -> Vec<HostEvent> {
         std::mem::take(&mut self.out)
+    }
+
+    /// [`take_events`](Self::take_events) as a drain, keeping the queue's capacity.
+    pub fn drain_output(&mut self) -> std::vec::Drain<'_, HostEvent> {
+        self.out.drain(..)
     }
 
     fn send(&mut self, connection: ConnectionId, text: String) {
@@ -1115,17 +1132,22 @@ impl MatchHost {
         if simulation.match_state.phase != MatchPhase::Playing {
             return;
         }
-        let mut commands: BTreeMap<u32, VehicleCommand> = BTreeMap::new();
+        // The map keeps last tick's entries, overwritten in place, so its nodes stay;
+        // tanks that gave no command this tick leave it.
+        let (commands, commanded) = (&mut self.commands, &mut self.commanded);
+        commanded.clear();
         for seat in &mut self.seats {
             if let Some(controls) = seat.controls.as_mut() {
                 let command = controls.command(simulation, tick, now_ms as f64);
                 self.input_lapses += controls.take_lapses();
                 if let Some(command) = command {
                     commands.insert(controls.tank_id, command);
+                    commanded.push(controls.tank_id);
                 }
             }
         }
-        simulation.step_with(&commands);
+        commands.retain(|tank, _| commanded.contains(tank));
+        simulation.step_with(commands);
         if let Some(hook) = self.tick_hook.as_mut() {
             hook(simulation, tick);
         }
@@ -1149,8 +1171,10 @@ impl MatchHost {
         {
             self.capture_frame(tick);
         }
-        let frames = std::mem::take(&mut self.frames);
-        let mut sends = Vec::new();
+        let mut frames = std::mem::take(&mut self.frames);
+        let mut moving = std::mem::take(&mut self.moving);
+        // Sends follow whatever this advance already queued, in client order.
+        let mut out = std::mem::take(&mut self.out);
         for (connection, client) in &self.clients {
             let Some(seat) = self.seat_index(&client.player_id) else {
                 continue;
@@ -1167,15 +1191,14 @@ impl MatchHost {
             let index = controls.and_then(|controls| simulation.tank_index(controls.tank_id));
             let hull = index.and_then(|index| HullState::capture(simulation, index, tick));
             // And what moves near it, which prediction carries on.
-            let mut bodies = Vec::new();
+            moving.clear();
             if let (Some(index), Some(_)) = (index, hull) {
-                MovingBody::capture_near(simulation, index, &mut bodies);
+                MovingBody::capture_near(simulation, index, &mut moving);
             }
-            // A baseline sent since the previous batch already shows its earlier frames.
-            let unseen: Vec<_> = frames
-                .iter()
-                .filter(|(_, seq, _)| *seq > client.baseline_seq)
-                .collect();
+            // A baseline sent since the previous batch already shows its earlier frames;
+            // frames are in sequence order.
+            let seen = frames.partition_point(|(_, seq, _)| *seq <= client.baseline_seq);
+            let unseen = &frames[seen..];
             // Clients read at most MAX_BATCH_FRAMES per message; seats joining between
             // two intervals each add a frame, so a longer run goes out as several batches.
             for chunk in unseen.chunks(MAX_BATCH_FRAMES) {
@@ -1192,21 +1215,26 @@ impl MatchHost {
                     &ack,
                     first_seq,
                     chunk.len(),
-                    hull.as_ref().map(|hull| (hull, bodies.as_slice())),
+                    hull.as_ref().map(|hull| (hull, moving.as_slice())),
                 );
                 for (frame_tick, _, body) in chunk {
                     super::wire::put_varint(&mut message, last_tick - frame_tick);
                     message.extend_from_slice(body);
                 }
-                sends.push((*connection, message));
+                out.push(HostEvent::Send {
+                    connection: *connection,
+                    message: Message::Binary(message),
+                });
             }
         }
-        for (connection, message) in sends {
-            self.out.push(HostEvent::Send {
-                connection,
-                message: Message::Binary(message),
-            });
+        self.out = out;
+        self.moving = moving;
+        for (_, _, body) in frames.drain(..) {
+            if self.spare_frames.len() < MAX_BATCH_FRAMES {
+                self.spare_frames.push(body);
+            }
         }
+        self.frames = frames;
     }
 
     fn capture_frame(&mut self, tick: u64) {
@@ -1215,11 +1243,14 @@ impl MatchHost {
             return;
         };
         self.scene.capture_from(simulation);
-        let frame = stream.snapshot(
+        let mut frame = self.spare_frames.pop().unwrap_or_default();
+        frame.clear();
+        stream.snapshot_into(
             &mut self.scene,
             tick,
             &self.events,
             self.shot_paths.entries(),
+            &mut frame,
         );
         self.frames.push((tick, stream.seq, frame));
         self.events.clear();

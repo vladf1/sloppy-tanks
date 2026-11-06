@@ -52,6 +52,7 @@ mod shoot_mines;
 mod shooter_first;
 mod simulation_setup;
 mod stress_test_level;
+mod structure_blasts;
 mod superstress_level;
 mod tank_contact;
 mod tank_destruction;

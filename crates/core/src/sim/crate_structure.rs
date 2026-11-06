@@ -48,8 +48,8 @@ pub fn crate_board_part(h: f64, face: usize, row: usize) -> usize {
 }
 
 /// A board or the lid breaks to a standard shell (40) that strikes it, tearing the
-/// boards either side of the hit with it; a wall's frame of battens takes a few shells
-/// at its boards, and the base of skids more.
+/// boards of its wall with it; a wall's frame of battens takes a few shells at its
+/// boards, and the base of skids more.
 const BOARDS: Material = Material {
     strength: 30.0,
     density: 0.35,
@@ -57,9 +57,10 @@ const BOARDS: Material = Material {
     breaking: Breaking::Splinters,
     tear: BOARD_TEAR,
 };
-/// A struck board tears the boards whose edge lies within this of the hit (m): the one
-/// above and below it, a third if the hit is near a seam.
-const BOARD_TEAR: f64 = 0.35;
+/// A struck board tears the boards of its wall whose edge lies within this of the hit
+/// (m): from any shell's height, every board of the wall up to a 2.6 m crate's top, so
+/// one shell opens the face it strikes down to its frame.
+const BOARD_TEAR: f64 = 1.4;
 const FRAME: Material = Material {
     strength: 80.0,
     tear: 0.0,

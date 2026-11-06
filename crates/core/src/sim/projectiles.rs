@@ -207,11 +207,13 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     let budget = simulation.shots.len() * (COMBAT.contacts_per_shot + defenses) + 1;
     let mut event = 0;
     let mut tank_positions = std::mem::take(&mut simulation.projectile_tank_positions);
+    let mut structure_bodies = std::mem::take(&mut simulation.projectile_structure_bodies);
     while remaining > COMBAT.contact_time_epsilon && !simulation.shots.is_empty() && event < budget
     {
         let (next, time) = find_next_contact(
             simulation,
             &mut tank_positions,
+            &mut structure_bodies,
             remaining,
             dt - remaining,
             if sweep_tank_motion { dt } else { 0.0 },
@@ -249,6 +251,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         event += 1;
     }
     simulation.projectile_tank_positions = tank_positions;
+    simulation.projectile_structure_bodies = structure_bodies;
 }
 
 /// The earliest contact found for one shell, returned beside that shell's index; indices
@@ -281,10 +284,12 @@ enum Contact {
 }
 
 /// Query without moving entities; equal-time contacts preserve the original priority order.
-/// `tank_positions` is scratch space reused across the queries of one tick.
+/// `tank_positions` and `structure_bodies` are scratch space reused across the queries of
+/// a tick.
 fn find_next_contact(
     simulation: &Simulation,
     tank_positions: &mut Vec<Option<Point3>>,
+    structure_bodies: &mut Vec<RigidBodyHandle>,
     limit: f64,
     elapsed: f64,
     tank_frame_delta: f64,
@@ -306,14 +311,24 @@ fn find_next_contact(
     // down to [`LOW_DEBRIS_REACH`] under it.
     let low_half = ((LOW_DEBRIS_REACH - SHELL_HIT_RADIUS) / 2.0) as f32;
     let low_shape = Capsule::new_y(low_half, SHELL_HIT_RADIUS as f32);
-    let structure_bodies: Vec<RigidBodyHandle> = simulation
-        .fragments
-        .iter()
-        .filter(|fragment| structure_debris(fragment))
-        .map(|fragment| fragment.body)
-        .collect();
+    // A resolved contact can split or remove a fallen body, so these are read again for
+    // every query too; sorted, the cast's predicate finds a body by halving.
+    structure_bodies.clear();
+    structure_bodies.extend(
+        simulation
+            .fragments
+            .iter()
+            .filter(|fragment| structure_debris(fragment))
+            .map(|fragment| fragment.body),
+    );
+    structure_bodies.sort_unstable_by_key(|body| body.into_raw_parts());
+    let structure_bodies = &*structure_bodies;
     let in_structure_debris = |_: ColliderHandle, collider: &rapier3d::prelude::Collider| {
-        collider.parent().is_some_and(|body| structure_bodies.contains(&body))
+        collider.parent().is_some_and(|body| {
+            structure_bodies
+                .binary_search_by_key(&body.into_raw_parts(), |body| body.into_raw_parts())
+                .is_ok()
+        })
     };
     for (si, shot) in simulation.shots.iter().enumerate() {
         if shot.life <= time {
