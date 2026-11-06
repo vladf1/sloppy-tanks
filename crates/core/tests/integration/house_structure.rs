@@ -8,7 +8,7 @@ use crate::{net_support, support};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::house_layout::{HousePart, RoofForm};
-use sloppy_core::sim::house_structure::{CHIMNEY_PART, PartKind};
+use sloppy_core::sim::house_structure::{CHIMNEY_PART, CHIMNEY_STACK, POST_FEET, PartKind};
 use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::structure::{PartSet, Structure};
 use sloppy_core::sim::structure_physics::{FUSE_DISTANCE, part_box};
@@ -806,6 +806,21 @@ fn every_placed_cottage_stands_and_drops_a_slope_whose_eave_wall_is_gone() {
     }
 }
 
+/// Where to aim at fragment `id`: the middle of its part nearest its centre of mass, so
+/// a shell meets the body rather than flying down the seam between two of its parts.
+fn aim_at(s: &Simulation, id: u32) -> Point3 {
+    let f = s.fragments.iter().find(|f| f.id == id).expect("the body");
+    let body = &s.world.bodies[f.body];
+    let middle = body.center_of_mass();
+    let at = body
+        .colliders()
+        .iter()
+        .map(|&collider| s.world.colliders[collider].compute_aabb().center())
+        .min_by(|a, b| (*a - middle).length().total_cmp(&(*b - middle).length()))
+        .unwrap_or(middle);
+    Point3::new(at.x.into(), at.y.into(), at.z.into())
+}
+
 /// The cottage's loose bodies: (fragment id, parts, middle, speed).
 fn loose_bodies(s: &Simulation, house: usize) -> Vec<(u32, PartSet, Point3, f64)> {
     s.fragments
@@ -857,7 +872,7 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     assert!(speed < 0.1, "it has come to rest: {speed}");
     let seated = parts
         .iter()
-        .map(|part| (layout.parts[part].min.y + layout.parts[part].max.y) / 2.0)
+        .map(|part| (layout.part(part).min.y + layout.part(part).max.y) / 2.0)
         .sum::<f64>()
         / parts.len() as f64;
     assert!(
@@ -876,7 +891,7 @@ fn fallen_roof(s: &mut Simulation, house: usize) -> u32 {
     for (_, parts, _, _) in &bodies {
         let sheets = parts
             .iter()
-            .filter(|&part| layout.parts[part].house().kind == PartKind::Sheet)
+            .filter(|&part| layout.part(part).house().kind == PartKind::Sheet)
             .count();
         assert!(
             sheets < slope_sheets,
@@ -927,6 +942,7 @@ fn fallen_section_breaks_under_shells(shift: f64) {
         if s.fragments.iter().all(|f| f.id != section) {
             break;
         }
+        let at = aim_at(&s, section);
         fire_at(&mut s, house, at, Weapon::Standard);
         for _ in 0..90 {
             s.events.clear();
@@ -972,24 +988,28 @@ fn fallen_section_breaks_under_shells(shift: f64) {
             "smaller ones"
         );
     }
-    // Shell after shell at what is left of it: each breaks it down further, until
-    // nothing of it is left.
-    let mut remaining = left;
-    for _ in 0..parts.len() * 3 {
-        let Some((_, _, at, _)) = loose_bodies(&s, house)
+    // Shell after shell at what is left of it (its parts and their pieces): each breaks
+    // it down further, until nothing of it is left.
+    let left_of_it = |s: &Simulation| -> usize {
+        loose_bodies(s, house)
+            .iter()
+            .filter(|(_, p, _, _)| p.iter().all(of_it))
+            .map(|(_, p, _, _)| p.len())
+            .sum()
+    };
+    let mut remaining = left_of_it(&s);
+    for _ in 0..parts.len() * 3 + 2 {
+        let Some((id, _, _, _)) = loose_bodies(&s, house)
             .into_iter()
-            .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
+            .filter(|(_, p, _, _)| p.iter().all(of_it))
             .max_by_key(|(id, p, _, _)| (p.len(), std::cmp::Reverse(*id)))
         else {
             break;
         };
+        let at = aim_at(&s, id);
         fire_at(&mut s, house, at, Weapon::Standard);
         run(&mut s, 1.5);
-        let now: usize = loose_bodies(&s, house)
-            .iter()
-            .filter(|(_, p, _, _)| p.iter().all(|part| parts.contains(part)))
-            .map(|(_, p, _, _)| p.len())
-            .sum();
+        let now = left_of_it(&s);
         assert!(now <= remaining, "nothing grows back: {remaining} -> {now}");
         remaining = now;
     }
@@ -1009,11 +1029,12 @@ fn an_armour_piercing_round_breaks_a_fallen_section_and_flies_on() {
 fn armour_piercing_round_breaks_fallen_section(shift: f64) {
     let (mut s, house) = lone_cottage_at(shift);
     let section = fallen_roof(&mut s, house);
-    let (_, parts, at, _) = loose_bodies(&s, house)
+    let (_, parts, _, _) = loose_bodies(&s, house)
         .into_iter()
         .find(|body| body.0 == section)
         .unwrap();
-    fire_at(&mut s, house, at, Weapon::Piercing);
+    let aim = aim_at(&s, section);
+    fire_at(&mut s, house, aim, Weapon::Piercing);
     let mut explosions = 0;
     for _ in 0..90 {
         s.events.clear();
@@ -1591,13 +1612,14 @@ fn a_falling_section_of_wall_and_roof_tips_out_without_lifting_its_roof() {
     for design in VILLAGE_DESIGNS {
         let (mut s, house) = cottage_alone(design);
         let layout = s.covers[house].structure.as_ref().unwrap().layout.clone();
-        // An eave wall's bottom course gone: the wall over it and the roof on it fall
-        // together.
+        // An eave wall's bottom course gone, and the corner posts: the wall over it and
+        // the roof on it fall together.
         let course: Vec<usize> = (0..layout.parts.len())
             .filter(|&index| {
                 layout.parts[index].house().wall == Some(2) && layout.parts[index].grounded
             })
             .chain(0..4)
+            .chain(POST_FEET..POST_FEET + 4)
             .collect();
         s.break_structure(
             house,
@@ -1622,8 +1644,13 @@ fn a_falling_section_of_wall_and_roof_tips_out_without_lifting_its_roof() {
                 let first = *top.entry(f.id).or_insert(high);
                 assert!(
                     high < first + 0.2,
-                    "{design:?}: a falling section's top rose {:.2} m",
-                    high - first
+                    "{design:?}: a falling section's top rose {:.2} m: {:?}",
+                    high - first,
+                    f.structure_parts()
+                        .unwrap()
+                        .iter()
+                        .map(|p| layout.part(p).house().kind)
+                        .collect::<Vec<_>>()
                 );
             }
         }
@@ -1914,4 +1941,108 @@ fn a_broken_chimney_falls_and_lands_as_bricks() {
         });
     }
     assert!(bricks, "it burst into bricks where it landed");
+}
+
+/// A standard shell from a tank at `from` toward `to` as the critics' capture fires it
+/// (from the muzzle, 2.4 m ahead of the hull), flown until it is spent and then left
+/// half a second to settle.
+fn capture_shot(s: &mut Simulation, from: Vec2, to: Vec2) {
+    let (dx, dz) = (to.x - from.x, to.z - from.z);
+    let length = dx.hypot(dz);
+    let muzzle = Vec2::new(from.x + dx / length * 2.4, from.z + dz / length * 2.4);
+    fire_level(s, muzzle, to, 1.0, Weapon::Standard);
+    for _ in 0..260 {
+        idle(s);
+        if s.shots.is_empty() {
+            break;
+        }
+    }
+    run(s, 0.5);
+}
+
+/// Offsets along a face `length` long, `spacing` apart, clear of the corners (the
+/// capture's `along`).
+fn along_face(length: f64, spacing: f64) -> Vec<f64> {
+    let reach = length / 2.0 - 0.4;
+    let count = ((2.0 * reach) / spacing).floor() as usize + 1;
+    (0..count)
+        .map(|i| -reach + 2.0 * reach * i as f64 / (count - 1) as f64)
+        .collect()
+}
+
+/// The critics' one-wall run on the cottage at (24, 0) moved by `shift`: sixteen shells
+/// at one spot of the +z wall, ten across the +z and -x walls, then heavy bursts along
+/// the -z wall at hull and plate height bring it down; returns the simulation 25 s on.
+fn one_wall_run(shift: f64) -> (Simulation, usize) {
+    let (mut s, house) = lone_cottage_at(shift);
+    let c = s.covers[house].clone();
+    let (cx, cz, w, d) = (c.x, c.z, c.w, c.d);
+    for _ in 0..16 {
+        capture_shot(
+            &mut s,
+            Vec2::new(cx - 1.0, cz + d / 2.0 + 21.0),
+            Vec2::new(cx + 0.6, cz + d / 2.0),
+        );
+    }
+    for u in along_face(w, 1.1) {
+        capture_shot(
+            &mut s,
+            Vec2::new(cx + u, cz + d / 2.0 + 18.0),
+            Vec2::new(cx + u, cz + d / 2.0),
+        );
+    }
+    for u in along_face(d, 1.2) {
+        capture_shot(
+            &mut s,
+            Vec2::new(cx - w / 2.0 - 18.0, cz + u),
+            Vec2::new(cx - w / 2.0, cz + u),
+        );
+    }
+    let id = s.tanks[0].id;
+    for u in along_face(w, 1.25) {
+        for y in [1.0, 2.6] {
+            s.damage_cover(
+                house,
+                150.0,
+                id,
+                Team::Blue,
+                None,
+                Some(Point3::new(cx + u, y, cz - d / 2.0)),
+            );
+        }
+    }
+    assert!(!s.covers[house].alive, "the cottage comes down");
+    run(&mut s, 25.0);
+    (s, house)
+}
+
+/// The critics' one-wall run levels the cottage, and 25 s on its ruin is not a bare pad:
+/// the chimney's stack stands (nothing is nailed to it), corner posts' feet and stubs of
+/// wall stand where the walls tipped off them, and no resting piece wore them down.
+#[test]
+fn a_cottage_levelled_by_the_one_wall_run_leaves_a_ruin_standing() {
+    for shift in COTTAGE_SHIFTS {
+        let (s, house) = one_wall_run(shift);
+        let state = s.covers[house].structure.as_ref().unwrap();
+        let layout = &state.layout;
+        let standing = |index: usize| state.standing(index);
+        let feet = (POST_FEET..POST_FEET + 4)
+            .filter(|&foot| standing(foot))
+            .count();
+        let stubs = (0..layout.parts.len())
+            .filter(|&index| {
+                let part = &layout.parts[index];
+                standing(index) && part.grounded && part.house().wall.is_some()
+            })
+            .count();
+        assert!(
+            standing(CHIMNEY_STACK),
+            "shift {shift}: the chimney's stack is down"
+        );
+        assert!(feet >= 1, "shift {shift}: no corner post's foot stands");
+        assert!(
+            feet + stubs >= 4,
+            "shift {shift}: {feet} corner posts' feet and {stubs} stubs of wall stand"
+        );
+    }
 }

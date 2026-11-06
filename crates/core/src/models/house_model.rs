@@ -2603,14 +2603,14 @@ fn door_stone(
     );
 }
 
-/// A brick stack rising through the roof with a corbelled top, a concrete cap,
-/// lead flashing at the roof and a clay pot; some cottages strap a TV aerial to
-/// it. A chimney a roof strike toppled stands as a ragged stub, its bricks
-/// strewn down the slope.
+/// A brick stack rising from the floor up through the attic and the roof with a
+/// corbelled top, a concrete cap, lead flashing at the roof and a clay pot; some
+/// cottages strap a TV aerial to it. A ruin keeps the stack under the roof standing.
 fn chimney(kit: &mut Kit<Surface>, design: &HouseDesign, roof: &Roof) {
     let flue = design.flue();
     let (cx, cz) = (flue.x, flue.z);
-    let (bottom, full_top) = design.chimney_span();
+    let (_, full_top) = design.chimney_span();
+    let bottom = PLINTH;
     // Flashing lies on the slope around the stack's base.
     let tilt = if roof.form == RoofForm::Hip && cz.abs() - roof.ridge_half > cx.abs() {
         DVec3::new(roof.pitch.atan() * cz.signum(), 0.0, 0.0)

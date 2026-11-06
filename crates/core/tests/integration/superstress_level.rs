@@ -295,7 +295,7 @@ fn a_fallen_cottage_rebuilds_whole_each_time_it_falls() {
         fell_cottage(&mut sim, house);
         assert!(!sim.covers[house].alive);
         assert!(
-            !sim.nav.is_blocked(Vec2::new(x, z)),
+            !sim.nav.is_blocked(support::open_ruin_ground(&sim, house)),
             "cycle {cycle}: it opens"
         );
         assert!(sim.fragments.iter().any(|f| f.of_structure(house)));

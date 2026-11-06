@@ -124,8 +124,23 @@ const BRICK_DENSITY: f64 = 0.8;
 pub const CHIMNEY_BRICK: u32 = 0x9c4a32;
 const ROOM_PAINT: u32 = 0xc9b48f;
 
-/// The chimney's index among a cottage's parts, after the four corner posts.
+/// The chimney's index among a cottage's parts (its top, through the roof), after the
+/// four corner posts (their lengths over the bottom course; the feet under them follow
+/// the chimney).
 pub const CHIMNEY_PART: usize = 4;
+/// Corner post `k`'s foot (the post's length in the walls' bottom course) is part
+/// `POST_FEET + k`.
+pub const POST_FEET: usize = CHIMNEY_PART + 1;
+/// The chimney's stack under the roof, after the posts' feet.
+pub const CHIMNEY_STACK: usize = POST_FEET + 4;
+/// The stack's top stays at least this far (m) under the roof sheets' rafters.
+const STACK_CLEAR: f64 = 0.1;
+/// The hole the chimney comes through the roof reaches this far (m) past the stack.
+const HOLE_MARGIN: f64 = 0.04;
+/// The damage the chimney's stack takes before it breaks: solid brickwork on its own
+/// footing, five standard shells, and more than a roof section coming down past it
+/// strikes it with.
+const STACK_STRENGTH: f64 = 200.0;
 
 /// A brick cottage's walls take this much more than clapboard ones.
 const BRICK_STRENGTH: f64 = 1.6;
@@ -293,6 +308,9 @@ struct FramePart {
     min: DVec3,
     max: DVec3,
     cells: Vec<PartCell>,
+    /// Its collider's convex pieces, when it is not one hull: a sheet framed round the
+    /// chimney's hole.
+    hulls: Vec<Vec<DVec3>>,
     strength: f64,
     /// Stands on the plinth.
     grounded: bool,
@@ -314,6 +332,7 @@ impl FramePart {
             min,
             max,
             cells,
+            hulls: Vec::new(),
             strength: kind.material().strength,
             grounded: min.y <= PLINTH + GROUND_REACH,
             wall: None,
@@ -343,12 +362,14 @@ impl FramePart {
     /// the ground through their footing, which goes with them), material, paint, how it
     /// stands, lies and breaks apart, and its role.
     fn into_part(self, design: &HouseDesign, braces: Vec<Brace>) -> Part {
-        let shape = if self.cuboid {
+        let shapes = if self.cuboid && self.hulls.is_empty() {
             let footed = self.grounded && (self.wall.is_some() || self.kind == PartKind::Post);
             let bottom = if footed { self.min.with_y(0.0) } else { self.min };
-            PartShape::aligned(bottom, self.max)
+            vec![PartShape::aligned(bottom, self.max)]
+        } else if self.hulls.is_empty() {
+            vec![PartShape::Hull(self.points.clone())]
         } else {
-            PartShape::Hull(self.points.clone())
+            self.hulls.iter().cloned().map(PartShape::Hull).collect()
         };
         let material = Material {
             strength: self.strength,
@@ -395,7 +416,7 @@ impl FramePart {
         };
         let middle = self.center();
         let mut part = Part::new(
-            vec![shape],
+            shapes,
             material,
             Role::House(HouseRole {
                 kind: self.kind,
@@ -414,6 +435,8 @@ impl FramePart {
             part.contacts = part.base();
         }
         part.upright = self.kind.upright();
+        // The stack stands on its footing whatever is left round it.
+        part.anchor = self.kind == PartKind::Chimney && self.grounded;
         part.blocks_ground = self.min.y < GROUND_BLOCK && self.kind != PartKind::Floor;
         part.seat_needed = if self.kind == PartKind::Floor {
             FLOOR_SEAT_NEEDED
@@ -534,9 +557,12 @@ impl Frame {
             supports: Vec::new(),
             beside: Vec::new(),
         };
-        structure.build_posts();
+        structure.build_posts(false);
         structure.build_chimney();
         debug_assert_eq!(structure.parts.len() - 1, CHIMNEY_PART);
+        structure.build_posts(true);
+        structure.build_stack();
+        debug_assert_eq!(structure.parts.len() - 1, CHIMNEY_STACK);
         for index in 0..4 {
             structure.build_wall(index);
         }
@@ -571,11 +597,12 @@ impl Frame {
         structure
     }
 
-    /// The chimney above the deck, standing on the roof it comes through: the model
-    /// draws no stack under the roof, so it comes down with the roof round it.
+    /// The chimney over its stack, through the attic and the roof, standing on the roof
+    /// it comes through: it comes down with the roof round it.
     fn build_chimney(&mut self) {
         let flue = self.design.flue();
-        let (bottom, top) = self.design.chimney_span();
+        let (_, top) = self.design.chimney_span();
+        let bottom = self.stack_top();
         let reach = DVec3::new(CHIMNEY / 2.0, 0.0, CHIMNEY / 2.0);
         let chimney = FramePart::cuboid(
             PartKind::Chimney,
@@ -583,19 +610,64 @@ impl Frame {
             DVec3::new(flue.x, top, flue.z) + reach,
             vec![PartCell {
                 part: HousePart::Chimney,
-                min: DVec2::splat(-FAR),
+                min: DVec2::new(-FAR, self.stack_top()),
                 max: DVec2::splat(FAR),
             }],
         );
         self.parts.push(chimney);
     }
 
-    /// The four corner posts: front right, front left, back right, back left.
-    fn build_posts(&mut self) {
-        let (hw, hd, top) = (self.design.w / 2.0, self.design.d / 2.0, self.roof.wall);
+    /// The chimney's stack from the floor up through the rooms to the wall tops, on its
+    /// own footing: nothing is nailed to it and it carries nothing, so a ruin keeps it
+    /// standing until it is struck itself. It stays well under the roof's rafters, so a
+    /// slope coming down turns down past it rather than catching on it and lifting.
+    fn build_stack(&mut self) {
+        let flue = self.design.flue();
+        let reach = DVec3::new(CHIMNEY / 2.0, 0.0, CHIMNEY / 2.0);
+        let top = self.stack_top();
+        let mut stack = FramePart::cuboid(
+            PartKind::Chimney,
+            DVec3::new(flue.x, PLINTH, flue.z) - reach,
+            DVec3::new(flue.x, top, flue.z) + reach,
+            vec![PartCell {
+                part: HousePart::Chimney,
+                min: DVec2::splat(-FAR),
+                max: DVec2::new(FAR, top),
+            }],
+        );
+        debug_assert!(stack.grounded);
+        stack.strength = STACK_STRENGTH;
+        self.parts.push(stack);
+    }
+
+    /// Where the chimney's stack ends: at the wall tops, or under the lowest rafters
+    /// over it if they come lower.
+    fn stack_top(&self) -> f64 {
+        let flue = self.design.flue();
+        let rafters = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
+            .map(|(sx, sz)| self.roof.top(flue.x + sx * CHIMNEY / 2.0, flue.z + sz * CHIMNEY / 2.0))
+            .into_iter()
+            .fold(f64::INFINITY, f64::min)
+            - self.roof.thick
+            - SHEET_DEPTH;
+        self.roof.wall.min(rafters - STACK_CLEAR)
+    }
+
+    /// The four corner posts (front right, front left, back right, back left) over the
+    /// walls' bottom course, or with `feet` the posts' feet in it, each its own part: a
+    /// wall that tips with its post snaps the post off over its foot as it snaps off its
+    /// own stubs, so a ruin keeps its corners waist high.
+    fn build_posts(&mut self, feet: bool) {
+        let (hw, hd) = (self.design.w / 2.0, self.design.d / 2.0);
+        let split = PLINTH + SILL;
+        let (bottom, top) = if feet {
+            (PLINTH, split)
+        } else {
+            (split, self.roof.wall)
+        };
         let frames = wall_frames(self.design.w, self.design.d);
         for (sx, sz) in [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
-            let a = DVec3::new(sx * hw, PLINTH, sz * hd);
+            let a = DVec3::new(sx * hw, bottom, sz * hd);
             let b = DVec3::new(sx * (hw - POST), top, sz * (hd - POST));
             // Drawn as each wall's end at this corner: the end column of the front or
             // back wall and of the side wall that meet here.
@@ -612,15 +684,20 @@ impl Frame {
                         (-FAR, -inner)
                     };
                     let gable = self.gable_wall(index);
+                    let (low, high) = match (feet, gable) {
+                        (true, _) => (-FAR, split),
+                        (false, true) => (split, self.roof.wall),
+                        (false, false) => (split, FAR),
+                    };
                     PartCell {
                         part: HousePart::wall(index),
-                        min: DVec2::new(min_s, -FAR),
-                        max: DVec2::new(max_s, if gable { self.roof.wall } else { FAR }),
+                        min: DVec2::new(min_s, low),
+                        max: DVec2::new(max_s, high),
                     }
                 })
                 .collect();
-            let mut post = FramePart::cuboid(PartKind::Post, a.min(b), a.max(b), cells);
-            post.grounded = true;
+            let post = FramePart::cuboid(PartKind::Post, a.min(b), a.max(b), cells);
+            debug_assert_eq!(post.grounded, feet);
             self.parts.push(post);
         }
     }
@@ -842,16 +919,38 @@ impl Frame {
         let mut levels = vec![self.roof.wall];
         levels.extend(self.upper_floor());
         let strips = ((2.0 * inside.y) / FLOOR_STRIP).round().max(1.0) as usize;
+        // The chimney's stack comes up through the floors: their boards are framed round
+        // it, so a floor coming down drops past it.
+        let flue = self.design.flue();
+        let reach = DVec2::splat(CHIMNEY / 2.0 + HOLE_MARGIN);
+        let (hole_low, hole_high) = (DVec2::new(flue.x, flue.z) - reach, DVec2::new(flue.x, flue.z) + reach);
         for level in levels {
             for k in 0..strips {
                 let z0 = -inside.y + 2.0 * inside.y * k as f64 / strips as f64;
                 let z1 = -inside.y + 2.0 * inside.y * (k + 1) as f64 / strips as f64;
-                self.parts.push(FramePart::cuboid(
+                let (bottom, top) = (level - FLOOR_DEPTH, level);
+                let mut floor = FramePart::cuboid(
                     PartKind::Floor,
-                    DVec3::new(-inside.x, level - FLOOR_DEPTH, z0),
-                    DVec3::new(inside.x, level, z1),
+                    DVec3::new(-inside.x, bottom, z0),
+                    DVec3::new(inside.x, top, z1),
                     Vec::new(),
-                ));
+                );
+                let plan = [
+                    DVec2::new(-inside.x, z0),
+                    DVec2::new(inside.x, z0),
+                    DVec2::new(inside.x, z1),
+                    DVec2::new(-inside.x, z1),
+                ];
+                floor.hulls = framed(&plan, hole_low, hole_high)
+                    .into_iter()
+                    .map(|strip| {
+                        strip
+                            .iter()
+                            .flat_map(|q| [DVec3::new(q.x, bottom, q.y), DVec3::new(q.x, top, q.y)])
+                            .collect()
+                    })
+                    .collect();
+                self.parts.push(floor);
             }
         }
     }
@@ -1084,10 +1183,6 @@ impl Frame {
                     if plan.len() < 3 {
                         continue;
                     }
-                    let points = slab(
-                        &roof,
-                        plan.iter().map(|q| DVec3::new(side * q.y, 0.0, q.x)),
-                    );
                     let cell = PartCell {
                         part,
                         min: DVec2::new(
@@ -1099,9 +1194,7 @@ impl Frame {
                             if upper { t1 } else { FAR },
                         ),
                     };
-                    let mut sheet = FramePart::new(PartKind::Sheet, points, false, vec![cell]);
-                    sheet.slope = Some((part, upper));
-                    self.parts.push(sheet);
+                    self.push_sheet((part, upper), &plan, cell, &|q| DVec3::new(side * q.y, 0.0, q.x));
                 }
             }
         }
@@ -1132,18 +1225,12 @@ impl Frame {
                     if plan.len() < 3 {
                         continue;
                     }
-                    let points = slab(
-                        &roof,
-                        plan.iter().map(|q| DVec3::new(q.x, 0.0, end * q.y)),
-                    );
                     let cell = PartCell {
                         part,
                         min: DVec2::new(if half < 0.0 { -FAR } else { 0.0 }, -FAR),
                         max: DVec2::new(if half < 0.0 { 0.0 } else { FAR }, FAR),
                     };
-                    let mut sheet = FramePart::new(PartKind::Sheet, points, false, vec![cell]);
-                    sheet.slope = Some((part, false));
-                    self.parts.push(sheet);
+                    self.push_sheet((part, false), &plan, cell, &|q| DVec3::new(q.x, 0.0, end * q.y));
                 }
             }
         }
@@ -1164,6 +1251,22 @@ impl Frame {
                 Vec::new(),
             ));
         }
+    }
+
+    /// A roof sheet of `slope` with plan `plan` (in its part's plane, placed in the build
+    /// frame by `place`) drawn as `cell`, framed round the hole the chimney comes through
+    /// where it does: its collider is then the strips of deck round the hole, so a roof
+    /// coming down slides down past the stack rather than landing on it like a table.
+    fn push_sheet(&mut self, slope: (HousePart, bool), plan: &[DVec2], cell: PartCell, place: &dyn Fn(DVec2) -> DVec3) {
+        let points = slab(&self.roof, plan.iter().map(|&q| place(q)));
+        let mut sheet = FramePart::new(PartKind::Sheet, points, false, vec![cell]);
+        sheet.slope = Some(slope);
+        let (hole_low, hole_high) = chimney_hole(&self.design, slope.0);
+        sheet.hulls = framed(plan, hole_low, hole_high)
+            .into_iter()
+            .map(|strip| slab(&self.roof, strip.iter().map(|&q| place(q))))
+            .collect();
+        self.parts.push(sheet);
     }
 
     /// Supports of the roof (sheets, ridge, chimney: parts from `first` on): the
@@ -1265,9 +1368,9 @@ impl Frame {
                                 links.push((i, j, share, 0.0));
                                 links.push((j, i, share, 0.0));
                             }
-                            // The stack stands on the roof it comes through, and
-                            // carries none of it.
-                            (PartKind::Chimney, _) if touching(a, b) => {
+                            // The chimney's top stands on the roof it comes through,
+                            // and carries none of it.
+                            (PartKind::Chimney, _) if j == CHIMNEY_PART && touching(a, b) => {
                                 links.push((j, i, REST, 0.0));
                             }
                             _ => {}
@@ -1285,7 +1388,7 @@ impl Frame {
                                 let span = (a.max.z - a.min.z) / RIDGE_TIE_SPAN;
                                 links.push((i, j, RIDGE_TIE.powf(span as f32), 0.0));
                             }
-                            PartKind::Chimney if touching(a, b) => {
+                            PartKind::Chimney if j == CHIMNEY_PART && touching(a, b) => {
                                 links.push((j, i, REST, 0.0));
                             }
                             // A gable's middle piece carries the ridge's end.
@@ -1408,7 +1511,7 @@ impl Frame {
         let part = &self.parts[index];
         let count = self.parts.len();
         match part.kind {
-            PartKind::Post => vec![Brace::any((0..count).filter(|&other| {
+            PartKind::Post if !part.grounded => vec![Brace::any((0..count).filter(|&other| {
                 let wall = &self.parts[other];
                 wall.wall.is_some()
                     && !wall.grounded
@@ -1496,10 +1599,11 @@ impl Frame {
     }
 
     /// The cottage as a structure: its parts fastened to what holds them up (all but the
-    /// chimney, whose masonry is not nailed to the roof), standing by the share rule and
+    /// chimney, whose masonry is not nailed to the frame), standing by the share rule and
     /// tipping, levelled once its roof is down.
     fn into_structure(self) -> Structure {
         let braces: Vec<Vec<Brace>> = (0..self.parts.len()).map(|index| self.braces(index)).collect();
+        let outlines: Vec<Vec<DVec3>> = self.parts.iter().map(|part| part.points.clone()).collect();
         let design = self.design;
         let sheets = PartSet::from_indices(
             (0..self.parts.len()).filter(|&index| self.parts[index].kind == PartKind::Sheet),
@@ -1520,7 +1624,7 @@ impl Frame {
             COTTAGE_DEBRIS,
         );
         structure.supports = self.supports;
-        structure.join_supports(&PartSet::from_indices([CHIMNEY_PART]));
+        structure.join_supports(&PartSet::from_indices([CHIMNEY_PART, CHIMNEY_STACK]));
         structure.tipping = Some(COTTAGE_TIPPING);
         structure.levelling = Levelling {
             keys: sheets,
@@ -1529,73 +1633,93 @@ impl Frame {
             dust: COTTAGE_DUST,
         };
         structure.variant = design.variant;
-        add_sheet_pieces(&mut structure, &design);
+        add_sheet_pieces(&mut structure, &design, &outlines);
         structure
     }
 }
 
-/// A roof sheet a landing leaves on its own breaks across its length, in two (three
-/// for a long one) at uneven places, its torn edges where the model shows broken
-/// boards: a 3-4 m slab of shingles never lies whole in a ruin.
-fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign) {
+/// A roof sheet a landing leaves on its own breaks across its rafters, in two at an
+/// uneven place down the slope (a long one also across its length, in two), its torn
+/// edges where the model shows snapped rafters and broken boards: a slab of shingles
+/// never lies whole in a ruin, nor stands on its edge as a card the height of the slope.
+fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign, outlines: &[Vec<DVec3>]) {
+    let roof = design.roof();
     let first = structure.parts.len() + structure.pieces.len();
     let mut pieces: Vec<Part> = Vec::new();
     let mut breakups = Vec::new();
-    for index in 0..structure.parts.len() {
-        let part = &structure.parts[index];
+    // Each sheet with its whole slab, the hole for the chimney aside.
+    for (index, (part, points)) in structure.parts.iter().zip(outlines).enumerate() {
         let role = part.house().clone();
-        let (Some(cell), PartShape::Hull(points)) = (role.cells.first().copied(), &part.shapes[0]) else {
+        let Some(cell) = role.cells.first().copied() else {
             continue;
         };
         if role.kind != PartKind::Sheet || role.cells.len() != 1 {
             continue;
         }
+        // The sheet in plan in its plane's (along, down the slope) coordinates: the slab's
+        // top corners, in order.
         let plane = part_plane(design, cell.part);
-        let along: Vec<f64> = points.iter().map(|p| p.dot(plane.s)).collect();
-        let (low, high) = along.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), &s| {
-            (low.min(s), high.max(s))
-        });
-        let shares: &[f64] = if high - low > LONG_SHEET {
-            &[0.3, 0.68]
-        } else if index % 2 == 0 {
-            &[0.42]
-        } else {
-            &[0.58]
-        };
-        let cuts: Vec<f64> = std::iter::once(low)
-            .chain(shares.iter().map(|share| low + (high - low) * share))
-            .chain(std::iter::once(high))
+        let plan: Vec<DVec2> = points
+            .iter()
+            .step_by(2)
+            .map(|p| DVec2::new(p.dot(plane.s), p.dot(plane.t)))
             .collect();
+        let (low, high) = plan.iter().fold(
+            (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
+            |(low, high), q| (low.min(*q), high.max(*q)),
+        );
+        let cuts = |from: f64, to: f64, shares: &[f64]| -> Vec<f64> {
+            std::iter::once(from)
+                .chain(shares.iter().map(|share| from + (to - from) * share))
+                .chain(std::iter::once(to))
+                .collect()
+        };
+        let along = if high.x - low.x > LONG_SHEET {
+            cuts(low.x, high.x, &[if index % 2 == 0 { 0.45 } else { 0.55 }])
+        } else {
+            cuts(low.x, high.x, &[])
+        };
+        let down = cuts(low.y, high.y, &[if index % 2 == 0 { 0.38 } else { 0.62 }]);
         let mut made = Vec::new();
-        for span in cuts.windows(2) {
-            let (from, to) = (span[0], span[1]);
-            let clipped: Vec<DVec3> = points
-                .iter()
-                .map(|&p| {
-                    let s = p.dot(plane.s);
-                    p + plane.s * (s.clamp(from, to) - s)
-                })
-                .collect();
-            let mut piece_cell = cell;
-            if from > low {
-                piece_cell.min.x = from;
+        for s_span in along.windows(2) {
+            for t_span in down.windows(2) {
+                let (min, max) = (DVec2::new(s_span[0], t_span[0]), DVec2::new(s_span[1], t_span[1]));
+                let piece_plan = clip_rect(&plan, min, max);
+                if piece_plan.len() < 3 {
+                    continue;
+                }
+                let (hole_low, hole_high) = chimney_hole(design, cell.part);
+                let mut plans = framed(&piece_plan, hole_low, hole_high);
+                if plans.is_empty() {
+                    plans.push(piece_plan);
+                }
+                let shapes: Vec<PartShape> = plans
+                    .iter()
+                    .map(|plan| PartShape::Hull(slab(&roof, plan.iter().map(|q| plane.s * q.x + plane.t * q.y))))
+                    .collect();
+                let mut piece_cell = cell;
+                for (axis, edge_low, edge_high) in [(0, low.x, high.x), (1, low.y, high.y)] {
+                    if min[axis] > edge_low + 1e-9 {
+                        piece_cell.min[axis] = min[axis];
+                    }
+                    if max[axis] < edge_high - 1e-9 {
+                        piece_cell.max[axis] = max[axis];
+                    }
+                }
+                let mut piece = Part::new(
+                    shapes,
+                    part.material,
+                    Role::House(HouseRole {
+                        cells: vec![piece_cell],
+                        ..role.clone()
+                    }),
+                );
+                piece.paint = part.paint;
+                piece.lie = part.lie;
+                piece.element = u16::MAX;
+                made.push((first + pieces.len()) as u16);
+                pieces.push(piece);
             }
-            if to < high {
-                piece_cell.max.x = to;
-            }
-            let mut piece = Part::new(
-                vec![PartShape::Hull(clipped)],
-                part.material,
-                Role::House(HouseRole {
-                    cells: vec![piece_cell],
-                    ..role.clone()
-                }),
-            );
-            piece.paint = part.paint;
-            piece.lie = part.lie;
-            piece.element = u16::MAX;
-            made.push((first + pieces.len()) as u16);
-            pieces.push(piece);
         }
         breakups.push(Breakup {
             needs: PartSet::from_indices([index]),
@@ -1603,11 +1727,12 @@ fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign) {
             alone: true,
         });
     }
+    debug_assert!(first + pieces.len() <= MAX_PARTS);
     structure.pieces.extend(pieces);
     structure.breakups.extend(breakups);
 }
 
-/// A roof sheet longer than this (m) along the ridge breaks in three.
+/// A roof sheet longer than this (m) along the ridge breaks across its length too.
 const LONG_SHEET: f64 = 2.6;
 
 /// The structure of the cottage `design` lays out.
@@ -1706,6 +1831,45 @@ fn clip_rect(polygon: &[DVec2], min: DVec2, max: DVec2) -> Vec<DVec2> {
         points = next;
     }
     points
+}
+
+/// Where the chimney comes through the roof part `part`: the stack's plan with a margin,
+/// in the part's plane (along, out down the slope).
+fn chimney_hole(design: &HouseDesign, part: HousePart) -> (DVec2, DVec2) {
+    let plane = part_plane(design, part);
+    let flue = design.flue();
+    let reach = CHIMNEY / 2.0 + HOLE_MARGIN;
+    [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
+        .map(|(sx, sz)| {
+            let p = DVec3::new(flue.x + sx * reach, 0.0, flue.z + sz * reach);
+            DVec2::new(p.dot(plane.s), p.dot(plane.t))
+        })
+        .into_iter()
+        .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| (low.min(q), high.max(q)))
+}
+
+/// The convex plans `plan` (in a roof part's plane) is cut into round the hole
+/// `hole_low`–`hole_high`: the strips beside, under and over the hole where it reaches
+/// into the plan, none where it does not.
+fn framed(plan: &[DVec2], hole_low: DVec2, hole_high: DVec2) -> Vec<Vec<DVec2>> {
+    let (low, high) = plan.iter().fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| {
+        (low.min(*q), high.max(*q))
+    });
+    let (hole_low, hole_high) = (hole_low.max(low), hole_high.min(high));
+    if (hole_high - hole_low).min_element() <= 1e-6 {
+        return Vec::new();
+    }
+    [
+        (low, DVec2::new(hole_low.x, high.y)),
+        (DVec2::new(hole_high.x, low.y), high),
+        (DVec2::new(hole_low.x, low.y), DVec2::new(hole_high.x, hole_low.y)),
+        (DVec2::new(hole_low.x, hole_high.y), DVec2::new(hole_high.x, high.y)),
+    ]
+    .into_iter()
+    .filter(|(min, max)| (*max - *min).min_element() > 1e-6)
+    .map(|(min, max)| clip_rect(plan, min, max))
+    .filter(|strip| strip.len() >= 3)
+    .collect()
 }
 
 /// A roof sheet's hull from its plan corners (y ignored): the deck's top and its
@@ -1870,6 +2034,7 @@ mod tests {
                 let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                     let part = &structure.parts[index];
                     index == post
+                        || index == POST_FEET + post
                         || (part.house().wall.is_some()
                             && part.min.y < GROUND_BLOCK
                             && (part.middle() - corner).with_y(0.0).length() < 2.2)
@@ -1987,7 +2152,7 @@ mod tests {
             };
             let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                 let part = &structure.parts[index];
-                (index == 0 || index == 2) || (part.house().wall == Some(2) && !kept(part))
+                [0, 2, POST_FEET, POST_FEET + 2].contains(&index) || (part.house().wall == Some(2) && !kept(part))
             }));
             let down = gone.union(&structure.unsupported(&gone));
             for (index, part) in structure.parts.iter().enumerate() {
@@ -2029,7 +2194,7 @@ mod tests {
             }
             // A corner post shot out: the upper storey's wall nearest it comes down; the
             // ground floor's parts there stand on.
-            let gone = PartSet::from_indices([0]);
+            let gone = PartSet::from_indices([0, POST_FEET]);
             let falling = structure.unsupported(&gone);
             let corner = structure.parts[0].middle().with_y(0.0);
             let near = |part: &Part| (part.middle().with_y(0.0) - corner).length() < 1.0;
@@ -2154,13 +2319,67 @@ mod tests {
     }
 
     #[test]
-    fn the_chimney_comes_down_with_the_roof_it_stands_on() {
+    fn the_chimney_comes_down_with_the_roof_it_stands_on_and_its_stack_stands() {
         for design in village() {
             let structure = house_structure(&design);
             let roof = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                 matches!(structure.parts[index].house().kind, PartKind::Sheet | PartKind::Ridge)
             }));
             assert!(structure.unsupported(&roof).contains(CHIMNEY_PART));
+            let all_else = PartSet::from_indices((0..structure.parts.len()).filter(|&index| index != CHIMNEY_STACK));
+            assert!(!structure.unsupported(&all_else).contains(CHIMNEY_STACK), "{:?}", design.style.form);
+            // Clear of the roof's rafters over it: nothing holds it or rests on it.
+            let (stack, roof) = (&structure.parts[CHIMNEY_STACK], design.roof());
+            for (x, z) in [(stack.min.x, stack.min.z), (stack.max.x, stack.max.z), (stack.min.x, stack.max.z), (stack.max.x, stack.min.z)] {
+                assert!(roof.top(x, z) - roof.thick - SHEET_DEPTH > stack.max.y);
+            }
+            assert!(structure.supports[CHIMNEY_STACK].is_empty());
+            assert!(structure.supports.iter().flatten().all(|support| support.by as usize != CHIMNEY_STACK));
+        }
+    }
+
+    #[test]
+    fn the_roof_and_floors_are_framed_round_the_chimney_stack() {
+        for design in village() {
+            let structure = house_structure(&design);
+            let stack = &structure.parts[CHIMNEY_STACK];
+            let mut framed = 0;
+            for part in structure.parts.iter().chain(&structure.pieces) {
+                if !matches!(part.house().kind, PartKind::Sheet | PartKind::Floor) {
+                    continue;
+                }
+                framed += usize::from(part.shapes.len() > 1);
+                for shape in &part.shapes {
+                    let (low, high) = shape.points().iter().fold(
+                        (DVec3::INFINITY, DVec3::NEG_INFINITY),
+                        |(low, high), p| (low.min(*p), high.max(*p)),
+                    );
+                    let apart = (stack.min - high).max(low - stack.max).with_y(f64::NEG_INFINITY);
+                    assert!(apart.max_element() > 0.0, "{:?}: a {:?} reaches over the stack", design.style.form, part.house().kind);
+                }
+            }
+            assert!(framed > 0, "{:?}: no sheet is framed round the chimney", design.style.form);
+        }
+    }
+
+    #[test]
+    fn a_wall_that_tips_with_its_corner_post_leaves_the_post_foot_and_stubs() {
+        for design in village() {
+            let structure = house_structure(&design);
+            // Everything gone but the front wall (with no gable over it) and its posts.
+            let kept = |index: usize| {
+                let part = &structure.parts[index];
+                [0, 1, POST_FEET, POST_FEET + 1].contains(&index)
+                    || (part.house().wall == Some(0) && part.house().kind != PartKind::Gable)
+            };
+            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| !kept(index)));
+            let down = structure.unsupported(&gone);
+            assert!(down.contains(0) && down.contains(1), "{:?}: the posts stand", design.style.form);
+            for index in (0..structure.parts.len()).filter(|&index| kept(index)) {
+                let part = &structure.parts[index];
+                let stub = part.grounded && part.max.y <= STUB_TOP;
+                assert_eq!(down.contains(index), !stub, "{:?} {index} {:?}", design.style.form, part.house().kind);
+            }
         }
     }
 
@@ -2190,6 +2409,7 @@ mod tests {
             let kept = |index: usize| {
                 let part = &structure.parts[index];
                 index == 0
+                    || index == POST_FEET
                     || (part.house().wall == Some(0)
                         && part.house().kind != PartKind::Gable
                         && (part.middle().with_y(0.0) - corner).length() < 1.4)
