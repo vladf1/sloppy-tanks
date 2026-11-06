@@ -278,6 +278,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
     // The lid rests on the walls, fastened to none: it comes off them on its own.
     structure.join_supports(&PartSet::from_indices([CRATE_LID_PART]));
     structure.hinges = true;
+    structure.breachable = false;
     for wall in CRATE_WALLS {
         let neighbours = if wall < 2 { [2, 3] } else { [0, 1] };
         for other in neighbours {

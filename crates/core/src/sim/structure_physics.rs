@@ -490,6 +490,9 @@ pub fn ground_footprints(cover: &Cover, out: &mut Vec<Footprint>) {
 pub fn breach_point(cover: &Cover, from: Vec2) -> Option<Vec2> {
     let state = cover.structure.as_ref()?;
     let layout = &state.layout;
+    if !layout.breachable {
+        return None;
+    }
     let loaded = layout.parts.iter().any(|part| part.load);
     (0..layout.parts.len())
         .filter(|&index| {
@@ -502,9 +505,13 @@ pub fn breach_point(cover: &Cover, from: Vec2) -> Option<Vec2> {
                     part.blocks_ground && part.min.y <= BLAST_HEIGHT && part.max.y >= BLAST_HEIGHT
                 }
         })
-        .map(|index| {
-            let center = layout.to_world(layout.parts[index].mass_center);
-            Vec2::new(cover.x + center.x, cover.z + center.z)
+        // A point of one of its shapes at shell height: a crate wall's frame is battens
+        // round an open middle, which a shell at its box's middle passes through.
+        .filter_map(|index| {
+            let part = &layout.parts[index];
+            let at = if loaded { part.mass_center } else { part.point_at_height(BLAST_HEIGHT)? };
+            let center = layout.to_world(at);
+            Some(Vec2::new(cover.x + center.x, cover.z + center.z))
         })
         .min_by(|a, b| {
             let gap = |p: &Vec2| (p.x - from.x).hypot(p.z - from.z);

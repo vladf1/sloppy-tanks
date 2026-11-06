@@ -375,6 +375,37 @@ impl Part {
         (p.clamp(self.min, self.max) - p).length()
     }
 
+    /// The middle of the first of the part's shapes that reaches height `y` (build
+    /// frame), at that height: somewhere a level shell meets the part itself.
+    pub fn point_at_height(&self, y: f64) -> Option<DVec3> {
+        self.shapes.iter().find_map(|shape| {
+            let (low, high, middle) = match shape {
+                PartShape::Box {
+                    center,
+                    half,
+                    rotation,
+                } => {
+                    let corners = [-1.0, 1.0].iter().flat_map(|&x| {
+                        [-1.0, 1.0].iter().flat_map(move |&y| {
+                            [-1.0, 1.0].map(move |z| *center + *rotation * (*half * DVec3::new(x, y, z)))
+                        })
+                    });
+                    let (low, high) = corners.fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), p| {
+                        (low.min(p.y), high.max(p.y))
+                    });
+                    (low, high, *center)
+                }
+                PartShape::Hull(points) => {
+                    let (low, high) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), p| {
+                        (low.min(p.y), high.max(p.y))
+                    });
+                    (low, high, points.iter().copied().sum::<DVec3>() / points.len().max(1) as f64)
+                }
+            };
+            (low <= y && y <= high).then(|| middle.with_y(y))
+        })
+    }
+
     /// How far `p` (build frame) lies from the part's own shapes: a frame of battens
     /// round a wall is near its edges only, where its box covers the whole wall.
     pub fn shape_distance(&self, p: DVec3) -> f64 {
@@ -543,6 +574,9 @@ pub struct Structure {
     /// Whether a part that loses its other supports while one still stands hinges down
     /// off that one's top edge (a crate's lid off its last wall) rather than dropping.
     pub hinges: bool,
+    /// Whether a bot shoots its way through it: a crate's frame of battens blocks a
+    /// tank until it breaks, which takes several shells, so bots drive round a crate.
+    pub breachable: bool,
 }
 
 /// A body of a structure's parts coming down together: its parts, and for a group that
@@ -597,6 +631,7 @@ impl Structure {
             variant: 0,
             whole: false,
             hinges: false,
+            breachable: true,
         }
     }
 

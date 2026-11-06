@@ -12,6 +12,7 @@ use sloppy_core::sim::crate_structure::{
 };
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::structure::PartSet;
+use sloppy_core::sim::structure_physics::breach_point;
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Weapon};
 use support::{clear_arena, fire_at, place_tank, run};
 
@@ -202,4 +203,12 @@ fn a_scrap_yard_crate_falls_and_rises_again_in_place() {
         );
         assert!(sim.nav.is_blocked(Vec2::new(x, z)));
     }
+}
+
+/// Bots drive round a crate rather than shoot their way through it: its frame of
+/// battens blocks a tank until several shells break it.
+#[test]
+fn bots_do_not_breach_a_crate() {
+    let (s, crate_) = lone_crate();
+    assert!(breach_point(&s.covers[crate_], Vec2::new(0.0, 0.0)).is_none());
 }

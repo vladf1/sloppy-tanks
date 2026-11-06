@@ -193,8 +193,13 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
             if !near {
                 return None;
             }
+            // Where the shell goes must lie on the route too: a frame's batten at the far
+            // side of a crate is not in the way.
             match &o.structure {
-                Some(_) => breach_point(o, position),
+                Some(_) => breach_point(o, position).filter(|at| {
+                    angle_delta(route, (at.x - position.x).atan2(at.z - position.z)).abs()
+                        < BREACH_ROUTE_ANGLE
+                }),
                 None => Some(Vec2::new(o.x, o.z)),
             }
         });
