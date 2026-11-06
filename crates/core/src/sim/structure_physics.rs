@@ -208,6 +208,31 @@ fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyH
     }
 }
 
+/// Whether a structure's fallen body passes through what stands of the structures
+/// ([`group::STRUCTURE_DEBRIS_THROUGH`]): a timber knocked out, a piece dropping off the
+/// remains it was wedged on.
+pub fn passes_through(world: &rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle) -> bool {
+    world.bodies[body].colliders().first().is_some_and(|&collider| {
+        world.colliders[collider].collision_groups()
+            == interaction_groups(group::STRUCTURE_DEBRIS_THROUGH)
+    })
+}
+
+/// Let a structure's fallen body in a client's predicted world pass through what stands,
+/// or meet it again, as the host's does ([`passes_through`]).
+pub fn set_passing_through(
+    world: &mut rapier3d::prelude::PhysicsWorld,
+    body: RigidBodyHandle,
+    through: bool,
+) {
+    let groups = if through {
+        group::STRUCTURE_DEBRIS_THROUGH
+    } else {
+        group::STRUCTURE_DEBRIS
+    };
+    set_body_groups(world, body, groups);
+}
+
 /// Let a rested piece turn again, thrown out of its rest by a blast (the host's, and a
 /// client's predicted world's as the host has it).
 pub fn unrest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle) {

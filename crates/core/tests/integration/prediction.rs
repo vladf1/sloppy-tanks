@@ -24,7 +24,7 @@ use sloppy_core::sim::types::{
     CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
 };
 use sloppy_core::sim::{RenderState, Simulation};
-use support::{clear_arena, place_tank, tank_index};
+use support::{clear_arena, fire_at, place_tank, tank_index};
 
 /// Prediction windows start every third tick: a sample of the snapshots, which arrive
 /// every tick.
@@ -749,4 +749,77 @@ fn a_cottages_fallen_parts_stand_in_the_predicted_world_where_the_host_has_them(
     let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 240);
     eprintln!("cottage parts: {with:.4} m, {without:.4} m without them");
     assert!(with < 0.4, "cottage parts {with} against {without}");
+}
+
+#[test]
+fn a_knocked_out_timber_passes_through_the_wall_in_the_predicted_world_as_on_the_host() {
+    use sloppy_core::sim::structure_physics::passes_through;
+    use sloppy_core::sim::timber_layout::TIMBER_HEALTH;
+    // A timber wall 6 m ahead of alice; a shell knocks a beam out of its posts.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    let wall = sim.add_cover(&CoverDef::new(
+        CoverKind::Timber,
+        0.0,
+        6.0,
+        3.7,
+        0.9,
+        2.8,
+        TIMBER_HEALTH,
+        0xb47a49,
+    ));
+    sim.world.step();
+    fire_at(
+        &mut sim,
+        Vec2::new(0.3, 3.0),
+        Vec2::new(0.3, 20.0),
+        1.0,
+        sloppy_core::sim::Weapon::Standard,
+    );
+    let mut predictor = TankPredictor::default();
+    let hull = Point3::new(0.0, 0.0, 0.0);
+    // Each of the wall's fallen pieces: whether it passes through on the host, as the
+    // wire carries it and in the predicted world.
+    let predicted = |sim: &Simulation, predictor: &mut TankPredictor| {
+        let scene = client_scene(sim, viewer);
+        predictor.sync_scene(&scene);
+        predictor.sync_bodies(&scene, &[], hull);
+        sim.fragments
+            .iter()
+            .filter(|fragment| fragment.of_structure(wall))
+            .map(|fragment| {
+                let seen = scene
+                    .fragments
+                    .iter()
+                    .find(|seen| seen.id == fragment.id)
+                    .expect("replicated");
+                let pose = predictor
+                    .body_pose(Moved::Fragment(fragment.id))
+                    .expect("in the predicted world");
+                (
+                    passes_through(&sim.world, fragment.body),
+                    seen.passes_through,
+                    pose.passes_through,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut through = false;
+    for _ in 0..60 {
+        sim.step_with(&BTreeMap::from([(viewer, VehicleCommand::idle())]));
+        let pieces = predicted(&sim, &mut predictor);
+        for &(host, wire, client) in &pieces {
+            assert_eq!((host, host), (wire, client), "replicated and predicted");
+        }
+        through |= pieces.iter().any(|&(host, ..)| host);
+        if through && pieces.iter().all(|&(host, ..)| !host) {
+            break;
+        }
+    }
+    assert!(through, "the knocked-out beam passed through the wall");
+    assert!(
+        predicted(&sim, &mut predictor)
+            .iter()
+            .all(|&(.., client)| !client),
+        "and meets it again, on the host and in the predicted world"
+    );
 }
