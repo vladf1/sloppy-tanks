@@ -1049,7 +1049,7 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
             .insert_body(RigidBodyBuilder::dynamic().translation(vector(-1.0, half, 0.0)));
         s.world.insert_collider(
             ColliderBuilder::cuboid(0.5, half as f32, 0.5)
-                .collision_groups(interaction_groups(group::TIMBER_DEBRIS))
+                .collision_groups(interaction_groups(group::PUSHABLE_DEBRIS))
                 .mass(0.3),
             Some(body),
         );

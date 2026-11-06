@@ -307,7 +307,6 @@ pub mod group {
     pub const GROUND: u32 = 0x0004_000b;
     pub const FRAGMENT: u32 = 0x0008_0006;
     pub const PUSHABLE_DEBRIS: u32 = SOLID_DEBRIS;
-    pub const TIMBER_DEBRIS: u32 = SOLID_DEBRIS;
     pub const WRECK: u32 = SOLID_DEBRIS;
     /// A structure's fallen parts: solid debris that also rests on a cottage garden's
     /// poles and plants.
