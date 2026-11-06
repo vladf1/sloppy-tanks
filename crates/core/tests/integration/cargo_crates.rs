@@ -143,13 +143,6 @@ fn a_scrap_yard_crate_falls_and_rises_again_in_place() {
         support::set_translation(&mut sim, tank, -30.0, 0.0);
     }
     let (x, z) = (sim.covers[crate_].x, sim.covers[crate_].z);
-    let parts = sim.covers[crate_]
-        .structure
-        .as_ref()
-        .unwrap()
-        .layout
-        .parts
-        .len();
     sim.start();
     let (id, team) = (sim.human().id, sim.human().team);
     for cycle in 0..2 {
@@ -172,7 +165,7 @@ fn a_scrap_yard_crate_falls_and_rises_again_in_place() {
                 .values()
                 .filter(|&&index| index == crate_)
                 .count(),
-            parts
+            1
         );
         assert!(sim.nav.is_blocked(Vec2::new(x, z)));
     }

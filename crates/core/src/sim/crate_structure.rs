@@ -177,6 +177,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
             structure.join(wall, other);
         }
     }
+    structure.whole = true;
     structure.tipping = Some(CRATE_TIPPING);
     structure.levelling = Levelling {
         keys: PartSet::from_indices(CRATE_WALLS),

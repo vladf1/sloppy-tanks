@@ -501,6 +501,12 @@ pub struct Structure {
     pub debris: DebrisRules,
     /// Varies how a landed body breaks apart, from the design.
     pub variant: u32,
+    /// Whether the structure stands as one box collider while none of its parts is gone
+    /// (its parts fill its box: a timber wall, a crate), a strike finding the part at the
+    /// point it lands; it takes a collider for each part once one goes. The world keeps
+    /// a slot for every collider, and the village's timber walls by the part pushed it
+    /// over a doubling of its arenas.
+    pub whole: bool,
 }
 
 /// A body of a structure's parts coming down together: its parts, and for a group that
@@ -553,6 +559,7 @@ impl Structure {
             },
             debris,
             variant: 0,
+            whole: false,
         }
     }
 
@@ -608,6 +615,22 @@ impl Structure {
     }
 
     /// How many parts the standing share counts: all but footings.
+    /// The standing part (not in `gone`) nearest the build-frame point `local`, the
+    /// lowest index among those as near.
+    pub fn part_at(&self, local: DVec3, gone: &PartSet) -> Option<usize> {
+        (0..self.parts.len())
+            .filter(|&index| !gone.contains(index))
+            .min_by(|&a, &b| self.parts[a].distance(local).total_cmp(&self.parts[b].distance(local)))
+    }
+
+    /// The build-frame box round every part.
+    pub fn bounds(&self) -> (DVec3, DVec3) {
+        self.parts.iter().fold(
+            (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+            |(min, max), part| (min.min(part.min), max.max(part.max)),
+        )
+    }
+
     pub fn breakable(&self) -> usize {
         self.parts.iter().filter(|part| !part.footing).count()
     }

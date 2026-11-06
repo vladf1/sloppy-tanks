@@ -91,6 +91,13 @@ fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
     let rng = s.rng.state;
     let (front, back) = (Vec2::new(0.3, 6.0), Vec2::new(0.3, 14.0));
     assert!(!s.visible(front, back), "a whole wall blocks the line");
+    let colliders = |s: &Simulation| {
+        s.cover_by_collider
+            .values()
+            .filter(|&&index| index == wall)
+            .count()
+    };
+    assert_eq!(colliders(&s), 1, "an intact wall stands as one box");
     fire_at(
         &mut s,
         Vec2::new(0.3, 0.0),
@@ -101,6 +108,11 @@ fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
     run(&mut s, 1.0);
     let beam = member(&s, wall, TimberPartKind::Beam, 1);
     assert!(gone(&s, wall).contains(beam), "the struck beam is out");
+    assert_eq!(
+        colliders(&s),
+        BEAM_COUNT + 1,
+        "the members left stand each by its own collider"
+    );
     for post in [BEAM_COUNT, BEAM_COUNT + 1] {
         assert!(!gone(&s, wall).contains(post), "post {post} stands");
     }
@@ -304,13 +316,6 @@ fn a_scrap_yard_wall_falls_and_rises_again_in_place() {
         support::set_translation(&mut sim, tank, -30.0, 0.0);
     }
     let (x, z) = (sim.covers[wall].x, sim.covers[wall].z);
-    let parts = sim.covers[wall]
-        .structure
-        .as_ref()
-        .unwrap()
-        .layout
-        .parts
-        .len();
     sim.start();
     let (id, team) = (sim.human().id, sim.human().team);
     for cycle in 0..2 {
@@ -333,7 +338,7 @@ fn a_scrap_yard_wall_falls_and_rises_again_in_place() {
                 .values()
                 .filter(|&&index| index == wall)
                 .count(),
-            parts,
+            1,
             "cycle {cycle}: every member stands again"
         );
         assert!(

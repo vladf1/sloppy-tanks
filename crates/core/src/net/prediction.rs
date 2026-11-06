@@ -20,7 +20,7 @@ use super::schema::{NUMBER_BOUND, ReadResult};
 use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
-use crate::sim::structure_physics::{debris_colliders, falling_damping, rest_body, structural};
+use crate::sim::structure_physics::{WHOLE, debris_colliders, falling_damping, rest_body, structural};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -945,7 +945,21 @@ impl CoverCast for TankPredictor {
         let body = self.world.colliders[collider].parent();
         let cover = self.covers.values().find(|cover| Some(cover.body) == body);
         let part = cover.and_then(|cover| {
-            let index = self.world.colliders[collider].user_data as usize;
+            let index = match self.world.colliders[collider].user_data {
+                // An intact structure's one collider: the part where the ray meets it.
+                WHOLE => {
+                    let at = ray.point_at(hit.time_of_impact);
+                    let middle = self.world.bodies[cover.body].translation();
+                    let local = glam::DVec3::new(
+                        f64::from(at.x - middle.x),
+                        f64::from(at.y),
+                        f64::from(at.z - middle.z),
+                    );
+                    let layout = cover.layout.as_ref()?;
+                    layout.part_at(layout.to_local(local), &PartSet::EMPTY)?
+                }
+                index => index as usize,
+            };
             let cottage = cover.struck.kind == CoverKind::House;
             // A watchtower's footing takes a shell as other concrete does.
             let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)

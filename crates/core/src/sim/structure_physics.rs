@@ -364,10 +364,30 @@ pub fn debris_colliders(layout: &Structure, parts: &PartSet) -> Vec<ColliderBuil
 /// The colliders of a structure's standing parts (those not in `gone`), in part order,
 /// on a fixed body at its ground centre.
 pub fn standing_colliders(layout: &Structure, gone: &PartSet) -> Vec<ColliderBuilder> {
+    if layout.whole && gone.is_empty() {
+        return vec![whole_collider(layout)];
+    }
     (0..layout.parts.len())
         .filter(|&index| !gone.contains(index))
         .map(|index| standing_collider(layout, index))
         .collect()
+}
+
+/// The user data of an intact structure's one collider ([`Structure::whole`]).
+pub const WHOLE: u128 = u128::MAX;
+
+/// An intact structure's box as one collider.
+fn whole_collider(layout: &Structure) -> ColliderBuilder {
+    let (min, max) = layout.bounds();
+    let inset = DVec3::splat(layout.debris.seam);
+    let (a, b) = (layout.to_world(min + inset), layout.to_world(max - inset));
+    let (min, max) = (a.min(b), a.max(b));
+    let (half, center) = ((max - min) / 2.0, (min + max) / 2.0);
+    ColliderBuilder::cuboid(half.x as f32, half.y as f32, half.z as f32)
+        .translation(vector(center.x, center.y, center.z))
+        .user_data(WHOLE)
+        .collision_groups(interaction_groups(group::COVER))
+        .friction(0.4)
 }
 
 fn standing_collider(layout: &Structure, index: usize) -> ColliderBuilder {
@@ -441,11 +461,50 @@ fn part_paint(cover: &Cover, layout: &Structure, index: usize) -> u32 {
 
 impl Simulation {
     /// The part of a structure behind `collider` (from its user data), if it is one.
-    pub fn structure_part(&self, collider: ColliderHandle) -> Option<(usize, usize)> {
+    pub fn structure_part(&self, collider: ColliderHandle, at: Point3) -> Option<(usize, usize)> {
         let &cover = self.cover_by_collider.get(&collider)?;
-        self.covers[cover].structure.as_ref()?;
-        let part = self.world.colliders.get(collider)?.user_data as usize;
-        Some((cover, part))
+        let c = &self.covers[cover];
+        let state = c.structure.as_ref()?;
+        let data = self.world.colliders.get(collider)?.user_data;
+        if data == WHOLE {
+            let local = state.layout.to_local(DVec3::new(at.x - c.x, at.y, at.z - c.z));
+            return Some((cover, state.layout.part_at(local, &state.gone)?));
+        }
+        Some((cover, data as usize))
+    }
+
+    /// The structure a standing collider belongs to.
+    pub fn structure_cover(&self, collider: ColliderHandle) -> Option<usize> {
+        let &cover = self.cover_by_collider.get(&collider)?;
+        self.covers[cover].structure.as_ref().map(|_| cover)
+    }
+
+    /// Give intact structure `cover`, standing as one collider, a collider for each part
+    /// not in `going`, before those go.
+    fn split_whole(&mut self, cover: usize, going: &PartSet) {
+        let body = self.covers[cover].body;
+        let Some(state) = &mut self.covers[cover].structure else {
+            return;
+        };
+        let Some(handle) = state.colliders.first().copied().flatten() else {
+            return;
+        };
+        if self.world.colliders.get(handle).is_none_or(|collider| collider.user_data != WHOLE) {
+            return;
+        }
+        state.colliders.iter_mut().for_each(|collider| *collider = None);
+        let layout = state.layout.clone();
+        self.cover_by_collider.remove(&handle);
+        self.world.remove_collider(handle);
+        for index in (0..layout.parts.len()).filter(|&index| !going.contains(index)) {
+            let handle = self
+                .world
+                .insert_collider(standing_collider(&layout, index), Some(body));
+            self.cover_by_collider.insert(handle, cover);
+            if let Some(state) = &mut self.covers[cover].structure {
+                state.colliders[index] = Some(handle);
+            }
+        }
     }
 
     /// Hit structure `cover`'s `part` for `amount` at `point`, from `along` (the way the
@@ -522,6 +581,7 @@ impl Simulation {
             // diagonal's box reaches far past it.
             let gap = state.colliders[index]
                 .and_then(|handle| self.world.colliders.get(handle))
+                .filter(|collider| collider.user_data != WHOLE)
                 .map_or(part.distance(local), |collider| {
                     f64::from(collider.shape().distance_to_point(
                         collider.position(),
@@ -608,7 +668,10 @@ impl Simulation {
                 false,
                 query_filter(group::COVER_QUERY),
             )
-            .is_some_and(|(collider, _)| self.structure_part(collider) != Some((cover, part)))
+            .is_some_and(|(collider, hit)| {
+                let at = ray.point_at(hit);
+                self.structure_part(collider, from_vector(at)) != Some((cover, part))
+            })
     }
 
     /// Stand structure `cover` as a scene shows it, with exactly the parts not in `gone`
@@ -622,6 +685,10 @@ impl Simulation {
         if state.gone == gone || !self.world.bodies.contains(body) {
             return;
         }
+        self.split_whole(cover, &gone);
+        let Some(state) = &mut self.covers[cover].structure else {
+            return;
+        };
         let layout = state.layout.clone();
         let mut removed = Vec::new();
         let mut added = Vec::new();
@@ -748,6 +815,7 @@ impl Simulation {
 
     /// Take `parts` out of the structure's standing parts and the world.
     fn remove_parts(&mut self, cover: usize, parts: &PartSet) {
+        self.split_whole(cover, parts);
         let Some(state) = &mut self.covers[cover].structure else {
             return;
         };
@@ -1666,7 +1734,7 @@ fn on_remains(simulation: &Simulation, body: RigidBodyHandle) -> bool {
             } else {
                 pair.collider1
             };
-            pair.has_any_active_contact() && simulation.structure_part(other).is_some()
+            pair.has_any_active_contact() && simulation.structure_cover(other).is_some()
         })
     })
 }
@@ -1750,15 +1818,16 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
             (contact.collider1, contact.collider2),
             (contact.collider2, contact.collider1),
         ] {
-            let Some(part) = simulation.structure_part(standing) else {
-                continue;
-            };
             let Some(body) = simulation
                 .world
                 .colliders
                 .get(falling)
                 .and_then(|collider| collider.parent())
             else {
+                continue;
+            };
+            let from = from_vector(simulation.world.bodies[body].center_of_mass());
+            let Some(part) = simulation.structure_part(standing, from) else {
                 continue;
             };
             // A body being shoved off the remains presses on them; it strikes nothing.
@@ -1771,7 +1840,6 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
                 continue;
             }
             let impulse = f64::from(contact.total_force_magnitude) * STEP;
-            let from = from_vector(simulation.world.bodies[body].center_of_mass());
             blows.push((part, body, impulse, from));
         }
     }

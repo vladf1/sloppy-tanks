@@ -177,6 +177,7 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
     structure.join_supports(&PartSet::EMPTY);
     // Beams lying on each other are fastened by their posts, not to each other: a body
     // of them comes down together only through a post.
+    structure.whole = true;
     structure.tipping = Some(WALL_TIPPING);
     let beams = PartSet::from_indices(
         (0..count).filter(|&index| is(&structure.parts[index], TimberPartKind::Beam)),

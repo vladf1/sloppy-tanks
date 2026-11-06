@@ -79,13 +79,14 @@ fn cover_queries_ignore_tanks_and_debris_and_release_destroyed_collider_identiti
     assert!(!s.cover_by_collider.contains_key(&handle));
     assert!(s.visible(a, b));
     s.reset(None);
-    // One collider a cover, a structure one for each of its parts.
+    // One collider a cover, a structure one for each of its parts (an intact timber
+    // wall or crate one for the whole).
     let colliders: usize = s
         .covers
         .iter()
         .map(|cover| match &cover.structure {
-            Some(state) => state.layout.parts.len(),
-            None => 1,
+            Some(state) if !state.layout.whole => state.layout.parts.len(),
+            _ => 1,
         })
         .sum();
     assert_eq!(s.cover_by_collider.len(), colliders);
@@ -205,20 +206,13 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
         .iter()
         .position(|c| c.kind == CoverKind::Container)
         .unwrap();
-    let parts = sim.covers[cargo]
-        .structure
-        .as_ref()
-        .unwrap()
-        .layout
-        .parts
-        .len();
     let colliders = |sim: &Simulation| {
         sim.cover_by_collider
             .values()
             .filter(|&&index| index == cargo)
             .count()
     };
-    assert_eq!(colliders(&sim), parts);
+    assert_eq!(colliders(&sim), 1, "an intact crate stands as one box");
     let cargo_at = cover_at(&sim, cargo);
     let (id, team) = (sim.human().id, sim.human_team);
     assert!(sim.nav.is_blocked(cargo_at));
@@ -226,7 +220,7 @@ fn harbor_cargo_stays_solid_while_damaged_then_opens_collision_and_navigation() 
     assert!(sim.covers[cargo].alive);
     assert_eq!(
         colliders(&sim),
-        parts,
+        1,
         "a crate's boards hold under light damage"
     );
     assert!(

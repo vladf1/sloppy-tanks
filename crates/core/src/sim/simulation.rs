@@ -37,7 +37,7 @@ use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quar
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::shooter_rewind::ShooterRewind;
 use super::structure::{PartSet, Structure, structure_of};
-use super::structure_physics::{StructureState, settle_structure_debris, standing_colliders};
+use super::structure_physics::{StructureState, WHOLE, settle_structure_debris, standing_colliders};
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
@@ -604,8 +604,10 @@ impl Simulation {
         // A structure's colliders are its standing parts, each marked with its index.
         if let Some(state) = &mut self.covers[index].structure {
             for &handle in colliders {
-                let part = self.world.colliders[handle].user_data as usize;
-                state.colliders[part] = Some(handle);
+                match self.world.colliders[handle].user_data {
+                    WHOLE => state.colliders.iter_mut().for_each(|part| *part = Some(handle)),
+                    part => state.colliders[part as usize] = Some(handle),
+                }
             }
             // A cottage garden's bean poles and cabbages bear what falls on them: only its
             // loose parts meet them, which come to rest on them rather than through them.

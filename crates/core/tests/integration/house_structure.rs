@@ -633,7 +633,7 @@ fn a_roof_coming_down_never_lies_up_on_the_remains_and_breaks_nothing_it_did_not
                 } else {
                     pair.collider1
                 };
-                pair.has_any_active_contact() && s.structure_part(other).is_some()
+                pair.has_any_active_contact() && s.structure_cover(other).is_some()
             })
         });
         assert!(
@@ -1393,7 +1393,7 @@ fn a_roof_shot_down_lies_flat_and_none_of_it_leans_up_on_the_walls() {
                 } else {
                     pair.collider1
                 };
-                pair.has_any_active_contact() && s.structure_part(other).is_some()
+                pair.has_any_active_contact() && s.structure_cover(other).is_some()
             })
         });
         assert!(

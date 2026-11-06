@@ -717,14 +717,16 @@ fn resolve_contact(
         // like other concrete.
         Contact::World { collider, .. }
             if simulation
-                .structure_part(collider)
+                .structure_part(collider, Point3::new(shot.x, shot.combat_y(), shot.z))
                 .is_some_and(|(cover, part)| {
                     simulation.covers[cover].structure.as_ref().is_some_and(|state| {
                         state.layout.parts[part].strength.is_finite()
                     })
                 }) =>
         {
-            let (cover, part) = simulation.structure_part(collider).expect("checked by the guard");
+            let (cover, part) = simulation
+                .structure_part(collider, Point3::new(shot.x, shot.combat_y(), shot.z))
+                .expect("checked by the guard");
             remove = strike_structure_part(simulation, si, cover, part);
         }
         Contact::World { collider, normal } => {
