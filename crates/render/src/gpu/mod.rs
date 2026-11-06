@@ -2666,6 +2666,21 @@ impl Renderer {
     }
 
     fn write_view_uniforms(&mut self) {
+        let views = self.view_uniforms();
+        self.frame.write_views(&self.gpu, &views);
+        let output = self.output_uniform();
+        self.frame.write_output(&self.gpu, output);
+        if self.occlusion_on() {
+            self.frame
+                .write_occlusion(&self.gpu, &self.occlusion_uniform());
+        }
+        if let (Some(uniform), Some(water)) = (self.water_uniform(), &self.water) {
+            water.gpu.write(&self.gpu, &uniform);
+        }
+    }
+
+    /// The frame uniform of each view (`MAIN_VIEW`, `REFLECTION_VIEW`, `SHADOW_VIEW`).
+    fn view_uniforms(&self) -> [FrameUniform; VIEW_COUNT] {
         let camera = self.camera();
         let size = self.scene_size();
         let main = self.frame_uniform(
@@ -2701,34 +2716,30 @@ impl Renderer {
         // Only the main view renders at the dynamic scale.
         views[REFLECTION_VIEW].quality[3] = 1.0;
         views[SHADOW_VIEW].quality[3] = 1.0;
-        self.frame.write_views(&self.gpu, &views);
-        let output = self.output_uniform();
-        self.frame.write_output(&self.gpu, output);
-        if self.occlusion_on() {
-            self.frame
-                .write_occlusion(&self.gpu, &self.occlusion_uniform());
-        }
-        if let Some(water) = &self.water {
-            let s = &water.settings;
-            let shore = match s.shore {
-                WaterShore::Basin { half_size } => [0.0, half_size, s.height, 0.0],
-                WaterShore::Creek => [1.0, 0.0, s.height, 0.0],
-            };
-            let uniform = WaterUniform {
-                sun_direction: rgb4(s.sun_direction.normalize_or_zero().into(), 0.0),
-                sun_color: rgb4(hex_to_linear(s.sun_color), 0.0),
-                deep_color: rgb4(hex_to_linear(s.deep_color), 0.0),
-                shallow_color: rgb4(hex_to_linear(s.shallow_color), 0.0),
-                settings: [
-                    s.ripple_scale,
-                    s.distortion_scale,
-                    s.normal_strength,
-                    self.time * s.time_scale,
-                ],
-                shore,
-            };
-            water.gpu.write(&self.gpu, &uniform);
-        }
+        views
+    }
+
+    /// The water's uniform, if the scene has water.
+    fn water_uniform(&self) -> Option<WaterUniform> {
+        let water = self.water.as_ref()?;
+        let s = &water.settings;
+        let shore = match s.shore {
+            WaterShore::Basin { half_size } => [0.0, half_size, s.height, 0.0],
+            WaterShore::Creek => [1.0, 0.0, s.height, 0.0],
+        };
+        Some(WaterUniform {
+            sun_direction: rgb4(s.sun_direction.normalize_or_zero().into(), 0.0),
+            sun_color: rgb4(hex_to_linear(s.sun_color), 0.0),
+            deep_color: rgb4(hex_to_linear(s.deep_color), 0.0),
+            shallow_color: rgb4(hex_to_linear(s.shallow_color), 0.0),
+            settings: [
+                s.ripple_scale,
+                s.distortion_scale,
+                s.normal_strength,
+                self.time * s.time_scale,
+            ],
+            shore,
+        })
     }
 
     fn update_culls(&mut self) {

@@ -2106,6 +2106,13 @@ impl Presentation {
         dt: f64,
         overview: bool,
     ) -> Result<(), String> {
+        self.update(state, alpha, dt, overview);
+        self.renderer.render(self.time as f32)
+    }
+
+    /// Synchronize entity visuals with `state` without drawing: the first half of
+    /// [`Self::render`].
+    pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, overview: bool) {
         self.time += dt;
         self.busy = false;
         self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
@@ -2156,7 +2163,6 @@ impl Presentation {
             alpha,
             dt,
         );
-        self.renderer.render(self.time as f32)
     }
 
     fn update_scenery(&mut self) {
