@@ -72,8 +72,9 @@ pub const FLASH_DECAY: f32 = 2.0;
 pub const LIGHT_CUTOFF: f32 = 0.05;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
-/// How far (m) round a rebuilt cottage its old splinters and boards are cleared: its
-/// yard, where the critics saw last round's boards round a new cottage.
+/// How far (m) round rebuilt cover its old splinters, boards and chips are cleared: a
+/// cottage's yard, where the critics saw last round's boards round a new cottage, and
+/// the ground round a Scrap Yard timber bay or crate standing again.
 const REBUILT_CLEARANCE: f64 = 3.0;
 /// The muzzle flash light's color.
 pub const MUZZLE_FLASH_COLOR: u32 = 0xffc070;
@@ -215,6 +216,12 @@ impl EffectSystems {
         if event.kind == T::Notice {
             return;
         }
+        // Scrap Yard cover standing again sends an impact naming it, with no shell's
+        // size (`superstress_level::rebuild_cover`): nothing struck it, so it throws no chips
+        // or dust, and the old ones round it are cleared (`Walls::rebuilt`).
+        if event.kind == T::Impact && event.id.is_some() && event.size.is_none() {
+            return;
+        }
         self.laser.event(event);
         if event.kind == T::Hurt && (event.id.is_none() || event.size.unwrap_or(0.0) <= 0.0) {
             return;
@@ -267,11 +274,14 @@ impl EffectSystems {
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
         self.particles.explosions.walls.sync(state);
-        // A rebuilt cottage stands clear of its old splinters and boards.
-        for &[x, z, half_w, half_d] in &self.particles.explosions.walls.rebuilt {
-            self.wood
-                .clear_round(x, z, half_w + REBUILT_CLEARANCE, half_d + REBUILT_CLEARANCE);
+        // Rebuilt cover stands clear of its old splinters, boards and chips.
+        let rebuilt = std::mem::take(&mut self.particles.explosions.walls.rebuilt);
+        for &[x, z, half_w, half_d] in &rebuilt {
+            let (half_w, half_d) = (half_w + REBUILT_CLEARANCE, half_d + REBUILT_CLEARANCE);
+            self.wood.clear_round(x, z, half_w, half_d);
+            self.particles.clear_round(x, z, half_w, half_d);
         }
+        self.particles.explosions.walls.rebuilt = rebuilt;
         let ground = Ground::from_theme(&state.map_theme);
         self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
@@ -541,7 +551,7 @@ mod browser {
 #[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
-    use sloppy_core::sim::render_state::RenderTank;
+    use sloppy_core::sim::render_state::{RenderCover, RenderTank};
     use sloppy_core::sim::{CoverKind, MatchPhase, Point3, SimEvent, Weapon};
 
     #[test]
@@ -659,6 +669,63 @@ mod tests {
         systems.reset();
         let cleared = systems.stats();
         assert_eq!(cleared.wood_chips + cleared.instances, 0);
+    }
+
+    #[test]
+    fn a_scrap_yard_bay_standing_again_clears_its_chips_and_throws_none() {
+        let mut systems = EffectSystems::default();
+        let mut bay = RenderCover {
+            id: 7,
+            kind: CoverKind::Timber,
+            w: 4.0,
+            d: 0.9,
+            h: 2.8,
+            destructible: true,
+            ..RenderCover::default()
+        };
+        let mut state = RenderState {
+            covers: vec![bay],
+            ..RenderState::default()
+        };
+        let dt = 1.0 / 60.0;
+        // Shot down: its splinters and chips lie round it.
+        let mut hit = SimEvent::at(SimEventType::Impact, 0.5, 0.6);
+        hit.cover_kind = Some(CoverKind::Timber);
+        hit.size = Some(0.6);
+        hit.from = Some(Point3::new(0.5, 1.0, 9.0));
+        systems.event(&hit);
+        let mut shatter = SimEvent::at(SimEventType::Shatter, -0.5, 0.0);
+        shatter.cover_kind = Some(CoverKind::Timber);
+        systems.event(&shatter);
+        for _ in 0..120 {
+            systems.update(&state, 1.0, dt, 0.0);
+        }
+        assert!(!systems.wood.is_empty() || !systems.particles.particles.is_empty());
+        // It stands again, announced by an impact naming it with no shell's size.
+        bay.alive = true;
+        state.covers = vec![bay];
+        let mut rebuilt = SimEvent::at(SimEventType::Impact, 0.0, 0.0);
+        rebuilt.id = Some(7);
+        rebuilt.cover_kind = Some(CoverKind::Timber);
+        rebuilt.height = Some(2.8);
+        systems.event(&rebuilt);
+        systems.update(&state, 1.0, dt, 0.0);
+        let near = |x: f64, z: f64| x.abs() < 5.0 && z.abs() < 3.5;
+        assert!(
+            systems
+                .wood
+                .wood()
+                .chain(systems.wood.straw())
+                .all(|piece| !near(piece.position.x, piece.position.z))
+        );
+        assert!(
+            systems
+                .particles
+                .particles
+                .iter()
+                .all(|chip| !near(chip.x, chip.z))
+        );
+        assert_eq!(systems.particles.explosions.active(), 0);
     }
 
     #[test]

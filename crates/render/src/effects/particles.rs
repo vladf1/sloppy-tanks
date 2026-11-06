@@ -249,6 +249,13 @@ impl ParticleEffects {
         self.records.clear();
     }
 
+    /// Drop every chip over the box `half_w` × `half_d` about `(x, z)`: rebuilt cover's
+    /// footprint and the ground round it.
+    pub fn clear_round(&mut self, x: f64, z: f64, half_w: f64, half_d: f64) {
+        self.particles
+            .retain(|chip| (chip.x - x).abs() > half_w || (chip.z - z).abs() > half_d);
+    }
+
     /// Spawn the event's particles and blast. Returns whether it deserves the
     /// explosion light flash.
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) -> bool {
