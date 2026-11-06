@@ -21,7 +21,7 @@ use glam::{DMat3, DQuat, DVec2, DVec3};
 
 use super::debris_physics::DebrisMaterial;
 use super::structure::{
-    Breakup, Breaking, Build, DebrisRules, Levelling, Lie, Material, Part, PartSet, PartShape, Role,
+    Breakup, Breaking, Build, DebrisRules, Levelling, Material, Part, PartSet, PartShape, Role,
     Structure, Tipping,
 };
 use super::tower_layout::{
@@ -82,6 +82,7 @@ impl TowerPartKind {
             density,
             surface,
             breaking,
+            tear: 0.0,
         }
     }
 
@@ -430,13 +431,6 @@ fn part(kind: TowerPartKind, shapes: Vec<PartShape>, mass: f64) -> Part {
     );
     part.mass = mass;
     part.paint = kind.paint();
-    // Nothing light and long stands on its end in the ruin: the ladder, and a railing
-    // as it stood or on its back. The frame's pieces lie as they land, tangled.
-    part.lie = match kind {
-        TowerPartKind::Ladder => Lie::of_box(part.min, part.max),
-        TowerPartKind::Railing => Lie::Face(DVec3::Y),
-        _ => Lie::Any,
-    };
     part
 }
 

@@ -191,6 +191,9 @@ pub struct Material {
     pub density: f64,
     pub surface: DebrisMaterial,
     pub breaking: Breaking,
+    /// A strike that breaks the part tears the parts of the same material within this
+    /// reach (m) of where it struck along with it (a crate board's neighbours).
+    pub tear: f64,
 }
 
 /// A part holding another up: `by` passes on `share` of its support. A part it rests on
@@ -267,29 +270,6 @@ pub enum Lie {
     Roof(DVec3),
     Length(DVec3),
 }
-
-impl Lie {
-    /// How a piece of build-frame box `min`..`max` lies by its proportions: a stick
-    /// along its length, a plate on its face, anything chunkier however it lands.
-    pub fn of_box(min: DVec3, max: DVec3) -> Lie {
-        let size = max - min;
-        let mut axes = [(size.x, DVec3::X), (size.y, DVec3::Y), (size.z, DVec3::Z)];
-        axes.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let [(thin, across), (middle, _), (long, along)] = axes;
-        if long > STICK * middle {
-            Lie::Length(along)
-        } else if thin < PLATE * middle {
-            Lie::Face(across)
-        } else {
-            Lie::Any
-        }
-    }
-}
-
-/// A box this many times longer than its next side is a stick.
-const STICK: f64 = 3.0;
-/// A box thinner than this share of its next side is a plate.
-const PLATE: f64 = 0.35;
 
 /// What a body that lands hard breaks into besides its parts: when it holds all of
 /// `needs`, those parts land as `pieces` (indices from [`Structure::parts`]' length on).
@@ -387,6 +367,25 @@ impl Part {
     /// How far `p` (build frame) lies from the part's box.
     pub fn distance(&self, p: DVec3) -> f64 {
         (p.clamp(self.min, self.max) - p).length()
+    }
+
+    /// How far `p` (build frame) lies from the part's own shapes: a frame of battens
+    /// round a wall is near its edges only, where its box covers the whole wall.
+    pub fn shape_distance(&self, p: DVec3) -> f64 {
+        self.shapes
+            .iter()
+            .map(|shape| match shape {
+                PartShape::Box {
+                    center,
+                    half,
+                    rotation,
+                } => {
+                    let local = rotation.inverse() * (p - *center);
+                    (local.clamp(-*half, *half) - local).length()
+                }
+                PartShape::Hull(_) => self.distance(p),
+            })
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Its footprint's corners, as contacts with the ground.
@@ -532,6 +531,9 @@ pub struct Structure {
     /// a slot for every collider, and the village's timber walls by the part pushed it
     /// over a doubling of its arenas.
     pub whole: bool,
+    /// Whether a part that loses its other supports while one still stands hinges down
+    /// off that one's top edge (a crate's lid off its last wall) rather than dropping.
+    pub hinges: bool,
 }
 
 /// A body of a structure's parts coming down together: its parts, and for a group that
@@ -585,6 +587,7 @@ impl Structure {
             debris,
             variant: 0,
             whole: false,
+            hinges: false,
         }
     }
 
@@ -645,7 +648,11 @@ impl Structure {
     pub fn part_at(&self, local: DVec3, gone: &PartSet) -> Option<usize> {
         (0..self.parts.len())
             .filter(|&index| !gone.contains(index))
-            .min_by(|&a, &b| self.parts[a].distance(local).total_cmp(&self.parts[b].distance(local)))
+            .min_by(|&a, &b| {
+                self.parts[a]
+                    .shape_distance(local)
+                    .total_cmp(&self.parts[b].shape_distance(local))
+            })
     }
 
     /// The build-frame box round every part.
@@ -911,6 +918,7 @@ impl Structure {
         for &index in &detached {
             falling.remove(index);
         }
+        let down = gone.union(&falling);
         let mut falls: Vec<Fall> = self
             .joined(&falling)
             .into_iter()
@@ -918,7 +926,8 @@ impl Structure {
                 let tip = tips
                     .iter()
                     .find(|(group, _)| group.iter().any(|index| parts.contains(index)))
-                    .map(|(_, tip)| *tip);
+                    .map(|(_, tip)| *tip)
+                    .or_else(|| self.hinge(&parts, &down));
                 Fall { parts, tip }
             })
             .collect();
@@ -932,6 +941,34 @@ impl Structure {
             }
         }
         falls
+    }
+
+    /// Where falling `parts` hinge down off a supporter still standing (not in `down`),
+    /// for a structure that [`Structure::hinges`]: the top edge of the supporter nearest
+    /// their middle, turning away from it.
+    fn hinge(&self, parts: &PartSet, down: &PartSet) -> Option<(DVec3, DVec2)> {
+        if !self.hinges {
+            return None;
+        }
+        let (_, middle) = self.balance(parts);
+        let by = parts
+            .iter()
+            .flat_map(|index| self.supports[index].iter().map(|support| support.by as usize))
+            .filter(|&by| !down.contains(by) && !parts.contains(by))
+            .min_by(|&a, &b| {
+                self.parts[a]
+                    .distance(middle)
+                    .total_cmp(&self.parts[b].distance(middle))
+                    .then(a.cmp(&b))
+            })?;
+        let holder = &self.parts[by];
+        let pivot = DVec3::new(
+            middle.x.clamp(holder.min.x, holder.max.x),
+            holder.max.y,
+            middle.z.clamp(holder.min.z, holder.max.z),
+        );
+        let way = DVec2::new(middle.x - pivot.x, middle.z - pivot.z);
+        (way.length() > 1e-6).then(|| (pivot, way.normalize()))
     }
 
     /// The groups of `parts` fastened to each other through `parts` alone, each in order

@@ -83,6 +83,7 @@ impl PartKind {
             density,
             surface: DebrisMaterial::Wood,
             breaking,
+            tear: 0.0,
         }
     }
 

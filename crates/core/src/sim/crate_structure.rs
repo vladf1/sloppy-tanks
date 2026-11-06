@@ -13,7 +13,8 @@ use std::sync::Arc;
 use glam::{DQuat, DVec3, EulerRot};
 
 use super::crate_layout::{
-    CRATE_BASE, CRATE_SKID_WIDTH, CrateBreak, CratePiece, CrateSection, crate_sections,
+    CRATE_BASE, CRATE_BATTEN, CRATE_BATTEN_WIDTH, CRATE_PLANK, CRATE_SKID_WIDTH, CrateBreak,
+    CratePiece, CrateSection, crate_sections, crate_wall_rows,
 };
 use super::debris_physics::DebrisMaterial;
 use super::structure::{
@@ -21,26 +22,48 @@ use super::structure::{
     PartShape, Role, Structure, Support, Tipping,
 };
 
-/// What a part of a crate is to its model: a wall (front, back, right, left) or the lid
-/// by its face, and the section of the crate it is drawn as (none for the base).
+/// What a part of a crate is to its model: a wall's frame (front, back, right, left) or
+/// the lid by its face, or one of a wall's boards by its face and row, and the section
+/// of the crate it is drawn as.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CratePart {
     pub face: Option<usize>,
     pub section: Option<CrateSection>,
+    /// The sheathing board's row, bottom up.
+    pub board: Option<usize>,
 }
 
-/// The parts: the four walls, the lid and the base.
+/// The parts: the four walls' frames (battens and brace), the lid and the base, then
+/// each wall's sheathing boards, front wall first, each bottom up
+/// ([`crate_board_part`]).
 pub const CRATE_WALLS: [usize; 4] = [0, 1, 2, 3];
 pub const CRATE_LID_PART: usize = 4;
 pub const CRATE_BASE_PART: usize = 5;
+const FIRST_BOARD: usize = 6;
 
-/// A wall or the lid blows out to a standard shell (40) that strikes it; the base of
-/// skids takes more.
+/// The part a crate `h` high numbers wall `face`'s board `row` (bottom up).
+pub fn crate_board_part(h: f64, face: usize, row: usize) -> usize {
+    let (rows, _) = crate_wall_rows(h);
+    FIRST_BOARD + face * rows + row
+}
+
+/// A board or the lid breaks to a standard shell (40) that strikes it, tearing the
+/// boards either side of the hit with it; a wall's frame of battens takes a few shells
+/// at its boards, and the base of skids more.
 const BOARDS: Material = Material {
     strength: 30.0,
     density: 0.35,
     surface: DebrisMaterial::Wood,
     breaking: Breaking::Splinters,
+    tear: BOARD_TEAR,
+};
+/// A struck board tears the boards whose edge lies within this of the hit (m): the one
+/// above and below it, a third if the hit is near a seam.
+const BOARD_TEAR: f64 = 0.35;
+const FRAME: Material = Material {
+    strength: 80.0,
+    tear: 0.0,
+    ..BOARDS
 };
 const SKIDS: Material = Material {
     strength: 60.0,
@@ -98,11 +121,66 @@ fn board(section: CrateSection, face: Option<usize>) -> Part {
         Role::Crate(CratePart {
             face,
             section: Some(section),
+            board: None,
         }),
     );
     part.lie = Lie::Face(DVec3::from_array(section.normal));
     part
 }
+
+/// A wall's frame is this share of the wall's weight; its boards the rest.
+const FRAME_SHARE: f64 = 0.4;
+
+/// The battens round a wall section's edge, outside its sheathing, as boxes in the
+/// section's frame turned to where it stands.
+fn frame_shapes(section: &CrateSection) -> Vec<PartShape> {
+    let [rx, ry, rz] = section.rotation;
+    let rotation = DQuat::from_euler(EulerRot::XYZ, rx, ry, rz);
+    let center = DVec3::from_array(section.center);
+    let [length, height, thickness] = section.size;
+    // Outside the sheathing, at the section's outer face (+z of its own frame).
+    let out = thickness / 2.0 - CRATE_BATTEN / 2.0;
+    let batten = |x: f64, y: f64, w: f64, h: f64| PartShape::Box {
+        center: center + rotation * DVec3::new(x, y, out),
+        half: DVec3::new(w, h, CRATE_BATTEN) / 2.0,
+        rotation,
+    };
+    let (half_l, half_h) = (length / 2.0, height / 2.0);
+    let edge = CRATE_BATTEN_WIDTH;
+    vec![
+        batten(0.0, -half_h + edge / 2.0, length, edge),
+        batten(0.0, half_h - edge / 2.0, length, edge),
+        batten(-half_l + edge / 2.0, 0.0, edge, height - 2.0 * edge),
+        batten(half_l - edge / 2.0, 0.0, edge, height - 2.0 * edge),
+    ]
+}
+
+/// Wall `face`'s sheathing board `row`, bottom up, behind its frame.
+fn sheathing(wall: &CrateSection, face: usize, row: usize, pitch: f64) -> Part {
+    let [rx, ry, rz] = wall.rotation;
+    let rotation = DQuat::from_euler(EulerRot::XYZ, rx, ry, rz);
+    let [length, height, thickness] = wall.size;
+    let y = -height / 2.0 + pitch * (row as f64 + 0.5);
+    let inner = -thickness / 2.0 + CRATE_PLANK / 2.0;
+    let center = DVec3::from_array(wall.center) + rotation * DVec3::new(0.0, y, inner);
+    let section = CrateSection {
+        piece: CratePiece::Plank,
+        center: center.to_array(),
+        size: [length, pitch - BOARD_SEAM, CRATE_PLANK],
+        rotation: wall.rotation,
+        normal: wall.normal,
+    };
+    let mut part = board(section, Some(face));
+    part.role = Role::Crate(CratePart {
+        face: Some(face),
+        section: Some(section),
+        board: Some(row),
+    });
+    part
+}
+
+/// The dark seam between neighbouring boards.
+const BOARD_SEAM: f64 = 0.012;
 
 /// The structure of a `w` × `d` × `h` crate.
 pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
@@ -112,7 +190,14 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
         .enumerate()
         .map(|(face, &section)| {
             let mut wall = board(section, Some(face));
-            wall.upright = face < 4;
+            if face < 4 {
+                // A wall's frame: its battens round the edge and its brace, the
+                // sheathing boards ([`crate_board_part`]) nailed to it.
+                wall.shapes = frame_shapes(&section);
+                wall.material = FRAME;
+                wall.mass *= FRAME_SHARE;
+                wall.upright = true;
+            }
             wall
         })
         .collect();
@@ -137,6 +222,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
         SKIDS,
         Role::Crate(CratePart {
             face: None,
+            board: None,
             section: Some(CrateSection {
                 piece: CratePiece::Skid,
                 center: [0.0, CRATE_BASE / 2.0, 0.0],
@@ -150,7 +236,24 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
     base.contacts = base.base();
     base.lie = Lie::Face(DVec3::Y);
     parts.push(base);
+    let (rows, pitch) = crate_wall_rows(h);
+    for (face, section) in whole[..4].iter().enumerate() {
+        for row in 0..rows {
+            parts.push(sheathing(section, face, row, pitch));
+        }
+    }
     let mut structure = Structure::new(Build::Crate, 0.0, parts, CRATE_DEBRIS);
+    // Each board is nailed to its wall's frame, and hangs on it whatever else goes.
+    for (face, frame) in CRATE_WALLS.into_iter().enumerate() {
+        for row in 0..rows {
+            structure.supports[crate_board_part(h, face, row)].push(Support {
+                by: frame as u16,
+                share: 1.0,
+                seat: 0.0,
+                end: super::structure::End::Any,
+            });
+        }
+    }
     for wall in CRATE_WALLS {
         structure.supports[wall].push(Support {
             by: CRATE_BASE_PART as u16,
@@ -170,7 +273,9 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
             end: super::structure::End::Any,
         });
     }
-    structure.join_supports(&PartSet::EMPTY);
+    // The lid rests on the walls, fastened to none: it comes off them on its own.
+    structure.join_supports(&PartSet::from_indices([CRATE_LID_PART]));
+    structure.hinges = true;
     for wall in CRATE_WALLS {
         let neighbours = if wall < 2 { [2, 3] } else { [0, 1] };
         for other in neighbours {
@@ -209,8 +314,14 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
             indices.push(first + pieces.len() as u16);
             pieces.push(part);
         }
+        // A wall landing whole with its boards breaks along them.
+        let boards = if face < 4 {
+            (0..rows).map(|row| crate_board_part(h, face, row)).collect()
+        } else {
+            Vec::new()
+        };
         breakups.push(Breakup {
-            needs: PartSet::from_indices([face]),
+            needs: PartSet::from_indices(std::iter::once(face).chain(boards)),
             pieces: indices,
         });
     }
@@ -227,9 +338,21 @@ mod tests {
     fn a_whole_crate_stands_and_one_wall_blown_out_leaves_the_lid_on() {
         let crate_ = crate_structure(3.0, 3.0, 2.6);
         assert!(crate_.unsupported(&PartSet::EMPTY).is_empty());
-        for wall in CRATE_WALLS {
-            assert!(crate_.unsupported(&PartSet::from_indices([wall])).is_empty(), "{wall}");
+        let (rows, _) = crate_wall_rows(2.6);
+        for (face, wall) in CRATE_WALLS.into_iter().enumerate() {
+            // Its frame shot away, a wall's boards come down with nothing else.
+            let boards = PartSet::from_indices((0..rows).map(|row| crate_board_part(2.6, face, row)));
+            assert_eq!(crate_.unsupported(&PartSet::from_indices([wall])), boards, "{wall}");
         }
+    }
+
+    #[test]
+    fn boards_shot_out_leave_the_ones_above_and_below_on_their_battens() {
+        let crate_ = crate_structure(3.0, 3.0, 2.6);
+        let (rows, _) = crate_wall_rows(2.6);
+        assert!(rows >= 6, "{rows}");
+        let shot = PartSet::from_indices((2..4).map(|row| crate_board_part(2.6, 0, row)));
+        assert!(crate_.unsupported(&shot).is_empty());
     }
 
     #[test]

@@ -29,9 +29,9 @@ use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
-use crate::sim::crate_structure::{CratePart, crate_structure};
+use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
 use crate::sim::structure::{PartSet, Role};
-use crate::sim::timber_layout::{TimberJoin, TimberWall, timber_parts};
+use crate::sim::timber_layout::{TimberJoin, TimberPart, TimberWall, timber_members, timber_parts};
 use crate::sim::types::CoverKind;
 
 /// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
@@ -116,7 +116,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         // in the static covers' draws.
         CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
         CoverKind::Timber => {
-            let parts = timber_parts(&TimberWall {
+            let wall = TimberWall {
                 x: c.x,
                 z: c.z,
                 w: c.w,
@@ -124,14 +124,35 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 h: c.h,
                 color: c.color,
                 join: c.timber_join,
-            });
-            // The members that stand, numbered as the wall's structure numbers them.
-            let standing = parts
-                .iter()
-                .enumerate()
-                .filter(|(index, _)| !c.broken.contains(*index))
-                .map(|(_, part)| part);
-            add_timber_parts(group, standing);
+            };
+            // The lengths that stand, numbered as the wall's structure numbers them: a
+            // member all of whose lengths stand draws whole as it stood, the lengths
+            // left of a broken beam each with its torn ends.
+            let members = timber_members(&wall);
+            let whole = |part: &TimberPart| {
+                members
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, member)| member.kind == part.kind && member.index == part.index)
+                    .all(|(index, _)| !c.broken.contains(index))
+            };
+            let parts = timber_parts(&wall);
+            add_timber_parts(group, parts.iter().filter(|part| whole(part)));
+            for (index, member) in members.iter().enumerate() {
+                let Some(beam) = parts
+                    .iter()
+                    .find(|part| part.kind == member.kind && part.index == member.index)
+                else {
+                    continue;
+                };
+                if c.broken.contains(index) || whole(beam) {
+                    continue;
+                }
+                let mut node = timber_debris_model(member);
+                node.position = DVec3::new(member.x, member.y, member.z);
+                node.rotation = glam::DQuat::from_rotation_y(member.yaw);
+                group.children.push(node);
+            }
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
@@ -223,7 +244,7 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
         CoverKind::House => house_debris(c.x, c.z, c.w, c.d, c.h, parts),
         CoverKind::Tower => tower_debris(c.color, parts),
         CoverKind::Timber => {
-            let members = timber_parts(&TimberWall {
+            let members = timber_members(&TimberWall {
                 x: c.x,
                 z: c.z,
                 w: c.w,
@@ -249,11 +270,16 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
             for index in parts.iter() {
                 let Role::Crate(CratePart {
                     section: Some(section),
-                    ..
+                    face,
+                    board,
                 }) = layout.part(index).role
                 else {
                     continue;
                 };
+                // A wall's frame falling with its boards draws as the whole wall.
+                if board.is_some() && face.is_some_and(|face| parts.contains(CRATE_WALLS[face])) {
+                    continue;
+                }
                 let size = DVec3::from_array(section.size);
                 let mut node = crate_piece_model(section.piece, size, c.color, index as u32);
                 let [rx, ry, rz] = section.rotation;

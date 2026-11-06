@@ -15,8 +15,8 @@ use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure_physics::part_box;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::tower_structure::{
-    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, RAILINGS, ROOF,
-    TowerPartKind, piece_look, tower_structure,
+    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, ROOF, TowerPartKind,
+    piece_look, tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -1023,41 +1023,4 @@ fn a_tower_falling_on_a_timber_wall_breaks_there_and_then() {
     assert!(bodies(&s, tower).len() > 4, "it broke up where it struck");
     let beams = s.covers[wall].structure.as_ref().unwrap().gone.len();
     assert!(beams > 0, "it smashed the beams it came down on");
-}
-
-/// The ladder and the railings a toppling tower throws off end lying down: the ladder
-/// along the ground, a railing as it stood or on its back, never balanced on end.
-#[test]
-fn the_fallen_ladder_and_railings_lie_down() {
-    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
-        let (mut s, tower) = lone_tower();
-        s.break_structure(
-            tower,
-            PartSet::from_indices([leg]),
-            PartSet::EMPTY,
-            None,
-            None,
-        );
-        run(&mut s, 6.0);
-        for piece in s.fragments.iter().filter(|f| f.of_structure(tower)) {
-            let parts = piece.structure_parts().unwrap();
-            let up = *s.world.bodies[piece.body].rotation() * glam::Vec3::Y;
-            if parts == PartSet::from_indices([LADDER]) {
-                assert!(
-                    up.y.abs() < 0.5,
-                    "corner {corner}: the ladder rises {:.2}",
-                    up.y
-                );
-            }
-            for railing in RAILINGS {
-                if parts == PartSet::from_indices([railing]) {
-                    assert!(
-                        up.y.abs() > 0.7,
-                        "corner {corner}: railing {railing} on end ({:.2})",
-                        up.y
-                    );
-                }
-            }
-        }
-    }
 }

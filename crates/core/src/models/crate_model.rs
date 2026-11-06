@@ -23,7 +23,9 @@ use crate::sim::crate_layout::{
     CRATE_SKID_WIDTH, CratePiece,
 };
 use crate::sim::math::{Random, js_round, to_int32};
-use crate::sim::crate_structure::{CRATE_BASE_PART, CRATE_LID_PART, CRATE_WALLS, WIDE_CRATE};
+use crate::sim::crate_structure::{
+    CRATE_BASE_PART, CRATE_LID_PART, CRATE_WALLS, WIDE_CRATE, crate_board_part,
+};
 use crate::sim::structure::PartSet;
 
 /// `Pick<Cover, "x" | "z" | "w" | "d" | "h" | "color">`: crates also seed their
@@ -623,7 +625,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
                 skin: true,
                 ..Damage::default()
             };
-            lay(group, wall, face, &board, &skin);
+            lay(group, crate_board_part(c.h, index, row), face, &board, &skin);
         }
         let reach = if long {
             face.half + CRATE_BATTEN
@@ -1117,7 +1119,13 @@ mod tests {
         let wall = first_board(&intact, front, -DVec3::Z).expect("the front is boarded");
         assert!((wall - c.d / 2.0).abs() < 1e-3, "the sheathing: {wall}");
         let mut blown = Node::default();
-        cargo_crate(&mut blown, c, &PartSet::from_indices([CRATE_WALLS[0]]));
+        let (rows, _) = crate::sim::crate_layout::crate_wall_rows(c.h);
+        let front_wall = (0..rows).map(|row| crate_board_part(c.h, 0, row));
+        cargo_crate(
+            &mut blown,
+            c,
+            &PartSet::from_indices(std::iter::once(CRATE_WALLS[0]).chain(front_wall)),
+        );
         let through = first_board(&blown, front, -DVec3::Z).expect("the back wall");
         assert!(through > c.d, "the front is gone: {through}");
         let far = first_board(&blown, back, DVec3::Z).expect("the back is boarded");

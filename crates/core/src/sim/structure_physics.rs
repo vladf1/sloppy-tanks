@@ -574,8 +574,23 @@ impl Simulation {
         if !force && state.damage[part] < strength {
             return false;
         }
+        // A board tears its neighbours of the same stuff near the hit along with it.
+        let layout = state.layout.clone();
+        let material = layout.parts[part].material;
+        let (x, z) = (self.covers[cover].x, self.covers[cover].z);
+        let Some(state) = &self.covers[cover].structure else {
+            return false;
+        };
+        let local = layout.to_local(DVec3::new(point.x - x, point.y, point.z - z));
+        let torn = PartSet::from_indices((0..layout.parts.len()).filter(|&index| {
+            index == part
+                || (material.tear > 0.0
+                    && state.standing(index)
+                    && layout.parts[index].material == material
+                    && layout.parts[index].shape_distance(local) <= material.tear)
+        }));
         let from = Point3::new(point.x - along.x, point.y, point.z - along.z);
-        self.break_structure(cover, PartSet::from_indices([part]), PartSet::EMPTY, Some(from), by);
+        self.break_structure(cover, torn, PartSet::EMPTY, Some(from), by);
         true
     }
 
@@ -624,7 +639,7 @@ impl Simulation {
             let gap = state.colliders[index]
                 .and_then(|handle| self.world.colliders.get(handle))
                 .filter(|collider| collider.user_data != WHOLE)
-                .map_or(part.distance(local), |collider| {
+                .map_or(part.shape_distance(local), |collider| {
                     f64::from(collider.shape().distance_to_point(
                         collider.position(),
                         vector(point.x, point.y, point.z),
@@ -1330,12 +1345,12 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             simulation.burst_bricks(index);
             continue;
         }
-        let jammed = !debris.landed
-            && !layout.debris.firm_only
+        let stopped = !debris.landed
             && debris.parts.len() > 1
             && debris
                 .still_since
                 .is_some_and(|since| simulation.elapsed - since >= REST_HOLD);
+        let jammed = stopped && !layout.debris.firm_only;
         let hard = debris.struck
             || (change > layout.debris.landing_speed
                 && (!layout.debris.firm_only || on_firm(simulation, handle, debris.cover)));
@@ -1367,6 +1382,18 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
                 debris.landed_at = simulation.elapsed;
             }
         }
+        // A firm-only body come to a stop on something else (its own remains, other
+        // debris) lands whole there: it settles and rests from now, and breaks only
+        // where something new strikes it.
+        if stopped
+            && layout.debris.firm_only
+            && let Some(debris) = &mut simulation.fragments[index].structure
+            && !debris.landed
+        {
+            debris.landed = true;
+            debris.landed_at = simulation.elapsed;
+        }
+        let body = &simulation.world.bodies[handle];
         let up_on_remains = !debris.rested
             && f64::from(body.center_of_mass().y) >= WEDGE_HEIGHT
             && on_remains(simulation, handle);

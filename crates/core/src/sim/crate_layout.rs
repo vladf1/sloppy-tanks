@@ -21,6 +21,13 @@ pub const CRATE_BATTEN_WIDTH: f64 = 0.15;
 pub const CRATE_BOARD_PITCH: f64 = 0.3;
 /// Width of a skid across its grain.
 pub const CRATE_SKID_WIDTH: f64 = 0.2;
+/// The sheathing boards a wall of a crate `h` high is laid in, and their pitch up it.
+pub fn crate_wall_rows(h: f64) -> (usize, f64) {
+    let span = h - CRATE_LID - CRATE_BASE;
+    let rows = (span / CRATE_BOARD_PITCH).round().clamp(3.0, 10.0);
+    (rows as usize, span / rows)
+}
+
 /// Clearance between neighbouring sections so they start apart, not interpenetrating.
 const SECTION_GAP: f64 = 0.02;
 

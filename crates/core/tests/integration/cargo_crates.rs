@@ -6,7 +6,10 @@
 use crate::support;
 
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::crate_structure::{CRATE_BASE_PART, CRATE_LID_PART, CRATE_WALLS};
+use sloppy_core::sim::crate_layout::crate_wall_rows;
+use sloppy_core::sim::crate_structure::{
+    CRATE_BASE_PART, CRATE_LID_PART, CRATE_WALLS, crate_board_part,
+};
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Weapon};
@@ -44,7 +47,7 @@ fn gone(s: &Simulation, crate_: usize) -> PartSet {
 }
 
 #[test]
-fn a_shell_blows_out_the_wall_it_strikes_and_the_lid_stays_on() {
+fn a_shell_tears_out_the_boards_round_its_hit_and_the_wall_stands() {
     let (mut s, crate_) = lone_crate();
     let rng = s.rng.state;
     fire_at(
@@ -56,22 +59,52 @@ fn a_shell_blows_out_the_wall_it_strikes_and_the_lid_stays_on() {
     );
     run(&mut s, 1.0);
     let down = gone(&s, crate_);
-    // The back wall faces -z, toward the shell.
-    assert!(
-        down.contains(CRATE_WALLS[1]),
-        "the struck wall is blown out: {down:?}"
-    );
-    assert!(
-        !down.contains(CRATE_LID_PART),
-        "the lid stays on three walls"
-    );
+    // The back wall faces -z, toward the shell: two or three of its boards go round the
+    // hit, the rest hang on its battens.
+    let (rows, _) = crate_wall_rows(2.6);
+    let back: Vec<usize> = (0..rows).map(|row| crate_board_part(2.6, 1, row)).collect();
+    let torn = back.iter().filter(|&&board| down.contains(board)).count();
+    assert!((2..=3).contains(&torn), "{torn} boards torn: {down:?}");
+    assert!(!down.contains(CRATE_WALLS[1]), "its frame stands");
+    assert!(!down.contains(CRATE_LID_PART), "the lid stays on");
     assert!(!down.contains(CRATE_BASE_PART));
+    let front: Vec<usize> = (0..rows).map(|row| crate_board_part(2.6, 0, row)).collect();
+    assert!(
+        front.iter().all(|&board| !down.contains(board)),
+        "the burst in the hold leaves the far wall"
+    );
     assert!(s.covers[crate_].alive);
     assert!(
         s.events.iter().any(|e| e.kind == SimEventType::Explosion),
         "the shell bursts in the hold"
     );
     assert_eq!(s.rng.state, rng, "a crate's break draws nothing");
+}
+
+/// Shell after shell at one wall: its boards go a few at a time, and the wall comes
+/// away whole only once its frame breaks.
+#[test]
+fn repeated_shells_take_a_wall_down_in_the_end() {
+    let (mut s, crate_) = lone_crate();
+    let mut shells = 0;
+    while !gone(&s, crate_).contains(CRATE_WALLS[1]) && shells < 12 {
+        let x = [-0.8, 0.0, 0.8][shells % 3];
+        let y = [0.7, 1.4, 2.0][shells / 3 % 3];
+        fire_at(
+            &mut s,
+            Vec2::new(x, 0.0),
+            Vec2::new(x, 20.0),
+            y,
+            Weapon::Standard,
+        );
+        run(&mut s, 0.6);
+        shells += 1;
+    }
+    assert!(shells >= 3, "the wall went after {shells} shells");
+    assert!(
+        gone(&s, crate_).contains(CRATE_WALLS[1]),
+        "12 shells did not take the wall"
+    );
 }
 
 #[test]

@@ -14,7 +14,7 @@ use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure::Role;
 use sloppy_core::sim::structure_physics::breach_point;
 use sloppy_core::sim::superstress_level::SUPERSTRESS_MAP;
-use sloppy_core::sim::timber_layout::{BEAM_COUNT, TIMBER_HEALTH, TimberPartKind};
+use sloppy_core::sim::timber_layout::{BEAM_COUNT, BEAM_SEGMENTS, TIMBER_HEALTH, TimberPartKind};
 use sloppy_core::sim::timber_structure::TimberRole;
 use sloppy_core::sim::{CoverKind, DamageCause, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, fire_at, place_tank, run};
@@ -46,12 +46,14 @@ fn gone(s: &Simulation, wall: usize) -> PartSet {
     s.covers[wall].structure.as_ref().expect("a structure").gone
 }
 
-/// The wall's member of `kind` numbered `index` (beams bottom up, posts -x then +x).
+/// The wall's member of `kind` numbered `index` (beams bottom up, posts -x then +x): a
+/// beam's middle length.
 fn member(s: &Simulation, wall: usize, kind: TimberPartKind, index: usize) -> usize {
     let layout = &s.covers[wall].structure.as_ref().unwrap().layout;
     (0..layout.parts.len())
         .find(|&part| {
-            matches!(layout.parts[part].role, Role::Timber(TimberRole { kind: k, index: i }) if k == kind && i == index)
+            matches!(layout.parts[part].role, Role::Timber(TimberRole { kind: k, index: i, segment })
+                if k == kind && i == index && segment.is_none_or(|(k, of)| k == of / 2))
         })
         .expect("the member")
 }
@@ -110,10 +112,11 @@ fn a_beam_shot_out_leaves_a_gap_the_next_shell_and_sight_pass_through() {
     assert!(gone(&s, wall).contains(beam), "the struck beam is out");
     assert_eq!(
         colliders(&s),
-        BEAM_COUNT + 1,
+        BEAM_COUNT * BEAM_SEGMENTS + 1,
         "the members left stand each by its own collider"
     );
     for post in [BEAM_COUNT, BEAM_COUNT + 1] {
+        let post = member(&s, wall, TimberPartKind::Post, post);
         assert!(!gone(&s, wall).contains(post), "post {post} stands");
     }
     assert!(s.covers[wall].alive, "one beam does not level the wall");
@@ -189,6 +192,39 @@ fn the_posts_carry_the_beams_and_one_shot_out_drops_what_it_held() {
         bodies - falling,
         "no body is left behind"
     );
+}
+
+/// A standard shell at a post snaps it: the lengths of beam it held come down as bodies,
+/// and the far ends stand as stubs in the other post.
+#[test]
+fn a_shell_at_a_post_snaps_it_and_drops_the_beams_at_that_end() {
+    let (mut s, wall) = lone_wall();
+    let post = member(&s, wall, TimberPartKind::Post, BEAM_COUNT);
+    let x = s.covers[wall].structure.as_ref().unwrap().layout.parts[post]
+        .middle()
+        .x;
+    fire_at(
+        &mut s,
+        Vec2::new(x, 0.0),
+        Vec2::new(x, 20.0),
+        1.0,
+        Weapon::Standard,
+    );
+    run(&mut s, 0.5);
+    let down = gone(&s, wall);
+    assert!(down.contains(post), "the post snaps");
+    assert!(
+        s.fragments.iter().any(|f| f.of_structure(wall)),
+        "beam lengths fall as bodies"
+    );
+    let layout = s.covers[wall].structure.as_ref().unwrap().layout.clone();
+    let stubs = (0..layout.parts.len())
+        .filter(|&index| {
+            matches!(layout.parts[index].role, Role::Timber(TimberRole { segment: Some((k, of)), .. }) if k + 1 == of)
+                && !down.contains(index)
+        })
+        .count();
+    assert_eq!(stubs, BEAM_COUNT, "the far ends stand in their post");
 }
 
 #[test]
