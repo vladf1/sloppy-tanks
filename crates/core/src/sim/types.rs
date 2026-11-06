@@ -394,6 +394,10 @@ pub struct Shot {
     pub fuse: Option<f64>,
     /// Two fresh piercing rounds pass through each other exactly once.
     pub pierced_shot: Option<u32>,
+    /// The bodies a structure's part came down as when this shell broke it and flew on
+    /// (an HE round on its fuse, an armour-piercing round): it went through that part, so
+    /// it never meets them again where they start, round it.
+    pub loosened: Vec<RigidBodyHandle>,
     /// A defense gets one chance per projectile, even after a miss or bounce.
     pub laser_checked_by: Vec<u32>,
 }
