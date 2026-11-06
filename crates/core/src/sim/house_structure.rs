@@ -147,7 +147,7 @@ const COTTAGE_DUST: f64 = 7.0;
 /// into their neighbours'.
 const COTTAGE_DEBRIS: DebrisRules = DebrisRules {
     landing_speed: 1.5,
-    ground_only: false,
+    firm_only: false,
     life: 11.0,
     life_spread: 6.0,
     deadline: 19.5,

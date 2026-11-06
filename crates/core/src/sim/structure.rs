@@ -268,6 +268,29 @@ pub enum Lie {
     Length(DVec3),
 }
 
+impl Lie {
+    /// How a piece of build-frame box `min`..`max` lies by its proportions: a stick
+    /// along its length, a plate on its face, anything chunkier however it lands.
+    pub fn of_box(min: DVec3, max: DVec3) -> Lie {
+        let size = max - min;
+        let mut axes = [(size.x, DVec3::X), (size.y, DVec3::Y), (size.z, DVec3::Z)];
+        axes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let [(thin, across), (middle, _), (long, along)] = axes;
+        if long > STICK * middle {
+            Lie::Length(along)
+        } else if thin < PLATE * middle {
+            Lie::Face(across)
+        } else {
+            Lie::Any
+        }
+    }
+}
+
+/// A box this many times longer than its next side is a stick.
+const STICK: f64 = 3.0;
+/// A box thinner than this share of its next side is a plate.
+const PLATE: f64 = 0.35;
+
 /// What a body that lands hard breaks into besides its parts: when it holds all of
 /// `needs`, those parts land as `pieces` (indices from [`Structure::parts`]' length on).
 #[derive(Clone, Debug, PartialEq)]
@@ -455,15 +478,17 @@ pub struct Levelling {
 }
 
 /// How a structure's fallen parts land and clear: a falling body breaks up when its
-/// velocity changes by `landing_speed` (m/s) in a tick, only on the ground when
-/// `ground_only` (a frame caught on cover stays whole until it comes down); a loose piece
+/// velocity changes by `landing_speed` (m/s) in a tick, or where it jams still; with
+/// `firm_only` only where it strikes the ground or cover (not its own remains or other
+/// debris), and never where it jams: a frame propped on something stays whole until a
+/// new hit or a hard landing breaks it; a loose piece
 /// lies `life` seconds (plus up to `life_spread` by its parts) before it clears, and is
 /// gone by `deadline`. Standing parts' colliders reach `seam` metres past their faces,
 /// so a shell along the seam between two parts meets one.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DebrisRules {
     pub landing_speed: f64,
-    pub ground_only: bool,
+    pub firm_only: bool,
     pub life: f64,
     pub life_spread: f64,
     pub deadline: f64,

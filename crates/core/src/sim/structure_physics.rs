@@ -311,6 +311,9 @@ pub struct StructureDebris {
     pub rested: bool,
     /// How it is damped this tick.
     pub damping: Damping,
+    /// It broke a part of a structure it came down on since the last tick: its landing,
+    /// however gently it came to a stop there.
+    pub struck: bool,
     /// When it came to rest up on its structure's remains, while it is shoved off them.
     pub wedged: Option<f64>,
     /// Being laid down off the thin edge it came to rest on.
@@ -1328,12 +1331,14 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             continue;
         }
         let jammed = !debris.landed
+            && !layout.debris.firm_only
             && debris.parts.len() > 1
             && debris
                 .still_since
                 .is_some_and(|since| simulation.elapsed - since >= REST_HOLD);
-        let hard = change > layout.debris.landing_speed
-            && (!layout.debris.ground_only || on_ground(simulation, handle));
+        let hard = debris.struck
+            || (change > layout.debris.landing_speed
+                && (!layout.debris.firm_only || on_firm(simulation, handle, debris.cover)));
         if !debris.landed && alive && (jammed || hard) {
             if debris.parts.iter().any(|part| layout.part(part).load) {
                 let at = from_vector(body.center_of_mass());
@@ -1376,6 +1381,7 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
         let debris = fragment.structure.as_mut().expect("checked above");
         let body = &mut simulation.world.bodies[handle];
         debris.velocity = now;
+        debris.struck = false;
         let since_landing = if debris.landed {
             elapsed - debris.landed_at
         } else {
@@ -1750,7 +1756,9 @@ fn clear_together(simulation: &mut Simulation) {
 }
 
 /// Whether any of `body`'s colliders touches the ground.
-fn on_ground(simulation: &Simulation, body: RigidBodyHandle) -> bool {
+/// Whether fallen body `body` of structure `cover` touches the ground or a cover other
+/// than what stands of its own structure.
+fn on_firm(simulation: &Simulation, body: RigidBodyHandle, cover: usize) -> bool {
     simulation.world.bodies[body].colliders().iter().any(|&collider| {
         simulation.world.contact_pairs_with(collider).any(|pair| {
             let other = if pair.collider1 == collider {
@@ -1758,10 +1766,14 @@ fn on_ground(simulation: &Simulation, body: RigidBodyHandle) -> bool {
             } else {
                 pair.collider1
             };
-            pair.has_any_active_contact()
-                && simulation.world.colliders.get(other).is_some_and(|other| {
-                    other.collision_groups().memberships.bits() & GROUND_MEMBERSHIP != 0
-                })
+            let ground = simulation.world.colliders.get(other).is_some_and(|other| {
+                other.collision_groups().memberships.bits() & GROUND_MEMBERSHIP != 0
+            });
+            let struck = simulation
+                .cover_by_collider
+                .get(&other)
+                .is_some_and(|&index| index != cover);
+            pair.has_any_active_contact() && (ground || struck)
         })
     })
 }
@@ -1913,7 +1925,7 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
         }
     }
     let mut struck: Vec<((usize, usize), f64, Point3)> = Vec::new();
-    for (part, _, impulse, from) in blows {
+    for &(part, _, impulse, from) in &blows {
         match struck.iter_mut().find(|(key, _, _)| *key == part) {
             Some((_, total, _)) => *total += impulse,
             None => struck.push((part, impulse, from)),
@@ -1925,7 +1937,19 @@ pub fn crush_structure_parts(simulation: &mut Simulation, contacts: &[ContactFor
             continue;
         };
         let along = Vec2::new(center.x - from.x, center.z - from.z);
-        simulation.strike_structure(cover, part, impulse * CRUSH_DAMAGE, false, center, along, Some(NOBODY));
+        if simulation.strike_structure(cover, part, impulse * CRUSH_DAMAGE, false, center, along, Some(NOBODY)) {
+            // What broke it has landed, there and then.
+            for &(_, body, _, _) in blows.iter().filter(|blow| blow.0 == (cover, part)) {
+                if let Some(debris) = simulation
+                    .fragments
+                    .iter_mut()
+                    .find(|fragment| fragment.body == body)
+                    .and_then(|fragment| fragment.structure.as_mut())
+                {
+                    debris.struck = true;
+                }
+            }
+        }
     }
 }
 

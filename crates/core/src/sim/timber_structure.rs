@@ -61,7 +61,7 @@ const LEVELLED: f64 = 0.34;
 /// clearance between them, so no shell slips between them.
 const WALL_DEBRIS: DebrisRules = DebrisRules {
     landing_speed: 1.5,
-    ground_only: false,
+    firm_only: false,
     life: 9.5,
     life_spread: 2.0,
     deadline: 18.0,

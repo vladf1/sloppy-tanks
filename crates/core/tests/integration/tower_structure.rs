@@ -15,8 +15,8 @@ use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure_physics::part_box;
 use sloppy_core::sim::tower_layout::TOWER_BASE;
 use sloppy_core::sim::tower_structure::{
-    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, ROOF, TowerPartKind,
-    piece_look, tower_structure,
+    CORNERS, DECKS, FOOTINGS, LADDER, LOWER_LEGS, PART_COUNT, PieceLook, RAILINGS, ROOF,
+    TowerPartKind, piece_look, tower_structure,
 };
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Team, Weapon};
 use support::{clear_arena, idle, place_tank};
@@ -967,4 +967,97 @@ fn a_falling_towers_landings_show_where_its_pieces_land() {
         farthest > 3.0,
         "the top lands away from the foot: {farthest:.2} m"
     );
+}
+
+/// A tower toppling onto a timber wall breaks where it strikes the wall and smashes the
+/// beams it comes down on; once it lies still, nothing more of it breaks without a new
+/// hit (a frame lying propped once broke up seconds later, in the same pose).
+#[test]
+fn a_tower_falling_on_a_timber_wall_breaks_there_and_then() {
+    let (mut s, tower) = lone_tower();
+    let c = s.covers[tower].clone();
+    let wall = s.add_cover(&CoverDef::new(
+        CoverKind::Timber,
+        c.x,
+        c.z + 4.5,
+        3.7,
+        0.9,
+        2.8,
+        sloppy_core::sim::timber_layout::TIMBER_HEALTH,
+        0xb47a49,
+    ));
+    s.nav.rebuild(&s.covers, None);
+    s.world.step();
+    s.break_structure(
+        tower,
+        PartSet::from_indices([LOWER_LEGS[1]]),
+        PartSet::EMPTY,
+        None,
+        None,
+    );
+    let mut still_since: Option<usize> = None;
+    let mut count_at_rest = 0;
+    for tick in 0..(8.0 / STEP) as usize {
+        idle(&mut s);
+        let count = bodies(&s, tower).len();
+        let still = s
+            .fragments
+            .iter()
+            .filter(|f| f.of_structure(tower))
+            .all(|f| s.world.bodies[f.body].linvel().length() < 0.3);
+        match (still, still_since) {
+            (true, None) => {
+                still_since = Some(tick);
+                count_at_rest = count;
+            }
+            (false, _) => still_since = None,
+            (true, Some(since)) if tick - since > 30 => {
+                assert!(
+                    count <= count_at_rest,
+                    "tick {tick}: lying still since {since}, it broke into {count} from {count_at_rest}"
+                );
+            }
+            _ => {}
+        }
+    }
+    assert!(bodies(&s, tower).len() > 4, "it broke up where it struck");
+    let beams = s.covers[wall].structure.as_ref().unwrap().gone.len();
+    assert!(beams > 0, "it smashed the beams it came down on");
+}
+
+/// The ladder and the railings a toppling tower throws off end lying down: the ladder
+/// along the ground, a railing as it stood or on its back, never balanced on end.
+#[test]
+fn the_fallen_ladder_and_railings_lie_down() {
+    for (corner, &leg) in LOWER_LEGS.iter().enumerate() {
+        let (mut s, tower) = lone_tower();
+        s.break_structure(
+            tower,
+            PartSet::from_indices([leg]),
+            PartSet::EMPTY,
+            None,
+            None,
+        );
+        run(&mut s, 6.0);
+        for piece in s.fragments.iter().filter(|f| f.of_structure(tower)) {
+            let parts = piece.structure_parts().unwrap();
+            let up = *s.world.bodies[piece.body].rotation() * glam::Vec3::Y;
+            if parts == PartSet::from_indices([LADDER]) {
+                assert!(
+                    up.y.abs() < 0.5,
+                    "corner {corner}: the ladder rises {:.2}",
+                    up.y
+                );
+            }
+            for railing in RAILINGS {
+                if parts == PartSet::from_indices([railing]) {
+                    assert!(
+                        up.y.abs() > 0.7,
+                        "corner {corner}: railing {railing} on end ({:.2})",
+                        up.y
+                    );
+                }
+            }
+        }
+    }
 }
