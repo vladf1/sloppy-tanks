@@ -413,8 +413,9 @@ impl NetworkTimeline {
     }
 
     /// Fills `output` with the scene to draw at `now_ms`, overwriting all of it in place,
-    /// and returns the events whose tick the display just reached. With a `dodger`, shells
-    /// coming at it and their effects near it are drawn toward its present.
+    /// and appends to `events` the events whose tick the display just reached (a buffer the
+    /// caller keeps, so frames do not allocate one). With a `dodger`, shells coming at it
+    /// and their effects near it are drawn toward its present.
     pub fn read(
         &mut self,
         now_ms: f64,
@@ -422,7 +423,8 @@ impl NetworkTimeline {
         dt: f64,
         output: &mut RenderState,
         dodger: Option<&Dodger>,
-    ) -> Vec<SimEvent> {
+        events: &mut Vec<SimEvent>,
+    ) {
         let display = self.clock.read(now_ms) / SIMULATION_STEP_MS;
         let newest_ms = self.newest_tick as f64 * SIMULATION_STEP_MS;
         // The fallback local hull extrapolates toward the server's present: newest path
@@ -431,7 +433,6 @@ impl NetworkTimeline {
             + MAX_LOCAL_LEAD_MS.min(rtt_ms / 2.0))
             / 1000.0;
         self.poses.read(display / 60.0, local_time, dt, output);
-        let mut events = Vec::new();
         while let Some(timed) = self.events.pop_front_if(|event| event.tick <= display) {
             events.push(timed.event);
         }
@@ -560,7 +561,6 @@ impl NetworkTimeline {
         let paths = &self.paths;
         self.shells
             .retain(|shell| paths.iter().any(|displayed| displayed.path.id == shell.id));
-        events
     }
 }
 

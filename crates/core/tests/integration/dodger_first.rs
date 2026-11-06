@@ -125,12 +125,14 @@ fn play_as(
         }
         let present = now / STEP_MS + PRESENT_LEAD;
         let viewer = viewer(present);
-        let events = timeline.read(
+        let mut events = Vec::new();
+        timeline.read(
             now,
             100.0,
             STEP / FRAMES_PER_TICK,
             &mut shown,
             dodger_first.then_some(&viewer),
+            &mut events,
         );
         frames.push(Frame {
             present,
@@ -456,7 +458,15 @@ fn strike_lateness(distance: f64, lead: f64) -> f64 {
             .unwrap();
         timeline.arrive(now);
         let present = newest as f64 + lead;
-        let events = timeline.read(now, 100.0, STEP, &mut shown, Some(&dodger(present)));
+        let mut events = Vec::new();
+        timeline.read(
+            now,
+            100.0,
+            STEP,
+            &mut shown,
+            Some(&dodger(present)),
+            &mut events,
+        );
         if events
             .iter()
             .any(|event| event.kind == SimEventType::Impact)

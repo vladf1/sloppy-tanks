@@ -501,7 +501,7 @@ impl NetGame {
         let drawn = match client.frame(now, &local) {
             Some(frame) => {
                 let scoreboard = Scoreboard::Rendered(&frame.state.tanks);
-                for displayed in frame.events {
+                for displayed in frame.events.drain(..) {
                     let feedback = event_feedback(
                         &displayed.event,
                         displayed.own,
