@@ -539,9 +539,10 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         timber_join: None,
         timber_bays: None,
     };
-    // A wall's beams falling against the hull cost the windows of their fall as well: they
-    // are whole beams the host lays and rests as they land.
-    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.3)] {
+    // A wall's beams falling against the hull cost the windows of their fall as well; after
+    // it the hull shoves them along, held to the host's loose-piece speed.
+    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.05)]
+    {
         let (mut sim, viewer) = open_field(VehicleKind::Balanced);
         sim.add_cover(&timber);
         sim.world.step();

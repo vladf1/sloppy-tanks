@@ -188,6 +188,8 @@ pub struct RenderFragment {
     pub structure_parts: Option<PartSet>,
     /// A structure's piece come to rest for good: it no longer turns, and grips the pile.
     pub rested: bool,
+    /// How the host damps a structure's piece this tick.
+    pub damping: Option<crate::sim::structure_physics::Damping>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub created_at: Option<f64>,
@@ -410,6 +412,7 @@ impl Simulation {
             .map(|debris| self.covers[debris.cover].id);
         view.structure_parts = fragment.structure.map(|debris| debris.parts);
         view.rested = fragment.structure.is_some_and(|debris| debris.rested);
+        view.damping = fragment.structure.map(|debris| debris.damping);
         view.tree_cover_id = fragment.tree_cover_id;
         view.tree_center_y = fragment.tree_center_y;
         view.created_at = fragment.created_at;

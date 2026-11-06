@@ -200,6 +200,37 @@ pub fn unrest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyH
     world.bodies[body].lock_rotations(false, true);
 }
 
+/// How the host damps a structure's fallen piece this tick, replicated so a client's
+/// predicted copy moves as the host's does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Damping {
+    /// Falling, by its age ([`falling_damping`]).
+    #[default]
+    Falling,
+    /// Sliding off the remains or being laid down: falling's damping.
+    Sliding,
+    /// Landed a moment ago.
+    Settled,
+    /// Barely moving well after its landing.
+    Creeping,
+    /// At rest for good.
+    Rested,
+}
+
+impl Damping {
+    /// Its linear and angular damping for a piece `age` seconds after it came loose.
+    pub fn values(self, age: f64) -> (f32, f32) {
+        match self {
+            Damping::Falling => falling_damping(age),
+            Damping::Sliding => FALLING_DAMPING,
+            Damping::Settled => SETTLED_DAMPING,
+            Damping::Creeping => CREEP_DAMPING,
+            Damping::Rested => RESTED_DAMPING,
+        }
+    }
+}
+
 /// The linear and angular damping of a falling body `age` seconds after it came loose.
 pub fn falling_damping(age: f64) -> (f32, f32) {
     if age > SETTLE_AFTER {
@@ -278,6 +309,8 @@ pub struct StructureDebris {
     /// When its rest window opened, and where its middle was and how it was turned then.
     pub window: Option<(f64, glam::Vec3, glam::Quat)>,
     pub rested: bool,
+    /// How it is damped this tick.
+    pub damping: Damping,
     /// When it came to rest up on its structure's remains, while it is shoved off them.
     pub wedged: Option<f64>,
     /// Being laid down off the thin edge it came to rest on.
@@ -1240,6 +1273,7 @@ pub fn blast_structure_debris(simulation: &mut Simulation, point: Point3, radius
         if let Some(debris) = &mut fragment.structure {
             debris.velocity = from_vector(velocity);
             debris.rested = false;
+            debris.damping = Damping::Falling;
             debris.window = None;
             debris.still_since = None;
             debris.landed_at = elapsed;
@@ -1395,19 +1429,20 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             velocity.y = 0.0;
             body.set_linvel(velocity, false);
         }
-        let (linear, angular) = if debris.rested {
-            RESTED_DAMPING
+        debris.damping = if debris.rested {
+            Damping::Rested
         } else if debris.wedged.is_some() || up_on_remains || lies == Lying::Laying {
             // Up on the remains it slides off them freely; being shoved off them or laid
             // down it keeps falling's damping.
-            FALLING_DAMPING
+            Damping::Sliding
         } else if since_landing > CREEP_AFTER {
-            CREEP_DAMPING
+            Damping::Creeping
         } else if since_landing > LANDED_SETTLE {
-            SETTLED_DAMPING
+            Damping::Settled
         } else {
-            falling_damping(age)
+            Damping::Falling
         };
+        let (linear, angular) = debris.damping.values(age);
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
@@ -1420,7 +1455,10 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
     clear_together(simulation);
 }
 
-fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
+/// Hold a structure's loose piece to [`MAX_ACROSS`], [`MAX_RISE`] and [`MAX_TURN`] (the
+/// host each tick before its step, and a client's predicted world alike: a beam a hull
+/// shoves along is held back by it).
+pub fn cap_loose_speed(body: &mut rapier3d::prelude::RigidBody) {
     let v = body.linvel();
     let across = Vector::new(v.x, 0.0, v.z);
     let across = if across.length() > MAX_ACROSS {

@@ -842,7 +842,7 @@ fn find_fields(scene: &Value, missing: &mut BTreeSet<&str>) {
     });
 }
 
-const EXPECTED_FIELDS: [&str; 15] = [
+const EXPECTED_FIELDS: [&str; 16] = [
     "covers.broken",
     "covers.timberJoin",
     "covers.motion",
@@ -852,6 +852,7 @@ const EXPECTED_FIELDS: [&str; 15] = [
     "fragments.material",
     "fragments.sourceKind",
     "fragments.structureParts",
+    "fragments.damping",
     "fragments.createdAt",
     "fragments.wreck",
     "fragments.part",

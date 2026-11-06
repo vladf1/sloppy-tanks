@@ -25,6 +25,7 @@ use super::wire::{
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
+use crate::sim::structure_physics::Damping;
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -87,6 +88,14 @@ pub const MATERIALS: [(&str, DebrisMaterial); 3] = [
     ("wood", DebrisMaterial::Wood),
     ("metal", DebrisMaterial::Metal),
     ("concrete", DebrisMaterial::Concrete),
+];
+
+pub const DAMPINGS: [(&str, Damping); 5] = [
+    ("falling", Damping::Falling),
+    ("sliding", Damping::Sliding),
+    ("settled", Damping::Settled),
+    ("creeping", Damping::Creeping),
+    ("rested", Damping::Rested),
 ];
 
 pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
@@ -198,6 +207,7 @@ const VEHICLE_NAMES: [&str; 4] = names(&VEHICLE_KINDS);
 const WEAPON_NAMES: [&str; 6] = names(&WEAPONS);
 const COVER_NAMES: [&str; 12] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
+const DAMPING_NAMES: [&str; 5] = names(&DAMPINGS);
 
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
@@ -315,7 +325,7 @@ wire_fields!(
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
         STRUCTURE_ID = Field::new("structureId", COUNT),
-        RESTED = Field::new("rested", FLAG),
+        DAMPING = Field::new("damping", FieldKind::Choice(&DAMPING_NAMES)),
     }
 );
 
@@ -685,7 +695,7 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         }
         None => record.clear(STRUCTURE_PARTS),
     }
-    record.set_flag(RESTED, fragment.structure.is_some_and(|debris| debris.rested));
+    set_choice(record, DAMPING, &DAMPINGS, fragment.structure.map(|debris| debris.damping));
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
     }
@@ -1194,7 +1204,8 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map(read_part_set)
             .transpose()
             .map_err(|e| format!("structureParts: {e}"))?,
-        rested: fields.flag(RESTED)?,
+        rested: fields.opt_choice(DAMPING, &DAMPINGS)? == Some(Damping::Rested),
+        damping: fields.opt_choice(DAMPING, &DAMPINGS)?,
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,

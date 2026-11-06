@@ -21,7 +21,7 @@ use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
 use crate::sim::structure_physics::{
-    WHOLE, debris_colliders, falling_damping, rest_body, structural, unrest_body,
+    WHOLE, cap_loose_speed, debris_colliders, rest_body, structural, unrest_body,
 };
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
@@ -416,6 +416,8 @@ struct DebrisBody {
     seen: u64,
     /// Held at rest for good, as the host holds a structure's piece.
     rested: bool,
+    /// A structure's fallen parts, whose speed the host caps while they are loose.
+    structure: bool,
 }
 
 struct OtherTank {
@@ -596,8 +598,15 @@ impl TankPredictor {
                 for collider in colliders.1 {
                     self.world.insert_collider(collider, Some(body));
                 }
-                self.debris
-                    .insert(fragment.id, DebrisBody { body, seen: sync, rested: false });
+                self.debris.insert(
+                    fragment.id,
+                    DebrisBody {
+                        body,
+                        seen: sync,
+                        rested: false,
+                        structure: fragment.structure_parts.is_some(),
+                    },
+                );
             }
             let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
             debris.seen = sync;
@@ -612,9 +621,9 @@ impl TankPredictor {
             }
             let body = &mut self.world.bodies[debris.body];
             if fragment.structure_parts.is_some() && !fragment.rested {
-                // Damped as the host damps a falling body at its age.
+                // Damped as the host damps it this tick.
                 let age = state.elapsed - fragment.created_at.unwrap_or(state.elapsed);
-                let (linear, angular) = falling_damping(age);
+                let (linear, angular) = fragment.damping.unwrap_or_default().values(age);
                 body.set_linear_damping(linear);
                 body.set_angular_damping(angular);
             }
@@ -825,6 +834,10 @@ impl TankPredictor {
                 &mut self.world.bodies[other.body],
                 other.drive,
             );
+        }
+        // As the host does ahead of its step.
+        for debris in self.debris.values().filter(|debris| debris.structure && !debris.rested) {
+            cap_loose_speed(&mut self.world.bodies[debris.body]);
         }
         self.world.step();
     }
