@@ -48,6 +48,7 @@ const TALLY_KEYS = [
   "playerHits",
   "playerHitsTaken",
   "triggerPulls",
+  "quarryPulls",
   "teamChanges",
 ];
 const FEEL_KEYS = [

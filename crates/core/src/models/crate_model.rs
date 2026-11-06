@@ -55,9 +55,6 @@ const STRAP_COLOR: u32 = 0x3b4044;
 /// Fresh wood where boards tore, and the darker fibres under it.
 /// The inside of the walls, out of the sun.
 const HOLD_COLOR: u32 = 0x2b1f14;
-/// The inside of an opened crate's walls in the daylight let in: the boards' backs,
-/// darker than their faces but lit, not a black void.
-const OPENED_HOLD_COLOR: u32 = 0x6a4f35;
 const RAW_WOOD: u32 = 0xe4c899;
 const TORN_WOOD: u32 = 0xc9a26e;
 const CRACK_LIP_COLOR: u32 = 0xb98a55;
@@ -565,37 +562,14 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
         *normal = normal.map(|n| -n);
     }
     let middle = DVec3::new(0.0, (CRATE_BASE + FLOOR_THICKNESS + top) / 2.0, 0.0);
-    if broken.is_empty() {
+    // An opened crate has no liner: its boards are drawn whole, their backs lit in the
+    // daylight let in, so a hole shows the far wall's boards and battens from inside
+    // and two holes in line show the day through.
+    let opened = !broken.is_empty();
+    if !opened {
         let mut hold = scrap(liner, HOLD_COLOR);
         hold.position = middle;
         add(group, CRATE_BASE_PART, hold);
-    } else {
-        // Each of the liner's faces is the inside of a wall, the lid or the floor, and
-        // goes with it: through a gone wall the hold opens to the daylight.
-        for (part, inward) in [
-            (CRATE_WALLS[0], [0.0, 0.0, -1.0]),
-            (CRATE_WALLS[1], [0.0, 0.0, 1.0]),
-            (CRATE_WALLS[2], [-1.0, 0.0, 0.0]),
-            (CRATE_WALLS[3], [1.0, 0.0, 0.0]),
-            (CRATE_LID_PART, [0.0, -1.0, 0.0]),
-            (CRATE_BASE_PART, [0.0, 1.0, 0.0]),
-        ] {
-            let mut side = liner.clone();
-            side.indices = liner.indices.as_ref().map(|indices| {
-                indices
-                    .chunks(3)
-                    .filter(|triangle| {
-                        let normal = liner.normals[triangle[0] as usize];
-                        (0..3).all(|k| (normal[k] - inward[k]).abs() < 0.5)
-                    })
-                    .flatten()
-                    .copied()
-                    .collect()
-            });
-            let mut hold = scrap(side, OPENED_HOLD_COLOR);
-            hold.position = middle;
-            add(group, part, hold);
-        }
     }
 
     // Walls: sheathing planks, then the frame and brace over them.
@@ -625,7 +599,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
                 seed: hash(seed, (index * 40 + row) as i32),
             };
             let skin = Damage {
-                skin: true,
+                skin: !opened,
                 ..Damage::default()
             };
             lay(group, crate_board_part(c.h, index, row), face, &board, &skin);
@@ -706,7 +680,7 @@ pub fn cargo_crate(group: &mut Node, c: CrateShape, broken: &PartSet) {
             seed: hash(seed, 300 + row as i32),
         };
         let skin = Damage {
-            skin: true,
+            skin: !opened,
             ..Damage::default()
         };
         lay(group, CRATE_LID_PART, lid, &board, &skin);
@@ -1133,6 +1107,32 @@ mod tests {
         assert!(through > c.d, "the front is gone: {through}");
         let far = first_board(&blown, back, DVec3::Z).expect("the back is boarded");
         assert!((far - c.d / 2.0).abs() < 1e-3, "the back wall is whole: {far}");
+    }
+
+    #[test]
+    fn two_holes_in_line_show_the_day_through_an_opened_crate() {
+        let c = CrateShape {
+            x: 4.0,
+            z: 20.0,
+            w: 3.0,
+            d: 3.0,
+            h: 2.6,
+            color: 0xb88b53,
+        };
+        let (_, pitch) = crate::sim::crate_layout::crate_wall_rows(c.h);
+        let row = 1;
+        let y = CRATE_BASE + pitch * (row as f64 + 0.5);
+        let holed = PartSet::from_indices([0, 1].map(|face| crate_board_part(c.h, face, row)));
+        let mut node = Node::default();
+        cargo_crate(&mut node, c, &holed);
+        let origin = DVec3::new(0.3, y, c.d);
+        // Nothing inside the crate stops the line: past its back wall it meets at most
+        // the back's brace on the outside.
+        let first = first_board(&node, origin, -DVec3::Z);
+        assert!(
+            first.is_none_or(|t| t > 1.5 * c.d - 1e-3),
+            "the line through both holes stops at {first:?}"
+        );
     }
 
     #[test]

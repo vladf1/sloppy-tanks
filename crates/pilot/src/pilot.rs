@@ -591,6 +591,12 @@ impl Cockpit {
         simulation.tanks[index].aim = command.aim;
         if command.fire {
             self.tally.trigger_pulls += 1;
+            if self
+                .hunted
+                .is_some_and(|id| simulation.tanks[index].brain.target == id)
+            {
+                self.tally.quarry_pulls += 1;
+            }
             self.fire_until_ms = now_ms + TRIGGER_HOLD_MS;
         }
         let mine = command.mine && now_ms - self.last_mine_ms >= MINE_RETRY_MS;
