@@ -40,12 +40,17 @@ impl HostOutput {
         });
     }
 
-    pub fn extend(&mut self, events: Vec<HostEvent>) {
+    pub fn extend(&mut self, events: impl IntoIterator<Item = HostEvent>) {
         self.events.extend(events);
     }
 
     pub fn take(&mut self) -> Vec<HostEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    /// The queued events in order, keeping the queue's capacity for the next call.
+    pub fn drain(&mut self) -> std::vec::Drain<'_, HostEvent> {
+        self.events.drain(..)
     }
 }
 

@@ -24,22 +24,22 @@ impl MatchRoom {
 impl RoomHost for MatchRoom {
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
         self.host.receive(connection, text, now_ms);
-        out.extend(self.host.take_events());
+        out.extend(self.host.drain_output());
     }
 
     fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput) {
         self.host.disconnect(connection, now_ms);
-        out.extend(self.host.take_events());
+        out.extend(self.host.drain_output());
     }
 
     fn advance(&mut self, now_ms: u64, out: &mut HostOutput) {
         self.host.advance(now_ms);
-        out.extend(self.host.take_events());
+        out.extend(self.host.drain_output());
     }
 
     fn dispose(&mut self, reason: &str, out: &mut HostOutput) {
         self.host.dispose(reason);
-        out.extend(self.host.take_events());
+        out.extend(self.host.drain_output());
     }
 
     fn is_disposed(&self) -> bool {

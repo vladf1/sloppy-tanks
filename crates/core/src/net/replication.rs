@@ -90,6 +90,8 @@ pub struct StateStream {
 struct SnapshotScratch {
     updates: Vec<u8>,
     removed: Vec<u8>,
+    /// One kind's updated records, written before their count.
+    changes: Vec<u8>,
     entries: Vec<u32>,
     record: WireRecord,
 }
@@ -170,29 +172,47 @@ impl StateStream {
         events: &[TimedEvent],
         paths: &[PathEntry],
     ) -> Vec<u8> {
+        let mut out = Vec::with_capacity(256);
+        self.snapshot_into(scene, tick, events, paths, &mut out);
+        out
+    }
+
+    /// [`snapshot`](Self::snapshot), appending the body to `out`.
+    pub fn snapshot_into(
+        &mut self,
+        scene: &mut Scene,
+        tick: u64,
+        events: &[TimedEvent],
+        paths: &[PathEntry],
+        out: &mut Vec<u8>,
+    ) {
         self.seq += 1;
         index_scene(&mut self.current, scene);
         let previous = self.previous.as_ref();
         let SnapshotScratch {
             updates,
             removed,
+            changes,
             entries,
             record,
         } = &mut self.scratch;
         let (held_motion, next_motion) = (&mut self.motion, &mut self.next_motion);
-        let mut out = Vec::with_capacity(256);
         let mut sections = 0;
         let elapsed = thousandths(scene.elapsed);
         put_signed(
-            &mut out,
+            out,
             elapsed - previous.map_or(0, |scene| thousandths(scene.elapsed)),
         );
-        let mut body = Vec::new();
+        // The section mask goes before the sections; with five sections it is always one
+        // varint byte, its own value, so the sections are written after a placeholder.
+        let mask_at = out.len();
+        out.push(0);
+        let body = out;
         if write_changes(
             MATCH_FIELDS,
             previous.map(|scene| &scene.match_record),
             &scene.match_record,
-            &mut body,
+            body,
         ) {
             sections |= MATCH_SECTION;
         }
@@ -212,7 +232,7 @@ impl StateStream {
             entries.sort_unstable();
             let mut count = 0u64;
             let mut last = 0u32;
-            let mut changes = Vec::new();
+            changes.clear();
             let next_motion = &mut next_motion[kind];
             next_motion.clear();
             next_motion.resize_with(records.len(), Motion::new);
@@ -226,8 +246,8 @@ impl StateStream {
                     .map(std::mem::take)
                     .unwrap_or_default();
                 let start = changes.len();
-                put_varint(&mut changes, u64::from(id - last));
-                if write_moving_changes(fields, old(id), next, Some(&mut motion), &mut changes) {
+                put_varint(changes, u64::from(id - last));
+                if write_moving_changes(fields, old(id), next, Some(&mut motion), changes) {
                     last = id;
                     count += 1;
                 } else {
@@ -238,7 +258,7 @@ impl StateStream {
             if count > 0 {
                 updated_kinds |= 1 << kind;
                 put_varint(updates, count);
-                updates.extend_from_slice(&changes);
+                updates.extend_from_slice(changes);
             }
             if let Some(before) = before {
                 entries.clear();
@@ -262,43 +282,42 @@ impl StateStream {
         }
         if updated_kinds != 0 {
             sections |= UPDATES_SECTION;
-            put_varint(&mut body, updated_kinds);
+            put_varint(body, updated_kinds);
             body.extend_from_slice(updates);
         }
         if removed_kinds != 0 {
             sections |= REMOVED_SECTION;
-            put_varint(&mut body, removed_kinds);
+            put_varint(body, removed_kinds);
             body.extend_from_slice(removed);
         }
         let frame_tick = thousandths(tick as f64);
         if !events.is_empty() {
             sections |= EVENTS_SECTION;
-            put_varint(&mut body, events.len() as u64);
+            put_varint(body, events.len() as u64);
             let mut last = 0;
             for event in events {
-                put_varint(&mut body, event.event_id - last);
+                put_varint(body, event.event_id - last);
                 last = event.event_id;
-                put_signed(&mut body, frame_tick - thousandths(event.tick));
+                put_signed(body, frame_tick - thousandths(event.tick));
                 write_event(record, &event.event);
-                write_record(EVENT_FIELDS, record, &mut body);
+                write_record(EVENT_FIELDS, record, body);
             }
         }
         if !paths.is_empty() {
             sections |= PATHS_SECTION;
-            put_varint(&mut body, paths.len() as u64);
+            put_varint(body, paths.len() as u64);
             for entry in paths {
-                entry.write_binary(&mut body, tick);
+                entry.write_binary(body, tick);
             }
         }
-        put_varint(&mut out, sections);
-        out.extend_from_slice(&body);
+        debug_assert!(sections < 0x80, "the section mask fits its byte");
+        body[mask_at] = sections as u8;
         let current = std::mem::take(scene);
         std::mem::swap(&mut self.index, &mut self.current);
         std::mem::swap(&mut self.motion, &mut self.next_motion);
         if let Some(old) = self.previous.replace(current) {
             *scene = old;
         }
-        out
     }
 }
 
