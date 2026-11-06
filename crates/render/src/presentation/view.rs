@@ -789,11 +789,13 @@ enum FragmentLook {
 }
 
 /// A structure debris look shared by every fragment that looks the same
-/// ([`shared_debris_key`]). It keeps no model tree: the piles draw its parts again
-/// when they merge them, rather than every look built ahead holding its meshes on
-/// the CPU for the round.
+/// ([`shared_debris_key`]), with the parts' model tree the piles merge while
+/// fragments show it. A look built ahead, or one no fragment shows any more, keeps no
+/// tree (a harbor's crate looks held 3 MB of meshes on the CPU for the round): the
+/// piles draw its parts again when they merge them.
 struct SharedDebris {
     look: BoundedModel,
+    node: Option<Node>,
     /// The fragments showing it.
     users: usize,
     /// Built ahead (a crate's walls, lid and landing pieces): kept for the round.
@@ -1771,7 +1773,11 @@ impl Presentation {
         if let Some((shape, parts)) = self.debris_warmups.pop()
             && let Some(key) = shared_debris_key(&shape, &parts)
         {
-            self.shared_structure_debris(&shape, &parts, key).ahead = true;
+            let shared = self.shared_structure_debris(&shape, &parts, key);
+            shared.ahead = true;
+            if shared.users == 0 {
+                shared.node = None;
+            }
         }
     }
 
@@ -1792,6 +1798,7 @@ impl Presentation {
             };
             SharedDebris {
                 look,
+                node: Some(node),
                 users: 0,
                 ahead: false,
             }
@@ -1806,7 +1813,11 @@ impl Presentation {
             return;
         };
         shared.users -= 1;
-        if shared.users > 0 || shared.ahead {
+        if shared.users > 0 {
+            return;
+        }
+        shared.node = None;
+        if shared.ahead {
             return;
         }
         self.idle_debris.push_back(key);
@@ -3342,8 +3353,12 @@ impl Presentation {
     /// views; show again the ones whose chunk broke up. The merges are one-off models,
     /// merged straight into the upload layout and not kept once uploaded.
     fn settle_piles(&mut self) {
-        let layouts = &mut self.layouts;
-        let plan = self.piles.plan(self.time, |source| layouts.body(source));
+        let (layouts, shared) = (&mut self.layouts, &self.shared_debris);
+        let plan = self.piles.plan(self.time, |source| {
+            let node = shared_debris_key(&source.shape, &source.parts)
+                .and_then(|key| shared.get(&key)?.node.clone());
+            node.unwrap_or_else(|| layouts.body(source))
+        });
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
