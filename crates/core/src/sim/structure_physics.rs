@@ -249,6 +249,9 @@ pub struct StructureState {
     pub layout: Arc<Structure>,
     pub gone: PartSet,
     pub damage: Vec<f64>,
+    /// The parts that have taken damage, kept as damage lands: every frame's scene reads
+    /// them for every structure, mostly intact.
+    hurt: PartSet,
     pub colliders: Vec<Option<ColliderHandle>>,
     /// Counted as levelled ([`super::structure::Levelling`]).
     pub levelled: bool,
@@ -261,6 +264,7 @@ impl StructureState {
             layout,
             gone: PartSet::EMPTY,
             damage: vec![0.0; count],
+            hurt: PartSet::EMPTY,
             colliders: vec![None; count],
             levelled: false,
         }
@@ -274,7 +278,15 @@ impl StructureState {
     /// reads the standing ones, and a watchtower's model scars a struck leg and leaves a
     /// tall stub of a shot-out one.
     pub fn cracked(&self) -> PartSet {
-        PartSet::from_indices((0..self.damage.len()).filter(|&index| self.damage[index] > 0.0))
+        self.hurt
+    }
+
+    /// Part `index` takes `amount` of damage.
+    pub fn take(&mut self, index: usize, amount: f64) {
+        self.damage[index] += amount;
+        if self.damage[index] > 0.0 {
+            self.hurt.insert(index);
+        }
     }
 
     /// The share of the structure's breakable parts still standing.
@@ -572,7 +584,7 @@ impl Simulation {
         if !state.standing(part) || strength.is_infinite() {
             return false;
         }
-        state.damage[part] += amount;
+        state.take(part, amount);
         if !force && state.damage[part] < strength {
             return false;
         }
@@ -660,7 +672,7 @@ impl Simulation {
         let state = self.covers[cover].structure.as_mut().expect("checked above");
         let (mut broken, mut loose) = (PartSet::EMPTY, PartSet::EMPTY);
         for (index, amount, gap) in hits {
-            state.damage[index] += amount;
+            state.take(index, amount);
             if state.damage[index] >= layout.parts[index].strength {
                 if gap < BLAST_CORE {
                     broken.insert(index);
@@ -681,12 +693,13 @@ impl Simulation {
             return;
         };
         let (mut broken, mut loose) = (PartSet::EMPTY, PartSet::EMPTY);
-        for index in 0..state.layout.parts.len() {
-            let part = &state.layout.parts[index];
+        let layout = state.layout.clone();
+        for index in 0..layout.parts.len() {
+            let part = &layout.parts[index];
             if !state.standing(index) || part.strength.is_infinite() {
                 continue;
             }
-            state.damage[index] += amount;
+            state.take(index, amount);
             if state.damage[index] >= part.strength {
                 if part.grounded || part.min.y < WEDGE_FOOT {
                     broken.insert(index);
