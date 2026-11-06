@@ -1070,9 +1070,8 @@ impl CoverCast for TankPredictor {
             let gone = |index: usize| breached.clone().any(|part| part == (whole, index));
             let body = *self.world.bodies[cover.body].position();
             let shapes = cover.part_shapes.get_or_init(|| part_shapes(layout));
-            for (index, (_, shape)) in shapes.iter().enumerate().filter(|&(index, _)| !gone(index)) {
-                // A built collider has no parent yet: its shape was placed at the body.
-                let pose = body * Pose::IDENTITY;
+            for (index, (part, shape)) in shapes.iter().enumerate().filter(|&(index, _)| !gone(index)) {
+                let pose = body * *part;
                 let reach = nearest.as_ref().map_or(distance as f32, |(_, hit, _)| hit.time_of_impact);
                 if let Some(hit) = shape.cast_ray_and_get_normal(&pose, &ray, reach, true) {
                     nearest = Some((collider, hit, Some(index)));
@@ -1314,6 +1313,43 @@ mod tests {
             next.distance - first.distance
         );
         assert!(next.part.is_some_and(|hit| hit.key != part.key));
+    }
+
+    #[test]
+    fn a_shell_past_a_breached_board_strikes_a_part_where_the_part_stands() {
+        // Past a board of an intact crate, each shell meets a standing part where that
+        // part stands, as the host's split crate would have it, not at the crate's middle.
+        let mut sim = Simulation::with_seed(731.0);
+        sim.start();
+        let crate_index =
+            sim.add_cover(&CoverDef::new(CoverKind::Cargo, 0.0, 40.0, 3.0, 3.0, 2.6, 80.0, 0xb47a49));
+        let scene = mirrored(&sim);
+        let mut predictor = TankPredictor::default();
+        predictor.sync_scene(&scene);
+        predictor.world.step();
+        let direction = Vec2::new(0.0, -1.0);
+        for x in [-1.2, -0.6, 0.0, 0.4, 0.9, 1.3] {
+            let origin = Point3::new(x, 1.1, 50.0);
+            let first = predictor.cast_cover(origin, direction, 20.0).expect("the crate");
+            let Some(part) = first.part else {
+                continue;
+            };
+            let Some(next) = predictor.cast_cover_past(origin, direction, 20.0, &[part.key]) else {
+                continue;
+            };
+            let (_, index) = whole_part(next.part.expect("a part of the crate").key)
+                .expect("a part of the intact crate");
+            let (min, max) = crate::sim::structure_physics::part_box(&sim.covers[crate_index], index)
+                .expect("a standing part");
+            let at = Point3::new(origin.x, origin.y, origin.z - next.distance);
+            let slack = 0.02;
+            assert!(
+                (min.x - slack..=max.x + slack).contains(&at.x)
+                    && (min.y - slack..=max.y + slack).contains(&at.y)
+                    && (min.z - slack..=max.z + slack).contains(&at.z),
+                "x {x}: struck part {index} at {at:?}, which stands within {min:?}..{max:?}"
+            );
+        }
     }
 
     #[test]
