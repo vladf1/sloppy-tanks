@@ -22,7 +22,7 @@
 //! Parts are measured in the structure's build frame: its ground centre at the origin, y
 //! up, turned [`Structure::yaw`] about y from the world's axes.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, Weak};
 
 use glam::{DMat3, DQuat, DVec2, DVec3};
 use serde::{Deserialize, Serialize};
@@ -619,6 +619,41 @@ pub struct Structure {
 pub struct Fall {
     pub parts: PartSet,
     pub tip: Option<(DVec3, DVec2)>,
+}
+
+/// Layouts that something still holds, by what they were laid out from. A layout is
+/// never changed once built and follows from that alone, so the simulation's cover,
+/// its model and a reset's next round (which holds the last round's until its own
+/// covers are in) all take one instead of each laying it out again, with its part
+/// shapes already built. Kept only while held, never for good.
+pub(crate) struct HeldLayouts<K>(Mutex<Vec<(K, Weak<Structure>)>>);
+
+impl<K: PartialEq> HeldLayouts<K> {
+    pub(crate) const fn new() -> Self {
+        Self(Mutex::new(Vec::new()))
+    }
+
+    /// The layout held for `key`, or the one `lay_out` builds.
+    pub(crate) fn get_or_lay_out(&self, key: K, lay_out: impl FnOnce() -> Structure) -> Arc<Structure> {
+        let held = |layouts: &[(K, Weak<Structure>)]| {
+            layouts
+                .iter()
+                .find(|(other, _)| *other == key)
+                .and_then(|(_, layout)| layout.upgrade())
+        };
+        if let Some(layout) = held(&self.0.lock().expect("held layouts")) {
+            return layout;
+        }
+        // Laid out outside the lock: another thread's structures need not wait for it.
+        let layout = Arc::new(lay_out());
+        let mut layouts = self.0.lock().expect("held layouts");
+        if let Some(layout) = held(&layouts) {
+            return layout;
+        }
+        layouts.retain(|(_, layout)| layout.strong_count() > 0);
+        layouts.push((key, Arc::downgrade(&layout)));
+        layout
+    }
 }
 
 /// The structure a cover of `kind` stands for, if it is built of parts.

@@ -399,8 +399,8 @@ impl Simulation {
         self.rng = Random::new(self.seed);
         self.next_id = 1;
         self.tanks.clear();
-        // Held until the new round's covers are added: a cottage laid out for this map
-        // before is taken again rather than laid out anew (`shared_house_structure`).
+        // Held until the new round's covers are added: a structure laid out for this map
+        // before is taken again rather than laid out anew (`HeldLayouts`).
         let laid_out: Vec<_> = self
             .covers
             .drain(..)
