@@ -1061,7 +1061,7 @@ pub struct Presentation {
     fragments: HashMap<u32, FragmentView>,
     /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
     piles: HousePiles<(ModelId, InstanceId), DebrisSource>,
-    /// Cottages' layouts while a build holds them, and this frame's pieces for their
+    /// Hit cottages' layouts for the round, and a collapsing cottage's pieces for its
     /// fallen bodies.
     layouts: CottageLayouts,
     /// Structure debris looks shared by every fragment that looks the same.
@@ -3359,18 +3359,18 @@ impl Presentation {
             }
         }
         self.settle_piles();
-        self.layouts.end_frame();
+        self.layouts.end_frame(self.time);
     }
 
     /// Bake resting cottage parts into merged chunks, one a frame, and hide their own
     /// views; show again the ones whose chunk broke up. The merges are one-off models,
     /// merged straight into the upload layout and not kept once uploaded.
     fn settle_piles(&mut self) {
-        let (layouts, shared) = (&mut self.layouts, &self.shared_debris);
+        let (layouts, shared, now) = (&mut self.layouts, &self.shared_debris, self.time);
         let plan = self.piles.plan(self.time, |source| {
             let node = shared_debris_key(&source.shape, &source.parts)
                 .and_then(|key| shared.get(&key)?.node.clone());
-            node.unwrap_or_else(|| layouts.body(source))
+            node.unwrap_or_else(|| layouts.body(source, now))
         });
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
@@ -3419,9 +3419,9 @@ impl Presentation {
                     .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))
             } else {
-                // A cottage's bodies falling this frame are cut from one build of its
-                // pieces.
-                let node = self.layouts.body(&source);
+                // A cottage's bodies falling over a collapse are cut from one build of
+                // its pieces.
+                let node = self.layouts.body(&source, self.time);
                 let look = structure_debris_look(&mut self.renderer, &node);
                 self.piles
                     .track(fragment.id, structure, source, Some(node), self.time);
