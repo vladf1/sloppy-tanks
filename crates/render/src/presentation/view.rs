@@ -25,7 +25,7 @@ use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure_physics::structural;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
-use sloppy_core::sim::tower_structure::LOWER_LEGS;
+use sloppy_core::sim::tower_structure::{LOWER_LEGS, tower_structure};
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
@@ -803,6 +803,27 @@ struct SharedDebris {
     ahead: bool,
 }
 
+/// A falling watchtower's landing looks still to cut, and those cut: the bodies its frame
+/// breaks into when it lands (`Structure::landing`, no random draw), drawn while it
+/// falls rather than all on the frame it lands (27 of them took 4 ms natively). Only the
+/// model trees are cut ahead: each is registered with the GPU on the frame its body
+/// appears, as before, so nothing is drawn or uploaded any sooner. The trees go with the
+/// falling body: once it lands it is gone (broken up) or rests whole, and a round's reset
+/// drops them too. A tower's are several MB natively, held for the seconds it falls.
+#[derive(Default)]
+struct LandingLooks {
+    /// The falling body each is for, its tower's shape and the landing body's parts.
+    queued: Vec<(u32, CoverShape, PartSet)>,
+    cut: HashMap<SharedDebrisKey, (u32, Node)>,
+    /// Each watchtower's broken parts as of the last frame: a body of parts that stood
+    /// then has just come down and has its landing ahead of it, while the bodies a
+    /// landing breaks a frame into have landed already.
+    broken: Vec<(u32, PartSet)>,
+}
+
+/// The time (ms) a frame may spend cutting landing looks ahead: one look at least.
+const LANDING_LOOKS_MS: f64 = 0.5;
+
 /// How many shared debris looks no fragment shows any more are kept for the next
 /// fragment that looks the same; older ones are released. A Scrap Yard that keeps
 /// felling and rebuilding towers otherwise kept a model for every way one came down.
@@ -1072,6 +1093,7 @@ pub struct Presentation {
     /// Debris looks this round's crates can break into, still to build; one is built a
     /// frame, so a crate breaking builds none.
     debris_warmups: Vec<(CoverShape, PartSet)>,
+    landing_looks: LandingLooks,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
     chimneys: Vec<(u32, bool)>,
@@ -1169,6 +1191,7 @@ impl Presentation {
             shared_debris: HashMap::default(),
             idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
+            landing_looks: LandingLooks::default(),
             chimneys: Vec::new(),
             pickups: HashMap::default(),
             supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
@@ -1771,6 +1794,82 @@ impl Presentation {
         }
     }
 
+    /// Queue the landing looks of watchtower `tower`'s body `fragment` of `parts`
+    /// ([`LandingLooks`]) not shared already, when it has just come down whole.
+    fn queue_landing_looks(
+        &mut self,
+        fragment: u32,
+        tower: u32,
+        shape: &CoverShape,
+        parts: &PartSet,
+    ) {
+        if shape.kind != CoverKind::Tower || parts.len() < 2 {
+            return;
+        }
+        let looks = &self.landing_looks;
+        let stood = looks
+            .broken
+            .iter()
+            .find(|(id, _)| *id == tower)
+            .is_none_or(|(_, broken)| parts.iter().all(|part| !broken.contains(part)));
+        if !stood {
+            return;
+        }
+        for body in tower_structure().landing(parts, false) {
+            if let Some(key) = shared_debris_key(shape, &body)
+                && !self.shared_debris.contains_key(&key)
+                && !self.landing_looks.cut.contains_key(&key)
+            {
+                self.landing_looks
+                    .queued
+                    .push((fragment, shape.clone(), body));
+            }
+        }
+    }
+
+    /// Cut queued landing looks while this frame's [`LANDING_LOOKS_MS`] lasts, on a frame
+    /// that rebuilt no cover and built no debris (the tower's fall, for one), and drop
+    /// those of bodies gone (landed), whether or not their pieces used them.
+    fn cut_landing_looks(&mut self, state: &RenderState) {
+        // A body still falling: one that landed whole (caught on something) comes to
+        // rest instead of breaking up, and its pieces' looks are not wanted.
+        let falling = |id: &u32| {
+            state
+                .fragments
+                .iter()
+                .any(|fragment| fragment.id == *id && !fragment.rested)
+        };
+        let looks = &mut self.landing_looks;
+        looks.broken.clear();
+        looks.broken.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| cover.kind == CoverKind::Tower)
+                .map(|cover| (cover.id, cover.broken)),
+        );
+        looks.queued.retain(|(id, ..)| falling(id));
+        looks.cut.retain(|_, (id, _)| falling(id));
+        if self.busy {
+            return;
+        }
+        let start = now_ms();
+        while let Some((id, shape, parts)) = looks.queued.first().cloned() {
+            looks.queued.remove(0);
+            if let Some(key) = shared_debris_key(&shape, &parts)
+                && !self.shared_debris.contains_key(&key)
+            {
+                looks
+                    .cut
+                    .entry(key)
+                    .or_insert_with(|| (id, structure_debris(&shape, &parts)));
+            }
+            if now_ms() - start >= LANDING_LOOKS_MS {
+                break;
+            }
+        }
+    }
+
     /// Build one queued debris look, on a frame that rebuilt no cover and built no
     /// debris (the look is ahead of need, so it waits for a quieter frame).
     fn warm_debris(&mut self) {
@@ -1797,8 +1896,11 @@ impl Presentation {
         key: SharedDebrisKey,
     ) -> &mut SharedDebris {
         let renderer = &mut self.renderer;
+        let cut = &mut self.landing_looks.cut;
         self.shared_debris.entry(key).or_insert_with(|| {
-            let node = structure_debris(shape, parts);
+            let node = cut
+                .remove(&key)
+                .map_or_else(|| structure_debris(shape, parts), |(_, node)| node);
             let look = BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
                 model: renderer.add_falling_debris_model(&node, Lifetime::Round),
@@ -2139,6 +2241,7 @@ impl Presentation {
         self.update_pickups(state);
         self.update_supply_pieces();
         self.update_fragments(state);
+        self.cut_landing_looks(state);
         self.warm_debris();
         self.update_mines(state);
         // The camera is final here; the effects order smoke by this frame's eye.
@@ -3421,6 +3524,7 @@ impl Presentation {
                 let shared = self.shared_structure_debris(&source.shape, &parts, key);
                 shared.users += 1;
                 let (model, bounds) = (shared.look.model, shared.look.bounds);
+                self.queue_landing_looks(fragment.id, structure, &source.shape, &parts);
                 self.piles
                     .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))

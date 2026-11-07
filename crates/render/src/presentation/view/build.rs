@@ -82,6 +82,7 @@ impl Presentation {
         self.layouts.clear();
         self.shared_debris.clear();
         self.idle_debris.clear();
+        self.landing_looks = Default::default();
         self.pickups.clear();
         self.supply_pieces.clear();
         self.mines.clear();
