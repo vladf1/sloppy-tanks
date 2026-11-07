@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::json::{self, ObjectWriter};
 use super::multiplayer_simulation::set_driver;
-use super::schema::MAX_SAFE_INTEGER;
+use super::schema::{MAX_SAFE_INTEGER, Record};
 use crate::sim::ammunition::AMMO_ORDER;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{AmmoSelection, Driver, VehicleCommand, Weapon};
@@ -136,21 +136,71 @@ pub fn encode_input(input: &ControlInput, round_id: u64) -> String {
 }
 
 fn finite(value: Option<&Value>, bound: f64) -> Option<f64> {
-    value
-        .and_then(Value::as_f64)
-        .filter(|number| number.is_finite() && number.abs() <= bound)
+    finite_number(value.and_then(Value::as_f64), bound)
+}
+
+/// [`finite`] over a field already read as a number (`None`: missing or `null`).
+pub(crate) fn finite_number(number: Option<f64>, bound: f64) -> Option<f64> {
+    number.filter(|number| number.is_finite() && number.abs() <= bound)
 }
 
 fn safe_integer(value: Option<&Value>) -> Option<i64> {
-    value
-        .and_then(Value::as_f64)
+    safe_integer_number(value.and_then(Value::as_f64))
+}
+
+/// [`safe_integer`] over a field already read as a number.
+pub(crate) fn safe_integer_number(number: Option<f64>) -> Option<i64> {
+    number
         .filter(|number| number.trunc() == *number && number.abs() <= MAX_SAFE_INTEGER)
         .map(|number| number as i64)
 }
 
+/// The optional `tick` an input asks to drive from, once present: a non-negative safe
+/// integer.
+pub(crate) fn requested_tick(number: Option<f64>) -> Option<u64> {
+    u64::try_from(safe_integer_number(number)?).ok()
+}
+
+/// The `view` delay in ticks, once present.
+pub(crate) fn view_ticks(number: Option<f64>) -> Option<u32> {
+    u32::try_from(safe_integer_number(number)?)
+        .ok()
+        .filter(|ticks| *ticks <= MAX_VIEW_TICKS)
+}
+
+/// The player's ammunition named `weapon`. Players select from AMMO_ORDER; the TOW is
+/// bot-only.
+pub(crate) fn player_ammo(weapon: &str) -> Option<Weapon> {
+    AMMO_ORDER
+        .into_iter()
+        .find(|candidate| candidate.as_str() == weapon)
+}
+
+/// A turret angle within half a turn.
+pub(crate) fn aim_angle(number: Option<f64>) -> Option<Aim> {
+    Some(Aim::Angle(finite_number(number, std::f64::consts::PI)?))
+}
+
+/// A world aim point within the arena's bounds.
+pub(crate) fn aim_point(x: Option<f64>, z: Option<f64>) -> Option<Aim> {
+    Some(Aim::Point {
+        x: finite_number(x, MAX_AIM_COORDINATE)?,
+        z: finite_number(z, MAX_AIM_COORDINATE)?,
+    })
+}
+
+/// A negative epoch never matches; keep it distinguishable from every real one.
+pub(crate) fn epoch(control_epoch: i64) -> u64 {
+    u64::try_from(control_epoch).unwrap_or(u64::MAX)
+}
+
 /// `validInput`: omitted (or `null`) fire and actions mean "not firing" and "no actions".
 pub fn read_input(value: &Value) -> Option<ControlInput> {
-    let message = value.as_object()?;
+    read_input_record(value.as_object()?)
+}
+
+/// [`read_input`] over a message already parsed into an object.
+pub fn read_input_record(message: &Record) -> Option<ControlInput> {
     let aim = message.get("aim")?.as_object()?;
     let actions = match message.get("actions") {
         None | Some(Value::Null) => Vec::new(),
@@ -162,11 +212,7 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
                     Some("mine") if action.len() == 1 => Some(Action::Mine),
                     Some("ammo") if action.len() == 2 => {
                         let weapon = action.get("weapon").and_then(Value::as_str)?;
-                        // Players select from AMMO_ORDER; the TOW is bot-only.
-                        AMMO_ORDER
-                            .into_iter()
-                            .find(|candidate| candidate.as_str() == weapon)
-                            .map(Action::Ammo)
+                        player_ammo(weapon).map(Action::Ammo)
                     }
                     _ => None,
                 }
@@ -180,29 +226,25 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
         Some(_) => return None,
     };
     let aim = if aim.len() == 1 {
-        Aim::Angle(finite(aim.get("angle"), std::f64::consts::PI)?)
+        aim_angle(aim.get("angle").and_then(Value::as_f64))?
     } else if aim.len() == 2 {
-        Aim::Point {
-            x: finite(aim.get("x"), MAX_AIM_COORDINATE)?,
-            z: finite(aim.get("z"), MAX_AIM_COORDINATE)?,
-        }
+        aim_point(
+            aim.get("x").and_then(Value::as_f64),
+            aim.get("z").and_then(Value::as_f64),
+        )?
     } else {
         return None;
     };
-    let control_epoch = safe_integer(message.get("controlEpoch"))?;
     let tick = match message.get("tick") {
         None | Some(Value::Null) => None,
-        some => Some(u64::try_from(safe_integer(some)?).ok()?),
+        Some(some) => Some(requested_tick(some.as_f64())?),
     };
     let view = match message.get("view") {
         None | Some(Value::Null) => 0,
-        some => u32::try_from(safe_integer(some)?)
-            .ok()
-            .filter(|ticks| *ticks <= MAX_VIEW_TICKS)?,
+        Some(some) => view_ticks(some.as_f64())?,
     };
     Some(ControlInput {
-        // A negative epoch never matches; keep it distinguishable from every real one.
-        control_epoch: u64::try_from(control_epoch).unwrap_or(u64::MAX),
+        control_epoch: epoch(safe_integer(message.get("controlEpoch"))?),
         seq: safe_integer(message.get("seq"))?,
         observed_tick: safe_integer(message.get("observedTick"))?,
         tick,
@@ -321,12 +363,31 @@ impl PlayerControls {
         self.accept_at(simulation, value, server_tick, server_tick + 1, now_ms)
     }
 
-    /// Accepts one `input` message whose earliest tick is `arrival_tick`. Returns false
-    /// without partially applying a malformed or stale message, or extending its lease.
+    /// [`accept_input_at`](Self::accept_input_at) for a message as JSON.
     pub fn accept_at(
         &mut self,
         simulation: &Simulation,
         value: &Value,
+        server_tick: u64,
+        arrival_tick: u64,
+        now_ms: f64,
+    ) -> bool {
+        self.accept_input_at(
+            simulation,
+            read_input(value),
+            server_tick,
+            arrival_tick,
+            now_ms,
+        )
+    }
+
+    /// Accepts one `input` message, read by [`read_input`] (`None` when malformed), whose
+    /// earliest tick is `arrival_tick`. Returns false without partially applying a
+    /// malformed or stale message, or extending its lease.
+    pub fn accept_input_at(
+        &mut self,
+        simulation: &Simulation,
+        input: Option<ControlInput>,
         server_tick: u64,
         arrival_tick: u64,
         now_ms: f64,
@@ -348,7 +409,7 @@ impl PlayerControls {
             return false;
         }
         self.expire_actions(now_ms);
-        let Some(input) = read_input(value) else {
+        let Some(input) = input else {
             return false;
         };
         let server_tick = server_tick as i64;

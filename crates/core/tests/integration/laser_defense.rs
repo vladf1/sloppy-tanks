@@ -119,25 +119,20 @@ fn fifty_percent_chance_is_rolled_once_per_shot_and_tank_and_misses_can_still_hi
     let mut s = fixture();
     s.rng = missing_rng();
     let before = s.rng.clone();
-    // Record every sweep so the shell's final state is readable after it is removed.
-    s.projectile_moves = Some(Vec::new());
     let p = incoming(&mut s, Weapon::Standard, |_| {});
     let hp = s.tanks[0].hp;
     let mut i = 0;
+    // The shell's state before the step that removes it.
+    let mut checked_by = Vec::new();
     while i < 20 && !s.shots.is_empty() {
+        if let Some(shot) = s.shots.iter().find(|shot| shot.id == p) {
+            checked_by.clone_from(&shot.laser_checked_by);
+        }
         step_projectiles(&mut s, STEP, false);
         i += 1;
     }
     assert_eq!(draws_since(&before, &s.rng), 1);
-    let last = s
-        .projectile_moves
-        .as_ref()
-        .unwrap()
-        .iter()
-        .rev()
-        .find(|m| m.shot.id == p)
-        .unwrap();
-    assert_eq!(last.shot.laser_checked_by, vec![s.tanks[0].id]);
+    assert_eq!(checked_by, vec![s.tanks[0].id]);
     assert_eq!(s.tanks[0].hp, hp - 40.0);
     assert_eq!(event_count(&s, SimEventType::Laser), 0);
 }

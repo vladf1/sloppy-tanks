@@ -6,6 +6,7 @@
 //! - [`match_host`]: `MatchHost`, the room authority (seats, lobby, rounds, lifetime).
 //! - [`multiplayer_simulation`]: room rosters on the shared simulation.
 //! - [`player_controls`]: one seat's input leases, action queue and control epochs.
+//! - [`quick_message`]: `input` and `ping` read without a JSON tree.
 //! - [`fixed_step_clock`]: the host's 60 Hz catch-up clock.
 //!
 //! Shared wire format:
@@ -43,6 +44,7 @@ pub mod player_names;
 pub mod playout_clock;
 pub mod prediction;
 pub mod protocol;
+pub mod quick_message;
 pub mod render_timeline;
 pub mod replication;
 pub mod room_list;

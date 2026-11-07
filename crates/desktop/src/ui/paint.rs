@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align2, Color32, FontId, Galley, Mesh, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
+    Align2, Color32, FontId, Galley, Id, Mesh, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
     StrokeKind, Ui, Vec2, pos2, vec2,
 };
 
@@ -64,6 +64,8 @@ pub enum MeshKind {
     RoundedGradient = 1,
     Vignette,
     LitDisc,
+    SetupSky,
+    SetupLand,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by
@@ -125,6 +127,11 @@ pub fn mesh_with_capacity(vertices: usize, triangles: usize) -> Mesh {
 
 /// A vertical gradient over `rect` through `stops` (share of the height, colour).
 pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
+    Shape::mesh(vgradient_mesh(rect, stops))
+}
+
+/// The mesh of [`vgradient`].
+pub fn vgradient_mesh(rect: Rect, stops: &[(f32, Color32)]) -> Mesh {
     let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let y = rect.top() + rect.height() * share;
@@ -136,7 +143,7 @@ pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
             mesh.add_triangle(base + 1, base + 3, base + 2);
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// A vertical gradient through `stops` filling `rect` with its corners rounded by
@@ -489,6 +496,11 @@ pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
 /// A radial gradient: an ellipse of `radii` round `center` through `stops` (share of
 /// the radii, colour), the first stop at the centre.
 pub fn radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
+    Shape::mesh(radial_mesh(center, radii, stops))
+}
+
+/// The mesh of [`radial`].
+pub fn radial_mesh(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Mesh {
     let segments = 48u32;
     let rings = stops.len().saturating_sub(1);
     let mut mesh = mesh_with_capacity(
@@ -519,7 +531,7 @@ pub fn radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
             mesh.add_triangle(b, b + segments, a + segments);
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// Text wrapped at `width`.
@@ -551,9 +563,98 @@ pub fn glass(
     );
 }
 
+/// The one-line texts [`galley`] laid out, each by a hash of what it was laid out from
+/// and the last pass that drew it, so drawing the same text again copies no string into
+/// a layout job (egui's own cache finds a galley only from a job). A galley holds places
+/// in egui's glyph atlas, so they all go when the fonts change, the atlas is cleared
+/// (egui does when it fills) or another context draws.
+#[derive(Default)]
+struct GalleyMemo {
+    /// The context the galleys belong to ([`context_token`]) and the pass that drew last.
+    context: u64,
+    pass: u64,
+    /// A text laid out through egui's cache every pass: egui keeps it while it is used,
+    /// so a different one back means egui let its galleys go.
+    probe: Option<Arc<Galley>>,
+    galleys: HashMap<u64, (Arc<Galley>, u64)>,
+}
+
+thread_local! {
+    static GALLEYS: RefCell<GalleyMemo> = RefCell::default();
+}
+
+/// A number naming `context` for as long as its memory lasts.
+fn context_token(context: &egui::Context) -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static ID: std::sync::LazyLock<Id> =
+        std::sync::LazyLock::new(|| Id::unique("paint galley memo"));
+    context.data_mut(|data| {
+        *data.get_temp_mut_or_insert_with(*ID, || {
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        })
+    })
+}
+
 /// Text laid out on one line, `spacing` points between letters, cut with an ellipsis
 /// beyond `max_width`.
 pub fn galley(
+    painter: &Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    spacing: f32,
+    max_width: f32,
+) -> Arc<Galley> {
+    use std::hash::{Hash, Hasher};
+    let context = painter.ctx();
+    let pass = context.cumulative_pass_nr();
+    let token = context_token(context);
+    let mut hasher = std::hash::DefaultHasher::new();
+    text.hash(&mut hasher);
+    font.hash(&mut hasher);
+    color.hash(&mut hasher);
+    for value in [spacing, max_width, context.pixels_per_point()] {
+        value.to_bits().hash(&mut hasher);
+    }
+    let key = hasher.finish();
+    let kept = GALLEYS.with_borrow_mut(|memo| {
+        if memo.context != token || memo.pass != pass {
+            let probe = context.fonts_mut(|fonts| {
+                fonts.layout_no_wrap(String::new(), FontId::default(), Color32::PLACEHOLDER)
+            });
+            let same_fonts = memo.context == token
+                && memo
+                    .probe
+                    .as_ref()
+                    .is_some_and(|kept| Arc::ptr_eq(kept, &probe));
+            if same_fonts {
+                let last = memo.pass;
+                memo.galleys.retain(|_, (_, used)| *used == last);
+            } else {
+                memo.galleys.clear();
+            }
+            (memo.context, memo.pass, memo.probe) = (token, pass, Some(probe));
+        }
+        match memo.galleys.get_mut(&key) {
+            // The text compared too, should two keys' hashes meet.
+            Some((galley, used)) if galley.job.text == text => {
+                *used = pass;
+                Some(Arc::clone(galley))
+            }
+            _ => None,
+        }
+    });
+    kept.unwrap_or_else(|| {
+        let galley = layout_galley(painter, text, font, color, spacing, max_width);
+        GALLEYS.with_borrow_mut(|memo| {
+            memo.galleys.insert(key, (Arc::clone(&galley), pass));
+        });
+        galley
+    })
+}
+
+/// [`galley`]'s layout through egui's own cache.
+fn layout_galley(
     painter: &Painter,
     text: &str,
     font: FontId,
@@ -1303,4 +1404,34 @@ pub fn button_at(
 ) -> Response {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     button(&mut child, art, label, icon, style, rect.size(), enabled)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The galley `text` draws in one pass of `context`.
+    fn drawn(context: &egui::Context, text: &str) -> Arc<Galley> {
+        let mut galley = None;
+        let mut output = context.run_pass(egui::RawInput::default(), |context| {
+            let painter = context.layer_painter(egui::LayerId::background());
+            galley = Some(uncoloured(&painter, text, FontId::default(), 0.0, 100.0));
+        });
+        // No painter takes the font atlas here.
+        output.textures_delta.clear();
+        galley.expect("a pass ran")
+    }
+
+    #[test]
+    fn galleys_are_kept_while_drawn_and_never_outlive_their_atlas() {
+        let first = drawn(&egui::Context::default(), "KILLS");
+        // Another context draws at the same pass number, with an atlas of its own.
+        let other = egui::Context::default();
+        let kept = drawn(&other, "KILLS");
+        assert!(!Arc::ptr_eq(&first, &kept));
+        assert!(Arc::ptr_eq(&kept, &drawn(&other, "KILLS")));
+        // New fonts put their glyphs in a new atlas.
+        theme::install(&other);
+        assert!(!Arc::ptr_eq(&kept, &drawn(&other, "KILLS")));
+    }
 }

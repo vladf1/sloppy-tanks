@@ -90,9 +90,11 @@ pub struct Assisted {
 }
 
 /// The tracked target, kept between frames.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct AimAssist {
     target: Option<u32>,
+    /// This frame's [`candidates`], kept so touch aim does not allocate every frame.
+    candidates: Vec<Candidate>,
 }
 
 /// An enemy the assist may aim at: its id, where the shell meets it (led), and its
@@ -121,12 +123,17 @@ impl AimAssist {
         stick: (f64, f64),
     ) -> Option<Assisted> {
         let viewer = state.viewer().filter(|viewer| viewer.alive)?;
-        let candidates = candidates(state, viewer, camera);
+        // The mouse aims without the assist: skip the scan of every enemy's lane.
+        if mode == AimMode::Pointer {
+            return None;
+        }
+        self.candidates.clear();
+        self.candidates.extend(candidates(state, viewer, camera));
         let from = (viewer.position.x, viewer.position.z);
         match mode {
             AimMode::Pointer => None,
             AimMode::Track => {
-                let target = self.track(&candidates);
+                let target = self.track(&self.candidates);
                 self.target = target.map(|candidate| candidate.id);
                 Some(match target {
                     Some(target) => Assisted {
@@ -143,7 +150,7 @@ impl AimAssist {
             }
             AimMode::Manual => {
                 let line = stick_bearing(camera, from, stick).unwrap_or(viewer.aim);
-                let pulled = pull(line, from, &candidates);
+                let pulled = pull(line, from, &self.candidates);
                 // A drag onto an enemy makes it the one a later tap fires at.
                 if let Some((target, _)) = pulled {
                     self.target = Some(target.id);
@@ -181,21 +188,21 @@ impl AimAssist {
 
 /// The enemies a shell can reach from `viewer`: alive, past their spawn protection, on
 /// screen and with no cover in the lane.
-fn candidates(
-    state: &RenderState,
-    viewer: &RenderTank,
-    camera: &PerspectiveCamera,
-) -> Vec<Candidate> {
+fn candidates<'a>(
+    state: &'a RenderState,
+    viewer: &'a RenderTank,
+    camera: &'a PerspectiveCamera,
+) -> impl Iterator<Item = Candidate> + 'a {
     let from = (viewer.position.x, viewer.position.z);
     let shell_speed = weapon(viewer.selected_ammo).speed;
     state
         .tanks
         .iter()
-        .filter(|tank| {
+        .filter(move |tank| {
             tank.alive && tank.id != viewer.id && tank.team != viewer.team && tank.protection <= 0.0
         })
-        .filter(|tank| on_screen(camera, (tank.position.x, tank.position.z)))
-        .filter_map(|tank| {
+        .filter(move |tank| on_screen(camera, (tank.position.x, tank.position.z)))
+        .filter_map(move |tank| {
             let at = (tank.position.x, tank.position.z);
             let distance = (at.0 - from.0).hypot(at.1 - from.1);
             let flight = distance / shell_speed * LEAD;
@@ -214,7 +221,6 @@ fn candidates(
                 distance,
             })
         })
-        .collect()
 }
 
 /// The candidate whose lane passes nearest the line at `line` radians from `from`, and
@@ -518,9 +524,18 @@ mod tests {
     #[test]
     fn pointer_mode_leaves_the_aim_to_the_pointer() {
         let (state, camera) = scene(&[(2, 0.0, 20.0)], Vec::new());
+        let mut assist = AimAssist::default();
         assert_eq!(
-            AimAssist::default().aim(&state, &camera, AimMode::Pointer, (0.0, 0.0)),
+            assist.aim(&state, &camera, AimMode::Pointer, (0.0, 0.0)),
             None
         );
+        assert_eq!(assist.target, None);
+        // The tracked target outlasts pointer frames between touches of the stick.
+        assist.aim(&state, &camera, AimMode::Track, (0.0, 0.0));
+        assert_eq!(
+            assist.aim(&state, &camera, AimMode::Pointer, (0.0, 0.0)),
+            None
+        );
+        assert_eq!(assist.target, Some(2));
     }
 }

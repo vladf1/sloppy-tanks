@@ -29,6 +29,9 @@ pub struct Deflate {
     decompress: Decompress,
     reset_compressor: bool,
     reset_decompressor: bool,
+    /// The last compressed message, reused so a message per client per tick does not
+    /// allocate its own buffer.
+    compressed: Vec<u8>,
 }
 
 impl Deflate {
@@ -58,17 +61,23 @@ impl Deflate {
             decompress: Decompress::new_with_window_bits(false, DEFAULT_WINDOW_BITS),
             reset_compressor: own_reset,
             reset_decompressor: peer_reset,
+            compressed: Vec::new(),
         }
     }
 
-    /// Compresses one message payload, without the trailing sync-flush block.
-    pub fn compress(&mut self, input: &[u8]) -> Vec<u8> {
-        let mut output = Vec::with_capacity(input.len() / 2 + 64);
+    /// Compresses one message payload, without the trailing sync-flush block. The bytes
+    /// stay valid until the next message is compressed.
+    pub fn compress(&mut self, input: &[u8]) -> &[u8] {
+        let output = &mut self.compressed;
+        output.clear();
+        // The deflate stream does not depend on how much output room each call has, so a
+        // buffer left larger by an earlier message gives the same bytes.
+        output.reserve(input.len() / 2 + 64);
         let mut consumed = 0;
         loop {
             let before = self.compress.total_in();
             self.compress
-                .compress_vec(&input[consumed..], &mut output, FlushCompress::Sync)
+                .compress_vec(&input[consumed..], output, FlushCompress::Sync)
                 .expect("deflate accepts any input");
             consumed += (self.compress.total_in() - before) as usize;
             // zlib finished the flush when it left output space unused.
@@ -169,10 +178,7 @@ mod tests {
             let packed = server.compress(text.as_bytes());
             sizes.push(packed.len());
             assert!(packed.len() < text.len() / 2);
-            assert_eq!(
-                client.decompress(&packed, 1 << 20).unwrap(),
-                text.as_bytes()
-            );
+            assert_eq!(client.decompress(packed, 1 << 20).unwrap(), text.as_bytes());
         }
         assert!(
             sizes[4] < sizes[0],
@@ -188,7 +194,7 @@ mod tests {
         };
         let (mut server, _) = pair(&params);
         let text = snapshot(1);
-        let first = server.compress(text.as_bytes());
+        let first = server.compress(text.as_bytes()).to_vec();
         assert_eq!(server.compress(text.as_bytes()), first);
         // A fresh decoder (the peer honours no-context-takeover) reads each one.
         let mut fresh = Deflate::new(&params, Role::Client);
@@ -200,10 +206,75 @@ mod tests {
         let (mut server, mut client) = pair(&DeflateParams::default());
         let bomb = server.compress(&vec![b'a'; 100_000]);
         assert!(bomb.len() < 1000);
-        assert_eq!(client.decompress(&bomb, 8192).unwrap_err().code, 1009);
+        assert_eq!(client.decompress(bomb, 8192).unwrap_err().code, 1009);
         let (mut server, mut client) = pair(&DeflateParams::default());
         let exact = server.compress(&vec![b'a'; 8192]);
-        assert_eq!(client.decompress(&exact, 8192).unwrap().len(), 8192);
+        assert_eq!(client.decompress(exact, 8192).unwrap().len(), 8192);
+    }
+
+    /// Each message as a fresh output buffer per message compressed it, before the
+    /// buffer was reused.
+    fn compress_into_fresh_buffer(deflate: &mut Deflate, input: &[u8]) -> Vec<u8> {
+        let mut output = Vec::with_capacity(input.len() / 2 + 64);
+        let mut consumed = 0;
+        loop {
+            let before = deflate.compress.total_in();
+            deflate
+                .compress
+                .compress_vec(&input[consumed..], &mut output, FlushCompress::Sync)
+                .unwrap();
+            consumed += (deflate.compress.total_in() - before) as usize;
+            if consumed == input.len() && output.len() < output.capacity() {
+                break;
+            }
+            output.reserve(output.capacity().max(1024));
+        }
+        output.truncate(output.len() - SYNC_TAIL.len());
+        if deflate.reset_compressor {
+            deflate.compress.reset();
+        }
+        output
+    }
+
+    #[test]
+    fn a_reused_buffer_gives_the_bytes_of_a_fresh_one() {
+        // Noise that deflate cannot shrink outgrows the first reservation; small messages
+        // after a large one start with far more room than they need.
+        let mut seed = 0x9e37_79b9_u32;
+        let mut noise = |length: usize| -> Vec<u8> {
+            (0..length)
+                .map(|_| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 17;
+                    seed ^= seed << 5;
+                    seed as u8
+                })
+                .collect()
+        };
+        let messages: Vec<Vec<u8>> = vec![
+            snapshot(1).into_bytes(),
+            noise(70_000),
+            snapshot(2).into_bytes(),
+            noise(100),
+            vec![b'a'; 100_000],
+            noise(3000),
+            snapshot(3).into_bytes(),
+        ];
+        for params in [
+            DeflateParams::default(),
+            DeflateParams {
+                server_no_context_takeover: true,
+                server_max_window_bits: Some(9),
+                ..DeflateParams::default()
+            },
+        ] {
+            let mut reused = Deflate::new(&params, Role::Server);
+            let mut fresh = Deflate::new(&params, Role::Server);
+            for message in &messages {
+                let expected = compress_into_fresh_buffer(&mut fresh, message);
+                assert_eq!(reused.compress(message), expected.as_slice());
+            }
+        }
     }
 
     #[test]
@@ -227,13 +298,13 @@ mod tests {
         let text = snapshot(3);
         assert_eq!(
             client
-                .decompress(&server.compress(text.as_bytes()), 1 << 20)
+                .decompress(server.compress(text.as_bytes()), 1 << 20)
                 .unwrap(),
             text.as_bytes()
         );
         assert_eq!(
             server
-                .decompress(&client.compress(text.as_bytes()), 1 << 20)
+                .decompress(client.compress(text.as_bytes()), 1 << 20)
                 .unwrap(),
             text.as_bytes()
         );

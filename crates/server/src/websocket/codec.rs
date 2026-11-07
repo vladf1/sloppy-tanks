@@ -217,9 +217,9 @@ impl Codec {
         match self.deflate.as_mut() {
             Some(deflate) if text.len() >= COMPRESSION_THRESHOLD => {
                 let packed = deflate.compress(text.as_bytes());
-                self.encode_frame(0x80 | 0x40 | OP_TEXT, &packed, output);
+                encode_frame(self.role, 0x80 | 0x40 | OP_TEXT, packed, output);
             }
-            _ => self.encode_frame(0x80 | OP_TEXT, text.as_bytes(), output),
+            _ => encode_frame(self.role, 0x80 | OP_TEXT, text.as_bytes(), output),
         }
     }
 
@@ -229,9 +229,9 @@ impl Codec {
         match self.deflate.as_mut() {
             Some(deflate) if bytes.len() >= BINARY_COMPRESSION_THRESHOLD => {
                 let packed = deflate.compress(bytes);
-                self.encode_frame(0x80 | 0x40 | OP_BINARY, &packed, output);
+                encode_frame(self.role, 0x80 | 0x40 | OP_BINARY, packed, output);
             }
-            _ => self.encode_frame(0x80 | OP_BINARY, bytes, output),
+            _ => encode_frame(self.role, 0x80 | OP_BINARY, bytes, output),
         }
     }
 
@@ -242,45 +242,47 @@ impl Codec {
             payload.extend_from_slice(&code.to_be_bytes());
             payload.extend_from_slice(reason.as_bytes());
         }
-        self.encode_frame(0x80 | OP_CLOSE, &payload, output);
+        encode_frame(self.role, 0x80 | OP_CLOSE, &payload, output);
     }
 
     pub fn encode_pong(&mut self, payload: &[u8], output: &mut BytesMut) {
-        self.encode_frame(
+        encode_frame(
+            self.role,
             0x80 | OP_PONG,
             &payload[..payload.len().min(MAX_CONTROL_PAYLOAD)],
             output,
         );
     }
+}
 
-    fn encode_frame(&mut self, header: u8, payload: &[u8], output: &mut BytesMut) {
-        let mask_bit = if self.role == Role::Client { 0x80 } else { 0 };
-        output.reserve(payload.len() + 14);
-        output.put_u8(header);
-        match payload.len() {
-            length @ 0..=125 => output.put_u8(mask_bit | length as u8),
-            length @ 126..=0xffff => {
-                output.put_u8(mask_bit | 126);
-                output.put_u16(length as u16);
-            }
-            length => {
-                output.put_u8(mask_bit | 127);
-                output.put_u64(length as u64);
-            }
+/// Appends one frame; a client masks its payload.
+fn encode_frame(role: Role, header: u8, payload: &[u8], output: &mut BytesMut) {
+    let mask_bit = if role == Role::Client { 0x80 } else { 0 };
+    output.reserve(payload.len() + 14);
+    output.put_u8(header);
+    match payload.len() {
+        length @ 0..=125 => output.put_u8(mask_bit | length as u8),
+        length @ 126..=0xffff => {
+            output.put_u8(mask_bit | 126);
+            output.put_u16(length as u16);
         }
-        if self.role == Role::Client {
-            let mut mask = [0u8; 4];
-            getrandom::fill(&mut mask).expect("operating system randomness");
-            output.put_slice(&mask);
-            output.extend(
-                payload
-                    .iter()
-                    .enumerate()
-                    .map(|(index, byte)| byte ^ mask[index % 4]),
-            );
-        } else {
-            output.put_slice(payload);
+        length => {
+            output.put_u8(mask_bit | 127);
+            output.put_u64(length as u64);
         }
+    }
+    if role == Role::Client {
+        let mut mask = [0u8; 4];
+        getrandom::fill(&mut mask).expect("operating system randomness");
+        output.put_slice(&mask);
+        output.extend(
+            payload
+                .iter()
+                .enumerate()
+                .map(|(index, byte)| byte ^ mask[index % 4]),
+        );
+    } else {
+        output.put_slice(payload);
     }
 }
 
@@ -392,11 +394,11 @@ mod tests {
 
     #[test]
     fn decodes_byte_by_byte_and_reassembles_fragments() {
-        let (mut server, mut client) = pair(None);
+        let (mut server, _) = pair(None);
         let mut wire = BytesMut::new();
-        client.encode_frame(OP_TEXT, b"hel", &mut wire);
-        client.encode_frame(0x80 | OP_PING, b"p", &mut wire);
-        client.encode_frame(0x80 | OP_CONTINUATION, b"lo", &mut wire);
+        encode_frame(Role::Client, OP_TEXT, b"hel", &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_PING, b"p", &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_CONTINUATION, b"lo", &mut wire);
         let mut buffer = BytesMut::new();
         let mut events = Vec::new();
         for byte in wire.iter() {
@@ -430,25 +432,25 @@ mod tests {
 
     #[test]
     fn rejects_protocol_violations() {
-        let (mut server, mut client) = pair(None);
+        let (mut server, _) = pair(None);
         let code = |bytes: &[u8], server: &mut Codec| decode_all(server, bytes).unwrap_err().code;
         // Unmasked client frame.
         assert_eq!(code(&[0x81, 0x01, b'a'], &mut server), 1002);
         let mut wire = BytesMut::new();
-        client.encode_frame(0x80 | OP_CONTINUATION, b"x", &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_CONTINUATION, b"x", &mut wire);
         assert_eq!(code(&wire, &mut Codec::new(Role::Server, None, 8192)), 1002);
         let mut wire = BytesMut::new();
-        client.encode_frame(0x80 | 0x40 | OP_TEXT, b"x", &mut wire);
+        encode_frame(Role::Client, 0x80 | 0x40 | OP_TEXT, b"x", &mut wire);
         assert_eq!(
             code(&wire, &mut Codec::new(Role::Server, None, 8192)),
             1002,
             "RSV1 without deflate"
         );
         let mut wire = BytesMut::new();
-        client.encode_frame(0x80 | OP_TEXT, &[0xff, 0xfe], &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_TEXT, &[0xff, 0xfe], &mut wire);
         assert_eq!(code(&wire, &mut Codec::new(Role::Server, None, 8192)), 1007);
         let mut wire = BytesMut::new();
-        client.encode_frame(0x80 | OP_CLOSE, &[0x03, 0xed], &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_CLOSE, &[0x03, 0xed], &mut wire);
         assert_eq!(
             code(&wire, &mut Codec::new(Role::Server, None, 8192)),
             1002,
@@ -463,8 +465,13 @@ mod tests {
             1009
         );
         let mut wire = BytesMut::new();
-        client.encode_frame(OP_TEXT, &[b'a'; 5000], &mut wire);
-        client.encode_frame(0x80 | OP_CONTINUATION, &[b'a'; 5000], &mut wire);
+        encode_frame(Role::Client, OP_TEXT, &[b'a'; 5000], &mut wire);
+        encode_frame(
+            Role::Client,
+            0x80 | OP_CONTINUATION,
+            &[b'a'; 5000],
+            &mut wire,
+        );
         assert_eq!(
             code(&wire, &mut Codec::new(Role::Server, None, 8192)),
             1009,

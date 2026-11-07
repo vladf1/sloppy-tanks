@@ -12,8 +12,9 @@ use sloppy_core::net::multiplayer_simulation::{
     MultiplayerOptions, create_multiplayer_simulation, set_driver,
 };
 use sloppy_core::net::player_controls::{
-    Ack, Action, Aim, ControlInput, PlayerControls, encode_input,
+    Ack, Action, Aim, ControlInput, PlayerControls, encode_input, read_input,
 };
+use sloppy_core::net::quick_message::QuickMessage;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::combat_record::CombatRecord;
 use sloppy_core::sim::debris_cleanup::cleanup_candidate;
@@ -878,5 +879,248 @@ fn per_tank_dispatch_preserves_legacy_command_and_rng_order() {
         assert_eq!(after.snapshot(), before.snapshot());
         assert_eq!(after.rng.state, before.rng.state);
         assert_eq!(after.combat_record, before.combat_record);
+    }
+}
+
+/// The host reads plain `input` text without a JSON tree. Whatever it reads that way must
+/// equal what `read_input` reads from the parsed `Value`, and every other form must be
+/// left to that path. Each case says whether the direct reader takes it and whether the
+/// input is valid.
+#[test]
+fn the_direct_input_reader_agrees_with_the_value_reader_or_leaves_the_message_to_it() {
+    let canonical = |aim: Aim, tick: Option<u64>, fire: bool, actions: Vec<Action>, view: u32| {
+        let input = ControlInput {
+            control_epoch: 3,
+            seq: 7,
+            observed_tick: 40,
+            tick,
+            move_x: -0.5,
+            move_z: 1.0,
+            aim,
+            fire,
+            actions,
+            view,
+        };
+        encode_input(&input, 2)
+    };
+    let base = r#""type":"input","roundId":2,"controlEpoch":3,"seq":7,"observedTick":40,"moveX":1,"moveZ":0"#;
+    let with = |rest: &str| format!("{{{base},{rest}}}");
+    let point = r#""aim":{"x":3,"z":4}"#;
+    let mine_and_rocket = vec![Action::Mine, Action::Ammo(Weapon::Rocket)];
+    let cases: Vec<(String, bool, bool)> = vec![
+        // What clients send.
+        (
+            canonical(Aim::Point { x: 1.5, z: -2.0 }, None, false, vec![], 0),
+            true,
+            true,
+        ),
+        (
+            canonical(Aim::Angle(-1.25), Some(41), true, vec![], 12),
+            true,
+            true,
+        ),
+        (
+            canonical(Aim::Angle(0.5), Some(44), true, mine_and_rocket, 600),
+            true,
+            true,
+        ),
+        // Aim: the key count decides, nulls count, and an array is not an object.
+        (with(r#""aim":{"angle":3.14}"#), true, true),
+        (with(r#""aim":{"angle":3.2}"#), true, false),
+        (with(r#""aim":{"x":1}"#), true, false),
+        (with(r#""aim":{"angle":0.5,"x":1}"#), true, false),
+        (with(r#""aim":{"x":1,"z":2,"angle":0}"#), true, false),
+        (with(r#""aim":{}"#), true, false),
+        (with(r#""aim":{"x":1025,"z":0}"#), true, false),
+        (with(r#""aim":{"angle":null}"#), false, false),
+        (with(r#""aim":{"x":1,"z":null}"#), false, false),
+        (with(r#""aim":{"x":1,"z":2,"w":3}"#), false, false),
+        (with(r#""aim":[0.5]"#), false, false),
+        (with(r#""aim":null"#), true, false),
+        (with(r#""aim":"north""#), false, false),
+        (format!("{{{base}}}"), true, false),
+        // Fire, tick and view: null reads as missing, other types are refused.
+        (with(&format!(r#"{point},"fire":null"#)), true, true),
+        (with(&format!(r#"{point},"fire":1"#)), false, false),
+        (
+            with(&format!(r#"{point},"tick":null,"view":null"#)),
+            true,
+            true,
+        ),
+        (with(&format!(r#"{point},"tick":-1"#)), true, false),
+        (with(&format!(r#"{point},"tick":1.5"#)), true, false),
+        (with(&format!(r#"{point},"tick":"3""#)), false, false),
+        (with(&format!(r#"{point},"view":601"#)), true, false),
+        (with(&format!(r#"{point},"view":-1"#)), true, false),
+        // Actions: object shapes, key counts and the bot-only TOW.
+        (with(&format!(r#"{point},"actions":null"#)), true, true),
+        (with(&format!(r#"{point},"actions":[]"#)), true, true),
+        (with(&format!(r#"{point},"actions":{{}}"#)), false, false),
+        (
+            with(&format!(
+                r#"{point},"actions":[{{"type":"mine","weapon":"rocket"}}]"#
+            )),
+            true,
+            false,
+        ),
+        (
+            with(&format!(
+                r#"{point},"actions":[{{"type":"mine","weapon":null}}]"#
+            )),
+            false,
+            false,
+        ),
+        (
+            with(&format!(r#"{point},"actions":[{{"type":"ammo"}}]"#)),
+            true,
+            false,
+        ),
+        (
+            with(&format!(
+                r#"{point},"actions":[{{"type":"ammo","weapon":"tow"}}]"#
+            )),
+            true,
+            false,
+        ),
+        (
+            with(&format!(
+                r#"{point},"actions":[{{"type":"ammo","weapon":"rocket","x":1}}]"#
+            )),
+            false,
+            false,
+        ),
+        (
+            with(&format!(r#"{point},"actions":[{{"weapon":"rocket"}}]"#)),
+            false,
+            false,
+        ),
+        (
+            with(&format!(r#"{point},"actions":[["mine"]]"#)),
+            false,
+            false,
+        ),
+        (
+            with(&format!(r#"{point},"actions":[{{"type":"bomb"}}]"#)),
+            true,
+            false,
+        ),
+        // Numbers: bounds, signs, fractions and integers past 2^53.
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":-5,"seq":1,"observedTick":0,"moveX":1,"moveZ":0,{point}}}"#
+            ),
+            true,
+            true,
+        ),
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":1,"seq":1,"observedTick":0,"moveX":1.0000001,"moveZ":0,{point}}}"#
+            ),
+            true,
+            false,
+        ),
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":1,"seq":1e20,"observedTick":0,"moveX":1,"moveZ":0,{point}}}"#
+            ),
+            true,
+            false,
+        ),
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":1,"seq":1,"observedTick":-0,"moveX":1,"moveZ":-0.0,{point}}}"#
+            ),
+            true,
+            true,
+        ),
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":18446744073709551616,"seq":1,"observedTick":0,"moveX":1,"moveZ":0,{point}}}"#
+            ),
+            true,
+            false,
+        ),
+        (
+            format!(
+                r#"{{"type":"input","controlEpoch":1,"seq":true,"observedTick":0,"moveX":1,"moveZ":0,{point}}}"#
+            ),
+            false,
+            false,
+        ),
+        // Keys: the last duplicate wins in a `Value`, unknown keys are ignored there, and
+        // escapes decode alike.
+        (
+            with(&format!(r#"{point},"moveX":0.5,"moveX":2"#)),
+            false,
+            false,
+        ),
+        (
+            with(&format!(r#"{point},"moveX":2,"moveX":0.5"#)),
+            false,
+            true,
+        ),
+        (
+            with(&format!(r#"{point},"extra":{{"deep":[1,2,3]}}"#)),
+            false,
+            true,
+        ),
+        (with(r#""aim":{"x":3,"\u007a":4}"#), true, true),
+        (with(&format!(r#"{point},"view\u0000":1"#)), false, true),
+        (
+            format!(
+                r#"{{"type":"inp\u0075t","controlEpoch":3,"seq":7,"observedTick":40,"moveX":1,"moveZ":0,{point}}}"#
+            ),
+            false,
+            true,
+        ),
+        // Not an input: another type, no type, another shape, invalid JSON.
+        (r#"{"type":"resync","roundId":2}"#.to_string(), false, false),
+        (format!(r#"{{"roundId":2,{point}}}"#), false, false),
+        (r#"["input",2]"#.to_string(), false, false),
+        (format!(r#"{{"type":"input",{point}"#), false, false),
+        (format!(r#"{{"type":"input",{point}}} x"#), false, false),
+        (
+            format!(r#"{{"type":"input","moveX":1e400,{point}}}"#),
+            false,
+            false,
+        ),
+    ];
+    for (text, direct, valid) in &cases {
+        let value = serde_json::from_str::<Value>(text).ok();
+        let read = value.as_ref().and_then(read_input);
+        assert_eq!(read.is_some(), *valid, "valid: {text}");
+        match QuickMessage::parse(text) {
+            Some(message) => {
+                assert!(direct, "read directly: {text}");
+                assert_eq!(message.input(), read, "{text}");
+                let value = value.expect("valid JSON");
+                assert_eq!(message.round_id(), value["roundId"].as_f64(), "{text}");
+                assert_eq!(message.observed_tick(), value["observedTick"].as_f64());
+            }
+            None => assert!(!direct, "left to the Value path: {text}"),
+        }
+    }
+}
+
+#[test]
+fn the_direct_reader_reads_a_ping_as_the_value_reader_does() {
+    for text in [
+        r#"{"type":"ping","roundId":2,"observedTick":40,"t":1234.5}"#,
+        r#"{"type":"ping","roundId":null,"observedTick":-1,"t":null}"#,
+        r#"{"type":"ping"}"#,
+    ] {
+        let value = serde_json::from_str::<Value>(text).unwrap();
+        let message = QuickMessage::parse(text).expect("a plain ping");
+        assert!(message.is_ping());
+        assert_eq!(message.round_id(), value["roundId"].as_f64());
+        assert_eq!(message.observed_tick(), value["observedTick"].as_f64());
+        assert_eq!(message.t(), value["t"].as_f64());
+    }
+    for text in [
+        r#"{"type":"ping","t":"soon"}"#,
+        r#"{"type":"ping","t":1,"t":2}"#,
+        r#"{"type":"ping","watch":true}"#,
+    ] {
+        assert!(QuickMessage::parse(text).is_none(), "{text}");
     }
 }
