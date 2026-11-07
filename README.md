@@ -29,7 +29,7 @@ export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 Bun handles dependency installation, TypeScript checking, tests and script
 execution; Vite, running on Bun, bundles the game and serves it in development. `.bun-version` and `package.json` pin its
 version; CI reads `.bun-version`. Installs use isolated linking and committed
-`bun.lock` files, including the lint package installed by `postinstall`. Root
+`bun.lock` files. Root
 dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
 [`tools/deploy/`](tools/deploy/README.md) and installs only when a Cloudflare command
 needs it; that package trusts only its `esbuild` and `workerd` setup scripts.
@@ -37,8 +37,8 @@ Wrangler alone runs on Node.js 22 or newer, which Cloudflare commands require on
 Run `bun add` to change dependencies and commit the affected lockfiles.
 
 `bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke
-this project's separate `check` quality gate. ESLint and Prettier run on Bun;
-the lint package retains TypeScript 6 solely for ESLint's parser and typed rules.
+this project's separate `check` quality gate. oxlint lints the TypeScript and the
+`.mjs` scripts, which `bun check` reads but does not type-check; Prettier formats.
 The browser build has no standalone TypeScript compiler dependency.
 
 Optionally, cache compiler outputs across checkouts with [Kache](https://github.com/kunobi-ninja/kache),
@@ -150,7 +150,7 @@ bun run test           # script, directory, traffic-bot and pilot tests (needs b
 bun run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
 bun run validate       # ten seeded full matches and reset checks
 bun run build          # production output in dist/ (builds the Wasm first)
-bun run lint:fix       # safe ESLint fixes
+bun run lint:fix       # safe oxlint fixes
 bun run format         # Prettier for tests, scripts, tools and docs; cargo fmt for Rust
 ```
 

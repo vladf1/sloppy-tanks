@@ -86,7 +86,7 @@ cargo fmt --all --check
 cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
 cargo test --locked -p sloppy-desktop
 bun x prettier --check scripts/desktop-ui-*.mjs
-bun x eslint scripts/desktop-ui-*.mjs --max-warnings 0
+bun x oxlint --deny-warnings scripts/desktop-ui-*.mjs
 git diff --check
 ```
 
