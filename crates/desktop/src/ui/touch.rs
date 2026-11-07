@@ -6,7 +6,7 @@
 //! the fingers that use them.
 
 use egui::{
-    Align2, Color32, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2,
+    Align2, Color32, Id, LayerId, Order, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2,
 };
 
 use super::UiState;
@@ -136,7 +136,10 @@ pub(super) fn lit_disc(
         }
         previous.1
     };
-    let mut mesh = Mesh::default();
+    let mut mesh = paint::mesh_with_capacity(
+        1 + ((RINGS + 1) * SEGMENTS) as usize,
+        ((1 + 2 * RINGS) * SEGMENTS) as usize,
+    );
     mesh.colored_vertex(center, color_at(center));
     // The last ring is the feather's outside, its colours gone to nothing.
     for ring in 1..=RINGS + 1 {
@@ -175,7 +178,7 @@ pub(super) fn lit_disc(
 /// vertically.
 pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) -> Shape {
     const STEPS: u32 = 32;
-    let mut mesh = Mesh::default();
+    let mut mesh = paint::mesh_with_capacity(2 * (STEPS as usize + 1), 2 * STEPS as usize);
     for step in 0..=STEPS {
         let x = radius * (2.0 * step as f32 / STEPS as f32 - 1.0);
         let half = (radius * radius - x * x).max(0.0).sqrt();

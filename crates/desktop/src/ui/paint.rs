@@ -40,9 +40,18 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     a.lerp_to_gamma(b, t.clamp(0.0, 1.0))
 }
 
+/// An untextured mesh with room for `vertices` and `triangles`, so building it never
+/// grows its buffers.
+pub fn mesh_with_capacity(vertices: usize, triangles: usize) -> Mesh {
+    let mut mesh = Mesh::default();
+    mesh.reserve_vertices(vertices);
+    mesh.reserve_triangles(triangles);
+    mesh
+}
+
 /// A vertical gradient over `rect` through `stops` (share of the height, colour).
 pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let y = rect.top() + rect.height() * share;
         mesh.colored_vertex(pos2(rect.left(), y), color);
@@ -108,10 +117,12 @@ fn rounded_vgradient_mesh(
         }
         previous.1
     };
-    let mut ys: Vec<f32> = stops
-        .iter()
-        .map(|(share, _)| rect.top() + rect.height() * share)
-        .collect();
+    let mut ys: Vec<f32> = Vec::with_capacity(stops.len() + 4 * (ARC_STEPS + 1));
+    ys.extend(
+        stops
+            .iter()
+            .map(|(share, _)| rect.top() + rect.height() * share),
+    );
     for step in 0..=ARC_STEPS {
         let angle = std::f32::consts::FRAC_PI_2 * step as f32 / ARC_STEPS as f32;
         let depth = 1.0 - angle.cos();
@@ -139,7 +150,7 @@ fn rounded_vgradient_mesh(
         .collect();
     let shifts = curve_feather(&outline, feather);
     let count = rows.len();
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(4 * count, 6 * count.saturating_sub(1) + 4);
     // Each row as its inner left and right vertices in the gradient's colour, then the
     // two faded out beyond them.
     for (index, &(left, right)) in rows.iter().enumerate() {
@@ -215,7 +226,7 @@ fn curve_feather(outline: &[Pos2], feather: f32) -> Vec<Vec2> {
 
 /// A horizontal gradient over `rect` through `stops` (share of the width, colour).
 pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let x = rect.left() + rect.width() * share;
         mesh.colored_vertex(pos2(x, rect.top()), color);
@@ -292,7 +303,7 @@ pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape
             shift
         }
     };
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(1 + 2 * count, 3 * count);
     let center = points
         .iter()
         .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
@@ -341,18 +352,19 @@ pub fn plate(painter: &Painter, rect: Rect, cut: f32, tint: Option<Color32>) {
 /// The shapes of [`plate`], for a slot reserved under content laid out first.
 pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
     let outline = cut_corners(rect, cut);
-    let mut shapes = vec![gradient_polygon(
+    let mut shapes = Vec::with_capacity(4);
+    shapes.push(gradient_polygon(
         &outline,
         hexa(PLATE_TOP, 0.97),
         hexa(PLATE_BOTTOM, 0.99),
-    )];
+    ));
     if let Some(tint) = tint {
         // A radial wash from the lower-left corner, as a fan fading outwards.
         let corner = rect.left_bottom();
         let reach = vec2(rect.width() * 0.7, rect.height() * 1.3);
-        let mut mesh = Mesh::default();
-        mesh.colored_vertex(corner, fade(tint, 0.22));
         let steps = 10;
+        let mut mesh = mesh_with_capacity(steps as usize + 2, steps as usize);
+        mesh.colored_vertex(corner, fade(tint, 0.22));
         for step in 0..=steps {
             let angle = -std::f32::consts::FRAC_PI_2 * step as f32 / steps as f32;
             let point = corner + vec2(angle.cos() * reach.x, angle.sin() * reach.y);
@@ -390,7 +402,11 @@ pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
 /// the radii, colour), the first stop at the centre.
 pub fn radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
     let segments = 48u32;
-    let mut mesh = Mesh::default();
+    let rings = stops.len().saturating_sub(1);
+    let mut mesh = mesh_with_capacity(
+        1 + rings * segments as usize,
+        (2 * rings).saturating_sub(1) * segments as usize,
+    );
     mesh.colored_vertex(
         center,
         stops.first().map_or(Color32::TRANSPARENT, |stop| stop.1),
@@ -687,12 +703,16 @@ pub fn vignette_at(
     }
     let radius = vec2(rect.width() * radii.x, rect.height() * radii.y);
     let segments = 48;
-    let mut mesh = Mesh::default();
     // The last stop's colour carries on past the corners.
-    let mut rings: Vec<(f32, Color32)> = stops.to_vec();
+    let mut rings: Vec<(f32, Color32)> = Vec::with_capacity(stops.len() + 1);
+    rings.extend_from_slice(stops);
     if let Some(&(_, last)) = stops.last() {
         rings.push((3.0, last));
     }
+    let mut mesh = mesh_with_capacity(
+        rings.len() * segments as usize,
+        rings.len().saturating_sub(1) * 2 * segments as usize,
+    );
     for &(share, color) in &rings {
         for segment in 0..segments {
             let angle = segment as f32 / segments as f32 * std::f32::consts::TAU;

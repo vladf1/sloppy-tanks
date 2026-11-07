@@ -2234,16 +2234,19 @@ fn loaded_face(rect: Rect, color: Color32) -> Shape {
         let rise = (SLOT_RADIUS - depth).max(0.0);
         SLOT_RADIUS - (SLOT_RADIUS * SLOT_RADIUS - rise * rise).sqrt()
     };
-    let mut ys: Vec<f32> = (0..=ROWS)
-        .map(|row| rect.top() + rect.height() * row as f32 / ROWS as f32)
-        .chain((1..CORNER_STEPS).flat_map(|step| {
-            let depth = SLOT_RADIUS * step as f32 / CORNER_STEPS as f32;
-            [rect.top() + depth, rect.bottom() - depth]
-        }))
-        .collect();
+    let mut ys: Vec<f32> = Vec::with_capacity((ROWS + 1 + 2 * (CORNER_STEPS - 1)) as usize);
+    ys.extend((0..=ROWS).map(|row| rect.top() + rect.height() * row as f32 / ROWS as f32));
+    ys.extend((1..CORNER_STEPS).flat_map(|step| {
+        let depth = SLOT_RADIUS * step as f32 / CORNER_STEPS as f32;
+        [rect.top() + depth, rect.bottom() - depth]
+    }));
     ys.sort_by(f32::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
-    let mut mesh = Mesh::default();
+    let columns = COLUMNS as usize;
+    let mut mesh = paint::mesh_with_capacity(
+        ys.len() * (columns + 1),
+        ys.len().saturating_sub(1) * 2 * columns,
+    );
     for (row, &y) in ys.iter().enumerate() {
         let side = inset((y - rect.top()).min(rect.bottom() - y));
         let (left, right) = (rect.left() + side, rect.right() - side);
@@ -2518,14 +2521,15 @@ const LOADED_GLOW_DIRECTIONS: usize = 12;
 /// The loaded round's icon, faint in its colour, spread round itself as a glow: the
 /// copies' alphas add up to the blur's weights.
 fn loaded_icon_glow(painter: &Painter, art: &Art, weapon: &str, icon: Rect, color: Color32) {
-    for (distance, share) in LOADED_GLOW_RINGS {
+    let copies = (0..LOADED_GLOW_RINGS.len() * LOADED_GLOW_DIRECTIONS).map(|copy| {
+        let (distance, share) = LOADED_GLOW_RINGS[copy / LOADED_GLOW_DIRECTIONS];
+        let direction = copy % LOADED_GLOW_DIRECTIONS;
         let alpha = LOADED_GLOW_OPACITY * share / LOADED_GLOW_DIRECTIONS as f32;
-        for direction in 0..LOADED_GLOW_DIRECTIONS {
-            let angle = std::f32::consts::TAU * direction as f32 / LOADED_GLOW_DIRECTIONS as f32;
-            let offset = Vec2::angled(angle) * distance;
-            art.icon(painter, weapon, icon.translate(offset), fade(color, alpha));
-        }
-    }
+        let angle = std::f32::consts::TAU * direction as f32 / LOADED_GLOW_DIRECTIONS as f32;
+        let offset = Vec2::angled(angle) * distance;
+        (icon.translate(offset), fade(color, alpha))
+    });
+    art.icon_copies(painter, weapon, copies);
 }
 
 /// The mine socket: armed, or a dial that refills while the seconds count down.
