@@ -178,10 +178,7 @@ mod tests {
             let packed = server.compress(text.as_bytes());
             sizes.push(packed.len());
             assert!(packed.len() < text.len() / 2);
-            assert_eq!(
-                client.decompress(&packed, 1 << 20).unwrap(),
-                text.as_bytes()
-            );
+            assert_eq!(client.decompress(packed, 1 << 20).unwrap(), text.as_bytes());
         }
         assert!(
             sizes[4] < sizes[0],
@@ -209,10 +206,10 @@ mod tests {
         let (mut server, mut client) = pair(&DeflateParams::default());
         let bomb = server.compress(&vec![b'a'; 100_000]);
         assert!(bomb.len() < 1000);
-        assert_eq!(client.decompress(&bomb, 8192).unwrap_err().code, 1009);
+        assert_eq!(client.decompress(bomb, 8192).unwrap_err().code, 1009);
         let (mut server, mut client) = pair(&DeflateParams::default());
         let exact = server.compress(&vec![b'a'; 8192]);
-        assert_eq!(client.decompress(&exact, 8192).unwrap().len(), 8192);
+        assert_eq!(client.decompress(exact, 8192).unwrap().len(), 8192);
     }
 
     /// Each message as a fresh output buffer per message compressed it, before the
@@ -301,13 +298,13 @@ mod tests {
         let text = snapshot(3);
         assert_eq!(
             client
-                .decompress(&server.compress(text.as_bytes()), 1 << 20)
+                .decompress(server.compress(text.as_bytes()), 1 << 20)
                 .unwrap(),
             text.as_bytes()
         );
         assert_eq!(
             server
-                .decompress(&client.compress(text.as_bytes()), 1 << 20)
+                .decompress(client.compress(text.as_bytes()), 1 << 20)
                 .unwrap(),
             text.as_bytes()
         );
