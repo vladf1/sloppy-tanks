@@ -261,11 +261,11 @@ fn room_rates(latest: &RoomStats) -> NetworkRates {
     sampler.sample(1_000.0, &latest.network)
 }
 
-struct Scenario {
-    name: &'static str,
-    in_round: bool,
-    phase: MatchPhase,
-    state: UiState,
+pub(super) struct Scenario {
+    pub(super) name: &'static str,
+    pub(super) in_round: bool,
+    pub(super) phase: MatchPhase,
+    pub(super) state: UiState,
 }
 
 /// A screen in `phase` with [`hud`]'s HUD for it, in a round unless Battle Setup shows.
@@ -281,7 +281,7 @@ fn screen(name: &'static str, phase: MatchPhase, solo: bool, alive: bool, ratio:
     }
 }
 
-fn scenarios() -> Vec<Scenario> {
+pub(super) fn scenarios() -> Vec<Scenario> {
     let mut list = Vec::new();
     let loading = Loading::Shaders {
         loaded: 31,

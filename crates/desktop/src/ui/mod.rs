@@ -418,6 +418,8 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
 mod snapshots;
 
 #[cfg(test)]
+mod frame_cost;
+#[cfg(test)]
 mod tests {
     use super::*;
 
