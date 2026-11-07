@@ -376,7 +376,7 @@ mod tests {
         nav.occupy(None);
         let expected = occupied_everywhere(&obstacles, &nav);
         assert_eq!(nav.blocked, expected);
-        assert!(expected.iter().any(|&b| b == 0) && expected.iter().any(|&b| b == 1));
+        assert!(expected.contains(&0) && expected.contains(&1));
         // A region rebuild clears and marks only its cells.
         nav.blocked.fill(1);
         let region = Footprint { x: 12.0, z: -7.0, w: 9.0, d: 5.0 };
