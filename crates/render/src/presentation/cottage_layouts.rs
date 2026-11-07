@@ -3,13 +3,16 @@
 //!
 //! A cottage's layout ([`shared_house_structure`]) takes a weak device a few milliseconds to
 //! lay out, and its finished pieces several more; a rebuild of its look and every body
-//! of it that falls in a frame each made both again. The layout is shared while any
-//! build holds it (a stepwise rebuild holds it over its frames), and the pieces are
-//! built once a frame for all the cottage's bodies, then dropped: the bodies' models
-//! hold what they draw, so no CPU copy of a mesh outlives the frame.
+//! of it that falls in a frame each made both again. The layout is kept for the round
+//! once a cottage is first hit: every later hit rebuilds its look from it, and laying it
+//! out again each time a rebuild had let it go cost the village's rounds two out of
+//! three of their layouts (half a millisecond each natively). It holds no mesh, only the
+//! parts' shapes, and is the simulation's own copy wherever that still stands. The pieces are built once a frame for
+//! all the cottage's bodies, then dropped: the bodies' models hold what they draw, so no
+//! CPU copy of a mesh outlives the frame.
 
 use crate::fixed_hash::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 
 use sloppy_core::models::{CoverShape, HouseDebris, structure_debris};
 use sloppy_core::scene::Node;
@@ -29,23 +32,23 @@ pub struct DebrisSource {
 
 #[derive(Default)]
 pub struct CottageLayouts {
-    /// Each cottage's layout by cover id, while a build holds it.
-    layouts: HashMap<u32, Weak<Structure>>,
+    /// Each hit cottage's layout by cover id, for the round.
+    layouts: HashMap<u32, Arc<Structure>>,
     /// This frame's cottages' pieces for their fallen bodies, by cover id.
     debris: Vec<(u32, HouseDebris)>,
 }
 
 impl CottageLayouts {
-    /// The layout of cottage `cover`, shaped `shape`: laid out again only when no
-    /// build holds it.
+    /// The layout of cottage `cover`, shaped `shape`, laid out on its first use in the
+    /// round.
     pub fn layout(&mut self, cover: u32, shape: &CoverShape) -> Arc<Structure> {
-        if let Some(layout) = self.layouts.get(&cover).and_then(Weak::upgrade) {
-            return layout;
-        }
-        let design = HouseDesign::of(shape.x, shape.z, shape.w, shape.d, shape.h);
-        let layout = shared_house_structure(&design);
-        self.layouts.insert(cover, Arc::downgrade(&layout));
-        layout
+        self.layouts
+            .entry(cover)
+            .or_insert_with(|| {
+                let design = HouseDesign::of(shape.x, shape.z, shape.w, shape.d, shape.h);
+                shared_house_structure(&design)
+            })
+            .clone()
     }
 
     /// The model of a structure's fallen body: a cottage's cut from its pieces, built
@@ -86,7 +89,7 @@ mod tests {
     use sloppy_core::sim::render_state::RenderCover;
 
     #[test]
-    fn a_layout_is_shared_while_held_and_bodies_match_their_own_builds() {
+    fn a_layout_is_kept_for_the_round_and_bodies_match_their_own_builds() {
         let cover = RenderCover {
             id: 3,
             kind: CoverKind::House,
@@ -119,10 +122,13 @@ mod tests {
         assert_eq!(layouts.debris.len(), 1, "one set of pieces for the frame");
         layouts.end_frame();
         assert!(layouts.debris.is_empty());
+        let first = Arc::downgrade(&held);
         drop(held);
         assert!(
-            layouts.layouts[&cover.id].upgrade().is_none(),
-            "no layout is kept once no build holds it"
+            Arc::ptr_eq(&layouts.layout(cover.id, &shape), &first.upgrade().unwrap()),
+            "the round keeps the layout once no build holds it"
         );
+        layouts.clear();
+        assert!(first.upgrade().is_none(), "a new round lets it go");
     }
 }
