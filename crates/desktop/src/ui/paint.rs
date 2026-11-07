@@ -123,14 +123,20 @@ fn rounded_vgradient_mesh(
             .iter()
             .map(|(share, _)| rect.top() + rect.height() * share),
     );
+    // Two corners of one radius along an edge give the same rows, which the dedup below
+    // would drop anyway: leave them out before sorting.
+    let top = if nw == ne { &[nw][..] } else { &[nw, ne][..] };
+    let bottom = if sw == se { &[sw][..] } else { &[sw, se][..] };
     for step in 0..=ARC_STEPS {
         let angle = std::f32::consts::FRAC_PI_2 * step as f32 / ARC_STEPS as f32;
         let depth = 1.0 - angle.cos();
-        ys.extend([nw, ne].map(|r| rect.top() + r * depth));
-        ys.extend([sw, se].map(|r| rect.bottom() - r * depth));
+        ys.extend(top.iter().map(|r| rect.top() + r * depth));
+        ys.extend(bottom.iter().map(|r| rect.bottom() - r * depth));
     }
     ys.retain(|y| (rect.top()..=rect.bottom()).contains(y));
-    ys.sort_by(f32::total_cmp);
+    // Values equal in this order are the same bits, so an unstable sort leaves them as
+    // a stable one would, without its scratch buffer.
+    ys.sort_unstable_by(f32::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let rows: Vec<(Pos2, Pos2)> = ys
         .iter()

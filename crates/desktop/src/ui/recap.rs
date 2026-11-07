@@ -171,7 +171,7 @@ fn angled_gradient(rect: Rect, degrees: f32, stops: &[(f32, Color32)]) -> Shape 
         .map(|column| rect.left() + rect.width() * column as f32 / COLUMNS as f32)
         .collect();
     xs.push(rect.left() + BANNER_CUT);
-    xs.sort_by(f32::total_cmp);
+    xs.sort_unstable_by(f32::total_cmp);
     let mut mesh = Mesh::default();
     for (index, &x) in xs.iter().enumerate() {
         let top = pos2(x, rect.top() + (BANNER_CUT - (x - rect.left())).max(0.0));

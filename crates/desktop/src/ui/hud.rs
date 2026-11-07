@@ -2240,7 +2240,7 @@ fn loaded_face(rect: Rect, color: Color32) -> Shape {
         let depth = SLOT_RADIUS * step as f32 / CORNER_STEPS as f32;
         [rect.top() + depth, rect.bottom() - depth]
     }));
-    ys.sort_by(f32::total_cmp);
+    ys.sort_unstable_by(f32::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let columns = COLUMNS as usize;
     let mut mesh = paint::mesh_with_capacity(
