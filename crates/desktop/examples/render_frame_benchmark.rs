@@ -246,6 +246,8 @@ fn main() {
         pollster::block_on(Renderer::new(target, String::new(), true)).expect("renderer");
     let mut view = Presentation::new(renderer, seed.to_bits());
     view.resize(WIDTH, HEIGHT);
+    // One cover rebuild step a frame, whatever the machine's speed.
+    view.cover_rebuild_ms = 0.0;
     let mut reports = Vec::new();
     for map in maps {
         let level = extra_level(map).map_or_else(standard_rules, single_player_rules);

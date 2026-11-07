@@ -1022,6 +1022,11 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// Milliseconds of a frame that marked covers may spend rebuilding their looks
+    /// ([`COVER_REBUILD_MS`]). A measurement that compares builds frame by frame sets
+    /// 0, one rebuild step a frame, so the machine's speed does not decide which frame
+    /// shows a rebuilt look.
+    pub cover_rebuild_ms: f64,
     /// The touch fire stick's target.
     pub aim_assist: AimAssist,
     /// The turret's aim when touch aims it this frame: the aim line then shows the
@@ -1157,6 +1162,7 @@ impl Presentation {
             cover_models: HashMap::default(),
             cover_looks: Vec::new(),
             busy: false,
+            cover_rebuild_ms: COVER_REBUILD_MS,
             fragments: HashMap::default(),
             piles: HousePiles::default(),
             layouts: CottageLayouts::default(),
@@ -2597,7 +2603,7 @@ impl Presentation {
             };
             let after = now_ms();
             *longest = longest.max(after - before);
-            if installed || after - start + *longest >= COVER_REBUILD_MS {
+            if installed || after - start + *longest >= self.cover_rebuild_ms {
                 return;
             }
         }
@@ -2621,7 +2627,7 @@ impl Presentation {
             // view is always built. A broken structure builds its new look in a step,
             // uploading it in a step of its own.
             let shown = shown.is_some();
-            let wait = shown && rebuilt && now_ms() - start + longest >= COVER_REBUILD_MS;
+            let wait = shown && rebuilt && now_ms() - start + longest >= self.cover_rebuild_ms;
             if rebuild && !wait {
                 if shown && structure {
                     self.build_cover_look(cover, start, &mut longest);
