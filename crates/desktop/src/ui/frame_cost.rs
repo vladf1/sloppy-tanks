@@ -297,7 +297,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool) {
 #[test]
 #[ignore = "a measurement; run alone on an optimized build"]
 fn frame_cost() {
-    const DESKTOP: [&str; 10] = [
+    const DESKTOP: [&str; 12] = [
         "hud",
         "hud-solo-first-person-critical",
         "respawn",
@@ -307,6 +307,8 @@ fn frame_cost() {
         "multiplayer-rooms",
         "hud-nerd-stats",
         "room-lobby",
+        "room-results",
+        "room-pause",
         "room-respawn",
     ];
     const TOUCH: [&str; 3] = ["hud", "hud-solo-first-person-critical", "respawn"];
