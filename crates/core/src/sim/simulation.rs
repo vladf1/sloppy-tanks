@@ -415,6 +415,11 @@ impl Simulation {
         map_option_for(self.current_map.id).name.to_uppercase()
     }
 
+    /// The map the arena is built from, which [`Simulation::map_name`] names.
+    pub fn map_id(&self) -> MapId {
+        self.current_map.id
+    }
+
     /// Compact maps shrink the shared spawn lanes, pickups and patrol routes about the centre.
     pub fn map_scale(&self) -> f64 {
         self.current_map.scale.unwrap_or(1.0)

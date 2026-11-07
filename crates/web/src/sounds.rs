@@ -131,10 +131,21 @@ impl SoundPlanner {
         right: Vec2,
     ) -> Vec<PlannedSound> {
         let mut sounds = Vec::new();
-        for event in events {
-            self.event(event, listener, right, &mut sounds);
-        }
+        self.plan_into(events, listener, right, &mut sounds);
         sounds
+    }
+
+    /// [`SoundPlanner::plan`] onto the end of `sounds`.
+    pub fn plan_into(
+        &mut self,
+        events: &[PendingEvent],
+        listener: Vec2,
+        right: Vec2,
+        sounds: &mut Vec<PlannedSound>,
+    ) {
+        for event in events {
+            self.event(event, listener, right, sounds);
+        }
     }
 
     /// The player's hit tick first, then the event's own sound if it is near enough and

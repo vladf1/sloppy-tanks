@@ -10,7 +10,7 @@ use egui::{
 };
 
 use super::icons::Art;
-use super::paint::{self, fade, hex, hexa, mix};
+use super::paint::{self, ShortText, fade, hex, hexa, mix};
 use super::theme::{self, GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View};
 use sloppy_core::sim::{GameMode, MatchPhase, Team, Weapon};
@@ -365,29 +365,34 @@ fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool)
     let pill = &hud.score_pill;
     // A phone's pill has room for the goal alone; its pause menu adds the rule.
     let objective = pill.objective.map(|objective| match objective {
-        Objective::Survive => "SURVIVE".to_owned(),
-        objective => objective.to_string(),
+        Objective::Survive => paint::short(format_args!("SURVIVE")),
+        objective => paint::short(format_args!("{objective}")),
     });
-    let time = pill.clock().to_string();
+    let time = paint::short(format_args!("{}", pill.clock()));
     let (time_font, time_color) = if pill.overtime {
         (bold_font(12.0), hex(0xff8a96))
     } else {
         (display_font(16.0), Color32::WHITE)
     };
     // Each plate's score, the tag under it and whether it is your side.
-    let plates: Vec<(String, Option<&str>, bool)> = if solo {
-        vec![(hud.human.kills.to_string(), Some("KILLS"), false)]
+    let plates: [(ShortText, Option<&str>, bool); 2] = if solo {
+        [
+            (
+                paint::short(format_args!("{}", hud.human.kills)),
+                Some("KILLS"),
+                false,
+            ),
+            Default::default(),
+        ]
     } else {
-        [Team::Blue, Team::Red]
-            .into_iter()
-            .map(|team| {
-                let yours = !room && team == hud.human_team;
-                let score = hud.match_state.scores[team.index()].to_string();
-                (score, yours.then_some("YOU"), yours)
-            })
-            .collect()
+        [Team::Blue, Team::Red].map(|team| {
+            let yours = !room && team == hud.human_team;
+            let score = paint::short(format_args!("{}", hud.match_state.scores[team.index()]));
+            (score, yours.then_some("YOU"), yours)
+        })
     };
-    let plate_width = |(score, tag, _): &(String, Option<&str>, bool)| {
+    let plates = &plates[..if solo { 1 } else { 2 }];
+    let plate_width = |(score, tag, _): &(ShortText, Option<&str>, bool)| {
         let tag = tag.map_or(0.0, |tag| {
             paint::text_width(painter, tag, tag_font.clone(), 1.2) + 10.0
         });
@@ -399,7 +404,10 @@ fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool)
     let clock_width =
         (paint::text_width(painter, &time, time_font.clone(), 0.0).max(objective_width) + 12.0)
             .max(48.0);
-    let widths: Vec<f32> = plates.iter().map(plate_width).collect();
+    let mut widths = [0.0; 2];
+    for (width, plate) in widths.iter_mut().zip(plates) {
+        *width = plate_width(plate);
+    }
     let total = widths.iter().sum::<f32>() + clock_width;
     let mut x = screen.center().x - total / 2.0;
     let upper = top + 16.0;
@@ -598,7 +606,7 @@ fn phone_keys(
 /// hull plate, since from inside the turret the bar over the tank is out of sight.
 fn phone_cockpit(painter: &Painter, art: &Art, screen: Rect, state: &UiState, human: &HudHuman) {
     let ramp = hex(human.hull_ramp);
-    let hp = format!("{}", human.hp.max(0.0).ceil());
+    let hp = paint::short(format_args!("{}", human.hp.max(0.0).ceil()));
     let number_font = display_font(20.0);
     let number_width = paint::text_width(painter, &hp, number_font.clone(), 0.0);
     let bar_width = 60.0;
@@ -655,17 +663,17 @@ fn phone_cockpit(painter: &Painter, art: &Art, screen: Rect, state: &UiState, hu
 }
 
 /// One team's plate on the score bar: its slanted outline toward the clock.
-fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
+fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> [Pos2; 4] {
     let slant = 16.0;
     if left_side {
-        vec![
+        [
             pos2(x, 0.0),
             pos2(x + width, 0.0),
             pos2(x + width, height),
             pos2(x + slant, height),
         ]
     } else {
-        vec![
+        [
             pos2(x, 0.0),
             pos2(x + width, 0.0),
             pos2(x + width - slant, height),
@@ -705,21 +713,26 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         (label + score + 10.0 + (label_inset + score_inset)).max(156.0)
     };
     let labels = if solo {
-        ["KILLS".to_owned(), String::new()]
+        [paint::short(format_args!("KILLS")), ShortText::default()]
     } else {
-        hud.team_names.map(str::to_uppercase)
+        hud.team_names.map(paint::upper)
     };
     let scores = if solo {
-        [format!("{}", hud.human.kills), String::new()]
+        [
+            paint::short(format_args!("{}", hud.human.kills)),
+            ShortText::default(),
+        ]
     } else {
-        match_state.scores.map(|score| format!("{score}"))
+        match_state
+            .scores
+            .map(|score| paint::short(format_args!("{score}")))
     };
     let pill = &hud.score_pill;
     let overtime = pill.overtime;
-    let time = pill.clock().to_string();
+    let time = paint::short(format_args!("{}", pill.clock()));
     let objective = pill
         .objective
-        .map(|objective| objective.to_string())
+        .map(|objective| paint::short(format_args!("{objective}")))
         .unwrap_or_default();
     let objective_width = paint::text_width(painter, &objective, bold_font(13.0), 1.2);
     let clock_least = if slim { 96.0 } else { 136.0 };
@@ -795,7 +808,12 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         } else {
             let mut outline = team_plate(x, width, height, team == 0);
             outline.iter_mut().for_each(|point| *point += shift);
-            painter.add(paint::gradient_polygon(&outline, light, deep));
+            painter.add(paint::gradient_polygon(
+                painter.ctx(),
+                &outline,
+                light,
+                deep,
+            ));
             // The glossy top half.
             let mut gloss = team_plate(x, width, height * 0.46, team == 0);
             if team == 0 {
@@ -805,12 +823,14 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
             }
             gloss.iter_mut().for_each(|point| *point += shift);
             painter.add(paint::gradient_polygon(
+                painter.ctx(),
                 &gloss,
                 hexa(0xffffff, 0.2),
                 hexa(0xffffff, 0.0),
             ));
             if yours {
                 painter.add(paint::gradient_polygon(
+                    painter.ctx(),
                     &[
                         pos2(x, top + 3.0),
                         pos2(x + width, top + 3.0),
@@ -901,6 +921,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
             let tab =
                 Rect::from_center_size(pos2(center, top + height + 9.0), vec2(tab_width, 19.0));
             painter.add(paint::gradient_polygon(
+                painter.ctx(),
                 &[
                     tab.left_top(),
                     tab.right_top(),
@@ -926,17 +947,16 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
     let clock_outline = if solo {
         team_plate(x, clock_width, height, false)
     } else {
-        vec![
+        [
             pos2(x, 0.0),
             pos2(x + clock_width, 0.0),
             pos2(x + clock_width, height),
             pos2(x, height),
         ]
     }
-    .into_iter()
-    .map(|point| point + shift)
-    .collect::<Vec<_>>();
+    .map(|point| point + shift);
     painter.add(paint::gradient_polygon(
+        painter.ctx(),
         &clock_outline,
         hex(0x0f2140),
         hex(0x07111f),
@@ -1048,15 +1068,12 @@ fn toolbar(
         },
         Action::ToggleFullscreen,
     );
-    let buttons: Vec<(&str, &str, Action)> = [
+    let buttons: [Option<(&str, &str, Action)>; 4] = [
         Some(("eye", "First-person view (V)", Action::ToggleView)),
         crate::app::offers_fullscreen().then_some(fullscreen),
         Some(("pause", "Pause (Esc)", Action::Pause)),
         Some(("gear", "Settings", Action::OpenSettings)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    ];
     let size = toolbar_size();
     let origin = pos2(screen.right() - toolbar_edge() - size.x, top);
     egui::Area::new(id)
@@ -1066,14 +1083,15 @@ fn toolbar(
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             paint::plate(&painter, rect, 9.0, None);
-            for (index, (icon, tip, action)) in buttons.into_iter().enumerate() {
+            for (index, (icon, tip, action)) in buttons.into_iter().flatten().enumerate() {
                 let cell = Rect::from_min_size(
                     rect.min + vec2(3.0 + index as f32 * button.x, 3.0),
                     button,
                 );
-                let response = ui
-                    .interact(cell, Id::unique(("hud tool", index)), Sense::click())
-                    .on_hover_text(tip);
+                let response = paint::on_hover_text_with(
+                    ui.interact(cell, Id::unique(("hud tool", index)), Sense::click()),
+                    || tip.to_owned(),
+                );
                 paint::labelled(&response, true, tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
@@ -1245,7 +1263,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
                 Align2::LEFT_CENTER,
             ),
         ] {
-            let name = name.to_uppercase();
+            let name = paint::upper(name);
             let (pos, fit) = match (bot, align == Align2::RIGHT_CENTER) {
                 (false, _) => (pos, name_width),
                 (true, true) => {
@@ -1674,13 +1692,18 @@ impl TouchPanel {
         } else {
             0.0
         };
-        let full = format!("{}", human.max_hp.round());
+        let full = human.max_hp.round();
         let readout = TOUCH_READOUT.number_left
-            + paint::text_width(painter, &full, display_font(TOUCH_READOUT.size), 0.0)
+            + paint::text_width(
+                painter,
+                &paint::short(format_args!("{full}")),
+                display_font(TOUCH_READOUT.size),
+                0.0,
+            )
             + READOUT_MAX_GAP
             + paint::text_width(
                 painter,
-                &format!("/ {full}"),
+                &paint::short(format_args!("/ {full}")),
                 display_font(READOUT_MAX_SIZE),
                 READOUT_MAX_SPACING,
             );
@@ -1844,12 +1867,13 @@ fn tank_panel(
                 let whole = rect;
                 let outline = paint::cut_corners(whole, 12.0);
                 painter.add(paint::gradient_polygon(
+                    painter.ctx(),
                     &outline,
                     hexa(paint::PLATE_TOP, 0.97),
                     hexa(paint::PLATE_BOTTOM, 0.99),
                 ));
                 painter.add(Shape::closed_line(
-                    outline,
+                    outline.to_vec(),
                     Stroke::new(1.0, theme::PLATE_EDGE),
                 ));
                 painter.line_segment(
@@ -2018,7 +2042,7 @@ fn tank_label(
     pill_end: f32,
     human: &HudHuman,
 ) {
-    let name = human.vehicle_name.to_uppercase();
+    let name = paint::upper(human.vehicle_name);
     let name_rect = paint::text_fit(
         painter,
         top_left,
@@ -2029,7 +2053,7 @@ fn tank_label(
         1.4,
         name_width,
     );
-    let rank = human.rank_name.to_uppercase();
+    let rank = paint::upper(human.rank_name);
     let rank_width = paint::text_width(painter, &rank, bold_font(12.0), 0.8) + 12.0;
     let rank_rect = Rect::from_min_size(
         pos2(name_rect.right() + RANK_GAP, top_left.y - 1.0),
@@ -2060,14 +2084,16 @@ fn tank_label(
         0.8,
         rank_rect.width() - 6.0,
     );
-    ui.interact(rank_rect, Id::unique("rank"), Sense::hover())
-        .on_hover_text(human.rank_title);
+    paint::on_hover_text_with(
+        ui.interact(rank_rect, Id::unique("rank"), Sense::hover()),
+        || human.rank_title.to_owned(),
+    );
 }
 
 /// The width the tank's name and its rank's pill take.
 fn tank_label_width(painter: &Painter, human: &HudHuman) -> f32 {
-    let name = human.vehicle_name.to_uppercase();
-    let rank = human.rank_name.to_uppercase();
+    let name = paint::upper(human.vehicle_name);
+    let rank = paint::upper(human.rank_name);
     paint::text_width(painter, &name, bold_font(13.0), 1.4)
         + RANK_GAP
         + paint::text_width(painter, &rank, bold_font(12.0), 0.8)
@@ -2107,7 +2133,7 @@ fn hull_readout(
         let flare = (0.5 - 0.5 * (time / 0.9 * std::f64::consts::TAU).cos()) as f32;
         number_color = mix(number_color, Color32::WHITE, flare);
     }
-    let hp = format!("{}", human.hp.max(0.0).ceil());
+    let hp = paint::short(format_args!("{}", human.hp.max(0.0).ceil()));
     let number = paint::shadowed(
         painter,
         pos2(left + kind.number_left, middle + kind.number_drop),
@@ -2121,7 +2147,7 @@ fn hull_readout(
         painter,
         pos2(number.right() + READOUT_MAX_GAP, middle + kind.max_drop),
         Align2::LEFT_BOTTOM,
-        &format!("/ {}", human.max_hp.round()),
+        &paint::short(format_args!("/ {}", human.max_hp.round())),
         display_font(READOUT_MAX_SIZE),
         hex(0xb9cadd),
         READOUT_MAX_SPACING,
@@ -2207,7 +2233,7 @@ fn count_mark(
         painter,
         pos,
         align,
-        &format!("{count}"),
+        &paint::short(format_args!("{count}")),
         display_font(size),
         color,
         0.0,
@@ -2313,13 +2339,13 @@ fn ammo_rack(
         let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
         x += width + gap;
         let color = hex(option.color());
-        let count_text = match count {
-            None => "unlimited".to_owned(),
-            Some(count) => format!("{count} remaining"),
-        };
-        let response = ui
-            .interact(rect, Id::unique(("ammo slot", index)), Sense::click())
-            .on_hover_text(format!("{}: {name} · {count_text}", index + 1));
+        let response = paint::on_hover_text_with(
+            ui.interact(rect, Id::unique(("ammo slot", index)), Sense::click()),
+            || match count {
+                None => format!("{}: {name} · unlimited", index + 1),
+                Some(count) => format!("{}: {name} · {count} remaining", index + 1),
+            },
+        );
         // Every slot loads while the tank plays, an empty one too: the engine answers
         // that it is empty (`hud-feedback.ts` disables the slots only off play).
         let usable = playing && human.alive;
@@ -2413,7 +2439,7 @@ fn ammo_rack(
             );
         } else {
             // The key at the top, the icon and the count under it.
-            let key = format!("{}", index + 1);
+            let key = paint::short(format_args!("{}", index + 1));
             let key_rect =
                 Rect::from_center_size(pos2(rect.center().x, rect.top() + 11.0), vec2(16.0, 15.0));
             painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
@@ -2569,7 +2595,7 @@ fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human:
             painter,
             middle,
             Align2::CENTER_CENTER,
-            &format!("{}", human.mine_cooldown.ceil()),
+            &paint::short(format_args!("{}", human.mine_cooldown.ceil())),
             display_font(18.0),
             hex(0xe6eef8),
             0.0,
@@ -2607,7 +2633,7 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, human: &HudHuman) {
     for effect in human.effects.iter().rev() {
         let (icon, color) = effect_art(effect.kind);
         let color = hex(color);
-        let detail = effect.detail.to_string();
+        let detail = paint::short(format_args!("{}", effect.detail));
         let name_width = paint::text_width(painter, effect.name, font.clone(), 1.0);
         let detail_width = if detail.is_empty() {
             0.0

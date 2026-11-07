@@ -164,6 +164,40 @@ fn write_settings(text: &str) {
 }
 
 impl Preferences {
+    /// These made equal to `other`, its player name written into this one's text: a
+    /// screen's working copy refreshed every frame without allocating.
+    pub fn copy_from(&mut self, other: &Preferences) {
+        let Preferences {
+            tank,
+            game_mode,
+            map,
+            difficulty,
+            first_person,
+            zoom,
+            volume,
+            graphics,
+            player_name,
+            debug,
+            fullscreen,
+            touch,
+        } = other;
+        *self = Preferences {
+            tank: *tank,
+            game_mode: *game_mode,
+            map: *map,
+            difficulty: *difficulty,
+            first_person: *first_person,
+            zoom: *zoom,
+            volume: *volume,
+            graphics: *graphics,
+            player_name: std::mem::take(&mut self.player_name),
+            debug: *debug,
+            fullscreen: *fullscreen,
+            touch: *touch,
+        };
+        self.player_name.clone_from(player_name);
+    }
+
     /// The saved choices; malformed or missing ones take their defaults. The touch
     /// setting applies from here on.
     pub fn load() -> Self {
@@ -332,6 +366,28 @@ mod tests {
             }
         );
         assert_eq!(Preferences::read("not json"), Preferences::default());
+    }
+
+    #[test]
+    fn a_copy_matches_its_source_and_keeps_its_own_name_text() {
+        let source = Preferences {
+            tank: VehicleKind::Heavy,
+            map: MapId::Harbor,
+            first_person: true,
+            zoom: Some(28.0),
+            volume: 0.25,
+            player_name: "Ace".into(),
+            fullscreen: true,
+            ..Preferences::default()
+        };
+        let mut copy = Preferences {
+            player_name: "A longer name than the source's".into(),
+            ..Preferences::default()
+        };
+        let text = copy.player_name.as_ptr();
+        copy.copy_from(&source);
+        assert_eq!(copy, source);
+        assert_eq!(copy.player_name.as_ptr(), text);
     }
 
     /// A page's `localStorage`, as `page_settings` reads it.

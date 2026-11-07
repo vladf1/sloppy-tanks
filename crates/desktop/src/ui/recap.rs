@@ -52,6 +52,7 @@ fn banner_ground(painter: &Painter, banner: Rect, outcome: Outcome, light: Color
     let won = outcome.won();
     if won {
         painter.add(paint::gradient_polygon(
+            painter.ctx(),
             &banner_outline(banner),
             hex(0x172e52),
             hex(0x10233f),
@@ -314,7 +315,8 @@ pub fn results(
                 Stroke::new(1.0, hexa(0xffffff, 0.12)),
             );
             banner_rule(painter, banner, report.outcome, light);
-            let eyebrow = format!("{mode} · {}", hud.map_name.to_uppercase());
+            let mut eyebrow = paint::short(format_args!("{mode} · "));
+            eyebrow.push_upper(hud.map_name);
             let eyebrow_rect = paint::text(
                 painter,
                 origin + vec2(0.0, inset_top + (eyebrow_height - 15.0) / 2.0),
@@ -588,7 +590,7 @@ fn recap_body(
     let feat_height = if compact { 39.0 } else { 43.0 };
     let mut feat_x = origin.x;
     for feat in &recap.feats {
-        let title = feat.title.to_uppercase();
+        let title = paint::upper(&feat.title);
         let chip_width = (paint::text_width(painter, &title, bold_font(11.5), 0.8) + 16.0).max(
             paint::text_width(painter, &feat.detail, egui::FontId::proportional(11.5), 0.0),
         ) + 20.0;
@@ -733,7 +735,7 @@ fn recap_body(
                 rect.top() + if compact { 8.0 } else { 11.0 },
             ),
             Align2::CENTER_TOP,
-            &caption.to_uppercase(),
+            &paint::upper(caption),
             bold_font(12.0),
             hex(0xa6c4d8),
             1.0,
@@ -806,12 +808,12 @@ fn recap_body(
                 painter,
                 pos2(cell.center().x, cell.top() + 14.0),
                 Align2::CENTER_CENTER,
-                &detail.label.to_uppercase(),
+                &paint::upper(detail.label),
                 bold_font(11.0),
                 hex(0xa6c4d8),
                 1.0,
             );
-            let value = detail.value.to_uppercase();
+            let value = paint::upper(&detail.value);
             let value_width = paint::text_width(painter, &value, display_font(19.0), 0.4)
                 + if *record { 16.0 } else { 0.0 };
             let mut x = cell.center().x - value_width / 2.0;
@@ -988,7 +990,7 @@ impl HeroLines {
             top += 12.0;
         }
         let line_y = top + 7.8;
-        let text = progress.text.to_uppercase();
+        let text = paint::upper(&progress.text);
         if progress.record {
             art.icon(
                 painter,
@@ -1148,7 +1150,7 @@ fn board(
             painter,
             pos2(header.left() + 12.0, header.center().y),
             Align2::LEFT_CENTER,
-            &hud.team_names[team.index()].to_uppercase(),
+            &paint::upper(hud.team_names[team.index()]),
             bold_font(13.0),
             Color32::WHITE,
             2.0,
@@ -1211,7 +1213,7 @@ fn board(
                 painter,
                 pos2(kills_x, center),
                 Align2::RIGHT_CENTER,
-                &format!("{}", row.kills),
+                &paint::short(format_args!("{}", row.kills)),
                 bold_font(size),
                 Color32::WHITE,
                 0.0,
@@ -1220,7 +1222,7 @@ fn board(
                 painter,
                 pos2(deaths_x, center),
                 Align2::RIGHT_CENTER,
-                &format!("{}", row.deaths),
+                &paint::short(format_args!("{}", row.deaths)),
                 bold_font(size),
                 hex(0xb9c4d0),
                 0.0,

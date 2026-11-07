@@ -66,6 +66,7 @@ pub enum MeshKind {
     LitDisc,
     SetupSky,
     SetupLand,
+    GradientPolygon,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by
@@ -345,7 +346,28 @@ const EDGE_FEATHER: f32 = 0.5;
 /// where unfeathered triangles leave stairs; its level and upright edges stay crisp, so
 /// shapes that share one (a plate and its band, the HUD's plates and clock) leave no
 /// seam between them.
-pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape {
+/// Built once while its points and colours stay ([`memo_mesh`]).
+pub fn gradient_polygon(
+    context: &egui::Context,
+    points: &[Pos2],
+    top: Color32,
+    bottom: Color32,
+) -> Shape {
+    if points.len() < 3 {
+        return Shape::Noop;
+    }
+    let colors = [top, bottom].map(|color| u32::from_le_bytes(color.to_array()));
+    let corners = key_floats(points.iter().flat_map(|point| [point.x, point.y]));
+    memo_mesh(
+        context,
+        MeshKind::GradientPolygon,
+        colors.into_iter().chain(corners),
+        || gradient_polygon_mesh(points, top, bottom),
+    )
+}
+
+/// [`gradient_polygon`]'s mesh, for three points or more.
+fn gradient_polygon_mesh(points: &[Pos2], top: Color32, bottom: Color32) -> Mesh {
     let bounds = Rect::from_points(points);
     let color = |y: f32| {
         let t = if bounds.height() > 0.0 {
@@ -356,9 +378,6 @@ pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape
         mix(top, bottom, t)
     };
     let count = points.len();
-    if count < 3 {
-        return Shape::Noop;
-    }
     // Each edge's outward normal and how far its fade reaches each way.
     let clockwise = (0..count)
         .map(|index| {
@@ -420,12 +439,12 @@ pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape
         mesh.add_triangle(inner, outer, next_outer);
         mesh.add_triangle(inner, next_outer, next_inner);
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// The armour plate's outline: `rect` with its top-left and bottom-right corners cut.
-pub fn cut_corners(rect: Rect, cut: f32) -> Vec<Pos2> {
-    vec![
+pub fn cut_corners(rect: Rect, cut: f32) -> [Pos2; 6] {
+    [
         pos2(rect.left() + cut, rect.top()),
         rect.right_top(),
         pos2(rect.right(), rect.bottom() - cut),
@@ -441,14 +460,34 @@ pub const PLATE_BOTTOM: u32 = 0x060f24;
 
 /// An armour plate over `rect`, faintly tinted from its lower-left corner by `tint`.
 pub fn plate(painter: &Painter, rect: Rect, cut: f32, tint: Option<Color32>) {
-    painter.extend(plate_shapes(rect, cut, tint));
+    each_plate_shape(painter.ctx(), rect, cut, tint, |shape| {
+        painter.add(shape);
+    });
 }
 
 /// The shapes of [`plate`], for a slot reserved under content laid out first.
-pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
+pub fn plate_shapes(
+    context: &egui::Context,
+    rect: Rect,
+    cut: f32,
+    tint: Option<Color32>,
+) -> Vec<Shape> {
+    let mut shapes = Vec::with_capacity(5);
+    each_plate_shape(context, rect, cut, tint, |shape| shapes.push(shape));
+    shapes
+}
+
+/// [`plate`]'s shapes in the order they draw.
+fn each_plate_shape(
+    context: &egui::Context,
+    rect: Rect,
+    cut: f32,
+    tint: Option<Color32>,
+    mut add: impl FnMut(Shape),
+) {
     let outline = cut_corners(rect, cut);
-    let mut shapes = Vec::with_capacity(4);
-    shapes.push(gradient_polygon(
+    add(gradient_polygon(
+        context,
         &outline,
         hexa(PLATE_TOP, 0.97),
         hexa(PLATE_BOTTOM, 0.99),
@@ -469,28 +508,27 @@ pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
                 mesh.add_triangle(0, step, step + 1);
             }
         }
-        shapes.push(Shape::mesh(mesh));
+        add(Shape::mesh(mesh));
     }
     // The sheen along the top and the shade along the bottom, inside the hairline.
-    shapes.push(Shape::line_segment(
+    add(Shape::line_segment(
         [
             pos2(rect.left() + cut, rect.top() + 1.5),
             pos2(rect.right() - 1.0, rect.top() + 1.5),
         ],
         Stroke::new(1.5, hexa(0xffffff, 0.08)),
     ));
-    shapes.push(Shape::line_segment(
+    add(Shape::line_segment(
         [
             pos2(rect.left() + 1.0, rect.bottom() - 1.5),
             pos2(rect.right() - cut, rect.bottom() - 1.5),
         ],
         Stroke::new(1.5, hexa(0x000000, 0.35)),
     ));
-    shapes.push(Shape::closed_line(
-        outline,
+    add(Shape::closed_line(
+        outline.to_vec(),
         Stroke::new(1.0, theme::PLATE_EDGE),
     ));
-    shapes
 }
 
 /// A radial gradient: an ellipse of `radii` round `center` through `stops` (share of
@@ -542,7 +580,30 @@ pub fn wrapped(
     color: Color32,
     width: f32,
 ) -> Arc<Galley> {
-    painter.layout(text.to_owned(), font, color, width)
+    wrapped_section(painter, text, TextFormat::simple(font, color), width)
+}
+
+/// `text` in one `format`, wrapped at `max_width`, kept between passes as [`galley`]
+/// keeps one line.
+pub fn wrapped_section(
+    painter: &Painter,
+    text: &str,
+    format: TextFormat,
+    max_width: f32,
+) -> Arc<Galley> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    "wrapped section".hash(&mut hasher);
+    text.hash(&mut hasher);
+    format.hash(&mut hasher);
+    for value in [max_width, painter.ctx().pixels_per_point()] {
+        value.to_bits().hash(&mut hasher);
+    }
+    kept_galley(painter, hasher.finish(), text, || {
+        let mut job = LayoutJob::single_section(text.to_owned(), format);
+        job.wrap.max_width = max_width;
+        painter.layout_job(job)
+    })
 }
 
 /// A rounded glass panel (`--glass`): the dialogs' wells and cards.
@@ -561,6 +622,101 @@ pub fn glass(
         Stroke::new(1.0, edge),
         StrokeKind::Inside,
     );
+}
+
+/// The bytes [`ShortText`] holds on the stack: a number, a clock, a name in capitals.
+const SHORT_TEXT: usize = 64;
+
+/// A line the screens write every frame from values that rarely change (a score, the
+/// clock, the hull's points, a name in capitals), written on the stack: with [`galley`]
+/// keeping its layout, building the text was all that line still cost. Longer text
+/// spills to the heap.
+pub struct ShortText {
+    bytes: [u8; SHORT_TEXT],
+    len: usize,
+    spilled: Option<String>,
+}
+
+impl Default for ShortText {
+    fn default() -> Self {
+        ShortText {
+            bytes: [0; SHORT_TEXT],
+            len: 0,
+            spilled: None,
+        }
+    }
+}
+
+impl std::fmt::Write for ShortText {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        if let Some(spilled) = &mut self.spilled {
+            spilled.push_str(text);
+            return Ok(());
+        }
+        let end = self.len + text.len();
+        if end <= SHORT_TEXT {
+            self.bytes[self.len..end].copy_from_slice(text.as_bytes());
+            self.len = end;
+        } else {
+            let mut spilled = String::with_capacity(end);
+            spilled.push_str(self.inline());
+            spilled.push_str(text);
+            self.spilled = Some(spilled);
+        }
+        Ok(())
+    }
+}
+
+impl ShortText {
+    /// The text while it fits on the stack: whole `&str`s only, so always UTF-8.
+    fn inline(&self) -> &str {
+        std::str::from_utf8(&self.bytes[..self.len]).unwrap_or_default()
+    }
+
+    /// `text` in capitals after what this holds.
+    pub fn push_upper(&mut self, text: &str) {
+        for letter in text.chars().flat_map(char::to_uppercase) {
+            // Writing to a `ShortText` never fails.
+            let _ = std::fmt::Write::write_char(self, letter);
+        }
+    }
+}
+
+impl std::ops::Deref for ShortText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.spilled.as_deref().unwrap_or_else(|| self.inline())
+    }
+}
+
+/// `format!` into a [`ShortText`].
+pub fn short(arguments: std::fmt::Arguments) -> ShortText {
+    let mut text = ShortText::default();
+    // Writing to a `ShortText` never fails.
+    let _ = std::fmt::Write::write_fmt(&mut text, arguments);
+    text
+}
+
+/// `text.to_uppercase()` into a [`ShortText`]: capitals char by char, as `str` makes
+/// them.
+pub fn upper(text: &str) -> ShortText {
+    let mut capitals = ShortText::default();
+    capitals.push_upper(text);
+    capitals
+}
+
+/// `response.on_hover_text(text())`, writing the tip only when it can show: while its
+/// tooltip is open, or when AccessKit describes the widget by it.
+pub fn on_hover_text_with(response: Response, text: impl FnOnce() -> String) -> Response {
+    if response.ctx.has_accesskit_node(response.id) {
+        return response.on_hover_text(text());
+    }
+    response.on_hover_ui(|ui| {
+        // As `on_hover_text` lays its tip out.
+        ui.set_max_width(ui.spacing().tooltip_width);
+        ui.add(egui::Label::new(text()));
+    })
 }
 
 /// The one-line texts [`galley`] laid out, each by a hash of what it was laid out from
@@ -606,17 +762,30 @@ pub fn galley(
     max_width: f32,
 ) -> Arc<Galley> {
     use std::hash::{Hash, Hasher};
-    let context = painter.ctx();
-    let pass = context.cumulative_pass_nr();
-    let token = context_token(context);
     let mut hasher = std::hash::DefaultHasher::new();
     text.hash(&mut hasher);
     font.hash(&mut hasher);
     color.hash(&mut hasher);
-    for value in [spacing, max_width, context.pixels_per_point()] {
+    for value in [spacing, max_width, painter.ctx().pixels_per_point()] {
         value.to_bits().hash(&mut hasher);
     }
-    let key = hasher.finish();
+    kept_galley(painter, hasher.finish(), text, || {
+        layout_galley(painter, text, font, color, spacing, max_width)
+    })
+}
+
+/// The galley `layout` lays `text` out in, kept by `key`, a hash of everything the
+/// layout depends on besides `text` (the pixel size too), for as long as a pass draws
+/// it ([`GalleyMemo`]).
+pub fn kept_galley(
+    painter: &Painter,
+    key: u64,
+    text: &str,
+    layout: impl FnOnce() -> Arc<Galley>,
+) -> Arc<Galley> {
+    let context = painter.ctx();
+    let pass = context.cumulative_pass_nr();
+    let token = context_token(context);
     let kept = GALLEYS.with_borrow_mut(|memo| {
         if memo.context != token || memo.pass != pass {
             let probe = context.fonts_mut(|fonts| {
@@ -645,7 +814,7 @@ pub fn galley(
         }
     });
     kept.unwrap_or_else(|| {
-        let galley = layout_galley(painter, text, font, color, spacing, max_width);
+        let galley = layout();
         GALLEYS.with_borrow_mut(|memo| {
             memo.galleys.insert(key, (Arc::clone(&galley), pass));
         });
@@ -1409,6 +1578,19 @@ pub fn button_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_text_writes_as_format_and_capitals_as_str_does() {
+        for name in ["Swift Falcon", "Rookie", "straße ǆ ﬁ", "BIG RIG", ""] {
+            assert_eq!(&*upper(name), name.to_uppercase());
+        }
+        assert_eq!(&*short(format_args!("/ {}", 140.0_f64)), "/ 140");
+        let long = "x".repeat(3 * SHORT_TEXT);
+        assert_eq!(&*short(format_args!("{long}·{}", 7)), format!("{long}·7"));
+        let mut eyebrow = short(format_args!("TEAM BATTLE · "));
+        eyebrow.push_upper("Pine Village");
+        assert_eq!(&*eyebrow, "TEAM BATTLE · PINE VILLAGE");
+    }
 
     /// The galley `text` draws in one pass of `context`.
     fn drawn(context: &egui::Context, text: &str) -> Arc<Galley> {

@@ -5,7 +5,7 @@
 //! The page reads them as `hud_json`; the desktop shell reads the same values typed.
 //! Read, they borrow the simulation or the displayed scene, so the page's frequent
 //! `hud_json` copies nothing on the way to its text; [`Hud::into_owned`] keeps one between
-//! reads.
+//! reads, and [`Hud::refill`] writes later reads over the kept one.
 
 use std::borrow::{Borrow, Cow};
 use std::fmt;
@@ -16,7 +16,7 @@ use serde::{Serialize, Serializer};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for};
 use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
-use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::map_options::{MAP_OPTIONS, MapId};
 use sloppy_core::sim::match_state::new_match;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
@@ -41,7 +41,7 @@ pub struct Hud<'a> {
     pub game_mode: GameMode,
     pub endless_match: bool,
     pub map_mode: MapId,
-    pub map_name: String,
+    pub map_name: &'static str,
     pub difficulty: Difficulty,
     pub human_team: Team,
     pub score_limit: u32,
@@ -68,7 +68,7 @@ impl Default for Hud<'_> {
             game_mode: GameMode::Team,
             endless_match: false,
             map_mode: MapId::Village,
-            map_name: String::new(),
+            map_name: "",
             difficulty: Difficulty::Normal,
             human_team: Team::Blue,
             score_limit: SCORE_LIMIT,
@@ -104,6 +104,56 @@ impl Hud<'_> {
     }
 }
 
+impl Hud<'static> {
+    /// `hud` kept in place of this one, its scoreboard's rows and names written over
+    /// these: a shell refreshing the HUD it keeps allocates no rows once they have grown.
+    pub fn refill(&mut self, hud: Hud<'_>) {
+        self.scoreboard.refill(&hud.scoreboard);
+        let Hud {
+            match_state,
+            elapsed,
+            game_mode,
+            endless_match,
+            map_mode,
+            map_name,
+            difficulty,
+            human_team,
+            score_limit,
+            team_names,
+            active_enemies,
+            human,
+            scoreboard: _,
+            recap,
+            score_pill,
+        } = hud;
+        self.match_state = match_state;
+        self.elapsed = elapsed;
+        self.game_mode = game_mode;
+        self.endless_match = endless_match;
+        self.map_mode = map_mode;
+        self.map_name = map_name;
+        self.difficulty = difficulty;
+        self.human_team = human_team;
+        self.score_limit = score_limit;
+        self.team_names = team_names;
+        self.active_enemies = active_enemies;
+        self.human = human;
+        self.recap = recap.map(|recap| Cow::Owned(recap.into_owned()));
+        self.score_pill = score_pill;
+    }
+}
+
+/// Each map's name in capitals, as single player's HUD names its arena, written once.
+fn map_capitals(id: MapId) -> &'static str {
+    static CAPITALS: LazyLock<[String; MAP_OPTIONS.len()]> =
+        LazyLock::new(|| MAP_OPTIONS.map(|option| option.name.to_uppercase()));
+    let index = MAP_OPTIONS
+        .iter()
+        .position(|option| option.id == id)
+        .expect("every map id has an option");
+    &CAPITALS[index]
+}
+
 /// Single player's HUD. The human's tank as the HUD reads it is refilled into `tank`
 /// from the simulation, not the last frame's state: debug hooks change tanks between
 /// frames. `recap` is the finished round's, while results show; `timers` learn how long
@@ -121,7 +171,7 @@ pub fn simulation_hud<'a>(
         game_mode: sim.game_mode,
         endless_match: sim.endless_match,
         map_mode: sim.map_mode,
-        map_name: sim.map_name(),
+        map_name: map_capitals(sim.map_id()),
         difficulty: sim.difficulty,
         human_team: sim.human_team,
         score_limit: SCORE_LIMIT,
@@ -320,6 +370,25 @@ impl Scoreboard<'_> {
     }
 }
 
+impl Scoreboard<'static> {
+    /// `source`'s rows kept in place of these, each name written over a kept one's.
+    pub fn refill(&mut self, source: &Scoreboard<'_>) {
+        let Self::Kept(rows) = self else {
+            *self = source.clone().into_owned();
+            return;
+        };
+        let mut count = 0;
+        for row in source.rows() {
+            match rows.get_mut(count) {
+                Some(kept) => kept.refill(row),
+                None => rows.push(row.into_owned()),
+            }
+            count += 1;
+        }
+        rows.truncate(count);
+    }
+}
+
 impl Serialize for Scoreboard<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(self.rows())
@@ -412,6 +481,24 @@ impl HudScore<'_> {
             team: self.team,
             kind: self.kind,
         }
+    }
+}
+
+impl HudScore<'static> {
+    /// `row` in place of this one, its name written into this one's text.
+    fn refill(&mut self, row: HudScore<'_>) {
+        let mut name = std::mem::take(&mut self.name).into_owned();
+        name.clear();
+        name.push_str(&row.name);
+        *self = HudScore {
+            id: row.id,
+            name: Cow::Owned(name),
+            kills: row.kills,
+            deaths: row.deaths,
+            bot: row.bot,
+            team: row.team,
+            kind: row.kind,
+        };
     }
 }
 
@@ -893,6 +980,32 @@ mod tests {
             serde_json::to_string(&Scoreboard::Rendered(&[])).unwrap(),
             "[]"
         );
+    }
+
+    /// A kept HUD refilled from a later read is that read's owned copy, its rows' names
+    /// written into the text they already had.
+    #[test]
+    fn a_refilled_hud_matches_a_fresh_copy_and_keeps_its_names() {
+        let mut simulation = Simulation::new(4242.0, SimulationSetup::default());
+        let (mut tank, mut timers) = (RenderTank::default(), EffectTimers::default());
+        let mut kept = simulation_hud(&simulation, &mut tank, None, &mut timers).into_owned();
+        let Scoreboard::Kept(rows) = &kept.scoreboard else {
+            panic!("an owned scoreboard keeps its rows");
+        };
+        let first_name = rows[0].name.as_ptr();
+        simulation.tanks[0].name = "K".into();
+        simulation.tanks[1].kills = 4;
+        simulation.tanks.pop();
+        let fresh = simulation_hud(&simulation, &mut tank, None, &mut timers);
+        let expected = serde_json::to_string(&fresh.clone().into_owned()).unwrap();
+        kept.refill(fresh);
+        assert_eq!(serde_json::to_string(&kept).unwrap(), expected);
+        assert_eq!(kept.map_name, simulation.map_name());
+        let Scoreboard::Kept(rows) = &kept.scoreboard else {
+            panic!("a refilled scoreboard keeps its rows");
+        };
+        assert_eq!(rows.len(), simulation.tanks.len());
+        assert_eq!(rows[0].name.as_ptr(), first_name);
     }
 
     #[test]
