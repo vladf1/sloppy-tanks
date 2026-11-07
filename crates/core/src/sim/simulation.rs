@@ -283,6 +283,31 @@ pub struct Simulation {
     pub(crate) crush_scratch: CrushScratch,
     /// The debris budget's ranking and the players' places it scores by, reused.
     pub(crate) cleanup_scratch: (Vec<(f64, usize)>, Vec<Vec2>),
+    /// Working lists of blasts, ruins, routes and reinforcements, reused.
+    pub(crate) scratch: Scratch,
+}
+
+/// Working lists that passes over the field fill and empty, kept so a busy field
+/// allocates nothing for them. A pass takes its list with `mem::take` and puts it back,
+/// so one that runs again inside itself (a blast setting off a mine) starts its own
+/// rather than overwriting the outer one's.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    /// The mines a blast sets off, in mine order ([`Simulation::explode`]).
+    pub chained_mines: Vec<Mine>,
+    /// A blast's damage to one structure's parts: part, damage and gap.
+    pub structure_hits: Vec<(usize, f64, f64)>,
+    /// The landed structure debris a blast may throw: id, and index when listed.
+    pub thrown_debris: Vec<(u32, usize)>,
+    /// A route a bot is weighing, swapped into its brain when kept.
+    pub path: Vec<Vec2>,
+    /// The other resting pieces of one ruin.
+    pub ruin: Vec<usize>,
+    /// The pieces a clearing one takes along, with the life they clear from.
+    pub along: Vec<(usize, f64)>,
+    /// Solo reinforcement: the living enemies and the free spawn slots.
+    pub living: Vec<usize>,
+    pub spawn_slots: Vec<Vec2>,
 }
 
 impl Simulation {
@@ -346,6 +371,7 @@ impl Simulation {
             debris_contacts: HashMap::new(),
             crush_scratch: CrushScratch::default(),
             cleanup_scratch: (Vec::new(), Vec::new()),
+            scratch: Scratch::default(),
         };
         setup.apply(&mut simulation);
         // reset advances the round (its number and the seed of the bot names), so start one
@@ -938,24 +964,31 @@ impl Simulation {
         if self.tanks.iter().filter(|tank| enemy(tank)).count() >= SOLO.active_enemies {
             return;
         }
-        let living: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| enemy(&self.tanks[i]))
-            .collect();
+        let mut living = std::mem::take(&mut self.scratch.living);
+        living.clear();
+        living.extend((0..self.tanks.len()).filter(|&i| enemy(&self.tanks[i])));
         let team = self.human_team.opponent();
-        let slots: Vec<Vec2> = (0..SOLO.active_enemies)
-            .map(|slot| solo_spawn(team, slot))
-            .filter(|&p| {
-                self.tanks.iter().all(|tank| {
-                    !tank.alive
-                        || distance(
-                            p,
-                            from_vector(self.world.bodies[tank.body].translation()).planar(),
-                        ) > 4.0
-                })
-            })
-            .collect();
-        let human = self.human_index().into_iter().collect::<Vec<_>>();
-        let spawn = best_by(slots, |&p| self.spawn_score(p, &human, &living));
+        let mut slots = std::mem::take(&mut self.scratch.spawn_slots);
+        slots.clear();
+        slots.extend(
+            (0..SOLO.active_enemies)
+                .map(|slot| solo_spawn(team, slot))
+                .filter(|&p| {
+                    self.tanks.iter().all(|tank| {
+                        !tank.alive
+                            || distance(
+                                p,
+                                from_vector(self.world.bodies[tank.body].translation()).planar(),
+                            ) > 4.0
+                    })
+                }),
+        );
+        let human = self.human_index();
+        let spawn = best_by(slots.iter().copied(), |&p| {
+            self.spawn_score(p, human.as_slice(), &living)
+        });
+        self.scratch.living = living;
+        self.scratch.spawn_slots = slots;
         let Some(spawn) = spawn else {
             return;
         };

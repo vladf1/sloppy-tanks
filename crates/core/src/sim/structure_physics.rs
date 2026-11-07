@@ -792,7 +792,8 @@ impl Simulation {
         }
         let layout = state.layout.clone();
         let local = layout.to_local(DVec3::new(point.x - c.x, point.y, point.z - c.z));
-        let mut hits: Vec<(usize, f64, f64)> = Vec::new();
+        let mut hits = std::mem::take(&mut self.scratch.structure_hits);
+        hits.clear();
         for (index, part) in layout.parts.iter().enumerate() {
             if !state.standing(index) || part.strength.is_infinite() || part.distance(local) >= radius
             {
@@ -821,7 +822,7 @@ impl Simulation {
         }
         let state = self.covers[cover].structure.as_mut().expect("checked above");
         let (mut broken, mut loose) = (PartSet::EMPTY, PartSet::EMPTY);
-        for (index, amount, gap) in hits {
+        for &(index, amount, gap) in &hits {
             state.take(index, amount);
             if state.damage[index] >= layout.parts[index].strength {
                 if gap < blast.shatter {
@@ -831,6 +832,7 @@ impl Simulation {
                 }
             }
         }
+        self.scratch.structure_hits = hits;
         if !broken.is_empty() || !loose.is_empty() {
             self.break_structure(cover, broken, loose, Some(point), by);
         }
@@ -1508,17 +1510,31 @@ pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius
     // A section still coming down as a structure falls as it was: a blast breaks or throws
     // only what has landed (the burst that shot out a tower's leg would otherwise have
     // crumpled the whole tower before it tipped).
-    let ids: Vec<u32> = simulation
-        .fragments
-        .iter()
-        .filter(|fragment| {
-            fragment.structure.is_some_and(|debris| debris.landed || debris.rested)
-                && fragment.life > DEBRIS_CLEANUP_SECONDS
-        })
-        .map(|fragment| fragment.id)
-        .collect();
-    for id in ids {
-        let Some(index) = simulation.fragments.iter().position(|fragment| fragment.id == id) else {
+    let mut listed = std::mem::take(&mut simulation.scratch.thrown_debris);
+    listed.clear();
+    listed.extend(
+        simulation
+            .fragments
+            .iter()
+            .enumerate()
+            .filter(|(_, fragment)| {
+                fragment.structure.is_some_and(|debris| debris.landed || debris.rested)
+                    && fragment.life > DEBRIS_CLEANUP_SECONDS
+            })
+            .map(|(index, fragment)| (fragment.id, index)),
+    );
+    for &(id, listed_at) in &listed {
+        // Breaking a body adds and evicts pieces, which moves the rest; ids are unique.
+        let unmoved = simulation
+            .fragments
+            .get(listed_at)
+            .is_some_and(|fragment| fragment.id == id);
+        let found = if unmoved {
+            Some(listed_at)
+        } else {
+            simulation.fragments.iter().position(|fragment| fragment.id == id)
+        };
+        let Some(index) = found else {
             continue;
         };
         let fragment = &simulation.fragments[index];
@@ -1564,6 +1580,7 @@ pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius
             debris.landed_at = elapsed;
         }
     }
+    simulation.scratch.thrown_debris = listed;
 }
 
 /// Each tick: a falling body that lands hard (on the ground, for a structure whose
@@ -1994,17 +2011,17 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
         .as_ref()
         .is_some_and(|state| state.layout.debris.one_clock);
     let fell = fragment.expires_at;
-    let ruin: Vec<usize> = (0..simulation.fragments.len())
-        .filter(|&other| {
-            let piece = &simulation.fragments[other];
-            other != index
-                && piece.life > DEBRIS_CLEANUP_SECONDS
-                && piece
-                    .structure
-                    .is_some_and(|debris| debris.rested && debris.cover == cover)
-                && fell_together(piece.expires_at, fell)
-        })
-        .collect();
+    let mut ruin = std::mem::take(&mut simulation.scratch.ruin);
+    ruin.clear();
+    ruin.extend((0..simulation.fragments.len()).filter(|&other| {
+        let piece = &simulation.fragments[other];
+        other != index
+            && piece.life > DEBRIS_CLEANUP_SECONDS
+            && piece
+                .structure
+                .is_some_and(|debris| debris.rested && debris.cover == cover)
+            && fell_together(piece.expires_at, fell)
+    }));
     let height = middle_height(simulation, fragment.body);
     let floor = DEBRIS_CLEANUP_SECONDS + CLEAR_TOP_FIRST;
     if one_clock {
@@ -2017,6 +2034,7 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
             })
             .fold(fragment.life, f64::min);
         simulation.fragments[index].life = (ground - height * CLEAR_TOP_FIRST).max(floor);
+        simulation.scratch.ruin = ruin;
         return;
     }
     // Before what it lies on, after what lies on it: each piece keeps one of the ruin's
@@ -2050,6 +2068,7 @@ fn clear_in_turn(simulation: &mut Simulation, index: usize) {
     }
     let life = simulation.fragments[index].life;
     simulation.fragments[index].life = life.max(floor);
+    simulation.scratch.ruin = ruin;
 }
 
 /// A body's footprint on the ground plane, a little grown so pieces lying edge to edge
@@ -2111,7 +2130,8 @@ fn fell_together(a: Option<f64>, b: Option<f64>) -> bool {
 /// everything.
 fn clear_together(simulation: &mut Simulation) {
     let rested = |piece: &Fragment| piece.structure.is_some_and(|debris| debris.rested);
-    let mut along: Vec<(usize, f64)> = Vec::new();
+    let mut along = std::mem::take(&mut simulation.scratch.along);
+    along.clear();
     for fragment in &simulation.fragments {
         if !rested(fragment) || fragment.life > DEBRIS_CLEANUP_SECONDS + CLEAR_AHEAD {
             continue;
@@ -2150,10 +2170,11 @@ fn clear_together(simulation: &mut Simulation) {
             }
         }
     }
-    for (index, life) in along {
+    for &(index, life) in &along {
         let piece = &mut simulation.fragments[index];
         piece.life = piece.life.min(life);
     }
+    simulation.scratch.along = along;
 }
 
 /// Whether any of `body`'s colliders touches the ground.
