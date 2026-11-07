@@ -33,6 +33,26 @@ fn interpolate_rotation(a: Quat4, b: Quat4, alpha: f64) -> Quat4 {
     }
 }
 
+/// The entry of `list` that `matches`, searched from `cursor` on and then from the start,
+/// with `cursor` left just past it. Two samples list their entities in the same order, so
+/// walking one sample's list against the other's finds each partner at the cursor rather
+/// than scanning the whole list per entity. Ids are unique within a sample, so this finds
+/// what a scan from the start would.
+fn find_from<'a, T>(
+    list: &'a [T],
+    cursor: &mut usize,
+    matches: impl Fn(&T) -> bool,
+) -> Option<&'a T> {
+    let start = (*cursor).min(list.len());
+    let (head, tail) = list.split_at(start);
+    let index = match tail.iter().position(&matches) {
+        Some(offset) => start + offset,
+        None => head.iter().position(&matches)?,
+    };
+    *cursor = index + 1;
+    Some(&list[index])
+}
+
 /// Interpolates received scene samples at a delayed display time. Membership comes from
 /// the older sample, so removals wait for the display clock. Shells are left to their
 /// paths (`NetworkTimeline`). The local hull instead
@@ -101,8 +121,9 @@ impl RenderTimeline {
             0.0
         };
 
+        let mut cursor = 0;
         fill_each(&mut output.tanks, &before.tanks, |out, tank| {
-            let next = after.tanks.iter().find(|candidate| {
+            let next = find_from(&after.tanks, &mut cursor, |candidate| {
                 candidate.id == tank.id
                     && candidate.life == tank.life
                     && candidate.alive == tank.alive
@@ -120,11 +141,11 @@ impl RenderTimeline {
             }
             out.previous = Vec2::new(out.position.x, out.position.z);
         });
+        let mut cursor = 0;
         fill_each(&mut output.covers, &before.covers, |out, cover| {
-            let next = after
-                .covers
-                .iter()
-                .find(|candidate| candidate.id == cover.id && candidate.alive == cover.alive);
+            let next = find_from(&after.covers, &mut cursor, |candidate| {
+                candidate.id == cover.id && candidate.alive == cover.alive
+            });
             out.clone_from(cover);
             out.position = cover
                 .position
@@ -135,11 +156,11 @@ impl RenderTimeline {
                 fraction,
             );
         });
+        let mut cursor = 0;
         fill_each(&mut output.fragments, &before.fragments, |out, fragment| {
-            let next = after
-                .fragments
-                .iter()
-                .find(|candidate| candidate.id == fragment.id);
+            let next = find_from(&after.fragments, &mut cursor, |candidate| {
+                candidate.id == fragment.id
+            });
             out.clone_from(fragment);
             out.position = fragment
                 .position

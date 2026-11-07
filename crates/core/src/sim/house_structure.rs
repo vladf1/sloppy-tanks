@@ -16,6 +16,8 @@
 //! +z, right +x, ground at y = 0). Each part also names the cells of the cottage's model
 //! it is drawn from: rectangles in the plane of a [`HousePart`] of the model.
 
+use std::sync::Arc;
+
 use glam::{DVec2, DVec3};
 
 use super::debris_physics::DebrisMaterial;
@@ -25,7 +27,7 @@ use super::house_layout::{
     wall_frames, window_columns,
 };
 use super::structure::{
-    Brace, Breakup, Breaking, Build, DebrisRules, End, GROUND_BLOCK, end_rank, Levelling, Lie, MAX_PARTS, Material,
+    Brace, Breakup, Breaking, Build, DebrisRules, End, GROUND_BLOCK, HeldLayouts, end_rank, Levelling, Lie, MAX_PARTS, Material,
     Part, PartSet, PartShape, Role, SEAT_NEEDED, Structure, Support, Tipping,
 };
 
@@ -1738,6 +1740,16 @@ const LONG_SHEET: f64 = 2.6;
 /// The structure of the cottage `design` lays out.
 pub fn house_structure(design: &HouseDesign) -> Structure {
     Frame::new(design).into_structure()
+}
+
+/// The cottages laid out that something still holds, by design.
+static COTTAGES: HeldLayouts<HouseDesign> = HeldLayouts::new();
+
+/// [`house_structure`], shared with whatever still holds the same design's
+/// ([`HeldLayouts`]): most of a village reset, and of each cottage's model, was laying
+/// its cottages out again.
+pub fn shared_house_structure(design: &HouseDesign) -> Arc<Structure> {
+    COTTAGES.get_or_lay_out(*design, || house_structure(design))
 }
 
 /// Where a touching part lies from the one it supports.

@@ -300,7 +300,7 @@ impl Network {
                                 .filter(|cover| cover.kind.movable())
                                 .map(|cover| (cover.id, cover.position))
                                 .collect(),
-                            events: frame.events.into_iter().map(|shown| shown.event).collect(),
+                            events: frame.events.drain(..).map(|shown| shown.event).collect(),
                         };
                         peer.drawn.push(drawn);
                     }

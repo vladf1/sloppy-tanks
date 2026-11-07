@@ -237,6 +237,8 @@ pub struct MatchHost {
     commanded: Vec<u32>,
     /// The bodies moving near one seat's hull, while its batch is written.
     moving: Vec<MovingBody>,
+    /// One seat's batch header, written first so its message is sized in one allocation.
+    header: Vec<u8>,
     empty_since_ms: Option<u64>,
     active_ms: u64,
     scene: Scene,
@@ -279,6 +281,7 @@ impl MatchHost {
             commands: BTreeMap::new(),
             commanded: Vec::new(),
             moving: Vec::new(),
+            header: Vec::new(),
             empty_since_ms: Some(options.now_ms),
             active_ms: options.now_ms,
             scene: Scene::default(),
@@ -1173,6 +1176,7 @@ impl MatchHost {
         }
         let mut frames = std::mem::take(&mut self.frames);
         let mut moving = std::mem::take(&mut self.moving);
+        let mut header = std::mem::take(&mut self.header);
         // Sends follow whatever this advance already queued, in client order.
         let mut out = std::mem::take(&mut self.out);
         for (connection, client) in &self.clients {
@@ -1203,13 +1207,9 @@ impl MatchHost {
             // two intervals each add a frame, so a longer run goes out as several batches.
             for chunk in unseen.chunks(MAX_BATCH_FRAMES) {
                 let (first_seq, last_tick) = (chunk[0].1, chunk[chunk.len() - 1].0);
-                let size = chunk
-                    .iter()
-                    .map(|(_, _, body)| body.len() + 3)
-                    .sum::<usize>();
-                let mut message = Vec::with_capacity(size + 24);
+                header.clear();
                 write_snapshot_header(
-                    &mut message,
+                    &mut header,
                     self.round_id,
                     last_tick,
                     &ack,
@@ -1217,6 +1217,13 @@ impl MatchHost {
                     chunk.len(),
                     hull.as_ref().map(|hull| (hull, moving.as_slice())),
                 );
+                // Room for each frame and the varint of its tick offset.
+                let size = chunk
+                    .iter()
+                    .map(|(_, _, body)| body.len() + 3)
+                    .sum::<usize>();
+                let mut message = Vec::with_capacity(header.len() + size);
+                message.extend_from_slice(&header);
                 for (frame_tick, _, body) in chunk {
                     super::wire::put_varint(&mut message, last_tick - frame_tick);
                     message.extend_from_slice(body);
@@ -1229,6 +1236,7 @@ impl MatchHost {
         }
         self.out = out;
         self.moving = moving;
+        self.header = header;
         for (_, _, body) in frames.drain(..) {
             if self.spare_frames.len() < MAX_BATCH_FRAMES {
                 self.spare_frames.push(body);

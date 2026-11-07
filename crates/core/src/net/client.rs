@@ -293,7 +293,8 @@ pub struct FrameEvent {
 /// What to draw this frame.
 pub struct ClientFrame<'a> {
     pub state: &'a RenderState,
-    pub events: Vec<FrameEvent>,
+    /// The frame's events, in a buffer the client keeps: take them with `drain(..)`.
+    pub events: &'a mut Vec<FrameEvent>,
     /// Seconds since the previous frame, capped at 0.1.
     pub dt: f64,
 }
@@ -422,6 +423,10 @@ pub struct NetworkClient {
     prediction_scene: RenderState,
     /// The predicted bodies held this frame, kept between frames.
     held_poses: Vec<HeldPose>,
+    /// The events the display reached this frame, and the same with the viewer's flags,
+    /// buffers kept between frames.
+    displayed: Vec<SimEvent>,
+    frame_events: Vec<FrameEvent>,
     pub feel: FeelReadings,
     /// The viewer's shots, drawn from the frame they are fired.
     pub own_shots: OwnShots,
@@ -488,6 +493,8 @@ impl NetworkClient {
             pending_hull: None,
             prediction_scene: RenderState::default(),
             held_poses: Vec::new(),
+            displayed: Vec::new(),
+            frame_events: Vec::new(),
             feel: FeelReadings::default(),
             own_shots: OwnShots::default(),
             hull_trail: VecDeque::new(),
@@ -1548,9 +1555,16 @@ impl NetworkClient {
         // The battle keeps playing behind the in-battle menu too. The timeline overwrites
         // the baseline or last frame in place.
         let display = self.display.get_or_insert_with(RenderState::default);
-        let mut displayed = self
-            .timeline
-            .read(now_ms, self.rtt_ms, dt, display, dodger.as_ref());
+        let mut displayed = std::mem::take(&mut self.displayed);
+        displayed.clear();
+        self.timeline.read(
+            now_ms,
+            self.rtt_ms,
+            dt,
+            display,
+            dodger.as_ref(),
+            &mut displayed,
+        );
         let display_tick = self.timeline.display_tick();
         // The own hull is drawn where prediction has it while the displayed tank lives
         // the predicted life; deaths and respawns still wait for the display clock.
@@ -1631,20 +1645,20 @@ impl NetworkClient {
             self.feel.own_shot_flashed(tick as f64, now_ms);
             displayed.push(flash);
         }
-        let events = displayed
-            .into_iter()
-            .map(|event| FrameEvent {
+        self.frame_events.clear();
+        self.frame_events
+            .extend(displayed.drain(..).map(|event| FrameEvent {
                 player_hit: matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
                     && event.owner == Some(viewer_id)
                     && event.team != viewer_team,
                 own: event.id == Some(viewer_id),
                 event,
-            })
-            .collect();
+            }));
+        self.displayed = displayed;
         self.collect(now_ms, input);
         Some(ClientFrame {
             state: self.display.as_ref().expect("checked above"),
-            events,
+            events: &mut self.frame_events,
             dt,
         })
     }

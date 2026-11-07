@@ -790,7 +790,7 @@ pub fn pause(
         padding,
         |ui, painter, origin, width| {
             let close = close_rect(origin, width, padding);
-            let score = (!solo).then_some((&hud, hud.match_state.scores));
+            let score = (!solo).then_some((&*hud, hud.match_state.scores));
             let mut y = origin.y;
             if phone {
                 let clear = close.left() - 6.0 - origin.x;

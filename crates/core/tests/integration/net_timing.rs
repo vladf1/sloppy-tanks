@@ -578,7 +578,8 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
     let mut state = RenderState::default();
     let mut frames = Vec::new();
     for now in 50..400 {
-        let events = timeline.read(f64::from(now), 0.0, 0.001, &mut state, None);
+        let mut events = Vec::new();
+        timeline.read(f64::from(now), 0.0, 0.001, &mut state, None, &mut events);
         let tank = state.viewer().unwrap();
         frames.push((
             tank.alive,
@@ -611,11 +612,9 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         "effects play once"
     );
     timeline.reset(&respawn, 6, 400.0, &LivePaths::default());
-    assert!(
-        timeline
-            .read(410.0, 0.0, 1.0 / 60.0, &mut state, None)
-            .is_empty()
-    );
+    let mut events = Vec::new();
+    timeline.read(410.0, 0.0, 1.0 / 60.0, &mut state, None, &mut events);
+    assert!(events.is_empty());
 }
 
 #[test]
@@ -662,7 +661,8 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_path_and_disapp
     let mut shown = RenderState::default();
     let mut now = 50.0;
     while now < 300.0 {
-        let events = timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None);
+        let mut events = Vec::new();
+        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None, &mut events);
         let shots = shown.shots.clone();
         let tick = timeline.clock.display_ms * 60.0 / 1000.0;
         if (1.0..1.5).contains(&tick) {
@@ -730,8 +730,8 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
         let mut fresh = RenderState::default();
         timeline
             .clone()
-            .read(now, 0.0, 1.0 / 60.0, &mut fresh, None);
-        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None);
+            .read(now, 0.0, 1.0 / 60.0, &mut fresh, None, &mut Vec::new());
+        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None, &mut Vec::new());
         assert_eq!(
             shown, fresh,
             "the reused state at {now} ms keeps nothing stale"
@@ -960,7 +960,7 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
         timeline.arrive(now);
         let mut shown = RenderState::default();
         for _ in 0..12 {
-            timeline.read(now, 0.0, 0.004, &mut shown, None);
+            timeline.read(now, 0.0, 0.004, &mut shown, None, &mut Vec::new());
             replay
                 .reads
                 .push((timeline.display_tick(), shown.shots.clone()));

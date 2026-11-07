@@ -4,7 +4,7 @@
 //! structures' standing rules cost (`Structure::unsupported` on every structure of the
 //! village and the Stress Grid for a fixed series of parts gone), a cottage collapse
 //! (each village cottage broken, blasted and levelled, then a few seconds of the collapse
-//! played out) and a minute of the Scrap Yard. Each prints a fingerprint of its results,
+//! played out) and a minute each of the village, the Stress Grid and the Scrap Yard. Each prints a fingerprint of its results,
 //! so two builds can show they played the same. Manual evidence, not a CI gate.
 
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -199,8 +199,9 @@ fn cottage_collapse() {
     );
 }
 
-fn scrap_yard_minute() {
-    let mut s = Simulation::new(79.0, setup(MapId::Superstress));
+/// A minute of `map`'s autoplay after ten seconds of warm-up.
+fn match_minute(name: &str, map: MapId) {
+    let mut s = Simulation::new(79.0, setup(map));
     s.start();
     for _ in 0..600 {
         s.step(VehicleCommand::idle(), true);
@@ -219,7 +220,7 @@ fn scrap_yard_minute() {
         ticks
     });
     report(
-        &format!("Scrap Yard, {ticks} ticks after 600 warm-up"),
+        &format!("{name}, {ticks} ticks after 600 warm-up"),
         allocations,
         bytes,
         ms,
@@ -231,5 +232,7 @@ fn main() {
     standing_rules("village", MapId::Village);
     standing_rules("Stress Grid", MapId::StressTest);
     cottage_collapse();
-    scrap_yard_minute();
+    match_minute("village", MapId::Village);
+    match_minute("Stress Grid", MapId::StressTest);
+    match_minute("Scrap Yard", MapId::Superstress);
 }

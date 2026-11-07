@@ -18,7 +18,7 @@ use super::crate_layout::{
 };
 use super::debris_physics::DebrisMaterial;
 use super::structure::{
-    Brace, Breaking, Breakup, Build, DebrisRules, Levelling, Lie, Material, Part, PartSet,
+    Brace, Breaking, Breakup, Build, DebrisRules, HeldLayouts, Levelling, Lie, Material, Part, PartSet,
     PartShape, Role, Structure, Support, Tipping,
 };
 
@@ -184,8 +184,17 @@ fn sheathing(wall: &CrateSection, face: usize, row: usize, pitch: f64) -> Part {
 /// The dark seam between neighbouring boards.
 const BOARD_SEAM: f64 = 0.012;
 
-/// The structure of a `w` × `d` × `h` crate.
+/// The crates laid out that something still holds, by size.
+static CRATES: HeldLayouts<(f64, f64, f64)> = HeldLayouts::new();
+
+/// The structure of a `w` × `d` × `h` crate, shared with whatever still holds one
+/// ([`HeldLayouts`]).
 pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
+    CRATES.get_or_lay_out((w, d, h), || lay_out_crate(w, d, h))
+}
+
+/// [`crate_structure`], laid out.
+fn lay_out_crate(w: f64, d: f64, h: f64) -> Structure {
     let whole = crate_sections(w, d, h, &CrateBreak::default());
     let mut parts: Vec<Part> = whole
         .iter()
@@ -332,7 +341,7 @@ pub fn crate_structure(w: f64, d: f64, h: f64) -> Arc<Structure> {
     }
     structure.pieces = pieces;
     structure.breakups = breakups;
-    Arc::new(structure)
+    structure
 }
 
 #[cfg(test)]

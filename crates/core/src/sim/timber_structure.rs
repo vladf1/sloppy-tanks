@@ -18,7 +18,7 @@ use glam::DVec3;
 
 use super::debris_physics::DebrisMaterial;
 use super::structure::{
-    Breaking, Build, DebrisRules, End, Levelling, Lie, Material, Part, PartSet, PartShape, Role,
+    Breaking, Build, DebrisRules, End, HeldLayouts, Levelling, Lie, Material, Part, PartSet, PartShape, Role,
     Structure, Support, Tipping,
 };
 use super::timber_layout::{TimberJoin, TimberPartKind, TimberWall, post_partner, timber_parts};
@@ -77,9 +77,17 @@ const WALL_DUST: f64 = 2.0;
 /// A beam this low stands on the ground.
 const GROUND_REACH: f64 = 0.1;
 
+/// The timber walls laid out that something still holds, by size and joins.
+static WALLS: HeldLayouts<(f64, f64, f64, Option<TimberJoin>)> = HeldLayouts::new();
+
 /// The structure of a `w` × `d` × `h` timber wall whose ends meet its neighbours as
-/// `join` says.
+/// `join` says, shared with whatever still holds one ([`HeldLayouts`]).
 pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc<Structure> {
+    WALLS.get_or_lay_out((w, d, h, join), || lay_out_wall(w, d, h, join))
+}
+
+/// [`timber_structure`], laid out.
+fn lay_out_wall(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Structure {
     let along = w > d;
     let (length, depth) = (w.max(d), w.min(d));
     // Laid out along x; the world's z-running wall is that turned a quarter turn.
@@ -205,7 +213,7 @@ pub fn timber_structure(w: f64, d: f64, h: f64, join: Option<TimberJoin>) -> Arc
     for (index, part) in structure.parts.iter_mut().enumerate() {
         part.element = index as u16;
     }
-    Arc::new(structure)
+    structure
 }
 
 #[cfg(test)]

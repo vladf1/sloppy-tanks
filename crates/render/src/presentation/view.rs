@@ -2,7 +2,7 @@
 //! renderer and runtime effects, keeps one renderer instance per simulation
 //! entity, and poses them from each frame's `RenderState`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
@@ -25,7 +25,7 @@ use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
 use sloppy_core::sim::structure_physics::structural;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
-use sloppy_core::sim::tower_structure::LOWER_LEGS;
+use sloppy_core::sim::tower_structure::{LOWER_LEGS, tower_structure};
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
@@ -66,6 +66,7 @@ use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::pickups::{supply_turn, supply_wear};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
+use crate::fixed_hash::{HashMap, HashSet};
 use crate::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PendingModel, PrepareProgress, Renderer,
     SunShadow, WaterSettings,
@@ -802,6 +803,27 @@ struct SharedDebris {
     ahead: bool,
 }
 
+/// A falling watchtower's landing looks still to cut, and those cut: the bodies its frame
+/// breaks into when it lands (`Structure::landing`, no random draw), drawn while it
+/// falls rather than all on the frame it lands (27 of them took 4 ms natively). Only the
+/// model trees are cut ahead: each is registered with the GPU on the frame its body
+/// appears, as before, so nothing is drawn or uploaded any sooner. The trees go with the
+/// falling body: once it lands it is gone (broken up) or rests whole, and a round's reset
+/// drops them too. A tower's are several MB natively, held for the seconds it falls.
+#[derive(Default)]
+struct LandingLooks {
+    /// The falling body each is for, its tower's shape and the landing body's parts.
+    queued: Vec<(u32, CoverShape, PartSet)>,
+    cut: HashMap<SharedDebrisKey, (u32, Node)>,
+    /// Each watchtower's broken parts as of the last frame: a body of parts that stood
+    /// then has just come down and has its landing ahead of it, while the bodies a
+    /// landing breaks a frame into have landed already.
+    broken: Vec<(u32, PartSet)>,
+}
+
+/// The time (ms) a frame may spend cutting landing looks ahead: one look at least.
+const LANDING_LOOKS_MS: f64 = 0.5;
+
 /// How many shared debris looks no fragment shows any more are kept for the next
 /// fragment that looks the same; older ones are released. A Scrap Yard that keeps
 /// felling and rebuilding towers otherwise kept a model for every way one came down.
@@ -1021,6 +1043,11 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// Milliseconds of a frame that marked covers may spend rebuilding their looks
+    /// ([`COVER_REBUILD_MS`]). A measurement that compares builds frame by frame sets
+    /// 0, one rebuild step a frame, so the machine's speed does not decide which frame
+    /// shows a rebuilt look.
+    pub cover_rebuild_ms: f64,
     /// The touch fire stick's target.
     pub aim_assist: AimAssist,
     /// The turret's aim when touch aims it this frame: the aim line then shows the
@@ -1055,7 +1082,7 @@ pub struct Presentation {
     fragments: HashMap<u32, FragmentView>,
     /// Cottages' and watchtowers' loose parts come to rest, merged into chunks.
     piles: HousePiles<(ModelId, InstanceId), DebrisSource>,
-    /// Cottages' layouts while a build holds them, and this frame's pieces for their
+    /// Hit cottages' layouts for the round, and a collapsing cottage's pieces for its
     /// fallen bodies.
     layouts: CottageLayouts,
     /// Structure debris looks shared by every fragment that looks the same.
@@ -1066,6 +1093,7 @@ pub struct Presentation {
     /// Debris looks this round's crates can break into, still to build; one is built a
     /// frame, so a crate breaking builds none.
     debris_warmups: Vec<(CoverShape, PartSet)>,
+    landing_looks: LandingLooks,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
     chimneys: Vec<(u32, bool)>,
@@ -1087,7 +1115,7 @@ pub struct Presentation {
     /// Canvas-drawn and baked textures the scenery and cover sample.
     textures: GeneratedTextures,
     /// Ids present this frame, for dropping views of departed entities.
-    live: std::collections::HashSet<u32>,
+    live: HashSet<u32>,
     /// What building the round's views has still to do (`build.rs`).
     build: build::BuildStage,
     /// When a build stepped over frames began, while it may wait for the page to read
@@ -1147,25 +1175,27 @@ impl Presentation {
             aim_line,
             player_ring,
             pulse,
-            scenery: HashMap::new(),
-            pads: HashMap::new(),
-            floors: HashMap::new(),
+            scenery: HashMap::default(),
+            pads: HashMap::default(),
+            floors: HashMap::default(),
             flags,
-            tanks: HashMap::new(),
-            covers: HashMap::new(),
-            cover_models: HashMap::new(),
+            tanks: HashMap::default(),
+            covers: HashMap::default(),
+            cover_models: HashMap::default(),
             cover_looks: Vec::new(),
             busy: false,
-            fragments: HashMap::new(),
+            cover_rebuild_ms: COVER_REBUILD_MS,
+            fragments: HashMap::default(),
             piles: HousePiles::default(),
             layouts: CottageLayouts::default(),
-            shared_debris: HashMap::new(),
+            shared_debris: HashMap::default(),
             idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
+            landing_looks: LandingLooks::default(),
             chimneys: Vec::new(),
-            pickups: HashMap::new(),
+            pickups: HashMap::default(),
             supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
-            mines: HashMap::new(),
+            mines: HashMap::default(),
             pad_decks: SpawnPadDecks::default(),
             branches: VecDeque::new(),
             viewer_id: None,
@@ -1175,7 +1205,7 @@ impl Presentation {
             sample_models: Vec::new(),
             random,
             textures: GeneratedTextures::default(),
-            live: std::collections::HashSet::new(),
+            live: HashSet::default(),
             build: build::BuildStage::Done,
             cache_wait_since: None,
             preparation: Preparation::default(),
@@ -1747,7 +1777,7 @@ impl Presentation {
     /// the lid alone, and each piece a landing breaks them into.
     fn queue_debris(&mut self, covers: &[RenderCover]) {
         self.debris_warmups.clear();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::default();
         for cover in covers.iter().filter(|cover| cover.kind == CoverKind::Cargo) {
             let shape = CoverShape::from(cover);
             let layout = crate_structure(cover.w, cover.d, cover.h);
@@ -1760,6 +1790,82 @@ impl Presentation {
                 {
                     self.debris_warmups.push((shape.clone(), parts));
                 }
+            }
+        }
+    }
+
+    /// Queue the landing looks of watchtower `tower`'s body `fragment` of `parts`
+    /// ([`LandingLooks`]) not shared already, when it has just come down whole.
+    fn queue_landing_looks(
+        &mut self,
+        fragment: u32,
+        tower: u32,
+        shape: &CoverShape,
+        parts: &PartSet,
+    ) {
+        if shape.kind != CoverKind::Tower || parts.len() < 2 {
+            return;
+        }
+        let looks = &self.landing_looks;
+        let stood = looks
+            .broken
+            .iter()
+            .find(|(id, _)| *id == tower)
+            .is_none_or(|(_, broken)| parts.iter().all(|part| !broken.contains(part)));
+        if !stood {
+            return;
+        }
+        for body in tower_structure().landing(parts, false) {
+            if let Some(key) = shared_debris_key(shape, &body)
+                && !self.shared_debris.contains_key(&key)
+                && !self.landing_looks.cut.contains_key(&key)
+            {
+                self.landing_looks
+                    .queued
+                    .push((fragment, shape.clone(), body));
+            }
+        }
+    }
+
+    /// Cut queued landing looks while this frame's [`LANDING_LOOKS_MS`] lasts, on a frame
+    /// that rebuilt no cover and built no debris (the tower's fall, for one), and drop
+    /// those of bodies gone (landed), whether or not their pieces used them.
+    fn cut_landing_looks(&mut self, state: &RenderState) {
+        // A body still falling: one that landed whole (caught on something) comes to
+        // rest instead of breaking up, and its pieces' looks are not wanted.
+        let falling = |id: &u32| {
+            state
+                .fragments
+                .iter()
+                .any(|fragment| fragment.id == *id && !fragment.rested)
+        };
+        let looks = &mut self.landing_looks;
+        looks.broken.clear();
+        looks.broken.extend(
+            state
+                .covers
+                .iter()
+                .filter(|cover| cover.kind == CoverKind::Tower)
+                .map(|cover| (cover.id, cover.broken)),
+        );
+        looks.queued.retain(|(id, ..)| falling(id));
+        looks.cut.retain(|_, (id, _)| falling(id));
+        if self.busy {
+            return;
+        }
+        let start = now_ms();
+        while let Some((id, shape, parts)) = looks.queued.first().cloned() {
+            looks.queued.remove(0);
+            if let Some(key) = shared_debris_key(&shape, &parts)
+                && !self.shared_debris.contains_key(&key)
+            {
+                looks
+                    .cut
+                    .entry(key)
+                    .or_insert_with(|| (id, structure_debris(&shape, &parts)));
+            }
+            if now_ms() - start >= LANDING_LOOKS_MS {
+                break;
             }
         }
     }
@@ -1790,8 +1896,11 @@ impl Presentation {
         key: SharedDebrisKey,
     ) -> &mut SharedDebris {
         let renderer = &mut self.renderer;
+        let cut = &mut self.landing_looks.cut;
         self.shared_debris.entry(key).or_insert_with(|| {
-            let node = structure_debris(shape, parts);
+            let node = cut
+                .remove(&key)
+                .map_or_else(|| structure_debris(shape, parts), |(_, node)| node);
             let look = BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
                 model: renderer.add_falling_debris_model(&node, Lifetime::Round),
@@ -2106,6 +2215,13 @@ impl Presentation {
         dt: f64,
         overview: bool,
     ) -> Result<(), String> {
+        self.update(state, alpha, dt, overview);
+        self.renderer.render(self.time as f32)
+    }
+
+    /// Synchronize entity visuals with `state` without drawing: the first half of
+    /// [`Self::render`].
+    pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, overview: bool) {
         self.time += dt;
         self.busy = false;
         self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
@@ -2125,6 +2241,7 @@ impl Presentation {
         self.update_pickups(state);
         self.update_supply_pieces();
         self.update_fragments(state);
+        self.cut_landing_looks(state);
         self.warm_debris();
         self.update_mines(state);
         // The camera is final here; the effects order smoke by this frame's eye.
@@ -2156,7 +2273,6 @@ impl Presentation {
             alpha,
             dt,
         );
-        self.renderer.render(self.time as f32)
     }
 
     fn update_scenery(&mut self) {
@@ -2561,6 +2677,12 @@ impl Presentation {
                     )));
                     false
                 }
+                // Its pieces, shared with its fallen bodies and its next looks.
+                LookPhase::Building(build) if build.needs_pieces() => {
+                    let shape = CoverShape::from(cover);
+                    build.use_pieces(self.layouts.pieces(cover.id, &shape, self.time));
+                    false
+                }
                 LookPhase::Building(build) => {
                     if build.step()
                         && let LookPhase::Building(build) =
@@ -2590,7 +2712,7 @@ impl Presentation {
             };
             let after = now_ms();
             *longest = longest.max(after - before);
-            if installed || after - start + *longest >= COVER_REBUILD_MS {
+            if installed || after - start + *longest >= self.cover_rebuild_ms {
                 return;
             }
         }
@@ -2614,7 +2736,7 @@ impl Presentation {
             // view is always built. A broken structure builds its new look in a step,
             // uploading it in a step of its own.
             let shown = shown.is_some();
-            let wait = shown && rebuilt && now_ms() - start + longest >= COVER_REBUILD_MS;
+            let wait = shown && rebuilt && now_ms() - start + longest >= self.cover_rebuild_ms;
             if rebuild && !wait {
                 if shown && structure {
                     self.build_cover_look(cover, start, &mut longest);
@@ -3346,18 +3468,18 @@ impl Presentation {
             }
         }
         self.settle_piles();
-        self.layouts.end_frame();
+        self.layouts.end_frame(self.time);
     }
 
     /// Bake resting cottage parts into merged chunks, one a frame, and hide their own
     /// views; show again the ones whose chunk broke up. The merges are one-off models,
     /// merged straight into the upload layout and not kept once uploaded.
     fn settle_piles(&mut self) {
-        let (layouts, shared) = (&mut self.layouts, &self.shared_debris);
+        let (layouts, shared, now) = (&mut self.layouts, &self.shared_debris, self.time);
         let plan = self.piles.plan(self.time, |source| {
             let node = shared_debris_key(&source.shape, &source.parts)
                 .and_then(|key| shared.get(&key)?.node.clone());
-            node.unwrap_or_else(|| layouts.body(source))
+            node.unwrap_or_else(|| layouts.body(source, now))
         });
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
@@ -3402,13 +3524,14 @@ impl Presentation {
                 let shared = self.shared_structure_debris(&source.shape, &parts, key);
                 shared.users += 1;
                 let (model, bounds) = (shared.look.model, shared.look.bounds);
+                self.queue_landing_looks(fragment.id, structure, &source.shape, &parts);
                 self.piles
                     .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))
             } else {
-                // A cottage's bodies falling this frame are cut from one build of its
-                // pieces.
-                let node = self.layouts.body(&source);
+                // A cottage's bodies falling over a collapse are cut from one build of
+                // its pieces.
+                let node = self.layouts.body(&source, self.time);
                 let look = structure_debris_look(&mut self.renderer, &node);
                 self.piles
                     .track(fragment.id, structure, source, Some(node), self.time);

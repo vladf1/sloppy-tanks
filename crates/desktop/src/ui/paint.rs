@@ -2,6 +2,8 @@
 //! the armour plates (top-left and bottom-right corners cut, a steel hairline round the
 //! cut), spaced type, key caps, timer rings, vignettes and the dialogs' buttons.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
@@ -40,9 +42,90 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     a.lerp_to_gamma(b, t.clamp(0.0, 1.0))
 }
 
+/// Meshes the screens build every frame from the same inputs (a stick's lit knob, a key
+/// cap's rounded gradient), each by the inputs it was built from and the last pass that
+/// drew it. A builder's mesh depends on its inputs alone, so a kept one is the mesh it
+/// would build again.
+#[derive(Default)]
+struct MeshMemo {
+    pass: u64,
+    meshes: HashMap<Box<[u32]>, (Arc<Mesh>, u64)>,
+    /// The key being looked up, kept to look up the next without allocating.
+    key: Vec<u32>,
+}
+
+thread_local! {
+    static MESHES: RefCell<MeshMemo> = RefCell::default();
+}
+
+/// A kind of mesh in [`memo_mesh`]'s keys, so two builders' inputs never meet.
+#[derive(Clone, Copy)]
+pub enum MeshKind {
+    RoundedGradient = 1,
+    Vignette,
+    LitDisc,
+}
+
+/// The words of a mesh's key: a builder's float inputs by their bits and colours by
+/// their bytes.
+pub fn key_floats(values: impl IntoIterator<Item = f32>) -> impl Iterator<Item = u32> {
+    values.into_iter().map(f32::to_bits)
+}
+
+pub fn key_stops(stops: &[(f32, Color32)]) -> impl Iterator<Item = u32> + '_ {
+    stops
+        .iter()
+        .flat_map(|&(share, color)| [share.to_bits(), u32::from_le_bytes(color.to_array())])
+}
+
+/// The mesh `build` makes from the inputs `key` holds, built only when no pass drew it
+/// last time: a mesh not drawn in a pass is let go at the next. `build` must not draw
+/// kept meshes itself.
+pub fn memo_mesh(
+    context: &egui::Context,
+    kind: MeshKind,
+    key: impl IntoIterator<Item = u32>,
+    build: impl FnOnce() -> Mesh,
+) -> Shape {
+    let pass = context.cumulative_pass_nr();
+    let kept = MESHES.with_borrow_mut(|memo| {
+        if memo.pass != pass {
+            let last = memo.pass;
+            memo.meshes.retain(|_, (_, used)| *used == last);
+            memo.pass = pass;
+        }
+        memo.key.clear();
+        memo.key.push(kind as u32);
+        memo.key.extend(key);
+        let (meshes, key) = (&mut memo.meshes, &memo.key);
+        meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
+            *used = pass;
+            Arc::clone(mesh)
+        })
+    });
+    let mesh = kept.unwrap_or_else(|| {
+        let mesh = Arc::new(build());
+        MESHES.with_borrow_mut(|memo| {
+            let key = memo.key.as_slice().into();
+            memo.meshes.insert(key, (Arc::clone(&mesh), pass));
+        });
+        mesh
+    });
+    Shape::Mesh(mesh)
+}
+
+/// An untextured mesh with room for `vertices` and `triangles`, so building it never
+/// grows its buffers.
+pub fn mesh_with_capacity(vertices: usize, triangles: usize) -> Mesh {
+    let mut mesh = Mesh::default();
+    mesh.reserve_vertices(vertices);
+    mesh.reserve_triangles(triangles);
+    mesh
+}
+
 /// A vertical gradient over `rect` through `stops` (share of the height, colour).
 pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let y = rect.top() + rect.height() * share;
         mesh.colored_vertex(pos2(rect.left(), y), color);
@@ -70,7 +153,15 @@ pub fn rounded_vgradient(
     stops: &[(f32, Color32)],
 ) {
     let feather = 1.0 / painter.pixels_per_point();
-    painter.add(rounded_vgradient_mesh(rect, radius, stops, feather));
+    let key = key_floats([rect.min.x, rect.min.y, rect.max.x, rect.max.y, feather])
+        .chain(key_floats(radius))
+        .chain(key_stops(stops));
+    painter.add(memo_mesh(
+        painter.ctx(),
+        MeshKind::RoundedGradient,
+        key,
+        || rounded_vgradient_mesh(rect, radius, stops, feather),
+    ));
 }
 
 /// The mesh of [`rounded_vgradient`], its corners faded out over `feather` points.
@@ -108,18 +199,26 @@ fn rounded_vgradient_mesh(
         }
         previous.1
     };
-    let mut ys: Vec<f32> = stops
-        .iter()
-        .map(|(share, _)| rect.top() + rect.height() * share)
-        .collect();
+    let mut ys: Vec<f32> = Vec::with_capacity(stops.len() + 4 * (ARC_STEPS + 1));
+    ys.extend(
+        stops
+            .iter()
+            .map(|(share, _)| rect.top() + rect.height() * share),
+    );
+    // Two corners of one radius along an edge give the same rows, which the dedup below
+    // would drop anyway: leave them out before sorting.
+    let top = if nw == ne { &[nw][..] } else { &[nw, ne][..] };
+    let bottom = if sw == se { &[sw][..] } else { &[sw, se][..] };
     for step in 0..=ARC_STEPS {
         let angle = std::f32::consts::FRAC_PI_2 * step as f32 / ARC_STEPS as f32;
         let depth = 1.0 - angle.cos();
-        ys.extend([nw, ne].map(|r| rect.top() + r * depth));
-        ys.extend([sw, se].map(|r| rect.bottom() - r * depth));
+        ys.extend(top.iter().map(|r| rect.top() + r * depth));
+        ys.extend(bottom.iter().map(|r| rect.bottom() - r * depth));
     }
     ys.retain(|y| (rect.top()..=rect.bottom()).contains(y));
-    ys.sort_by(f32::total_cmp);
+    // Values equal in this order are the same bits, so an unstable sort leaves them as
+    // a stable one would, without its scratch buffer.
+    ys.sort_unstable_by(f32::total_cmp);
     ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
     let rows: Vec<(Pos2, Pos2)> = ys
         .iter()
@@ -139,7 +238,7 @@ fn rounded_vgradient_mesh(
         .collect();
     let shifts = curve_feather(&outline, feather);
     let count = rows.len();
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(4 * count, 6 * count.saturating_sub(1) + 4);
     // Each row as its inner left and right vertices in the gradient's colour, then the
     // two faded out beyond them.
     for (index, &(left, right)) in rows.iter().enumerate() {
@@ -215,7 +314,7 @@ fn curve_feather(outline: &[Pos2], feather: f32) -> Vec<Vec2> {
 
 /// A horizontal gradient over `rect` through `stops` (share of the width, colour).
 pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let x = rect.left() + rect.width() * share;
         mesh.colored_vertex(pos2(x, rect.top()), color);
@@ -292,7 +391,7 @@ pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape
             shift
         }
     };
-    let mut mesh = Mesh::default();
+    let mut mesh = mesh_with_capacity(1 + 2 * count, 3 * count);
     let center = points
         .iter()
         .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
@@ -341,18 +440,19 @@ pub fn plate(painter: &Painter, rect: Rect, cut: f32, tint: Option<Color32>) {
 /// The shapes of [`plate`], for a slot reserved under content laid out first.
 pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
     let outline = cut_corners(rect, cut);
-    let mut shapes = vec![gradient_polygon(
+    let mut shapes = Vec::with_capacity(4);
+    shapes.push(gradient_polygon(
         &outline,
         hexa(PLATE_TOP, 0.97),
         hexa(PLATE_BOTTOM, 0.99),
-    )];
+    ));
     if let Some(tint) = tint {
         // A radial wash from the lower-left corner, as a fan fading outwards.
         let corner = rect.left_bottom();
         let reach = vec2(rect.width() * 0.7, rect.height() * 1.3);
-        let mut mesh = Mesh::default();
-        mesh.colored_vertex(corner, fade(tint, 0.22));
         let steps = 10;
+        let mut mesh = mesh_with_capacity(steps as usize + 2, steps as usize);
+        mesh.colored_vertex(corner, fade(tint, 0.22));
         for step in 0..=steps {
             let angle = -std::f32::consts::FRAC_PI_2 * step as f32 / steps as f32;
             let point = corner + vec2(angle.cos() * reach.x, angle.sin() * reach.y);
@@ -390,7 +490,11 @@ pub fn plate_shapes(rect: Rect, cut: f32, tint: Option<Color32>) -> Vec<Shape> {
 /// the radii, colour), the first stop at the centre.
 pub fn radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
     let segments = 48u32;
-    let mut mesh = Mesh::default();
+    let rings = stops.len().saturating_sub(1);
+    let mut mesh = mesh_with_capacity(
+        1 + rings * segments as usize,
+        (2 * rings).saturating_sub(1) * segments as usize,
+    );
     mesh.colored_vertex(
         center,
         stops.first().map_or(Color32::TRANSPARENT, |stop| stop.1),
@@ -472,6 +576,27 @@ pub fn galley(
     painter.layout_job(job)
 }
 
+/// [`galley`] in no colour of its own: drawn in the colour its painter passes. egui
+/// keeps a laid-out text by everything in its job, colour too, so text whose colour
+/// changes every frame (a fading or brightening row) would be shaped again each frame;
+/// this one is laid out once, and once for its width, its shadow and itself alike.
+fn uncoloured(
+    painter: &Painter,
+    text: &str,
+    font: FontId,
+    spacing: f32,
+    max_width: f32,
+) -> Arc<Galley> {
+    galley(
+        painter,
+        text,
+        font,
+        Color32::PLACEHOLDER,
+        spacing,
+        max_width,
+    )
+}
+
 /// Text anchored at `pos` by `align`; returns where it went.
 pub fn text(
     painter: &Painter,
@@ -482,7 +607,7 @@ pub fn text(
     color: Color32,
     spacing: f32,
 ) -> Rect {
-    let galley = galley(painter, text, font, color, spacing, f32::INFINITY);
+    let galley = uncoloured(painter, text, font, spacing, f32::INFINITY);
     let rect = align.anchor_size(pos, galley.size());
     painter.galley(rect.min, galley, color);
     rect
@@ -498,17 +623,13 @@ pub fn shadowed(
     color: Color32,
     spacing: f32,
 ) -> Rect {
-    let shadow = galley(
-        painter,
-        text,
-        font.clone(),
+    let galley = uncoloured(painter, text, font, spacing, f32::INFINITY);
+    let rect = align.anchor_size(pos, galley.size());
+    painter.galley(
+        rect.min + vec2(0.0, 1.5),
+        galley.clone(),
         hexa(0x000000, 0.55),
-        spacing,
-        f32::INFINITY,
     );
-    let rect = align.anchor_size(pos, shadow.size());
-    painter.galley(rect.min + vec2(0.0, 1.5), shadow, Color32::BLACK);
-    let galley = galley(painter, text, font, color, spacing, f32::INFINITY);
     painter.galley(rect.min, galley, color);
     rect
 }
@@ -525,7 +646,7 @@ pub fn text_fit(
     spacing: f32,
     width: f32,
 ) -> Rect {
-    let galley = galley(painter, text, font, color, spacing, width);
+    let galley = uncoloured(painter, text, font, spacing, width);
     let rect = align.anchor_size(pos, galley.size());
     painter.galley(rect.min, galley, color);
     rect
@@ -541,7 +662,7 @@ pub fn wrap_width(painter: &Painter, text: &str, font: FontId, width: f32) -> f3
 
 /// The width `text` takes.
 pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> f32 {
-    galley(painter, text, font, Color32::WHITE, spacing, f32::INFINITY)
+    uncoloured(painter, text, font, spacing, f32::INFINITY)
         .size()
         .x
 }
@@ -686,13 +807,26 @@ pub fn vignette_at(
         return;
     }
     let radius = vec2(rect.width() * radii.x, rect.height() * radii.y);
+    let key = key_floats([center.x, center.y, radius.x, radius.y, opacity]).chain(key_stops(stops));
+    let mesh = memo_mesh(painter.ctx(), MeshKind::Vignette, key, || {
+        vignette_mesh(center, radius, stops, opacity)
+    });
+    painter.with_clip_rect(rect).add(mesh);
+}
+
+/// The mesh of [`vignette_at`]: rings of `radius` round `center`.
+fn vignette_mesh(center: Pos2, radius: Vec2, stops: &[(f32, Color32)], opacity: f32) -> Mesh {
     let segments = 48;
-    let mut mesh = Mesh::default();
     // The last stop's colour carries on past the corners.
-    let mut rings: Vec<(f32, Color32)> = stops.to_vec();
+    let mut rings: Vec<(f32, Color32)> = Vec::with_capacity(stops.len() + 1);
+    rings.extend_from_slice(stops);
     if let Some(&(_, last)) = stops.last() {
         rings.push((3.0, last));
     }
+    let mut mesh = mesh_with_capacity(
+        rings.len() * segments as usize,
+        rings.len().saturating_sub(1) * 2 * segments as usize,
+    );
     for &(share, color) in &rings {
         for segment in 0..segments {
             let angle = segment as f32 / segments as f32 * std::f32::consts::TAU;
@@ -710,7 +844,7 @@ pub fn vignette_at(
             mesh.add_triangle(b, d, c);
         }
     }
-    painter.with_clip_rect(rect).add(Shape::mesh(mesh));
+    mesh
 }
 
 /// How a dialog button looks.

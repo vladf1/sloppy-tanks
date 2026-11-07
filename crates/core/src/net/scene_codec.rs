@@ -12,6 +12,7 @@
 //! typed values with the TypeScript readers' limits.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 
 use serde_json::{Value, json};
 
@@ -1365,18 +1366,47 @@ pub struct Stored<T> {
     pub motion: Motion,
 }
 
+/// Entity ids to their places in a scene's records.
+pub(crate) type IdIndex = HashMap<u32, usize, BuildHasherDefault<IdHasher>>;
+
+/// rustc's FxHash for entity ids: a multiply where SipHash was a fifth of the host's
+/// diff. The ids are the host's own, so resistance to chosen keys buys nothing, and an
+/// index is only looked up, never iterated, so the hash cannot change what is written.
+#[derive(Default)]
+pub(crate) struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u32(&mut self, id: u32) {
+        self.write_u64(u64::from(id));
+    }
+
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
 /// Records of one kind in scene order, indexed by id.
 #[derive(Clone, Debug)]
 pub struct EntityStore<T> {
     pub records: Vec<Stored<T>>,
-    index: HashMap<u32, usize>,
+    index: IdIndex,
 }
 
 impl<T> Default for EntityStore<T> {
     fn default() -> Self {
         Self {
             records: Vec::new(),
-            index: HashMap::new(),
+            index: IdIndex::default(),
         }
     }
 }
