@@ -623,6 +623,9 @@ struct ClassEntry {
     /// (backends with `OCCLUSION_DEPTH_PASS`) with its depth-only shadow shader, but
     /// the faces the main view draws.
     depth_key: Option<PipelineKey>,
+    /// Its effect stays out of ambient occlusion (`EffectDefinition::skips_occlusion`):
+    /// it has no depth draws, and on WebGL2 its main draws follow the depth copy.
+    skips_occlusion: bool,
     main: Option<u32>,
     back: Option<u32>,
     shadow: Option<u32>,
@@ -1063,6 +1066,11 @@ struct Scene<'a> {
     pools: &'a Slab<PoolEntry>,
     models: &'a Slab<ModelEntry>,
     views: &'a [ViewDraws; VIEW_COUNT],
+    /// The main view's opaque draws before the first that stays out of ambient
+    /// occlusion, which sort last (`DrawState::skips_occlusion`): WebGL2 copies the
+    /// depth its occlusion reads after these.
+    #[cfg_attr(not(feature = "webgl"), allow(dead_code))]
+    main_occluders: usize,
     merged_draws: &'a [MergedDraw],
     static_shadow_draws: &'a [Draw],
     static_merged_draws: &'a [MergedDraw],
@@ -1451,8 +1459,13 @@ impl Renderer {
                 let shadow = PipelineKey::shadow(shadow_shader, source);
                 // Without the shadow's dither, which only fades a caster's shadow.
                 let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
+                let skips_occlusion = self
+                    .effects
+                    .get(gpu.effect)
+                    .is_some_and(|e| e.skips_occlusion);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
                     && key.occludes
+                    && !skips_occlusion
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
@@ -1467,6 +1480,7 @@ impl Renderer {
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
                     shadow_key: shadow,
                     depth_key,
+                    skips_occlusion,
                     main: None,
                     back: None,
                     shadow: None,
@@ -1484,6 +1498,7 @@ impl Renderer {
                 // draw lists sort them.
                 for (order, pipeline) in self.class_order.iter_mut().zip(ranks) {
                     let state = DrawState {
+                        skips_occlusion,
                         pipeline,
                         vertex_page: u32::from(range.vertex_page),
                         pool: key.pool.unwrap_or(u32::MAX),
@@ -3256,6 +3271,15 @@ impl Renderer {
             pools: &self.pools,
             models: &self.models,
             views: &self.views,
+            main_occluders: self.views[MAIN_VIEW]
+                .opaque
+                .iter()
+                .position(|draw| {
+                    self.classes
+                        .at(draw.class)
+                        .is_some_and(|class| class.skips_occlusion)
+                })
+                .unwrap_or(self.views[MAIN_VIEW].opaque.len()),
             merged_draws: &self.merged_draws,
             static_shadow_draws: &self.static_shadow_draws,
             static_merged_draws: &self.static_merged_draws,

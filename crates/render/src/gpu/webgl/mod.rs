@@ -38,8 +38,9 @@ use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
 use textures::{linear_sampler, storage, texel_storage};
 
-/// Ambient occlusion reads the depth copy the main view's resolve blits; WebGL2 has
-/// no depth pass of its own for it.
+/// Ambient occlusion reads a copy of the main view's depth, blitted part way through
+/// its opaque draws (`ColorTarget::copy_depth`); WebGL2 has no depth pass of its own
+/// for it.
 pub const OCCLUSION_DEPTH_PASS: bool = false;
 
 /// Frames between `getError` checks: the call waits for the GPU process.
@@ -86,8 +87,8 @@ struct ColorTarget {
     depth: glow::Renderbuffer,
     framebuffer: glow::Framebuffer,
     resolved: glow::Texture,
-    /// A single-sample copy of the depth the resolve also blits, for the main view's
-    /// ambient occlusion (WebGL2 shaders cannot read multisampled depth).
+    /// A single-sample copy of the depth (`copy_depth`), for the main view's ambient
+    /// occlusion (WebGL2 shaders cannot read multisampled depth).
     resolved_depth: Option<glow::Texture>,
     resolve_framebuffer: glow::Framebuffer,
 }
@@ -166,20 +167,31 @@ impl ColorTarget {
         gpu.clear(Some(background));
     }
 
-    /// Resolve into the texture (and, with `depth`, the depth copy), discarding the
-    /// multisampled color and depth.
-    fn resolve(&self, gpu: &Gpu, depth: bool) {
-        let mask = if depth && self.resolved_depth.is_some() {
-            glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT
-        } else {
-            glow::COLOR_BUFFER_BIT
-        };
+    /// Copy the multisampled depth drawn so far into the single-sample depth texture,
+    /// then bind the multisampled framebuffer again to draw on.
+    fn copy_depth(&self, gpu: &Gpu) {
+        if self.resolved_depth.is_none() {
+            return;
+        }
         gpu.blit(
             self.framebuffer,
             self.resolve_framebuffer,
             self.width,
             self.height,
-            mask,
+            glow::DEPTH_BUFFER_BIT,
+        );
+        gpu.bind_framebuffer(Some(self.framebuffer));
+    }
+
+    /// Resolve the color into the texture, discarding the multisampled color and
+    /// depth.
+    fn resolve(&self, gpu: &Gpu) {
+        gpu.blit(
+            self.framebuffer,
+            self.resolve_framebuffer,
+            self.width,
+            self.height,
+            glow::COLOR_BUFFER_BIT,
         );
         gpu.invalidate_read(&[glow::COLOR_ATTACHMENT0, glow::DEPTH_ATTACHMENT]);
     }
@@ -797,12 +809,16 @@ impl Frame {
             count += draws.encode(&view.transparent, REFLECTION_VIEW, stats);
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
-            target.resolve(gpu, false);
+            target.resolve(gpu);
         }
         self.main.begin(gpu, scene.background);
         gpu.bind_uniform_block(block::FRAME, self.view_uniforms[MAIN_VIEW]);
         let view = &scene.views[MAIN_VIEW];
-        draws.encode(&view.opaque, MAIN_VIEW, stats);
+        // The occlusion reads a copy of the depth of what WebGPU's occlusion depth pass
+        // draws: the opaque draws but those it leaves out (the swaying grass, sorted
+        // last), and the water.
+        let (occluders, rest) = view.opaque.split_at(scene.main_occluders);
+        draws.encode(occluders, MAIN_VIEW, stats);
         if scene.sky {
             self.draw_sky(gpu, scene, stats);
         }
@@ -819,8 +835,12 @@ impl Frame {
             stats.draw_calls += 1;
             stats.triangles += range.index_count as u64 / 3;
         }
+        if scene.occlusion {
+            self.main.copy_depth(gpu);
+        }
+        draws.encode(rest, MAIN_VIEW, stats);
         draws.encode(&view.transparent, MAIN_VIEW, stats);
-        self.main.resolve(gpu, scene.occlusion);
+        self.main.resolve(gpu);
         if scene.occlusion {
             self.draw_occlusion(gpu, scene, stats);
         }

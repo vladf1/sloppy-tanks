@@ -248,6 +248,9 @@ const VG_GUST_SPEED = 0.55;
 const VG_TURF_LIP = 0.12;
 // The mean luminance of the tufts' instance tints (`village_vegetation::TUFT_COLORS`).
 const VG_TUFT_LUMA = 0.27;
+// A tuft's colour at its roots against its tips (linear), its blades' own shade
+// (`village_vegetation::tuft_geometry`'s root and tip vertex colours bound the ramp).
+const VG_TUFT_ROOT_SHADE = 0.72;
 // Earth seen between thinning blades at the turf's edge.
 const VG_ROOT_EARTH = vec3f(0.135, 0.095, 0.06);
 // Size of the hedged fields parcelling the valley, in metres.
@@ -1014,5 +1017,9 @@ fn vg_tuft_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let seeded = smoothstep(0.62, 0.81, pick) * tip;
     tuft = mix(tuft, vg_linear(0x9c9160) * shade * f.vertex_color.rgb, seeded * 0.55);
     tuft = mix(tuft, tuft * vec3f(0.86, 0.98, 1.02), smoothstep(0.25, 0.08, pick) * 0.6);
+    // The clump's own shade deepens towards its roots. Ambient occlusion leaves the
+    // tufts out (`EffectDefinition::skips_occlusion`), so this steady term stands
+    // in for the shade it gave them.
+    tuft = tuft * mix(VG_TUFT_ROOT_SHADE, 1.0, smoothstep(0.68, 1.13, f.vertex_color.g));
     (*s).color = tuft;
 }

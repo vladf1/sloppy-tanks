@@ -71,6 +71,12 @@ pub struct EffectDefinition {
     /// The vertex motion is a small cosmetic sway that leaves the cut-out alpha
     /// alone, so the caster may still merge into its model's still shadow.
     pub still_shadow: bool,
+    /// Blades too thin and too restless for the quarter-size ambient occlusion: they
+    /// draw no occlusion depth, so the ground under them keeps its own steady shade.
+    /// Drawn into it, each blade a pixel or two across caught and missed the probes
+    /// as it swayed (or as the camera moved), and a soft halo round every tuft
+    /// flickered like shimmering light.
+    pub skips_occlusion: bool,
     /// The hooks it defines, its own (`wgsl` and `entry`) and shared, found once
     /// when the registry takes the definition: every model part registered asks, and
     /// searching a large snippet each time added up.
@@ -108,6 +114,7 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
         shared_unlit: false,
         shadow_fade: false,
         still_shadow: false,
+        skips_occlusion: false,
         hooks: None,
     }
 }
@@ -269,6 +276,7 @@ pub const MEADOW_SWAY: EffectDefinition = EffectDefinition {
         "fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) { vg_tuft_world(w, v); }
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { vg_tuft_surface(s, f); }
 ",
+    skips_occlusion: true,
     ..effect(effects_scenery::MEADOW_SWAY, MEADOW_WGSL)
 };
 
