@@ -192,7 +192,7 @@ fn report_sites() {
         *sites.entry((stage, frames.join(" <- "))).or_default() += 1;
     }
     let mut sites: Vec<_> = sites.into_iter().collect();
-    sites.sort_by(|a, b| b.1.cmp(&a.1));
+    sites.sort_by_key(|site| std::cmp::Reverse(site.1));
     println!("allocation sites ({} allocations traced):", traces.len());
     for ((stage, site), count) in sites {
         println!("{count:6} {stage}: {site}");
