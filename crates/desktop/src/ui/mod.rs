@@ -16,6 +16,8 @@ pub mod setup;
 pub mod theme;
 pub mod touch;
 
+use std::rc::Rc;
+
 use sloppy_core::net::protocol::RoomSettings;
 use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind};
 use sloppy_web::events::PendingEvent;
@@ -120,8 +122,9 @@ const HULL_GHOST_SECONDS: f64 = 0.55;
 /// events drive, and which dialog is open.
 #[derive(Default)]
 pub struct UiState {
-    /// The engine's HUD as of its last refresh.
-    pub hud: Option<Hud<'static>>,
+    /// The engine's HUD as of its last refresh, shared so a frame's screens hold it
+    /// while they change the rest of the state without copying it.
+    pub hud: Option<Rc<Hud<'static>>>,
     pub kill_feed: Vec<KillFeedEntry>,
     pub toast: Option<Toast>,
     /// The latest ammunition notice and its age.
@@ -415,10 +418,10 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
 }
 
 #[cfg(test)]
+mod frame_cost;
+#[cfg(test)]
 mod snapshots;
 
-#[cfg(test)]
-mod frame_cost;
 #[cfg(test)]
 mod tests {
     use super::*;

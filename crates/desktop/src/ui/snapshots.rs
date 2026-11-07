@@ -190,6 +190,7 @@ fn feedback(state: &mut UiState) {
     state.viewer = Some((0.0, -0.1));
     // The shield and rapid fire have run a while: their rings have drained.
     if let Some(hud) = &mut state.hud {
+        let hud = std::rc::Rc::make_mut(hud);
         let mut timers = EffectTimers {
             longest: [0.0, 15.0, 10.0, 0.0, 0.0],
         };
@@ -275,7 +276,7 @@ fn screen(name: &'static str, phase: MatchPhase, solo: bool, alive: bool, ratio:
         in_round: phase != MatchPhase::Ready,
         phase,
         state: UiState {
-            hud: Some(hud(phase, solo, alive, ratio)),
+            hud: Some(std::rc::Rc::new(hud(phase, solo, alive, ratio))),
             ..UiState::default()
         },
     }
@@ -418,6 +419,7 @@ pub(super) fn scenarios() -> Vec<Scenario> {
         if scenario.name.starts_with("room-")
             && let Some(hud) = &mut scenario.state.hud
         {
+            let hud = std::rc::Rc::make_mut(hud);
             hud.score_pill = ScorePill::room(&hud.match_state);
         }
     }
@@ -499,8 +501,8 @@ fn snapshots() {
             "playerName": state.rooms.snapshot_player_name(),
             "size": size,
             "scale": SCALE,
-            "hud": state.hud,
-            "pause": state.hud.as_ref().map(pause_report),
+            "hud": state.hud.as_deref(),
+            "pause": state.hud.as_deref().map(pause_report),
             "stats": stats,
             "ready": state.ready,
             "status": state.status,
