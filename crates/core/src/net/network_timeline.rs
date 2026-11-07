@@ -311,13 +311,26 @@ impl NetworkTimeline {
         &mut self,
         state: RenderState,
         tick: u64,
-        events: Vec<TimedEvent>,
-        paths: Vec<PathEntry>,
+        mut events: Vec<TimedEvent>,
+        mut paths: Vec<PathEntry>,
+        cover: &impl CoverCast,
+    ) -> Result<(), String> {
+        self.push_from(state, tick, &mut events, &mut paths, cover)
+    }
+
+    /// [`push`](Self::push), moving the frame's events and path entries out of `events`
+    /// and `paths` and leaving them empty, their buffers kept for the next frame.
+    pub fn push_from(
+        &mut self,
+        state: RenderState,
+        tick: u64,
+        events: &mut Vec<TimedEvent>,
+        paths: &mut Vec<PathEntry>,
         cover: &impl CoverCast,
     ) -> Result<(), String> {
         self.newest_tick = tick;
         self.poses.push(at_tick(state, tick));
-        for entry in paths {
+        for entry in paths.drain(..) {
             let (id, from) = match entry {
                 PathEntry::Launch(path) | PathEntry::Change(path) => (path.id, path.tick),
                 PathEntry::End { id, tick } => (id, tick),
@@ -349,7 +362,7 @@ impl NetworkTimeline {
                 _ => {}
             }
         }
-        for timed in events {
+        for timed in events.drain(..) {
             // The host's effects of strikes already shown are not shown again.
             if self.strikes.iter().any(|shown| same_strike(shown, &timed)) {
                 continue;
