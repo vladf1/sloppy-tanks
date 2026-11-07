@@ -488,6 +488,27 @@ pub fn galley(
     painter.layout_job(job)
 }
 
+/// [`galley`] in no colour of its own: drawn in the colour its painter passes. egui
+/// keeps a laid-out text by everything in its job, colour too, so text whose colour
+/// changes every frame (a fading or brightening row) would be shaped again each frame;
+/// this one is laid out once, and once for its width, its shadow and itself alike.
+fn uncoloured(
+    painter: &Painter,
+    text: &str,
+    font: FontId,
+    spacing: f32,
+    max_width: f32,
+) -> Arc<Galley> {
+    galley(
+        painter,
+        text,
+        font,
+        Color32::PLACEHOLDER,
+        spacing,
+        max_width,
+    )
+}
+
 /// Text anchored at `pos` by `align`; returns where it went.
 pub fn text(
     painter: &Painter,
@@ -498,7 +519,7 @@ pub fn text(
     color: Color32,
     spacing: f32,
 ) -> Rect {
-    let galley = galley(painter, text, font, color, spacing, f32::INFINITY);
+    let galley = uncoloured(painter, text, font, spacing, f32::INFINITY);
     let rect = align.anchor_size(pos, galley.size());
     painter.galley(rect.min, galley, color);
     rect
@@ -514,17 +535,13 @@ pub fn shadowed(
     color: Color32,
     spacing: f32,
 ) -> Rect {
-    let shadow = galley(
-        painter,
-        text,
-        font.clone(),
+    let galley = uncoloured(painter, text, font, spacing, f32::INFINITY);
+    let rect = align.anchor_size(pos, galley.size());
+    painter.galley(
+        rect.min + vec2(0.0, 1.5),
+        galley.clone(),
         hexa(0x000000, 0.55),
-        spacing,
-        f32::INFINITY,
     );
-    let rect = align.anchor_size(pos, shadow.size());
-    painter.galley(rect.min + vec2(0.0, 1.5), shadow, Color32::BLACK);
-    let galley = galley(painter, text, font, color, spacing, f32::INFINITY);
     painter.galley(rect.min, galley, color);
     rect
 }
@@ -541,7 +558,7 @@ pub fn text_fit(
     spacing: f32,
     width: f32,
 ) -> Rect {
-    let galley = galley(painter, text, font, color, spacing, width);
+    let galley = uncoloured(painter, text, font, spacing, width);
     let rect = align.anchor_size(pos, galley.size());
     painter.galley(rect.min, galley, color);
     rect
@@ -557,7 +574,7 @@ pub fn wrap_width(painter: &Painter, text: &str, font: FontId, width: f32) -> f3
 
 /// The width `text` takes.
 pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> f32 {
-    galley(painter, text, font, Color32::WHITE, spacing, f32::INFINITY)
+    uncoloured(painter, text, font, spacing, f32::INFINITY)
         .size()
         .x
 }
