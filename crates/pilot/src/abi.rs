@@ -34,6 +34,16 @@ fn answer(call: impl FnOnce(&mut Engine) -> String) -> usize {
     })
 }
 
+/// Runs `call` with the fleet and the output buffer it writes its answer over, which
+/// keeps its allocation from one frame to the next.
+fn answer_into(call: impl FnOnce(&mut Fleet, &mut Vec<u8>)) -> usize {
+    ENGINE.with_borrow_mut(|engine| {
+        let Engine { fleet, output, .. } = engine;
+        call(fleet, output);
+        output.len()
+    })
+}
+
 fn input_text(engine: &Engine, length: usize) -> String {
     String::from_utf8_lossy(&engine.input[..length.min(engine.input.len())]).into_owned()
 }
@@ -129,13 +139,13 @@ pub extern "C" fn pilot_closed(handle: u32, socket: u32, code: u32, now_ms: f64)
 /// One frame; answers the actions to perform.
 #[unsafe(no_mangle)]
 pub extern "C" fn pilot_tick(handle: u32, now_ms: f64) -> usize {
-    answer(|engine| engine.fleet.tick(handle, now_ms))
+    answer_into(|fleet, output| fleet.tick(handle, now_ms, output))
 }
 
 /// Gives the seat up; answers the actions to perform.
 #[unsafe(no_mangle)]
 pub extern "C" fn pilot_leave(handle: u32, now_ms: f64) -> usize {
-    answer(|engine| engine.fleet.leave(handle, now_ms))
+    answer_into(|fleet, output| fleet.leave(handle, now_ms, output))
 }
 
 /// Answers the pilot's report.
