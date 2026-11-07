@@ -23,6 +23,7 @@ use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
 use sloppy_render::presentation::generated::theme_bakes;
 use sloppy_render::quality::DeviceClass;
+use sloppy_web::events::EventBatch;
 use sloppy_web::hud::Loading;
 use sloppy_web::{Game, GameConfig, PageError, ViewConfig, frame_slot};
 use web_time::Instant;
@@ -520,6 +521,9 @@ struct Session {
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
+    /// The engine's events of the latest frame that had any, kept so their vectors go
+    /// back to the engine's queue rather than freed and allocated again.
+    events: EventBatch,
     /// The engine stopped (a GPU error); shown instead of the game.
     failure: Option<String>,
     frame_log: Option<FrameLog>,
@@ -780,6 +784,7 @@ impl Session {
             menu_shown: false,
             last_frame: now_ms(),
             hud_dt: 0.0,
+            events: EventBatch::default(),
             failure: None,
             frame_log: frame_log.then(FrameLog::new),
             parts: FrameParts::default(),
@@ -1046,12 +1051,12 @@ impl Session {
     }
 
     fn refresh_hud(&mut self) {
-        let hud = self.game.hud().into_owned();
+        let hud = self.game.hud();
         self.phase = hud.match_state.phase;
         self.alive = hud.human.alive;
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
-        self.ui.hud = Some(Rc::new(hud));
+        self.ui.keep_hud(hud);
     }
 
     fn begin_round(&mut self) {
@@ -1100,7 +1105,7 @@ impl Session {
                 self.bakes_started.retain(|started| *started != key);
                 self.bake = None;
             }
-            self.ui.hud = Some(Rc::new(self.game.hud().into_owned()));
+            self.ui.keep_hud(self.game.hud());
         }
         if !self.preparation.preparing {
             if self.ui.starting {
@@ -1208,7 +1213,10 @@ impl Session {
         let zoomed = input.zoom != 0.0;
         // `now` is the game's clock, which a check may hold (`automation.rs`).
         let engine_start = now_ms();
-        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
+        let result = self
+            .game
+            .frame_slots(now, &input.pack())
+            .map_err(engine_error)?;
         self.parts.engine = now_ms() - engine_start;
         self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
         self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
@@ -1234,7 +1242,8 @@ impl Session {
             self.input.controls.clear();
         }
         if slot(frame_slot::EVENTS) > 0.0 {
-            let batch = self.game.take_events();
+            let mut batch = std::mem::take(&mut self.events);
+            self.game.take_events_into(&mut batch);
             if let Some(audio) = &mut self.audio {
                 audio.play(&batch);
             }
@@ -1249,6 +1258,8 @@ impl Session {
             for event in &batch.events {
                 self.ui.event(event);
             }
+            batch.events.clear();
+            self.events = batch;
         }
         let dt = f64::from(slot(frame_slot::DT));
         self.hud_dt += dt;

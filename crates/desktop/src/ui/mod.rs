@@ -20,6 +20,7 @@ use std::rc::Rc;
 
 use sloppy_core::net::protocol::RoomSettings;
 use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind};
+use sloppy_web::battle_report::PauseReport;
 use sloppy_web::events::PendingEvent;
 pub use sloppy_web::feedback::{DeathReport, ToastTone};
 use sloppy_web::hud::Hud;
@@ -118,6 +119,10 @@ pub use sloppy_web::feedback::{
 const HULL_GHOST_DELAY: f64 = 0.35;
 const HULL_GHOST_SECONDS: f64 = 0.55;
 
+/// A HUD's address and how many refills it had: which text written from a HUD is
+/// current.
+pub type HudKey = (usize, u64);
+
 /// What the screens show besides the engine's HUD state: transient feedback the
 /// events drive, and which dialog is open.
 #[derive(Default)]
@@ -125,6 +130,11 @@ pub struct UiState {
     /// The engine's HUD as of its last refresh, shared so a frame's screens hold it
     /// while they change the rest of the state without copying it.
     pub hud: Option<Rc<Hud<'static>>>,
+    /// How many times [`UiState::keep_hud`] refilled the HUD, which keeps its `Rc`: the
+    /// screens' text written from it knows by this when to write itself again.
+    pub hud_refreshes: u64,
+    /// Pause's facts for the HUD they were written from ([`UiState::pause_report`]).
+    pub pause_facts: Option<(HudKey, Rc<PauseReport>)>,
     pub kill_feed: Vec<KillFeedEntry>,
     pub toast: Option<Toast>,
     /// The latest ammunition notice and its age.
@@ -135,6 +145,9 @@ pub struct UiState {
     pub damage_ring: Option<(f64, f64)>,
     /// The Settings dialog's draft, while it is open.
     pub settings_draft: Option<Preferences>,
+    /// Battle Setup's working copy of the preferences, kept between frames so taking a
+    /// fresh copy writes into it rather than allocating one.
+    pub setup_prefs: Option<Preferences>,
     /// Battle Setup's status line (preparation progress, errors).
     pub status: String,
     /// The share of the arena's shaders loaded while the status line counts them.
@@ -338,6 +351,36 @@ impl UiState {
                 own_death: row.own_death,
                 age: 0.0,
             });
+        }
+    }
+
+    /// Keep the engine's latest HUD, refilling the kept one in place: its rows and names
+    /// reuse their text, so a refresh allocates nothing once they have grown. The screens
+    /// hold their `Rc` clones only while they draw.
+    pub fn keep_hud(&mut self, hud: Hud<'_>) {
+        if let Some(kept) = &mut self.hud {
+            Rc::make_mut(kept).refill(hud);
+        } else {
+            self.hud = Some(Rc::new(hud.into_owned()));
+        }
+        self.hud_refreshes += 1;
+    }
+
+    /// Which HUD `hud` is: the one kept, as of its latest refill.
+    fn hud_key(&self, hud: &Rc<Hud<'static>>) -> HudKey {
+        (Rc::as_ptr(hud) as usize, self.hud_refreshes)
+    }
+
+    /// Pause's facts for `hud`, written again only once the HUD changed.
+    pub fn pause_report(&mut self, hud: &Rc<Hud<'static>>) -> Rc<PauseReport> {
+        let key = self.hud_key(hud);
+        match &self.pause_facts {
+            Some((kept, report)) if *kept == key => Rc::clone(report),
+            _ => {
+                let report = Rc::new(sloppy_web::battle_report::pause_report(hud));
+                self.pause_facts = Some((key, Rc::clone(&report)));
+                report
+            }
         }
     }
 

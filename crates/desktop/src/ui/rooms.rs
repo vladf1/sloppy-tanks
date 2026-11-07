@@ -97,6 +97,10 @@ pub struct RoomsState {
     /// When to ask again; `None`: now.
     next_poll: Option<Instant>,
     list: ServerList,
+    /// Each listed room's two lines ([`room_lines`]) and the rooms they were written
+    /// from: written again only when the list changes, not every frame.
+    lines: Vec<(String, String)>,
+    lines_of: Vec<HostedRoom>,
     state: ListState,
     /// The open room chosen, or empty for the new room.
     selected: String,
@@ -131,6 +135,8 @@ impl Default for RoomsState {
             request: None,
             next_poll: None,
             list: ServerList::default(),
+            lines: Vec::new(),
+            lines_of: Vec::new(),
             state: ListState::Loading,
             selected: String::new(),
             name: None,
@@ -315,6 +321,14 @@ impl RoomsState {
             } else {
                 format!("{}\n{state}", self.return_notice)
             };
+        }
+    }
+
+    /// Write the listed rooms' lines again if the list changed since.
+    fn update_room_lines(&mut self) {
+        if self.lines_of != self.list.rooms {
+            self.lines = self.list.rooms.iter().map(room_lines).collect();
+            self.lines_of.clone_from(&self.list.rooms);
         }
     }
 
@@ -732,22 +746,23 @@ pub fn room_list_height(painter: &Painter, state: &RoomsState, width: f32) -> f3
 
 /// What a team choice says it means, wrapped to a choice `width` wide.
 fn team_line(painter: &Painter, line: &str, width: f32) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::single_section(
-        line.to_owned(),
+    let wrap = paint::wrap_width(
+        painter,
+        line,
+        egui::FontId::proportional(12.0),
+        width - TEAM_COPY_LEFT - 14.0,
+    );
+    paint::wrapped_section(
+        painter,
+        line,
         egui::TextFormat {
             font_id: egui::FontId::proportional(12.0),
             color: hex(0xd0e4f3),
             line_height: Some(TEAM_LINE),
             ..Default::default()
         },
-    );
-    job.wrap.max_width = paint::wrap_width(
-        painter,
-        line,
-        egui::FontId::proportional(12.0),
-        width - TEAM_COPY_LEFT - 14.0,
-    );
-    painter.layout_job(job)
+        wrap,
+    )
 }
 
 /// Each team choice's least height in a well `width` wide.
@@ -1517,9 +1532,10 @@ fn empty_rooms(ui: &mut egui::Ui, art: &Art, area: Rect, state: &mut RoomsState,
 /// The open rooms, one line each, chosen like the new room.
 fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
     ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
-    let rooms = state.list.rooms.clone();
-    for room in &rooms {
-        let (title, detail) = room_lines(room);
+    state.update_room_lines();
+    for index in 0..state.list.rooms.len() {
+        let room = &state.list.rooms[index];
+        let (title, detail) = &state.lines[index];
         let joinable = room.joinable();
         let (rect, response) = ui.allocate_exact_size(
             vec2(ui.available_width(), ROOM_ROW_HEIGHT),
@@ -1543,7 +1559,7 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
             painter,
             pos2(rect.left() + 38.0, rect.center().y),
             Align2::LEFT_CENTER,
-            &title,
+            title,
             bold_font(14.0),
             fade(Color32::WHITE, alpha),
             0.0,
@@ -1552,14 +1568,15 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
             painter,
             pos2(title_rect.right() + 10.0, rect.center().y + 1.0),
             Align2::LEFT_CENTER,
-            &detail,
+            detail,
             egui::FontId::proportional(12.0),
             fade(hex(SMALL_INK), alpha),
             0.0,
             (rect.right() - 10.0 - title_rect.right() - 10.0).max(0.0),
         );
         if joinable && response.clicked() {
-            state.choose(&room.room);
+            let room = room.room.clone();
+            state.choose(&room);
         }
     }
 }

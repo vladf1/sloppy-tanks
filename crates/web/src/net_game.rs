@@ -72,7 +72,7 @@
 //! `set_graphics_setting` (the setting itself).
 
 use crate::Shell;
-use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events, take_events_into};
 use crate::feedback::event_feedback;
 use crate::net_frame_slot;
 use crate::sounds::SoundPlanner;
@@ -188,7 +188,7 @@ pub struct NetGame {
     backdrop_blur: bool,
     graphics: Graphics,
     /// The last frame's result, which a frame skipped for the GPU hands back.
-    last_result: Vec<f32>,
+    last_result: [f32; net_frame_slot::LENGTH],
     /// Main-thread milliseconds spent applying received messages (including deliveries of
     /// the development delay) this page session, for the statistics.
     receive_ms: f64,
@@ -451,6 +451,15 @@ impl NetGame {
     /// One animation frame: advance the interpolated display, send input due now, route
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
+        self.run_frame(now, input).map(Vec::from)
+    }
+
+    /// [`NetGame::frame`]'s slots, which the typed shell reads without a copy on the heap.
+    fn run_frame(
+        &mut self,
+        now: f64,
+        input: &[f32],
+    ) -> Result<[f32; net_frame_slot::LENGTH], PageError> {
         let input = InputFrame::from_slice(input);
         self.sounds.set_clock(now);
         // The development delay delivers messages on this clock too.
@@ -469,7 +478,7 @@ impl NetGame {
             if active && self.view.rig.first_person.enabled {
                 self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
             }
-            let mut result = self.last_result.clone();
+            let mut result = self.last_result;
             result[net_frame_slot::RAN] = 0.0;
             result[net_frame_slot::EVENTS] = self.events.len() as f32;
             result[net_frame_slot::HUD_DUE] = 0.0;
@@ -535,7 +544,7 @@ impl NetGame {
         self.graphics
             .frame(&mut self.view.renderer, &self.times, playing);
         let result = self.frame_result(drawn, dt);
-        self.last_result.clone_from(&result);
+        self.last_result = result;
         Ok(result)
     }
 
@@ -664,6 +673,16 @@ impl NetGame {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl NetGame {
+    /// One animation frame ([`NetGame::frame`]), its result in [`net_frame_slot`]'s
+    /// slots.
+    pub fn frame_slots(
+        &mut self,
+        now: f64,
+        input: &[f32],
+    ) -> Result<[f32; net_frame_slot::LENGTH], PageError> {
+        self.run_frame(now, input)
+    }
+
     /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
     pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
@@ -719,7 +738,7 @@ impl NetGame {
             backdrop_blur: false,
             shell,
             graphics,
-            last_result: vec![0.0; net_frame_slot::LENGTH],
+            last_result: [0.0; net_frame_slot::LENGTH],
             receive_ms: 0.0,
             network_sampler: NetworkSampler::default(),
         };
@@ -805,6 +824,14 @@ impl NetGame {
         let listener = self.listener();
         let right = self.view.rig.listener_right;
         take_events(&mut self.events, listener, right, &mut self.sounds)
+    }
+
+    /// [`NetGame::take_events`] into a batch the shell keeps, which hands the queue its
+    /// emptied events back.
+    pub fn take_events_into(&mut self, batch: &mut EventBatch) {
+        let listener = self.listener();
+        let right = self.view.rig.listener_right;
+        take_events_into(&mut self.events, listener, right, &mut self.sounds, batch);
     }
 
     /// The chosen view and clamped overhead zoom.
@@ -997,9 +1024,9 @@ impl NetGame {
         }
     }
 
-    fn frame_result(&mut self, drawn: bool, dt: f64) -> Vec<f32> {
+    fn frame_result(&mut self, drawn: bool, dt: f64) -> [f32; net_frame_slot::LENGTH] {
         use net_frame_slot as slot;
-        let mut result = vec![0.0; slot::LENGTH];
+        let mut result = [0.0; slot::LENGTH];
         let phase = self.client.phase();
         let menu = self.client.menu_open();
         let flag = |value: bool| f32::from(u8::from(value));

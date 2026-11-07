@@ -91,7 +91,7 @@ pub fn vehicle_card(
         }
     } else if !narrow {
         // The class tag, led by a dot in the class's colour.
-        let class = tank.class.to_uppercase();
+        let class = paint::upper(tank.class);
         let class_font = bold_font(11.0);
         let class_width = paint::text_width(painter, &class, class_font.clone(), 0.4) + 26.0;
         let tag = Rect::from_min_size(
@@ -176,10 +176,13 @@ pub fn vehicle_card(
         let half = (rect.width() - 2.0 * padding - 16.0) / 2.0;
         for (index, (label, share)) in [
             (
-                format!("{} HIT POINTS", tank.hit_points()),
+                paint::short(format_args!("{} HIT POINTS", tank.hit_points())),
                 tank.hit_points_share(),
             ),
-            (format!("{} KM/H", tank.km_per_hour()), tank.speed_share()),
+            (
+                paint::short(format_args!("{} KM/H", tank.km_per_hour())),
+                tank.speed_share(),
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -220,6 +223,7 @@ pub fn vehicle_card(
                 (super::theme::GOLD_HOT, GOLD)
             };
             painter.add(paint::gradient_polygon(
+                painter.ctx(),
                 &[
                     fill.left_top(),
                     fill.right_top(),
@@ -412,7 +416,7 @@ fn map_card(
         // The art's height and how far it runs past the right edge, and where the scrim
         // is solid to and clear from, from the right (`var(--art) right -6px bottom /
         // auto 74%` under `#0b1b36 calc(100% - 150px), transparent calc(100% - 60px)`).
-        let art_name = format!("art-{}", map.id.as_str());
+        let art_name = paint::short(format_args!("art-{}", map.id.as_str()));
         let (share, past_edge) = match layout {
             MapLayout::Row => (0.74, 6.0),
             MapLayout::Phone => (0.96, 10.0),
@@ -831,7 +835,7 @@ fn battle_card(
         painter,
         rect.min + vec2(16.0, rect.height() - 33.0 - BATTLE_TITLE_SIZE),
         Align2::LEFT_TOP,
-        &name.to_uppercase(),
+        &paint::upper(name),
         display_font(BATTLE_TITLE_SIZE),
         Color32::WHITE,
         0.5,
@@ -888,7 +892,7 @@ fn battle_key(
         painter,
         rect.left_center() + vec2(BATTLE_KEY_PADDING, 0.0),
         Align2::LEFT_CENTER,
-        &battle.name.to_uppercase(),
+        &paint::upper(battle.name),
         display_font(title_size),
         Color32::WHITE,
         0.8,
@@ -913,7 +917,7 @@ fn difficulty_segment(
             painter,
             rect.center_top() + vec2(0.0, 12.0),
             Align2::CENTER_TOP,
-            &entry.name.to_uppercase(),
+            &paint::upper(entry.name),
             display_font(name_size),
             Color32::WHITE,
             0.6,
@@ -933,7 +937,7 @@ fn difficulty_segment(
         painter,
         rect.min + vec2(18.0, content_top),
         Align2::LEFT_TOP,
-        &entry.name.to_uppercase(),
+        &paint::upper(entry.name),
         display_font(24.0),
         Color32::WHITE,
         0.5,
@@ -1472,7 +1476,13 @@ pub fn battle_setup(
     actions: &mut Vec<Action>,
 ) {
     super::backdrop::backdrop(context, art);
-    let mut prefs = view.prefs.clone();
+    let mut prefs = match state.setup_prefs.take() {
+        Some(mut kept) => {
+            kept.copy_from(view.prefs);
+            kept
+        }
+        None => view.prefs.clone(),
+    };
     let screen = context.content_rect();
     if crate::touch::phone() {
         phone_setup(context, state, art, view, &mut prefs, actions);
@@ -1483,6 +1493,8 @@ pub fn battle_setup(
     }
     if prefs != *view.prefs {
         actions.push(Action::SettingsSaved(Box::new(prefs)));
+    } else {
+        state.setup_prefs = Some(prefs);
     }
 }
 
@@ -2153,7 +2165,7 @@ fn stack_tank_card(
     } else {
         (tank.class, 11.0, 0.4, 7.0, 6.0)
     };
-    let class = class.to_uppercase();
+    let class = paint::upper(class);
     let font = bold_font(font_size);
     let tag_width = padding
         + 6.0
@@ -2225,9 +2237,17 @@ fn stack_tank_card(
     );
     if !rows.narrow {
         let (hull, font_size, spacing) = if rows.class_below {
-            (format!("{} HP", tank.hit_points()), 10.5, 0.2)
+            (
+                paint::short(format_args!("{} HP", tank.hit_points())),
+                10.5,
+                0.2,
+            )
         } else {
-            (format!("{} HIT POINTS", tank.hit_points()), 11.0, 1.2)
+            (
+                paint::short(format_args!("{} HIT POINTS", tank.hit_points())),
+                11.0,
+                1.2,
+            )
         };
         let spec = Rect::from_min_max(
             pos2(rect.left() + left, rect.bottom() - bottom - SPEC_HEIGHT),
@@ -2238,7 +2258,10 @@ fn stack_tank_card(
             spec,
             [
                 (hull, tank.hit_points_share()),
-                (format!("{} KM/H", tank.km_per_hour()), tank.speed_share()),
+                (
+                    paint::short(format_args!("{} KM/H", tank.km_per_hour())),
+                    tank.speed_share(),
+                ),
             ],
             bold_font(font_size),
             spacing,
@@ -2253,7 +2276,7 @@ fn stack_tank_card(
 fn spec_bars(
     painter: &Painter,
     rect: Rect,
-    specs: [(String, f32); 2],
+    specs: [(paint::ShortText, f32); 2],
     font: egui::FontId,
     spacing: f32,
 ) {
@@ -2327,17 +2350,17 @@ fn map_name_galley(
             (15.0, MAP_NAME_LINE, column.max(detail))
         }
     };
-    let mut job = egui::text::LayoutJob::single_section(
-        map.name().to_owned(),
+    paint::wrapped_section(
+        painter,
+        map.name(),
         egui::TextFormat {
             font_id: bold_font(size),
             color: Color32::WHITE,
             line_height: Some(line),
             ..Default::default()
         },
-    );
-    job.wrap.max_width = wrap;
-    painter.layout_job(job)
+        wrap,
+    )
 }
 
 /// The height a row of map cards `width` wide needs: the least, or more for a name that
@@ -2362,22 +2385,23 @@ fn difficulty_detail(
     entry: &DifficultyOption,
     width: f32,
 ) -> std::sync::Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::single_section(
-        entry.detail.to_owned(),
+    let wrap = paint::wrap_width(
+        painter,
+        entry.detail,
+        egui::FontId::proportional(12.5),
+        width - DIFFICULTY_TEXT_INSET,
+    );
+    paint::wrapped_section(
+        painter,
+        entry.detail,
         egui::TextFormat {
             font_id: egui::FontId::proportional(12.5),
             color: hex(0xd0e4f3),
             line_height: Some(DIFFICULTY_LINE),
             ..Default::default()
         },
-    );
-    job.wrap.max_width = paint::wrap_width(
-        painter,
-        entry.detail,
-        egui::FontId::proportional(12.5),
-        width - DIFFICULTY_TEXT_INSET,
-    );
-    painter.layout_job(job)
+        wrap,
+    )
 }
 
 /// A difficulty level's least height in a level `width` wide.
@@ -3720,7 +3744,7 @@ fn phone_tank_card(
         return;
     }
     // The class in one word in a small tag, led by a dot in its colour.
-    let class = tank.short_class.to_uppercase();
+    let class = paint::upper(tank.short_class);
     let font = bold_font(10.5);
     let tag = Rect::from_min_size(
         pos2(
@@ -3759,8 +3783,14 @@ fn phone_tank_card(
     let row = PHONE_SPEC_LABEL + label_gap + PHONE_SPEC_BAR;
     let spec_top = rect.bottom() - pad_y - 2.0 * row - row_gap;
     for (index, (label, share)) in [
-        (format!("{} HP", tank.hit_points()), tank.hit_points_share()),
-        (format!("{} KM/H", tank.km_per_hour()), tank.speed_share()),
+        (
+            paint::short(format_args!("{} HP", tank.hit_points())),
+            tank.hit_points_share(),
+        ),
+        (
+            paint::short(format_args!("{} KM/H", tank.km_per_hour())),
+            tank.speed_share(),
+        ),
     ]
     .into_iter()
     .enumerate()
@@ -3836,7 +3866,7 @@ fn format_key(painter: &Painter, rect: Rect, battle: &BattleFormat, selected: bo
         painter,
         at,
         align,
-        &battle.name.to_uppercase(),
+        &paint::upper(battle.name),
         display_font(19.0),
         Color32::WHITE,
         0.5,

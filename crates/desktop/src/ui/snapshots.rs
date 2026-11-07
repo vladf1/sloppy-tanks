@@ -78,7 +78,7 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
     let mut hud = Hud {
         elapsed: 312.0,
         game_mode: if solo { GameMode::Solo } else { GameMode::Team },
-        map_name: "Pine Village".into(),
+        map_name: "Pine Village",
         active_enemies: 6,
         human: HudHuman {
             id: 1,
