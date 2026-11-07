@@ -10,11 +10,12 @@
 //! parts' shapes, and is the simulation's own copy wherever that still stands.
 //!
 //! A cottage's pieces (a millisecond natively) are kept a few seconds after the last
-//! body cut from them, for the [`PIECES_KEPT`] latest cottages: a collapse drops its
-//! bodies over a second or two, and its pile draws them again whenever a merged chunk
-//! breaks up as they settle and fade, in bursts seconds apart; building the pieces
-//! afresh each such frame was most of a collapsing cottage's cost. They are the
-//! source the bodies are cut and batched from, never what the GPU draws.
+//! look or body cut from them, for the [`PIECES_KEPT`] latest cottages: each hit
+//! rebuilds its look from them, a collapse drops its bodies over a second or two, and
+//! its pile draws them again whenever a merged chunk breaks up as they settle and
+//! fade, in bursts seconds apart; building the pieces afresh for each was most of a
+//! collapsing cottage's cost. They are the source the models are cut and batched
+//! from, never what the GPU draws.
 
 use crate::fixed_hash::HashMap;
 use std::sync::Arc;
@@ -35,17 +36,17 @@ pub struct DebrisSource {
     pub parts: PartSet,
 }
 
-/// Seconds a cottage's pieces are kept after the last body cut from them.
+/// Seconds a cottage's pieces are kept after the last look or body cut from them.
 const PIECES_KEPT_SECONDS: f64 = 3.0;
 /// Cottages whose pieces are kept beyond the frame that used them (about 0.6 MB each
 /// natively).
 const PIECES_KEPT: usize = 1;
 
-/// A cottage's pieces for its fallen bodies, and when a body was last cut from them
-/// (presentation seconds).
+/// A cottage's pieces for its looks and fallen bodies, and when one was last cut
+/// from them (presentation seconds).
 struct KeptPieces {
     cover: u32,
-    pieces: HouseDebris,
+    pieces: Arc<HouseDebris>,
     used: f64,
 }
 
@@ -70,36 +71,38 @@ impl CottageLayouts {
             .clone()
     }
 
-    /// The model of a structure's fallen body: a cottage's cut from its pieces, built
-    /// once for all its bodies falling or merging within a few seconds of each other
-    /// (`now`, presentation seconds).
-    pub fn body(&mut self, source: &DebrisSource, now: f64) -> Node {
-        let shape = &source.shape;
-        if shape.kind != CoverKind::House {
-            return structure_debris(shape, &source.parts);
-        }
-        let kept = match self
-            .debris
-            .iter()
-            .position(|kept| kept.cover == source.cover)
-        {
+    /// The pieces of cottage `cover`, shaped `shape`, with its plinth and yard: built
+    /// once for all its looks and bodies within a few seconds of each other (`now`,
+    /// presentation seconds).
+    pub fn pieces(&mut self, cover: u32, shape: &CoverShape, now: f64) -> Arc<HouseDebris> {
+        let kept = match self.debris.iter().position(|kept| kept.cover == cover) {
             Some(index) => {
                 let mut kept = self.debris.remove(index);
                 kept.used = now;
                 kept
             }
             None => {
-                let layout = self.layout(source.cover, shape);
+                let layout = self.layout(cover, shape);
                 KeptPieces {
-                    cover: source.cover,
-                    pieces: HouseDebris::new(layout, shape.x, shape.z),
+                    cover,
+                    pieces: Arc::new(HouseDebris::with_ground(layout, shape.x, shape.z)),
                     used: now,
                 }
             }
         };
-        let body = kept.pieces.body(&source.parts);
+        let pieces = kept.pieces.clone();
         self.debris.push(kept);
-        body
+        pieces
+    }
+
+    /// The model of a structure's fallen body: a cottage's cut from its
+    /// [pieces](Self::pieces).
+    pub fn body(&mut self, source: &DebrisSource, now: f64) -> Node {
+        let shape = &source.shape;
+        if shape.kind != CoverKind::House {
+            return structure_debris(shape, &source.parts);
+        }
+        self.pieces(source.cover, shape, now).body(&source.parts)
     }
 
     /// Drop the pieces no body was cut from for [`PIECES_KEPT_SECONDS`], and the least
@@ -121,7 +124,7 @@ impl CottageLayouts {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::models::house_debris;
+    use sloppy_core::models::{HouseBuild, house_debris};
     use sloppy_core::sim::render_state::RenderCover;
 
     #[test]
@@ -172,7 +175,7 @@ mod tests {
             shape: CoverShape::from(&RenderCover {
                 id: 4,
                 x: -20.0,
-                ..cover.clone()
+                ..cover
             }),
             parts: PartSet::from_indices([0]),
         };
@@ -201,5 +204,36 @@ mod tests {
         );
         layouts.clear();
         assert!(first.upgrade().is_none(), "a new round lets it go");
+    }
+
+    #[test]
+    fn a_look_built_from_shared_pieces_matches_its_own_build() {
+        let cover = RenderCover {
+            id: 5,
+            kind: CoverKind::House,
+            x: -6.0,
+            z: 14.0,
+            w: 8.0,
+            d: 7.0,
+            h: 5.5,
+            ..RenderCover::default()
+        };
+        let shape = CoverShape::from(&cover);
+        let mut layouts = CottageLayouts::default();
+        let layout = layouts.layout(cover.id, &shape);
+        let broken = PartSet::from_indices((0..layout.parts.len()).filter(|i| i % 7 == 2));
+        let build = |shared: Option<Arc<HouseDebris>>| {
+            let mut build = HouseBuild::new(layout.clone(), cover.x, cover.z, &broken);
+            if let Some(pieces) = shared {
+                assert!(build.needs_pieces());
+                build.use_pieces(pieces);
+            }
+            while !build.step() {}
+            format!("{:?}", build.finish())
+        };
+        let own = build(None);
+        let pieces = layouts.pieces(cover.id, &shape, 0.0);
+        assert_eq!(build(Some(pieces.clone())), own);
+        assert_eq!(build(Some(pieces)), own, "the pieces serve every look");
     }
 }

@@ -2574,6 +2574,12 @@ impl Presentation {
                     )));
                     false
                 }
+                // Its pieces, shared with its fallen bodies and its next looks.
+                LookPhase::Building(build) if build.needs_pieces() => {
+                    let shape = CoverShape::from(cover);
+                    build.use_pieces(self.layouts.pieces(cover.id, &shape, self.time));
+                    false
+                }
                 LookPhase::Building(build) => {
                     if build.step()
                         && let LookPhase::Building(build) =

@@ -65,7 +65,9 @@ pub struct HouseBuild {
     standing: PartSet,
     /// Whether a gap shows its rooms.
     open: bool,
-    pieces: Option<CottagePieces>,
+    /// The cottage's pieces from its first step on: its own, or ones it shares
+    /// ([`HouseBuild::use_pieces`]).
+    pieces: Option<Arc<HouseDebris>>,
     next: usize,
     group: Node,
 }
@@ -97,6 +99,20 @@ impl HouseBuild {
         &self.layout
     }
 
+    /// Whether the build's next step is the one that builds its pieces, which
+    /// [`HouseBuild::use_pieces`] can take instead.
+    pub fn needs_pieces(&self) -> bool {
+        self.open && self.pieces.is_none()
+    }
+
+    /// The step that builds the pieces ([`HouseBuild::needs_pieces`]), taking the
+    /// cottage's pieces built already for its looks or bodies
+    /// ([`HouseDebris::with_ground`] of the build's layout).
+    pub fn use_pieces(&mut self, pieces: Arc<HouseDebris>) {
+        debug_assert!(self.needs_pieces() && Arc::ptr_eq(&pieces.layout, &self.layout));
+        self.pieces = Some(pieces);
+    }
+
     /// One step of the build; true once it is done.
     pub fn step(&mut self) -> bool {
         if !self.open {
@@ -107,17 +123,21 @@ impl HouseBuild {
             }
             return true;
         }
-        let Some(pieces) = &mut self.pieces else {
-            self.pieces = Some(cottage_pieces(self.layout.design().expect("a cottage"), self.x, self.z, true));
+        let Some(source) = &mut self.pieces else {
+            self.pieces = Some(Arc::new(HouseDebris::with_ground(self.layout.clone(), self.x, self.z)));
             return false;
         };
-        if self.next < pieces.parts.len() {
+        if self.next < source.pieces.parts.len() {
+            let pieces = &source.pieces;
             piece_into(&mut self.group, &self.layout, pieces, &pieces.parts[self.next], &self.standing);
-            // Each piece is drawn once: the model now holds what it kept of its meshes.
-            let piece = &mut pieces.parts[self.next];
-            piece.meshes = Vec::new();
-            piece.shingles = None;
-            piece.nodes = Vec::new();
+            // Each piece is drawn once: unless the pieces are shared, the model now holds
+            // what it kept of its meshes.
+            if let Some(own) = Arc::get_mut(source) {
+                let piece = &mut own.pieces.parts[self.next];
+                piece.meshes = Vec::new();
+                piece.shingles = None;
+                piece.nodes = Vec::new();
+            }
             self.next += 1;
             return false;
         }
@@ -136,9 +156,14 @@ impl HouseBuild {
             mut group,
             ..
         } = self;
-        let pieces = pieces.expect("built");
+        let mut source = pieces.expect("built");
+        let ground = match Arc::get_mut(&mut source) {
+            Some(own) => std::mem::take(&mut own.pieces.ground),
+            None => source.pieces.ground.clone(),
+        };
+        let pieces = &source.pieces;
         let design = layout.design().expect("a cottage");
-        rooms_into(&mut group, &layout, &pieces, &standing, true);
+        rooms_into(&mut group, &layout, pieces, &standing, true);
         // The ground floor's boards laid on the ground inside the footing, which a
         // gutted cottage shows and a tank driving in rolls over, and the footing under
         // the parts still standing.
@@ -150,7 +175,7 @@ impl HouseBuild {
         );
         footings(&mut floor, &layout, &standing);
         paint_cottage(&mut group, floor.finish_scaled(cottage_scale(design)), design, &pieces.palette);
-        flatten_into(&mut group, pieces.ground);
+        flatten_into(&mut group, ground);
         // One draw per finish for the whole cottage, its plinth and yard with it.
         batch(&mut group);
         group.set_rotation_euler(0.0, design.yaw(), 0.0);
@@ -201,10 +226,11 @@ pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> 
     HouseDebris::new(layout, x, z).body(parts)
 }
 
-/// What a cottage's fallen bodies are cut from: its layout and its finished pieces
-/// (without its plinth and yard, which never fall). Building the pieces is most of a
-/// body's cost, so a collapse's bodies share one; it is dropped once they are built,
-/// never kept, since the bodies' models hold what they draw.
+/// What a cottage's fallen bodies, and with its plinth and yard its damaged looks
+/// ([`HouseBuild`]), are cut from: its layout and its finished pieces. Building the
+/// pieces is most of a body's cost and a millisecond of a look's, so a page shares one
+/// between a collapse's looks and bodies; they are the source the models are cut and
+/// batched from, never what the models draw.
 pub struct HouseDebris {
     layout: Arc<Structure>,
     pieces: CottagePieces,
@@ -215,6 +241,12 @@ impl HouseDebris {
     /// [`shared_house_structure`]).
     pub fn new(layout: Arc<Structure>, x: f64, z: f64) -> Self {
         let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, false);
+        Self { layout, pieces }
+    }
+
+    /// [`HouseDebris::new`] with the plinth and yard too, for [`HouseBuild::use_pieces`].
+    pub fn with_ground(layout: Arc<Structure>, x: f64, z: f64) -> Self {
+        let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, true);
         Self { layout, pieces }
     }
 
