@@ -22,7 +22,7 @@
 //! Parts are measured in the structure's build frame: its ground centre at the origin, y
 //! up, turned [`Structure::yaw`] about y from the world's axes.
 
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use glam::{DMat3, DQuat, DVec2, DVec3};
 use serde::{Deserialize, Serialize};
@@ -610,6 +610,8 @@ pub struct Structure {
     pub breachable: bool,
     /// Its parts' collider shapes, each built the first time a collider asks for it.
     pub shapes: ShapeCache,
+    /// Its supports turned round, built the first time the share rule runs.
+    holds: HoldsCache,
 }
 
 /// A body of a structure's parts coming down together: its parts, and for a group that
@@ -701,6 +703,7 @@ impl Structure {
             hinges: false,
             breachable: true,
             shapes: ShapeCache::default(),
+            holds: HoldsCache::default(),
         }
     }
 
@@ -828,11 +831,14 @@ impl Structure {
     /// than [`FIRM`] seats nothing, so this settles until the firm parts no longer change.
     /// Indexed by part; the entries past the structure's parts are 0.
     pub fn stability(&self, standing: &dyn Fn(usize) -> bool) -> [f32; MAX_PARTS] {
-        self.stability_with(&Holds::of(self), standing)
+        self.stability_with(self.holds(), standing)
     }
 
-    /// [`Self::stability`] over the structure's [`Holds`], built once for every run of
-    /// the rule that a break makes.
+    fn holds(&self) -> &Holds {
+        self.holds.0.get_or_init(|| Holds::of(self))
+    }
+
+    /// [`Self::stability`] over the structure's [`Holds`].
     fn stability_with(&self, holds: &Holds, standing: &dyn Fn(usize) -> bool) -> [f32; MAX_PARTS] {
         let count = self.parts.len();
         let mut firm = PartSet::from_indices((0..count).filter(|&index| standing(index)));
@@ -869,9 +875,14 @@ impl Structure {
         };
         support[..count].fill(0.0);
         let mut settled = [false; MAX_PARTS];
+        // The open parts with some support: the only ones the best can be among.
+        let mut open = [0u16; MAX_PARTS];
+        let mut open_count = 0;
         for (index, part) in self.parts.iter().enumerate() {
             if part.grounded && standing(index) {
                 support[index] = 1.0;
+                open[open_count] = index as u16;
+                open_count += 1;
             }
         }
         // How much of the share each part's seats at each end pass on, from what still
@@ -905,19 +916,25 @@ impl Structure {
         // takes its weaker end, so a part's support is settled once it is the best open
         // part.
         loop {
-            // The best open part (the lowest index on a tie), found by a linear scan: a
-            // structure has at most a few hundred parts.
+            // The best open part (the lowest index on a tie), found by a linear scan of
+            // the open parts: a structure has at most a few hundred parts, and few of them
+            // are open at once.
             let mut chosen = None;
             let mut value = 0.0f32;
-            for index in 0..count {
-                if !settled[index] && support[index] > value {
+            for (slot, &index) in open[..open_count].iter().enumerate() {
+                let index = index as usize;
+                if support[index] > value
+                    || (support[index] == value && chosen.is_some_and(|(_, best)| index < best))
+                {
                     value = support[index];
-                    chosen = Some(index);
+                    chosen = Some((slot, index));
                 }
             }
-            let Some(index) = chosen else {
+            let Some((slot, index)) = chosen else {
                 break;
             };
+            open_count -= 1;
+            open[slot] = open[open_count];
             settled[index] = true;
             for hold in holds.of_part(index) {
                 let held = hold.held as usize;
@@ -931,11 +948,16 @@ impl Structure {
                     let offered = value * share;
                     if offered > best[held][end] {
                         best[held][end] = offered;
-                        support[held] = support[held].max(held_by(
+                        let before = support[held];
+                        support[held] = before.max(held_by(
                             &best[held],
                             holds.spans.contains(held),
                             self.parts[held].beam,
                         ));
+                        if before == 0.0 && support[held] > 0.0 {
+                            open[open_count] = held as u16;
+                            open_count += 1;
+                        }
                     }
                 }
             }
@@ -946,15 +968,25 @@ impl Structure {
     /// them that tipped over with where they turn. Whether a part falls does not depend
     /// on `toward`, only which way a group tips.
     pub fn giving_way(&self, gone: &PartSet, toward: DVec3) -> GivingWay {
-        let holds = self.shares.then(|| Holds::of(self));
+        let holds = self.shares.then(|| self.holds());
         let mut falling = PartSet::EMPTY;
         let mut tips = Vec::new();
-        let (mut contacts, mut hull) = (Vec::new(), Hull::default());
+        // Room for every part's contacts at once (and a hull's chains round them), so the
+        // groups share it without growing it.
+        let room = match self.tipping {
+            Some(_) => self.parts.iter().map(|part| part.contacts.len()).sum(),
+            None => 0,
+        };
+        let mut contacts = Vec::with_capacity(room);
+        let mut hull = Hull {
+            sorted: Vec::with_capacity(room),
+            points: Vec::with_capacity(2 * room),
+        };
         loop {
             let down = gone.union(&falling);
             let standing = |index: usize| !down.contains(index);
             let mut more = PartSet::EMPTY;
-            if let Some(holds) = &holds {
+            if let Some(holds) = holds {
                 let stability = self.stability_with(holds, &standing);
                 for (index, (part, support)) in self.parts.iter().zip(&stability).enumerate() {
                     if standing(index) && !part.footing && *support < FALL_BELOW {
@@ -1320,6 +1352,30 @@ impl Holds {
     /// The parts `holder` holds.
     fn of_part(&self, holder: usize) -> &[Hold] {
         &self.links[self.start[holder] as usize..self.start[holder + 1] as usize]
+    }
+}
+
+/// A structure's [`Holds`], built the first time the share rule runs: a built structure's
+/// supports no longer change.
+#[derive(Default)]
+struct HoldsCache(OnceLock<Holds>);
+
+/// A copy of a structure starts with no holds: it may be changed.
+impl Clone for HoldsCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl PartialEq for HoldsCache {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl std::fmt::Debug for HoldsCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HoldsCache")
     }
 }
 
