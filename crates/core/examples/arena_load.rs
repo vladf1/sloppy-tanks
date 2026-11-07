@@ -9,7 +9,8 @@
 //! reset-<map> resets one, nav-<map> rebuilds its navigation grid 20 times,
 //! scenery-<theme> builds a theme's scenery, covers-<map> a map's cover models batched
 //! while its simulation stands, samples-<map> each structure kind's broken sample and
-//! debris, vehicles the vehicles with their wrecks; maps village harbor quarry
+//! debris, vehicles the vehicles with their wrecks, encode-<theme> and decode-<theme>
+//! a theme's scenery in the geometry cache's form; maps village harbor quarry
 //! stress-test superstress, themes village harbor quarry). `--repeat <workload> <n>`
 //! runs one workload n times in one process, for a sampling profiler. Manual evidence,
 //! not a CI gate.
@@ -25,6 +26,7 @@ use sloppy_core::models::{
     CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_model,
     structure_debris, tank_model, wreck_model,
 };
+use sloppy_core::scene_codec::{decode_bytes, encode};
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::level_rules::single_player_rules;
 use sloppy_core::sim::map_options::MapId;
@@ -234,6 +236,34 @@ fn workload(name: &str) -> Box<dyn FnOnce() -> u64> {
                 untimed(move || model_pin_hash::node_pin(scenery.root()))
             })
         }
+        "encode" => {
+            let scenery = build_scenery(theme(arg));
+            Box::new(move || {
+                let bytes = encode(scenery.root(), "arena_load").to_bytes();
+                untimed(move || {
+                    drop(scenery);
+                    let mut hasher = DefaultHasher::new();
+                    bytes.hash(&mut hasher);
+                    hasher.finish()
+                })
+            })
+        }
+        // A cached visit's read-back, in a process that built nothing: the file is
+        // written by another process.
+        "decode" => {
+            let path = std::env::temp_dir().join(format!("arena_load-{arg}.scenery"));
+            let status = Command::new(std::env::current_exe().expect("own path"))
+                .args(["--encode", arg])
+                .arg(&path)
+                .status()
+                .expect("encode the scenery");
+            assert!(status.success(), "encoding {arg} failed");
+            let bytes = std::fs::read(&path).expect("the encoded scenery");
+            Box::new(move || {
+                let root = decode_bytes(&bytes, "arena_load").expect("reads back");
+                untimed(move || model_pin_hash::node_pin(&root))
+            })
+        }
         "covers" => {
             let standing = render_state(map(arg));
             Box::new(move || {
@@ -337,6 +367,13 @@ fn main() {
     {
         let (ms, allocations, bytes, peak, hash) = sample(name);
         println!("{ms} {allocations} {bytes} {peak} {hash}");
+        return;
+    }
+    if let [flag, name, path] = args.as_slice()
+        && flag == "--encode"
+    {
+        let scenery = build_scenery(theme(name));
+        std::fs::write(path, encode(scenery.root(), "arena_load").to_bytes()).expect("written");
         return;
     }
     if let [flag, name, count] = args.as_slice()
