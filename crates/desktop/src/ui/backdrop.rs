@@ -6,11 +6,12 @@
 use std::sync::OnceLock;
 
 use egui::{
-    Color32, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2,
+    Color32, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Shape, Stroke, Vec2,
+    epaint::Tessellator, pos2, vec2,
 };
 
 use super::icons::Art;
-use super::paint::{self, hex, hexa, mix};
+use super::paint::{self, MeshKind, hex, hexa, mix};
 
 /// The land's view; it covers the screen, its foot on the screen's foot.
 const LAND_VIEW: Vec2 = vec2(1600.0, 900.0);
@@ -165,9 +166,7 @@ pub fn backdrop(context: &egui::Context, art: &Art) {
         screen.bottom() - LAND_VIEW.y * scale,
     );
     let place = |point: Pos2| origin + point.to_vec2() * scale;
-    for (land, fill) in lands().iter().zip([FAR_FILL, MID_FILL, NEAR_FILL]) {
-        land_layer(&painter, land, &fill, place);
-    }
+    painter.add(land_mesh(&painter, screen, place));
     // Two tanks on watch, the right one facing left (`.backdrop-tank`).
     let [_, _, tank_width, tank_height] = art.view("backdrop-tank");
     let left = Rect::from_min_size(
@@ -191,9 +190,21 @@ pub fn backdrop(context: &egui::Context, art: &Art) {
     );
 }
 
-/// The sky: night overhead to a warm horizon, a glow at the top and the low sun.
+/// The sky: night overhead to a warm horizon, a glow at the top and the low sun. It
+/// depends on the screen alone, so it is built once for a size.
 fn sky(painter: &Painter, screen: Rect) {
-    painter.add(paint::vgradient(
+    let key = paint::key_floats([screen.min.x, screen.min.y, screen.max.x, screen.max.y]);
+    painter.add(paint::memo_mesh(
+        painter.ctx(),
+        MeshKind::SetupSky,
+        key,
+        || sky_mesh(screen),
+    ));
+}
+
+/// The mesh of [`sky`]: its gradient, then its glows.
+fn sky_mesh(screen: Rect) -> Mesh {
+    let mut mesh = paint::vgradient_mesh(
         screen,
         &[
             (0.0, hex(0x060c1a)),
@@ -203,32 +214,76 @@ fn sky(painter: &Painter, screen: Rect) {
             (0.78, hex(0x1a2338)),
             (1.0, hex(0x1a2338)),
         ],
-    ));
+    );
     let at = |x: f32, y: f32| {
         pos2(
             screen.left() + screen.width() * x,
             screen.top() + screen.height() * y,
         )
     };
-    painter.add(paint::radial(
+    mesh.append(paint::radial_mesh(
         at(0.5, 0.0),
         vec2(screen.width() * 0.7, screen.height() * 0.6),
         &[(0.0, hexa(0x1d3f7a, 0.4)), (0.7, Color32::TRANSPARENT)],
     ));
-    painter.add(paint::radial(
+    mesh.append(paint::radial_mesh(
         at(0.5, 0.7),
         vec2(screen.width() * 0.9, screen.height() * 0.45),
         &[(0.0, hexa(0xff7a3d, 0.18)), (0.75, Color32::TRANSPARENT)],
     ));
-    painter.add(paint::radial(
+    mesh.append(paint::radial_mesh(
         at(0.5, 0.66),
         vec2(screen.width() * 0.55, screen.height() * 0.3),
         &[(0.0, hexa(0xffb35c, 0.33)), (0.7, Color32::TRANSPARENT)],
     ));
+    mesh
 }
 
-/// A layer of land: the ridge filled to the view's foot in its gradient, and its pines.
-fn land_layer(painter: &Painter, land: &Land, fill: &LandFill, place: impl Fn(Pos2) -> Pos2) {
+/// The land's three layers, far to near, placed on the screen by `place`. They depend
+/// on the screen and its pixel size alone, so they are built once for a size: the
+/// ridges, and the pines as egui would tessellate their polygons each frame (feathered
+/// edges and all, culled to the painter's clip as it would cull them).
+fn land_mesh(painter: &Painter, screen: Rect, place: impl Fn(Pos2) -> Pos2) -> Shape {
+    let context = painter.ctx();
+    let pixels_per_point = context.pixels_per_point();
+    let clip = painter.clip_rect();
+    let options = context.tessellation_options(|options| *options);
+    let key = paint::key_floats([
+        screen.min.x,
+        screen.min.y,
+        screen.max.x,
+        screen.max.y,
+        pixels_per_point,
+        clip.min.x,
+        clip.min.y,
+        clip.max.x,
+        clip.max.y,
+        options.feathering_size_in_pixels,
+    ])
+    .chain([
+        u32::from(options.feathering),
+        u32::from(options.coarse_tessellation_culling),
+    ]);
+    paint::memo_mesh(context, MeshKind::SetupLand, key, || {
+        let mut tessellator = Tessellator::new(pixels_per_point, options, [1, 1], Vec::new());
+        tessellator.set_clip_rect(clip);
+        let mut mesh = Mesh::default();
+        for (land, fill) in lands().iter().zip([FAR_FILL, MID_FILL, NEAR_FILL]) {
+            land_layer(&mut mesh, &mut tessellator, land, &fill, &place);
+        }
+        mesh
+    })
+}
+
+/// A layer of land added to `out`: the ridge filled to the view's foot in its gradient,
+/// and its pines.
+fn land_layer(
+    out: &mut Mesh,
+    tessellator: &mut Tessellator,
+    land: &Land,
+    fill: &LandFill,
+    place: impl Fn(Pos2) -> Pos2,
+) {
     let stop = land.top + (LAND_VIEW.y - land.top) * fill.stop;
     let mut mesh = Mesh::default();
     // Each column of the ridge: its top, the gradient's stop where that is lower, and
@@ -246,14 +301,14 @@ fn land_layer(painter: &Painter, land: &Land, fill: &LandFill, place: impl Fn(Po
             }
         }
     }
-    painter.add(Shape::mesh(mesh));
+    tessellator.tessellate_mesh(&mesh, out);
     // A pine's three tiers, each a convex piece: the top triangle and two trapezoids.
     for pine in &land.pines {
         let color = fill.at(land, (pine[0].y + pine[5].y) / 2.0);
         for tier in [[0, 1, 10, 10], [9, 2, 3, 8], [7, 4, 5, 6]] {
             let mut points: Vec<Pos2> = tier.iter().map(|&index| place(pine[index])).collect();
             points.dedup();
-            painter.add(Shape::convex_polygon(points, color, Stroke::NONE));
+            tessellator.tessellate_shape(Shape::convex_polygon(points, color, Stroke::NONE), out);
         }
     }
 }

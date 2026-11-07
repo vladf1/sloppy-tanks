@@ -27,6 +27,9 @@ use super::theme::{GOLD, GOLD_HOT, TEXT, TEXT_DIM, TEXT_LABEL, bold_font, displa
 use super::{Action, KillFeedEntry, UiState, View, hud, menus};
 use crate::links;
 use crate::tasks::Background;
+use std::borrow::Cow;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::mpsc::TryRecvError;
 
 /// Seconds "Code copied" shows on its button.
@@ -91,9 +94,10 @@ pub struct RoomMenu {
     pub creating: bool,
     /// The latest status line while joining or reconnecting.
     pub status: String,
-    pub lobby: Option<Lobby>,
+    /// Shared, so a frame that draws the menu while changing it holds it without a copy.
+    pub lobby: Option<Rc<Lobby>>,
     /// The engine's title, hint and rule chips for the lobby.
-    pub text: MenuText,
+    pub text: Rc<MenuText>,
     pub player_id: String,
     pub link: Link,
     /// The finished round as the viewer's tank played it, for its final score.
@@ -124,7 +128,7 @@ impl RoomMenu {
             creating,
             status: CONNECTING_STATUS.into(),
             lobby: None,
-            text: MenuText::default(),
+            text: Rc::default(),
             player_id: String::new(),
             // The joining card covers the dialog until the engine reveals the room.
             link: Link::Connecting(ConnectionDialog {
@@ -164,7 +168,7 @@ impl RoomMenu {
             "room": self.room, "playerId": self.player_id, "joining": self.joining,
             "creating": self.creating, "status": self.status, "link": link,
             "lobby": self.lobby.as_ref().map(|lobby| serde_json::from_str::<serde_json::Value>(&lobby.to_json()).expect("a lobby JSON")),
-            "menu": self.text,
+            "menu": &*self.text,
             "outcome": self.outcome.as_ref().map(sloppy_web::hud::PageMatch::from),
             "menuOpen": self.menu_open, "editingRules": self.editing_rules, "editingChoice": self.editing_choice,
             "controlsOpen": self.controls_open, "notice": self.notice, "deathCause": self.death_cause,
@@ -264,8 +268,8 @@ impl RoomMenu {
         } else {
             self.menu_open = false;
         }
-        self.lobby = Some(lobby);
-        self.text = text;
+        self.lobby = Some(Rc::new(lobby));
+        self.text = Rc::new(text);
         self.player_id = player_id;
     }
 
@@ -1307,22 +1311,23 @@ const ROOM_TAG_SIZE: f32 = 9.0;
 fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
     /// A row's name after its team's bar and padding (`td:first-child`).
     const NAME_INSET: f32 = 12.0;
-    let mut rows = lobby.scoreboard.clone();
+    let mut rows: Vec<&Player> = lobby.scoreboard.iter().collect();
+    let mut digits = [0; DIGITS];
     rows.sort_by(|a, b| b.kills.cmp(&a.kills).then(a.deaths.cmp(&b.deaths)));
     let width = ui.available_width();
     let painter = ui.painter().clone();
     let head_width = |label: &str| paint::text_width(&painter, label, bold_font(10.0), 1.5);
-    let number_width = |value: u32| {
+    let mut number_width = |value: u32| {
         paint::text_width(
             &painter,
-            &value.to_string(),
+            number(&mut digits, value),
             FontId::proportional(13.0),
             0.0,
         )
     };
     // A pilot's name carries its tag.
     let tag = paint::bot_tag_width(&painter, ROOM_TAG_SIZE) + paint::BOT_TAG_GAP;
-    let name_width = |row: &Player| {
+    let name_width = |row: &&Player| {
         paint::text_width(&painter, &row.name, bold_font(13.0), 0.0)
             + if row.bot { tag } else { 0.0 }
     };
@@ -1408,7 +1413,7 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
                         painter,
                         pos2(x, y),
                         Align2::RIGHT_CENTER,
-                        &value.to_string(),
+                        number(&mut digits, value),
                         FontId::proportional(13.0),
                         color,
                         0.0,
@@ -1600,34 +1605,73 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
     }
 }
 
+thread_local! {
+    /// The players list's rows in the order it draws them, and text it joins, kept
+    /// between frames so drawing them allocates nothing.
+    static PLAYER_ORDER: RefCell<Vec<usize>> = RefCell::default();
+    static JOINED: RefCell<String> = RefCell::default();
+}
+
+/// Room for a `u32`'s decimal digits.
+const DIGITS: usize = 10;
+
+/// `value` in decimal, written into `buffer`, for a number drawn every frame.
+fn number(buffer: &mut [u8; DIGITS], mut value: u32) -> &str {
+    let mut start = DIGITS;
+    loop {
+        start -= 1;
+        buffer[start] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    std::str::from_utf8(&buffer[start..]).expect("ASCII digits")
+}
+
+/// `draw` given `parts` joined, in a buffer kept between frames.
+fn joined<R>(parts: &[&str], draw: impl FnOnce(&str) -> R) -> R {
+    JOINED.with_borrow_mut(|text| {
+        text.clear();
+        for part in parts {
+            text.push_str(part);
+        }
+        draw(text)
+    })
+}
+
 /// The compact kill list beside the HUD during a battle.
-fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
+fn players<'a>(context: &egui::Context, menu: &'a RoomMenu, state: &'a UiState) {
     let Some(lobby) = &menu.lobby else { return };
     // Another seat shows its tank as the field draws it: while a bot stands in for an
     // away player, the bot's name, mark and score, not the player's under the bot's kills.
     // The viewer's own row keeps their name.
-    let shown = |player: &Player| -> (String, bool, u32) {
+    let shown = |player: &'a Player| -> (Cow<'a, str>, bool, u32) {
         let row = player
             .tank_id
             .and_then(|tank| state.hud.as_ref()?.scoreboard.row(tank));
         match row {
-            Some(row) if player.player_id != menu.player_id => {
-                (row.name.into_owned(), row.bot, row.kills)
-            }
-            Some(row) => (player.name.clone(), player.bot, row.kills),
-            None => (player.name.clone(), player.bot, player.kills),
+            Some(row) if player.player_id != menu.player_id => (row.name, row.bot, row.kills),
+            Some(row) => (Cow::Borrowed(&player.name), player.bot, row.kills),
+            None => (Cow::Borrowed(&player.name), player.bot, player.kills),
         }
     };
-    let mut players: Vec<&Player> = lobby.players.iter().collect();
-    players.sort_by_key(|player| (player.team.index(), player.slot));
+    PLAYER_ORDER.with_borrow_mut(|order| {
+        order.clear();
+        order.extend(0..lobby.players.len());
+        order.sort_by_key(|&index| {
+            let player = &lobby.players[index];
+            (player.team.index(), player.slot)
+        });
+    });
+    let count = lobby.players.len();
+    let mut digits = [0; DIGITS];
     egui::Area::new(Id::unique("room players"))
         .anchor(Align2::LEFT_TOP, [16.0, 88.0])
         .interactable(false)
         .show(context, |ui| {
-            let rect = Rect::from_min_size(
-                ui.cursor().min,
-                vec2(224.0, 44.0 + players.len() as f32 * 27.0),
-            );
+            let rect =
+                Rect::from_min_size(ui.cursor().min, vec2(224.0, 44.0 + count as f32 * 27.0));
             let painter = ui.painter();
             paint::rounded_vgradient(
                 painter,
@@ -1641,14 +1685,19 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 Stroke::new(1.0, hexa(0x9fd0ff, 0.15)),
                 StrokeKind::Inside,
             );
-            paint::text(
-                painter,
-                rect.min + vec2(12.0, 12.0),
-                Align2::LEFT_TOP,
-                &format!("PLAYERS · {}", players.len()),
-                bold_font(9.5),
-                TEXT_LABEL,
-                2.0,
+            joined(
+                &["PLAYERS · ", number(&mut digits, count as u32)],
+                |header| {
+                    paint::text(
+                        painter,
+                        rect.min + vec2(12.0, 12.0),
+                        Align2::LEFT_TOP,
+                        header,
+                        bold_font(9.5),
+                        TEXT_LABEL,
+                        2.0,
+                    )
+                },
             );
             paint::text(
                 painter,
@@ -1659,7 +1708,8 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 TEXT_LABEL,
                 2.0,
             );
-            for (index, player) in players.iter().enumerate() {
+            for index in 0..count {
+                let player = &lobby.players[PLAYER_ORDER.with_borrow(|order| order[index])];
                 let top = rect.top() + 32.0 + index as f32 * 27.0;
                 let alpha = if player.connected { 1.0 } else { 0.55 };
                 let team = if player.team == Team::Blue {
@@ -1679,16 +1729,19 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                 };
                 let (shown_name, bot, kills) = shown(player);
                 let tag = paint::bot_tag_width(painter, ROOM_TAG_SIZE) + paint::BOT_TAG_GAP;
-                let name = paint::text_fit(
-                    painter,
-                    pos2(rect.left() + 24.0, top + 13.5),
-                    Align2::LEFT_CENTER,
-                    &format!("{shown_name}{you}"),
-                    bold_font(12.0),
-                    paint::fade(hex(0xf5faff), alpha),
-                    0.0,
-                    155.0 - if bot { tag } else { 0.0 },
-                );
+                // One run with " (you)", so it shapes and cuts as the page's does.
+                let name = joined(&[&shown_name, you], |label| {
+                    paint::text_fit(
+                        painter,
+                        pos2(rect.left() + 24.0, top + 13.5),
+                        Align2::LEFT_CENTER,
+                        label,
+                        bold_font(12.0),
+                        paint::fade(hex(0xf5faff), alpha),
+                        0.0,
+                        155.0 - if bot { tag } else { 0.0 },
+                    )
+                });
                 if bot {
                     paint::bot_tag(
                         painter,
@@ -1701,7 +1754,7 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                     painter,
                     pos2(rect.right() - 12.0, top + 13.5),
                     Align2::RIGHT_CENTER,
-                    &kills.to_string(),
+                    number(&mut digits, kills),
                     bold_font(12.0),
                     paint::fade(hex(0xf5faff), alpha),
                     0.0,
@@ -1860,7 +1913,7 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
     menu.joining = false;
     menu.player_id = "viewer".into();
     menu.link = Link::Live;
-    menu.lobby = Some(Lobby {
+    menu.lobby = Some(Rc::new(Lobby {
         room_epoch: "snapshot-room".into(),
         round_id: 1,
         phase: match name {
@@ -1878,7 +1931,7 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         scoreboard: players.clone(),
         players,
         settings: RoomSettings::default(),
-    });
+    }));
     match name {
         "room-joining" => {
             menu.joining = true;
@@ -1889,7 +1942,7 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
                 title: "RECONNECTING",
                 message: room_text::connecting_message(
                     "Connecting to the room…",
-                    menu.lobby.as_ref(),
+                    menu.lobby.as_deref(),
                 ),
             })
         }
@@ -1921,7 +1974,12 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
     if let Some(lobby) = &menu.lobby {
         // The viewer plays on blue.
         let outcome = menu.outcome.clone().map(|state| (state, Team::Blue));
-        menu.text = room_text::menu_text(lobby, &menu.player_id, outcome.as_ref(), None);
+        menu.text = Rc::new(room_text::menu_text(
+            lobby,
+            &menu.player_id,
+            outcome.as_ref(),
+            None,
+        ));
     }
     menu
 }
