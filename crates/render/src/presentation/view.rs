@@ -813,7 +813,7 @@ struct SharedDebris {
 #[derive(Default)]
 struct LandingLooks {
     /// The falling body each is for, its tower's shape and the landing body's parts.
-    queued: Vec<(u32, CoverShape, PartSet)>,
+    queued: VecDeque<(u32, CoverShape, PartSet)>,
     cut: HashMap<SharedDebrisKey, (u32, Node)>,
     /// Each watchtower's broken parts as of the last frame: a body of parts that stood
     /// then has just come down and has its landing ahead of it, while the bodies a
@@ -1822,7 +1822,7 @@ impl Presentation {
             {
                 self.landing_looks
                     .queued
-                    .push((fragment, shape.clone(), body));
+                    .push_back((fragment, shape.clone(), body));
             }
         }
     }
@@ -1854,8 +1854,7 @@ impl Presentation {
             return;
         }
         let start = now_ms();
-        while let Some((id, shape, parts)) = looks.queued.first().cloned() {
-            looks.queued.remove(0);
+        while let Some((id, shape, parts)) = looks.queued.pop_front() {
             if let Some(key) = shared_debris_key(&shape, &parts)
                 && !self.shared_debris.contains_key(&key)
             {
@@ -2631,11 +2630,6 @@ impl Presentation {
             .cover_looks
             .iter()
             .position(|look| look.cover == cover.id);
-        // A newer look of a cottage still building keeps its layout.
-        let _layout = found.and_then(|index| match &self.cover_looks[index].phase {
-            LookPhase::Building(build) => Some(build.layout().clone()),
-            _ => None,
-        });
         let index = match found {
             Some(index) if self.cover_looks[index].print == print => index,
             found => {
@@ -2657,6 +2651,9 @@ impl Presentation {
                 }
             }
         };
+        // Whether another cover already shows this look: decided once, as the cover's
+        // models change only when this look installs.
+        let mut shown_elsewhere = None;
         loop {
             let before = now_ms();
             let phase = &mut self.cover_looks[index].phase;
@@ -2664,9 +2661,10 @@ impl Presentation {
                 // A look another cover already shows needs no model of its own.
                 LookPhase::Unbuilt
                     if cover.kind == CoverKind::House
-                        && !self
-                            .cover_models
-                            .contains_key(&Self::cover_model_key(cover)) =>
+                        && !*shown_elsewhere.get_or_insert_with(|| {
+                            self.cover_models
+                                .contains_key(&Self::cover_model_key(cover))
+                        }) =>
                 {
                     let layout = self.layouts.layout(cover.id, &CoverShape::from(cover));
                     *phase = LookPhase::Building(Box::new(HouseBuild::new(
@@ -2693,9 +2691,10 @@ impl Presentation {
                     false
                 }
                 LookPhase::Unbuilt
-                    if !self
-                        .cover_models
-                        .contains_key(&Self::cover_model_key(cover)) =>
+                    if !*shown_elsewhere.get_or_insert_with(|| {
+                        self.cover_models
+                            .contains_key(&Self::cover_model_key(cover))
+                    }) =>
                 {
                     let model = model_catalog::cover_model(&Self::built_cover(cover));
                     *phase = LookPhase::Ready(model);
