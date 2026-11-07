@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  // oxlint's correctness rules, plus the rest of ESLint's recommended set. The scripts are
+  // JavaScript that `bun check` reads but does not type-check, so this is their only check.
+  "categories": { "correctness": "error" },
+  "env": { "browser": true, "node": true, "es2024": true },
+  "globals": { "Bun": "readonly" },
+  "ignorePatterns": [".claude/**", "public/**", "scripts/benchmarks/**"],
+  "rules": {
+    "no-case-declarations": "error",
+    "no-empty": "error",
+    "no-fallthrough": "error",
+    "no-prototype-builtins": "error",
+    "no-redeclare": "error",
+    "no-regex-spaces": "error",
+    "no-undef": "error",
+    "no-unexpected-multiline": "error",
+    "preserve-caught-error": "error",
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "typescript/consistent-type-imports": "error",
+    // Argument lists grouped into spread literals, and cross products written out in full.
+    "unicorn/no-useless-spread": "off",
+    "oxc/erasing-op": "off"
+  },
+  "overrides": [
+    // TypeScript resolves names itself (`bun check`), types and all.
+    { "files": ["**/*.ts"], "rules": { "no-undef": "off" } }
+  ]
+}

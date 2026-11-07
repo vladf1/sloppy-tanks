@@ -28,7 +28,7 @@
 // `build:dev` sets `dev`) from `SLOPPY_DIRECTORY_URL`, both read when it compiles.
 //
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
-// Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
+// Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.130,
 // matching the `wasm-bindgen` crate pin.
 //
 // Like the server build, the Wasm is stamped with the content version clients and the
@@ -117,7 +117,7 @@ function run(command, args) {
     child.on("error", (error) =>
       reject(
         new Error(
-          `${command}: ${error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.129.`,
+          `${command}: ${error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.130.`,
         ),
       ),
     );

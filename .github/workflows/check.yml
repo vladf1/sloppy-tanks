@@ -118,7 +118,7 @@ jobs:
           console.log('hash=' + (await serverBuild()))" >> "$GITHUB_OUTPUT"
       - name: Restore the Kache store
         id: kache-store
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: ${{ runner.temp }}/kache
           key: kache-server-build-${{ steps.server-build.outputs.hash }}
@@ -137,7 +137,7 @@ jobs:
         run: '"$RUSTC_WRAPPER" gc --max-age 7d'
       - name: Save the Kache store
         if: steps.kache-store.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kache
           key: ${{ steps.kache-store.outputs.cache-primary-key }}

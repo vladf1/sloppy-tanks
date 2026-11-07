@@ -21,7 +21,7 @@ runs:
     - uses: oven-sh/setup-bun@v2
       with:
         bun-version-file: .bun-version
-    - uses: actions/cache@v5
+    - uses: actions/cache@v6
       if: inputs.js-dependencies == 'true'
       with:
         path: ~/.bun/install/cache
@@ -58,14 +58,14 @@ runs:
     - name: Cache wasm-bindgen-cli
       if: inputs.wasm-bindgen == 'true'
       id: wasm-bindgen
-      uses: actions/cache@v5
+      uses: actions/cache@v6
       with:
         path: ~/.cargo/bin/wasm-bindgen
-        key: wasm-bindgen-cli-0.2.129-${{ runner.os }}-${{ runner.arch }}
+        key: wasm-bindgen-cli-0.2.130-${{ runner.os }}-${{ runner.arch }}
     - name: Install wasm-bindgen-cli
       if: inputs.wasm-bindgen == 'true' && steps.wasm-bindgen.outputs.cache-hit != 'true'
       shell: bash
-      run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen
+      run: cargo install wasm-bindgen-cli --version 0.2.130 --locked --bin wasm-bindgen
     - run: bun install --frozen-lockfile
       if: inputs.js-dependencies == 'true'
       shell: bash

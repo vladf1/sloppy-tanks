@@ -9,7 +9,7 @@ After=network-online.target
 
 [Container]
 ContainerName=caddy
-Image=docker.io/library/caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+Image=docker.io/library/caddy:2.11.9@sha256:0c2243efcf437ab7f7a978f1027fcf0d4f9be8a75df27b1b3fbc5dbe0ffa8cf0
 # Pulled at the first start; a restart or reboot never needs the registry.
 Pull=missing
 # Host networking reaches the server on loopback and gives Caddy the players' real

@@ -43,12 +43,12 @@ sloppy-render = { workspace = true, features = ["native"] }
 sloppy-web = { path = "../web", features = ["native"] }
 egui-wgpu = { version = "0.37", default-features = false }
 egui-winit = { version = "0.37", default-features = false, features = ["links"] }
-pollster = "0.4"
+pollster = "1"
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
-dirs = "6"
+dirs = "7"
 # Sound; a page plays it with Web Audio (`audio/web.rs`).
 kira = { version = "0.12", default-features = false, features = ["cpal", "mp3"] }
 # The menu's tank previews and the window icon; a page decodes them with the browser.

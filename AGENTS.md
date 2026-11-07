@@ -100,22 +100,19 @@ the server:
   JSON for HUD, events and stats, never per-entity calls from JavaScript.
   In TypeScript, let the compiler infer obvious locals.
 - `cargo fmt` and clippy (`-D warnings`) own Rust style; Prettier owns the rest.
-  Bun checks the scripts and tools; lint uses a separate TypeScript 6
-  toolchain (see `tools/lint/README.md`).
+  `bun check` type-checks the TypeScript; oxlint (`.oxlintrc.json`) lints it and the
+  `.mjs` scripts, which nothing type-checks.
 
 ## Normal development and validation
 
 Use Bun 1.4.4 (pinned in `.bun-version` and `package.json`) and Rust through rustup.
 Bun supplies installation, TypeScript checking, script execution and the native
 test runner; Vite, running on Bun, bundles the page and serves it in development.
-ESLint and Prettier run on Bun;
-TypeScript 6 in `tools/lint/` exists only for ESLint's parser and typed rules.
 `rust-toolchain.toml` pins Rust with rustfmt, clippy and the
 `wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI
-must be 0.2.129, the crate pin. Put rustup's cargo before Homebrew's:
+must be 0.2.130, the crate pin. Put rustup's cargo before Homebrew's:
 `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
-Run `bun install --frozen-lockfile` in every new checkout or worktree. The root
-postinstall installs `tools/lint/` with its own committed `bun.lock`; use `bun add`
+Run `bun install --frozen-lockfile` in every new checkout or worktree. Use `bun add`
 for dependency changes. Installs use isolated linking; root dependencies cannot
 run install scripts. Wrangler lives in `tools/deploy/` with a separate lockfile;
 `bun run wrangler` and the Cloudflare deployment commands install it on demand
