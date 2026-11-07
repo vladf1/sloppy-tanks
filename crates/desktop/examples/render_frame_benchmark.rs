@@ -262,6 +262,7 @@ fn main() {
         let mut samples: BTreeMap<&str, Vec<Sample>> = BTreeMap::new();
         let mut frame_hash = DefaultHasher::new();
         let mut pool_hash = DefaultHasher::new();
+        let mut digests = Vec::new();
         for frame in 0..WARM_UP_FRAMES + MEASURED_FRAMES {
             let measured = frame >= WARM_UP_FRAMES;
             sim.set_wreck_view(Some(view.wreck_view()));
@@ -280,7 +281,9 @@ fn main() {
             if measured {
                 samples.entry("update").or_default().push(update);
                 samples.entry("render").or_default().push(render);
-                frame_hash.write_u64(view.renderer.frame_digest());
+                let digest = view.renderer.frame_digest();
+                frame_hash.write_u64(digest);
+                digests.push(format!("{digest:016x}"));
                 view.effects.systems.for_each_pool(|pool| {
                     pool_hash.write_usize(pool.len());
                     for record in pool.records() {
@@ -316,6 +319,7 @@ fn main() {
             "frameHash": format!("{frame_hash:016x}"),
             "poolHash": format!("{pool_hash:016x}"),
             "samples": samples,
+            "digests": digests,
         }));
     }
     if trace_sites {

@@ -31,6 +31,7 @@ pub mod camera;
 pub mod color;
 pub mod draw_list;
 pub mod effects;
+pub mod fixed_hash;
 pub mod material;
 pub mod mesh_pages;
 pub mod model;

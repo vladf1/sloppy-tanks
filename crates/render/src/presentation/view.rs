@@ -2,7 +2,7 @@
 //! renderer and runtime effects, keeps one renderer instance per simulation
 //! entity, and poses them from each frame's `RenderState`.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
@@ -66,6 +66,7 @@ use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::pickups::{supply_turn, supply_wear};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
+use crate::fixed_hash::{HashMap, HashSet};
 use crate::gpu::{
     Environment, Fog, InstanceId, Lifetime, ModelId, PendingModel, PrepareProgress, Renderer,
     SunShadow, WaterSettings,
@@ -1087,7 +1088,7 @@ pub struct Presentation {
     /// Canvas-drawn and baked textures the scenery and cover sample.
     textures: GeneratedTextures,
     /// Ids present this frame, for dropping views of departed entities.
-    live: std::collections::HashSet<u32>,
+    live: HashSet<u32>,
     /// What building the round's views has still to do (`build.rs`).
     build: build::BuildStage,
     /// When a build stepped over frames began, while it may wait for the page to read
@@ -1147,25 +1148,25 @@ impl Presentation {
             aim_line,
             player_ring,
             pulse,
-            scenery: HashMap::new(),
-            pads: HashMap::new(),
-            floors: HashMap::new(),
+            scenery: HashMap::default(),
+            pads: HashMap::default(),
+            floors: HashMap::default(),
             flags,
-            tanks: HashMap::new(),
-            covers: HashMap::new(),
-            cover_models: HashMap::new(),
+            tanks: HashMap::default(),
+            covers: HashMap::default(),
+            cover_models: HashMap::default(),
             cover_looks: Vec::new(),
             busy: false,
-            fragments: HashMap::new(),
+            fragments: HashMap::default(),
             piles: HousePiles::default(),
             layouts: CottageLayouts::default(),
-            shared_debris: HashMap::new(),
+            shared_debris: HashMap::default(),
             idle_debris: VecDeque::new(),
             debris_warmups: Vec::new(),
             chimneys: Vec::new(),
-            pickups: HashMap::new(),
+            pickups: HashMap::default(),
             supply_pieces: Vec::with_capacity(MAX_SUPPLY_PIECES),
-            mines: HashMap::new(),
+            mines: HashMap::default(),
             pad_decks: SpawnPadDecks::default(),
             branches: VecDeque::new(),
             viewer_id: None,
@@ -1175,7 +1176,7 @@ impl Presentation {
             sample_models: Vec::new(),
             random,
             textures: GeneratedTextures::default(),
-            live: std::collections::HashSet::new(),
+            live: HashSet::default(),
             build: build::BuildStage::Done,
             cache_wait_since: None,
             preparation: Preparation::default(),
@@ -1747,7 +1748,7 @@ impl Presentation {
     /// the lid alone, and each piece a landing breaks them into.
     fn queue_debris(&mut self, covers: &[RenderCover]) {
         self.debris_warmups.clear();
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = HashSet::default();
         for cover in covers.iter().filter(|cover| cover.kind == CoverKind::Cargo) {
             let shape = CoverShape::from(cover);
             let layout = crate_structure(cover.w, cover.d, cover.h);

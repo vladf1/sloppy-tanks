@@ -15,7 +15,7 @@
 //! its chunk broke up, or one whose look is shared (and so was never its own), is drawn
 //! again from its source.
 
-use std::collections::{HashMap, HashSet};
+use crate::fixed_hash::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::{Mat4, Quat, Vec3};
@@ -84,8 +84,8 @@ pub struct HousePiles<H, S> {
 impl<H, S> Default for HousePiles<H, S> {
     fn default() -> Self {
         Self {
-            bodies: HashMap::new(),
-            chunks: HashMap::new(),
+            bodies: HashMap::default(),
+            chunks: HashMap::default(),
             next_chunk: 0,
             resting: Vec::new(),
             broken: Vec::new(),

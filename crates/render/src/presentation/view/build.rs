@@ -258,7 +258,7 @@ impl Presentation {
     }
 
     fn add_cover_samples(&mut self, covers: &[RenderCover]) {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = crate::fixed_hash::HashSet::default();
         for cover in covers {
             if !structural(cover.kind) || !seen.insert(cover.kind) {
                 continue;

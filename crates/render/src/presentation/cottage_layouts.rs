@@ -8,7 +8,7 @@
 //! built once a frame for all the cottage's bodies, then dropped: the bodies' models
 //! hold what they draw, so no CPU copy of a mesh outlives the frame.
 
-use std::collections::HashMap;
+use crate::fixed_hash::HashMap;
 use std::sync::{Arc, Weak};
 
 use sloppy_core::models::{CoverShape, HouseDebris, structure_debris};
