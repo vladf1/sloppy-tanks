@@ -537,6 +537,70 @@ fn a_heartbeat_in_flight_from_the_previous_round_cannot_disconnect_a_player() {
     assert_eq!(h.latest("alice", "pong")["tick"], 0);
 }
 
+/// Plain pings and inputs skip the JSON tree; other forms of them still read as JSON
+/// reads them, and malformed ones fail with the same errors.
+#[test]
+fn pings_and_inputs_in_any_json_form_are_answered_as_json_reads_them() {
+    let mut h = harness();
+    for name in ["alice", "bob", "carol", "dave"] {
+        h.join(name, json!({}));
+    }
+    h.action("alice", "start", json!({}));
+    h.advance();
+    let round = h.host.round_id;
+    let send = |h: &mut Harness, name: &str, text: String| {
+        let id = h.id(name);
+        h.host.receive(id, &text, h.now);
+        h.drain();
+    };
+    let ping =
+        |rest: &str| format!(r#"{{"type":"ping","roundId":{round},"observedTick":0,{rest}}}"#);
+    send(&mut h, "alice", ping(r#""t":5"#));
+    assert_eq!(h.latest("alice", "pong")["t"], 5);
+    // The last of a repeated key counts, and escapes decode.
+    send(&mut h, "alice", ping(r#""t":"soon","t":6"#));
+    assert_eq!(h.latest("alice", "pong")["t"], 6);
+    send(
+        &mut h,
+        "alice",
+        format!(r#"{{"type":"p\u0069ng","roundId":{round},"observedTick":0,"t":7,"extra":[]}}"#),
+    );
+    assert_eq!(h.latest("alice", "pong")["t"], 7);
+    // A ping from another round is ignored before its fields are read.
+    send(
+        &mut h,
+        "alice",
+        r#"{"type":"ping","roundId":-1,"t":"soon"}"#.into(),
+    );
+    assert!(h.closed.is_empty());
+    // Malformed input is refused without closing the connection; only a bad `observedTick`
+    // on an accepted input does.
+    let epoch = h.latest("alice", "control")["controlEpoch"].clone();
+    let tick = h.host.tick();
+    send(
+        &mut h,
+        "alice",
+        format!(
+            r#"{{"type":"input","roundId":{round},"controlEpoch":{epoch},"seq":1,"observedTick":{tick},"moveX":1,"moveZ":0,"aim":[0.5]}}"#
+        ),
+    );
+    assert!(h.closed.is_empty());
+    let errors = [
+        ("bob", ping(r#""t":null"#), "Invalid number"),
+        ("carol", r#"["ping"]"#.to_string(), "Expected object"),
+        (
+            "dave",
+            ping(r#""t":1,"observedTick":99999"#),
+            "Invalid observed tick",
+        ),
+    ];
+    for (name, text, error) in errors {
+        send(&mut h, name, text);
+        assert!(h.closed.iter().any(|closed| closed == name), "{name}");
+        assert_eq!(h.latest(name, "error")["message"], error, "{name}");
+    }
+}
+
 #[test]
 fn suspended_clients_receive_no_snapshot_backlog_and_resume_with_a_current_baseline() {
     let mut h = harness();

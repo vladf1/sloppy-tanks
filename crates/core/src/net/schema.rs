@@ -32,7 +32,13 @@ pub fn parse_record(text: &str) -> ReadResult<Record> {
 }
 
 pub fn number_in(value: Option<&Value>, min: f64, max: f64, integer: bool) -> ReadResult<f64> {
-    match value.and_then(Value::as_f64) {
+    checked_number(value.and_then(Value::as_f64), min, max, integer)
+}
+
+/// [`number_in`] over a field already read as a number (`None`: missing, `null` or not
+/// a number).
+pub fn checked_number(number: Option<f64>, min: f64, max: f64, integer: bool) -> ReadResult<f64> {
+    match number {
         Some(number)
             if number.is_finite()
                 && number >= min
@@ -47,7 +53,12 @@ pub fn number_in(value: Option<&Value>, min: f64, max: f64, integer: bool) -> Re
 
 /// `id`: a safe non-negative integer.
 pub fn id(value: Option<&Value>) -> ReadResult<u64> {
-    number_in(value, 0.0, MAX_SAFE_INTEGER, true).map(|number| number as u64)
+    id_number(value.and_then(Value::as_f64))
+}
+
+/// [`id`] over a field already read as a number.
+pub fn id_number(number: Option<f64>) -> ReadResult<u64> {
+    checked_number(number, 0.0, MAX_SAFE_INTEGER, true).map(|number| number as u64)
 }
 
 /// An `id` that must also fit the simulation's 32-bit ids and counters.

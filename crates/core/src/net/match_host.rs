@@ -14,7 +14,7 @@ use super::multiplayer_simulation::{
     MAX_PLAYERS, MultiplayerOptions, TEAM_SLOTS, claim_player_tank, create_multiplayer_simulation,
     release_player_tank,
 };
-use super::player_controls::PlayerControls;
+use super::player_controls::{ControlInput, PlayerControls, read_input_record};
 use super::player_names::{is_player_name, name_seed, player_name};
 use super::prediction::{HullState, MovingBody};
 use super::protocol::{
@@ -26,7 +26,10 @@ use super::protocol::{
 use super::replication::{StateStream, TimedEvent, write_snapshot_header};
 use super::room_list::RoomListing;
 use super::scene_codec::Scene;
-use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
+use super::quick_message::QuickMessage;
+use super::schema::{
+    MAX_SAFE_INTEGER, ReadResult, Record, checked_number, id, id_number, number_in, parse_record,
+};
 use super::shot_paths::ShotPathRecorder;
 use crate::sim::bot_personalities::shuffled_bot_names;
 use crate::sim::shooter_rewind::ShooterRewind;
@@ -383,80 +386,65 @@ impl MatchHost {
         if text.len() > MAX_CLIENT_MESSAGE_BYTES {
             return Err("Message too large".into());
         }
+        // The frequent messages first, without building a JSON tree; the rest, and any
+        // input or ping in another form, through the general reader below.
+        if let Some(message) = QuickMessage::parse(text) {
+            let Some(client_index) = self.admit(connection, message.round_id(), now_ms)? else {
+                return Ok(());
+            };
+            if message.is_ping() {
+                return self.pong(
+                    connection,
+                    client_index,
+                    id_number(message.observed_tick()),
+                    checked_number(message.t(), 0.0, MAX_SAFE_INTEGER, false),
+                    now_ms,
+                );
+            }
+            let seat = self.seen_seat(client_index, now_ms)?;
+            return self.input(
+                client_index,
+                seat,
+                message.input(),
+                message.observed_tick(),
+                now_ms,
+            );
+        }
         let message = parse_record(text)?;
-        let kind = message
-            .get("type")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let kind = kind.as_deref();
+        let kind = message.get("type").and_then(Value::as_str);
         if kind == Some("join") {
             if self.client_index(connection).is_some() {
                 return Err("Already joined".into());
             }
             return self.join(connection, &message, now_ms);
         }
-        let client_index = self.client_index(connection).ok_or("Join required")?;
-        let tick = self.tick();
-        let round = self.round_id as f64;
-        let client = &mut self.clients[client_index].1;
-        if now_ms.saturating_sub(client.window_ms) >= 1000 {
-            client.window_ms = now_ms;
-            client.count = 0;
-        }
-        client.count += 1;
-        if client.count > MAX_MESSAGES_PER_SECOND {
-            return Err("Message rate exceeded".into());
-        }
-        // A connection only ever belongs to this room instance, so messages name just the round.
-        let current_round = message.get("roundId").and_then(Value::as_f64) == Some(round);
+        let round_id = message.get("roundId").and_then(Value::as_f64);
+        let Some(client_index) = self.admit(connection, round_id, now_ms)? else {
+            return Ok(());
+        };
         if kind == Some("ping") {
-            if !current_round {
-                return Ok(());
-            }
-            let observed = id(message.get("observedTick"))?;
-            let t = number_in(message.get("t"), 0.0, MAX_SAFE_INTEGER, false)?;
-            if observed > tick {
-                return Err("Invalid observed tick".into());
-            }
-            client.observed_tick = client.observed_tick.max(observed);
-            client.last_seen_ms = now_ms;
-            let pong = super::json::object(|writer| {
-                writer
-                    .string("type", "pong")
-                    .number("t", t)
-                    .int("tick", tick);
-            });
-            self.send(connection, pong);
-            return Ok(());
+            return self.pong(
+                connection,
+                client_index,
+                id(message.get("observedTick")),
+                number_in(message.get("t"), 0.0, MAX_SAFE_INTEGER, false),
+                now_ms,
+            );
         }
-        if !current_round {
-            return Ok(());
-        }
-        client.last_seen_ms = now_ms;
-        let player_id = client.player_id.clone();
-        let seat = self.seat_index(&player_id).ok_or("Join required")?;
-        let is_host = self.host_id == player_id;
+        let seat = self.seen_seat(client_index, now_ms)?;
+        let tick = self.tick();
+        let is_host = self.host_id == self.clients[client_index].1.player_id;
         let playing = self.phase == RoomPhase::Playing;
         match kind.unwrap_or("") {
             "input" => {
-                if !playing {
-                    return Ok(());
-                }
-                let (Some(simulation), Some(controls)) =
-                    (self.simulation.as_ref(), self.seats[seat].controls.as_mut())
-                else {
-                    return Ok(());
-                };
-                let value = Value::Object(message);
-                let arrival = self
-                    .clock
-                    .as_ref()
-                    .map_or(tick + 1, |clock| clock.arrival_tick(now_ms as f64));
-                if controls.accept_at(simulation, &value, tick, arrival, now_ms as f64) {
-                    let observed = id(value.get("observedTick"))?;
-                    let client = &mut self.clients[client_index].1;
-                    client.observed_tick = client.observed_tick.max(observed);
-                }
+                let observed = message.get("observedTick").and_then(Value::as_f64);
+                self.input(
+                    client_index,
+                    seat,
+                    read_input_record(&message),
+                    observed,
+                    now_ms,
+                )?;
             }
             "choose" => {
                 if playing {
@@ -532,6 +520,7 @@ impl MatchHost {
             }
             "resync" => self.send_full_limited(connection, client_index, now_ms)?,
             "leave" => {
+                let player_id = self.clients[client_index].1.player_id.clone();
                 self.disconnect(connection, now_ms);
                 if let Some(seat) = self.seat_index(&player_id) {
                     self.release(seat);
@@ -543,6 +532,98 @@ impl MatchHost {
                 }
             }
             _ => return Err("Unknown message".into()),
+        }
+        Ok(())
+    }
+
+    /// Counts a message from a joined connection against its rate limit. Messages from
+    /// another round are dropped (`None`): a connection only ever belongs to this room
+    /// instance, so messages name just the round.
+    fn admit(
+        &mut self,
+        connection: ConnectionId,
+        round_id: Option<f64>,
+        now_ms: u64,
+    ) -> Result<Option<usize>, String> {
+        let client_index = self.client_index(connection).ok_or("Join required")?;
+        let client = &mut self.clients[client_index].1;
+        if now_ms.saturating_sub(client.window_ms) >= 1000 {
+            client.window_ms = now_ms;
+            client.count = 0;
+        }
+        client.count += 1;
+        if client.count > MAX_MESSAGES_PER_SECOND {
+            return Err("Message rate exceeded".into());
+        }
+        Ok((round_id == Some(self.round_id as f64)).then_some(client_index))
+    }
+
+    /// Answers a `ping` whose `observedTick` and `t` read as given.
+    fn pong(
+        &mut self,
+        connection: ConnectionId,
+        client_index: usize,
+        observed: ReadResult<u64>,
+        t: ReadResult<f64>,
+        now_ms: u64,
+    ) -> Handled {
+        let observed = observed?;
+        let t = t?;
+        let tick = self.tick();
+        if observed > tick {
+            return Err("Invalid observed tick".into());
+        }
+        let client = &mut self.clients[client_index].1;
+        client.observed_tick = client.observed_tick.max(observed);
+        client.last_seen_ms = now_ms;
+        let pong = super::json::object(|writer| {
+            writer
+                .string("type", "pong")
+                .number("t", t)
+                .int("tick", tick);
+        });
+        self.send(connection, pong);
+        Ok(())
+    }
+
+    /// Marks a client heard from this round and finds its seat.
+    fn seen_seat(&mut self, client_index: usize, now_ms: u64) -> Result<usize, String> {
+        let client = &mut self.clients[client_index].1;
+        client.last_seen_ms = now_ms;
+        let player_id = &client.player_id;
+        self.seats
+            .iter()
+            .position(|seat| seat.player.player_id == *player_id)
+            .ok_or_else(|| "Join required".into())
+    }
+
+    /// An `input` message for `seat`, read as `input` (`None` when malformed) with its
+    /// `observedTick` as a number.
+    fn input(
+        &mut self,
+        client_index: usize,
+        seat: usize,
+        input: Option<ControlInput>,
+        observed_tick: Option<f64>,
+        now_ms: u64,
+    ) -> Handled {
+        if self.phase != RoomPhase::Playing {
+            return Ok(());
+        }
+        let tick = self.tick();
+        let (Some(simulation), Some(controls)) =
+            (self.simulation.as_ref(), self.seats[seat].controls.as_mut())
+        else {
+            return Ok(());
+        };
+        let arrival = self
+            .clock
+            .as_ref()
+            .map_or(tick + 1, |clock| clock.arrival_tick(now_ms as f64));
+        if controls.accept_input_at(simulation, input, tick, arrival, now_ms as f64) {
+            let observed = id_number(observed_tick)?;
+            let client = &mut self.clients[client_index].1;
+            client.observed_tick = client.observed_tick.max(observed);
         }
         Ok(())
     }
