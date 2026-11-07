@@ -1451,8 +1451,13 @@ impl Renderer {
                 let shadow = PipelineKey::shadow(shadow_shader, source);
                 // Without the shadow's dither, which only fades a caster's shadow.
                 let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
+                let skips_occlusion = self
+                    .effects
+                    .get(gpu.effect)
+                    .is_some_and(|e| e.skips_occlusion);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
                     && key.occludes
+                    && !skips_occlusion
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
