@@ -200,6 +200,7 @@ pub struct Simulation {
     pub(crate) projectile_tank_positions: Vec<Option<Point3>>,
     /// The fallen structure bodies a shell's low reach can strike, reused per query.
     pub(crate) projectile_structure_bodies: Vec<RigidBodyHandle>,
+    pub(crate) steering: super::bot_movement::SteeringScratch,
     pub(crate) bot_targets: super::bot_strategy::TargetScratch,
     pub mines: Vec<Mine>,
     /// Stable mine order while detonations can recursively remove entries.
@@ -272,6 +273,7 @@ impl Simulation {
             shots: Vec::new(),
             projectile_tank_positions: Vec::new(),
             projectile_structure_bodies: Vec::new(),
+            steering: Default::default(),
             shooter_rewind: None,
             bot_targets: Default::default(),
             mines: Vec::new(),

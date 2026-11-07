@@ -2,8 +2,9 @@
 
 use std::f64::consts::PI;
 
-use rapier3d::parry::query::ShapeCastOptions;
-use rapier3d::prelude::{Pose, QueryFilter};
+use rapier3d::parry::bounding_volume::{Aabb, BoundingVolume};
+use rapier3d::parry::query::{Ray, RayCast, ShapeCastOptions};
+use rapier3d::prelude::{ColliderHandle, Pose, QueryFilter, Vector};
 
 use super::data::group;
 use super::math::{Quat4, Vec2, angle_delta, distance};
@@ -18,6 +19,9 @@ const ARRIVAL_RADIUS: f64 = 0.25;
 const BRAKING_DISTANCE: f64 = 1.5;
 
 const HULL_MARGIN: f64 = 0.08;
+/// Widens the boxes that rule out steering obstacles well past any rounding in a cast's
+/// time of impact, so an obstacle is skipped only when it cannot stop the cast.
+const SWEEP_SLACK: f64 = 0.02;
 const STEERING_DEADZONE: f64 = 0.01;
 const LOOKAHEAD_DISTANCE: f64 = 1.5;
 const CLEAR_FRACTION: f64 = 0.9;
@@ -79,10 +83,26 @@ pub fn route_direction(simulation: &mut Simulation, tank_index: usize) -> Vec2 {
     Vec2::new((dx / d) * speed, (dz / d) * speed)
 }
 
+/// Storage for steering casts, reused from cast to cast.
+#[derive(Default)]
+pub(crate) struct SteeringScratch {
+    /// The colliders a cast's sweep might meet, with their boxes.
+    obstacles: Vec<(ColliderHandle, Aabb)>,
+    /// The obstacles one hull orientation's sweep reaches, with when it reaches their box.
+    reached: Vec<(f32, usize)>,
+}
+
 /// Check the visible hull, including other tanks, before choosing a steering direction.
 /// Callers only compare the result with `needed`, so casting stops once it falls short.
+///
+/// Matches casting the hull through the whole world's query pipeline, more cheaply: one
+/// broad-phase pass collects what the filter accepts in reach of both sweeps (the world's
+/// cast tries no collider whose broad-phase box its sweep misses), then each sweep casts
+/// against those nearest first, each pair exactly as the world's cast does, and keeps the
+/// earliest impact.
 fn clearance(
     simulation: &Simulation,
+    scratch: &mut SteeringScratch,
     tank_index: usize,
     direction: Vec2,
     length: f64,
@@ -92,7 +112,19 @@ fn clearance(
     let collider = &simulation.world.colliders[tank.collider];
     let position = collider.translation();
     let angle = direction.x.atan2(direction.z);
-    let mut clear = length;
+    let velocity = vector(direction.x, 0.0, direction.z);
+    // Check both the current hull and the orientation it is turning toward.
+    let poses = [
+        tank.heading,
+        tank.heading + angle_delta(tank.heading, angle),
+    ]
+    .map(|yaw| Pose::from_parts(position, to_rotation(Quat4::yaw(yaw))));
+    let hulls = poses.map(|pose| collider.shape().compute_aabb(&pose));
+    let travel = velocity * length as f32;
+    let reach = hulls[0]
+        .merged(&hulls[1])
+        .loosened((HULL_MARGIN + SWEEP_SLACK) as f32);
+    let swept = Aabb::new(reach.mins + travel.min(Vector::ZERO), reach.maxs + travel.max(Vector::ZERO));
     let query = if tank.kind == VehicleKind::Humvee {
         group::STEERING_QUERY | group::DEBRIS_QUERY
     } else {
@@ -101,26 +133,59 @@ fn clearance(
     let filter = QueryFilter::default()
         .groups(interaction_groups(query))
         .exclude_rigid_body(tank.body);
-    // Check both the current hull and the orientation it is turning toward.
-    for yaw in [
-        tank.heading,
-        tank.heading + angle_delta(tank.heading, angle),
-    ] {
-        let pose = Pose::from_parts(position, to_rotation(Quat4::yaw(yaw)));
+    scratch.obstacles.clear();
+    scratch.obstacles.extend(
+        simulation
+            .world
+            .query_pipeline_with_filter(filter)
+            .intersect_aabb_conservative(swept)
+            .map(|(handle, obstacle)| (handle, obstacle.compute_aabb())),
+    );
+    let mut clear = length;
+    if scratch.obstacles.is_empty() {
+        return clear;
+    }
+    let ray = Ray::new(Vector::ZERO, velocity);
+    let dispatcher = simulation.world.narrow_phase.query_dispatcher();
+    for (pose, hull) in poses.iter().zip(hulls) {
         let options = ShapeCastOptions {
             max_time_of_impact: clear as f32,
             target_distance: HULL_MARGIN as f32,
             stop_at_penetration: false,
             compute_impact_geometry_on_penetration: true,
         };
-        if let Some((_, hit)) = simulation.world.cast_shape(
-            &pose,
-            vector(direction.x, 0.0, direction.z),
-            collider.shape(),
-            options,
-            filter,
-        ) {
-            clear = clear.min(hit.time_of_impact as f64);
+        // When the sweep reaches each obstacle's box, widened past any rounding in a cast's
+        // time of impact: an obstacle first reached after an impact cannot come earlier.
+        let shift = -hull.center();
+        let margin = hull.half_extents() + Vector::splat((HULL_MARGIN + SWEEP_SLACK) as f32);
+        scratch.reached.clear();
+        for (index, (_, bounds)) in scratch.obstacles.iter().enumerate() {
+            let sum = Aabb::new(bounds.mins + shift - margin, bounds.maxs + shift + margin);
+            if let Some(time) = sum.cast_local_ray(&ray, options.max_time_of_impact, true) {
+                scratch.reached.push((time, index));
+            }
+        }
+        scratch.reached.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut earliest = options.max_time_of_impact;
+        for &(time, index) in &scratch.reached {
+            if time >= earliest {
+                break;
+            }
+            let obstacle = &simulation.world.colliders[scratch.obstacles[index].0];
+            let at = obstacle.position();
+            if let Ok(Some(hit)) = dispatcher.cast_shapes(
+                &at.inv_mul(pose),
+                at.rotation.inverse() * velocity,
+                obstacle.shape(),
+                collider.shape(),
+                options,
+            ) && hit.time_of_impact < earliest
+            {
+                earliest = hit.time_of_impact;
+            }
+        }
+        if earliest < options.max_time_of_impact {
+            clear = clear.min(earliest as f64);
         }
         if clear < needed {
             break;
@@ -131,6 +196,19 @@ fn clearance(
 
 /// Commit briefly to an open side instead of alternating retreat and attack every tick.
 pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, dt: f64) -> Vec2 {
+    let mut scratch = std::mem::take(&mut simulation.steering);
+    let steering = steer_around(simulation, &mut scratch, tank_index, desired, dt);
+    simulation.steering = scratch;
+    steering
+}
+
+fn steer_around(
+    simulation: &mut Simulation,
+    scratch: &mut SteeringScratch,
+    tank_index: usize,
+    desired: Vec2,
+    dt: f64,
+) -> Vec2 {
     let magnitude = desired.x.hypot(desired.z);
     let brain = &mut simulation.tanks[tank_index].brain;
     brain.avoidance_time = 0f64.max(brain.avoidance_time - dt);
@@ -147,11 +225,11 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
     };
     let enough = lookahead * CLEAR_FRACTION;
     if avoidance_time > 0.0
-        && clearance(simulation, tank_index, avoidance, lookahead, enough) >= enough
+        && clearance(simulation, scratch, tank_index, avoidance, lookahead, enough) >= enough
     {
         return Vec2::new(avoidance.x * magnitude, avoidance.z * magnitude);
     }
-    if clearance(simulation, tank_index, direction, lookahead, enough) >= enough {
+    if clearance(simulation, scratch, tank_index, direction, lookahead, enough) >= enough {
         return desired;
     }
     let mut best = Vec2::ZERO;
@@ -183,6 +261,7 @@ pub fn steer_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2, 
         }
         let open = clearance(
             simulation,
+            scratch,
             tank_index,
             candidate,
             lookahead,
