@@ -25,7 +25,7 @@ use crate::sim::math::angle_delta;
 use crate::sim::projectiles::RocketThrust;
 use crate::sim::render_state::RenderShot;
 use crate::sim::shooter_rewind::MAX_REWIND_TICKS;
-use crate::sim::simulation::Simulation;
+use crate::sim::simulation::{Simulation, SweptShot};
 use crate::sim::types::{Shot, Team, Weapon};
 
 /// Farthest, in metres, a drawn shell may be from its simulated position.
@@ -103,7 +103,7 @@ impl ShotPath {
 
     /// The path a shell starting a sweep at `tick` would be drawn on, rounded for the wire.
     fn starting(
-        shot: &Shot,
+        shot: &SweptShot,
         tick: f64,
         x: f64,
         z: f64,
@@ -481,7 +481,7 @@ impl ShotPathRecorder {
     pub fn sweep(
         &mut self,
         tick: u64,
-        shot: &Shot,
+        shot: &SweptShot,
         seconds: f64,
         offset: f64,
         thrust: Option<RocketThrust>,
@@ -570,7 +570,7 @@ impl ShotPathRecorder {
 
 /// Whether a sweep from `start` to `end` (fractional ticks) leaves `path`: the drawn shell
 /// would be too far away at either end, or head or move differently.
-fn strays(path: &ShotPath, shot: &Shot, start: f64, end: f64, x: f64, z: f64) -> bool {
+fn strays(path: &ShotPath, shot: &SweptShot, start: f64, end: f64, x: f64, z: f64) -> bool {
     let from = path.at(start);
     let to = path.at(end);
     if (from.x - x).hypot(from.z - z) > PATH_TOLERANCE

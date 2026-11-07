@@ -176,14 +176,45 @@ impl SimulationSetup {
 
 /// One projectile sweep, recorded for the server's presentation trace when enabled.
 /// Observing never changes combat.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProjectileMove {
     /// The shell after this sweep.
-    pub shot: Shot,
+    pub shot: SweptShot,
     /// Seconds swept.
     pub seconds: f64,
     /// Seconds into the tick at which the sweep started.
     pub offset: f64,
+}
+
+/// What a shell's path follows of it after a sweep: a copy of a few [`Shot`] fields, so
+/// recording every shell's every sweep copies no lists.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SweptShot {
+    pub id: u32,
+    pub team: Team,
+    pub weapon: Weapon,
+    pub x: f64,
+    pub z: f64,
+    pub vx: f64,
+    pub vz: f64,
+    pub y: Option<f64>,
+    pub visual_y: Option<f64>,
+}
+
+impl SweptShot {
+    pub fn of(shot: &Shot) -> Self {
+        Self {
+            id: shot.id,
+            team: shot.team,
+            weapon: shot.weapon,
+            x: shot.x,
+            z: shot.z,
+            vx: shot.vx,
+            vz: shot.vz,
+            y: shot.y,
+            visual_y: shot.visual_y,
+        }
+    }
 }
 
 pub struct Simulation {

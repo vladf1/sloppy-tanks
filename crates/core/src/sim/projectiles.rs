@@ -17,7 +17,7 @@ use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
 use super::shooter_rewind::{ShooterRewind, target_ticks};
-use super::simulation::{ProjectileMove, Simulation};
+use super::simulation::{ProjectileMove, Simulation, SweptShot};
 use super::structure_physics::{
     FUSE_DISTANCE, HE_BLAST_RADIUS, fragment_with_collider, structure_debris,
 };
@@ -230,7 +230,7 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
         }
         if let Some(moves) = &mut simulation.projectile_moves {
             moves.extend(simulation.shots.iter().map(|shot| ProjectileMove {
-                shot: shot.clone(),
+                shot: SweptShot::of(shot),
                 seconds: time,
                 offset,
             }));
