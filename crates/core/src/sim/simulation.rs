@@ -1,7 +1,7 @@
 //! The authoritative fixed-step simulation: one Rapier world, the entity records, and the
 //! tick order that seeded matches depend on.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use rapier3d::prelude::*;
 use serde::{Deserialize, Serialize, Serializer};
@@ -28,7 +28,7 @@ use super::math::{Point3, Quat4, Random, Vec2, best_by, distance, js_round, to_u
 use super::movable_cover::update_movable_cover;
 use super::navigation::{Footprint, Navigation};
 use super::physics::{
-    ContactForces, convex_hull, from_rotation, from_vector, interaction_groups, query_filter,
+    ContactForces, HandleMap, convex_hull, from_rotation, from_vector, interaction_groups, query_filter,
     vector,
 };
 use super::pickups::collect_pickup;
@@ -226,7 +226,7 @@ pub struct Simulation {
     pub tanks: Vec<Tank>,
     /// Covers are only ever appended during a round, so indices stay stable.
     pub covers: Vec<Cover>,
-    pub cover_by_collider: HashMap<ColliderHandle, usize>,
+    pub cover_by_collider: HandleMap<ColliderHandle, usize>,
     pub shots: Vec<Shot>,
     pub(crate) projectile_tank_positions: Vec<Option<Point3>>,
     /// The fallen structure bodies a shell's low reach can strike, reused per query.
@@ -278,7 +278,7 @@ pub struct Simulation {
     pub round_count: usize,
     pub(crate) bot_names: Vec<&'static str>,
     /// Metadata for bodies whose contact forces feed debris-impact events.
-    pub(crate) debris_contacts: HashMap<RigidBodyHandle, DebrisContact>,
+    pub(crate) debris_contacts: HandleMap<RigidBodyHandle, DebrisContact>,
     /// Falling bodies' blows on standing parts, reused tick to tick.
     pub(crate) crush_scratch: CrushScratch,
     /// The debris budget's ranking and the players' places it scores by, reused.
@@ -325,7 +325,7 @@ impl Simulation {
             rng,
             tanks: Vec::new(),
             covers: Vec::new(),
-            cover_by_collider: HashMap::new(),
+            cover_by_collider: HandleMap::default(),
             shots: Vec::new(),
             projectile_tank_positions: Vec::new(),
             projectile_structure_bodies: Vec::new(),
@@ -368,7 +368,7 @@ impl Simulation {
             bot_reroutes: 0,
             round_count: SIMULATION_RULES.default_tank_count,
             bot_names: Vec::new(),
-            debris_contacts: HashMap::new(),
+            debris_contacts: HandleMap::default(),
             crush_scratch: CrushScratch::default(),
             cleanup_scratch: (Vec::new(), Vec::new()),
             scratch: Scratch::default(),
@@ -516,7 +516,7 @@ impl Simulation {
                 }
             })
             .collect();
-        self.nav = Navigation::new();
+        self.nav.clear();
         self.nav.rebuild(&self.covers, None);
         if self.game_mode == GameMode::Solo {
             self.add_tank(self.human_team, true, self.human_kind, 2);
@@ -693,15 +693,16 @@ impl Simulation {
             {
                 let body = self.covers[index].body;
                 for hull in bed.props(&design, GARDEN_PROPS_HEIGHT) {
-                    let points: Vec<_> = hull
+                    // A cottage stands in the same place every round, so each reset and
+                    // rebuild takes its props' hulls from the authored ones.
+                    let points: Vec<f32> = hull
                         .into_iter()
-                        .map(|p| {
+                        .flat_map(|p| {
                             let p = design.to_world(p);
-                            vector(p.x, p.y, p.z)
+                            [p.x as f32, p.y as f32, p.z as f32]
                         })
                         .collect();
-                    let collider = ColliderBuilder::convex_hull(&points)
-                        .expect("a garden prop has volume")
+                    let collider = convex_hull(&points)
                         .collision_groups(interaction_groups(group::GARDEN_PROPS))
                         .friction(0.6);
                     self.world.insert_collider(collider, Some(body));
