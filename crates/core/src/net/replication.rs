@@ -29,14 +29,12 @@
 //! the frame in thousandths and whole event records; projectile path entries
 //! ([`PathEntry::write_binary`]).
 
-use std::collections::HashMap;
-
 use super::json::POSITION_SCALE;
 use super::player_controls::Ack;
 use super::prediction::{HullState, MAX_MOVING_BODIES, MovingBody};
 use super::protocol::{FULL_MESSAGE, SNAPSHOT_MESSAGE};
 use super::scene_codec::{
-    COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS,
+    COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS, IdIndex,
     MATCH_FIELDS, MINES, MirrorScene, Scene, Stored, TANKS, read_cover, read_event, read_fragment,
     read_match, read_mine, read_pickup, read_tank_reusing, write_event, write_record,
 };
@@ -78,8 +76,8 @@ pub struct StateStream {
     round_id: u64,
     previous: Option<Scene>,
     /// Ids of the previous scene's records by kind, and of the scene being written.
-    index: [HashMap<u32, usize>; 5],
-    current: [HashMap<u32, usize>; 5],
+    index: [IdIndex; 5],
+    current: [IdIndex; 5],
     /// The previous scene's records' motion by kind, in scene order, and the next scene's.
     motion: [Vec<Motion>; 5],
     next_motion: [Vec<Motion>; 5],
@@ -96,7 +94,7 @@ struct SnapshotScratch {
     record: WireRecord,
 }
 
-fn index_scene(index: &mut [HashMap<u32, usize>; 5], scene: &Scene) {
+fn index_scene(index: &mut [IdIndex; 5], scene: &Scene) {
     for (kind, ids) in index.iter_mut().enumerate() {
         ids.clear();
         for (position, record) in scene.entities[kind].iter().enumerate() {
