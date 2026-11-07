@@ -55,11 +55,18 @@ function option(name) {
   return index === -1 ? undefined : process.argv[index + 1];
 }
 
-/** The server's /health through Caddy, by the name that always reaches this machine. */
+/** The server's /health through Caddy, by the name that always reaches this machine.
+ * Always an object: a restarting machine can answer `null`, which the waits treat as
+ * not ready yet. */
 let health;
 const readHealth = () =>
   fetch(health, { cache: "no-store", signal: AbortSignal.timeout(10_000) })
     .then((response) => response.json())
+    .then((body) =>
+      body !== null && typeof body === "object"
+        ? body
+        : { error: `answered ${JSON.stringify(body)}` },
+    )
     .catch((error) => ({ error: error.cause?.message ?? error.message }));
 
 /** Waits until /health passes `expected`, through Caddy as players reach it. A new
