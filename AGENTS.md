@@ -112,7 +112,7 @@ ESLint and Prettier run on Bun;
 TypeScript 6 in `tools/lint/` exists only for ESLint's parser and typed rules.
 `rust-toolchain.toml` pins Rust with rustfmt, clippy and the
 `wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI
-must be 0.2.129, the crate pin. Put rustup's cargo before Homebrew's:
+must be 0.2.130, the crate pin. Put rustup's cargo before Homebrew's:
 `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
 Run `bun install --frozen-lockfile` in every new checkout or worktree. The root
 postinstall installs `tools/lint/` with its own committed `bun.lock`; use `bun add`

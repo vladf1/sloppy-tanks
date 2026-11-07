@@ -11,7 +11,7 @@ brew install rustup                 # once per machine
 curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
 export PATH="$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
-cargo install wasm-bindgen-cli --version 0.2.129 --locked
+cargo install wasm-bindgen-cli --version 0.2.130 --locked
 bun install --frozen-lockfile   # once per checkout or worktree, and after dependency changes
 bun run wasm                   # build the page's Wasm; rerun after Rust or WGSL edits
 bun run dev
@@ -19,7 +19,7 @@ bun run dev
 
 `rust-toolchain.toml` pins the Rust release, rustfmt, clippy and the
 `wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets. The wasm-bindgen CLI must match the `wasm-bindgen` crate pin
-(0.2.129). Homebrew's `rust` formula provides a `cargo` that ignores
+(0.2.130). Homebrew's `rust` formula provides a `cargo` that ignores
 `rust-toolchain.toml`, so rustup's must come first on `PATH`:
 
 ```sh
