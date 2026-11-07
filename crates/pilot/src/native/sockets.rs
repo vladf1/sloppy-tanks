@@ -12,7 +12,7 @@ use sloppy_core::net::client::MAX_BUFFERED_BYTES;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::Connector;
-use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes};
 
 /// Connecting and the opening handshake give up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -27,8 +27,8 @@ const ABNORMAL_CLOSE: u16 = 1006;
 #[derive(Debug)]
 pub enum SocketEvent {
     Opened(usize, u32),
-    Text(usize, u32, String),
-    Binary(usize, u32, Vec<u8>),
+    Text(usize, u32, Utf8Bytes),
+    Binary(usize, u32, Bytes),
     /// The socket is gone, with its close code; the last event of a socket.
     Closed(usize, u32, u16),
 }
@@ -168,10 +168,10 @@ async fn run(
             },
             message = read.next() => match message {
                 Some(Ok(Message::Text(text))) => {
-                    let _ = events.send(SocketEvent::Text(pilot, id, text.as_str().to_owned()));
+                    let _ = events.send(SocketEvent::Text(pilot, id, text));
                 }
                 Some(Ok(Message::Binary(bytes))) => {
-                    let _ = events.send(SocketEvent::Binary(pilot, id, bytes.to_vec()));
+                    let _ = events.send(SocketEvent::Binary(pilot, id, bytes));
                 }
                 Some(Ok(Message::Close(frame))) => {
                     let code = frame.map_or(NO_STATUS, |frame| frame.code.into());

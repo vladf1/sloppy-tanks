@@ -83,11 +83,15 @@ impl CleanupScores {
 /// Prefer distant settled pieces, then distant moving pieces, preserving nearby action.
 /// Returns the index into `fragments` of the lowest score, the first of equal ones; a NaN
 /// or infinite score is never picked.
-pub fn cleanup_candidate(simulation: &Simulation) -> Option<usize> {
-    let scores = CleanupScores::new(simulation, Vec::new());
-    best_by(0..simulation.fragments.len(), |&index| {
+/// Takes the simulation mutably only to reuse its list of the players' places.
+pub fn cleanup_candidate(simulation: &mut Simulation) -> Option<usize> {
+    let players = std::mem::take(&mut simulation.cleanup_scratch.1);
+    let scores = CleanupScores::new(simulation, players);
+    let candidate = best_by(0..simulation.fragments.len(), |&index| {
         -scores.score(simulation, &simulation.fragments[index])
-    })
+    });
+    simulation.cleanup_scratch.1 = scores.players;
+    candidate
 }
 
 /// Start the normal fade before the hard budget forces an immediate eviction.

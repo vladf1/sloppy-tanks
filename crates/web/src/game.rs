@@ -91,7 +91,7 @@
 
 use crate::Shell;
 use crate::battle_report::pause_report;
-use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events, take_events_into};
 use crate::feedback::event_feedback;
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::frame_slot::{self, phase_code};
@@ -284,7 +284,7 @@ pub struct Game {
     /// The finished round's recap; personal bests are saved once per result.
     recap: Option<RoundRecap>,
     /// The last frame's result, which a frame skipped for the GPU hands back.
-    last_result: Vec<f32>,
+    last_result: [f32; frame_slot::LENGTH],
 }
 
 #[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
@@ -402,6 +402,15 @@ impl Game {
     /// One animation frame: steps the simulation at the fixed rate, routes
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
+        self.run_frame(now, input).map(Vec::from)
+    }
+
+    /// [`Game::frame`]'s slots, which the typed shell reads without a copy on the heap.
+    fn run_frame(
+        &mut self,
+        now: f64,
+        input: &[f32],
+    ) -> Result<[f32; frame_slot::LENGTH], PageError> {
         let mut input = InputFrame::from_slice(input);
         self.sounds.set_clock(now);
         // A paced frame runs at its smoothed time; skipped, it only takes the input.
@@ -410,11 +419,11 @@ impl Game {
             return Ok(self.wait_for_gpu(&input, now));
         };
         let dt = self.times.advance(now);
-        let mut result = vec![0.0; frame_slot::LENGTH];
+        let mut result = [0.0; frame_slot::LENGTH];
         result[frame_slot::RAN] = 1.0;
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
-            self.last_result.clone_from(&result);
+            self.last_result = result;
             return Ok(result);
         }
         if self.sim.match_state.phase == MatchPhase::Results && self.auto_rounds {
@@ -504,14 +513,14 @@ impl Game {
         result[frame_slot::VIEWER_X] = viewer_x;
         result[frame_slot::VIEWER_Y] = viewer_y;
         self.frame_index += 1;
-        self.last_result.clone_from(&result);
+        self.last_result = result;
         Ok(result)
     }
 
     /// An animation frame skipped while the GPU still runs earlier ones: the view and
     /// first-person look take its input at once, its presses wait for the next tick, and
     /// the page keeps the last frame's result.
-    fn wait_for_gpu(&mut self, input: &InputFrame, now: f64) -> Vec<f32> {
+    fn wait_for_gpu(&mut self, input: &InputFrame, now: f64) -> [f32; frame_slot::LENGTH] {
         self.view.rig.zoom_by(input.zoom);
         if input.toggle_view {
             self.toggle_first_person();
@@ -522,7 +531,7 @@ impl Game {
         if playing && alive && self.view.rig.first_person.enabled {
             self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
         }
-        let mut result = self.last_result.clone();
+        let mut result = self.last_result;
         result[frame_slot::RAN] = 0.0;
         result[frame_slot::EVENTS] = self.events.len() as f32;
         result[frame_slot::HUD_DUE] = 0.0;
@@ -871,6 +880,15 @@ impl Game {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl Game {
+    /// One animation frame ([`Game::frame`]), its result in [`frame_slot`]'s slots.
+    pub fn frame_slots(
+        &mut self,
+        now: f64,
+        input: &[f32],
+    ) -> Result<[f32; frame_slot::LENGTH], PageError> {
+        self.run_frame(now, input)
+    }
+
     /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
     pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
@@ -943,7 +961,7 @@ impl Game {
             hud_tank: RenderTank::default(),
             effect_timers: EffectTimers::default(),
             recap: None,
-            last_result: vec![0.0; frame_slot::LENGTH],
+            last_result: [0.0; frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
         if config.defer_arena {
@@ -1047,6 +1065,14 @@ impl Game {
         let (x, z) = self.human_position();
         let right = self.view.rig.listener_right;
         take_events(&mut self.events, (x, z), right, &mut self.sounds)
+    }
+
+    /// [`Game::take_events`] into a batch the shell keeps, which hands the queue its
+    /// emptied events back.
+    pub fn take_events_into(&mut self, batch: &mut EventBatch) {
+        let (x, z) = self.human_position();
+        let right = self.view.rig.listener_right;
+        take_events_into(&mut self.events, (x, z), right, &mut self.sounds, batch);
     }
 
     /// The chosen view and clamped overhead zoom.

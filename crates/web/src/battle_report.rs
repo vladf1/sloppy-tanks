@@ -711,7 +711,7 @@ mod tests {
     fn team_battle(phase: MatchPhase) -> Hud<'static> {
         let mut hud = Hud {
             elapsed: 16.0,
-            map_name: "Pine Village".into(),
+            map_name: "Pine Village",
             difficulty: Difficulty::Hard,
             human_team: Team::Red,
             score_limit: 100,

@@ -1,11 +1,42 @@
 //! The Rapier boundary. Game math is f64 like the previous JS numbers; Rapier works in f32,
 //! so values narrow exactly where the old code crossed into the physics engine.
 
+use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::Mutex;
 
 use rapier3d::prelude::*;
 
 use super::math::{Point3, Quat4};
+
+/// A map keyed by Rapier handles, looked up per contact pair every tick. Only looked up,
+/// never iterated, so its hash cannot change what the simulation does.
+pub type HandleMap<K, V> = HashMap<K, V, BuildHasherDefault<HandleHasher>>;
+
+/// rustc's FxHash for the world's own arena handles (index and generation), where
+/// SipHash's resistance to chosen keys buys nothing.
+#[derive(Default)]
+pub struct HandleHasher(u64);
+
+impl Hasher for HandleHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u32(&mut self, word: u32) {
+        self.write_u64(u64::from(word));
+    }
+
+    fn write_u64(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
 
 /// Packed 32-bit collision groups (memberships high, filter low), tested with AND like the
 /// previous engine.
@@ -55,8 +86,9 @@ pub fn to_rotation(value: Quat4) -> Rotation {
 }
 
 /// The authored hulls built so far, by their points' bits: a hull never changes, and
-/// every drum, tooth and hedgehog of a size and variant shares one (each reset and
-/// each client's predicted copy took its quickhull again).
+/// every drum, tooth and hedgehog of a size and variant shares one, as does each
+/// cottage garden prop with itself in later rounds (each reset and each client's
+/// predicted copy took its quickhull again).
 static AUTHORED_HULLS: Mutex<Vec<(Vec<u32>, SharedShape)>> = Mutex::new(Vec::new());
 
 /// A convex hull from xyz triples.

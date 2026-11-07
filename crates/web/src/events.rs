@@ -68,13 +68,26 @@ pub fn take_events(
     listener_right: (f64, f64),
     sounds: &mut SoundPlanner,
 ) -> EventBatch {
+    let mut batch = EventBatch::default();
+    take_events_into(events, listener, listener_right, sounds, &mut batch);
+    batch
+}
+
+/// [`take_events`] into `batch`, a batch the shell keeps between drains: the queue gets
+/// the batch's emptied events back, so once both have grown a drain allocates nothing.
+pub fn take_events_into(
+    events: &mut Vec<PendingEvent>,
+    listener: (f64, f64),
+    listener_right: (f64, f64),
+    sounds: &mut SoundPlanner,
+    batch: &mut EventBatch,
+) {
     let listener = Vec2::new(listener.0, listener.1);
     let listener_right = Vec2::new(listener_right.0, listener_right.1);
-    let events = std::mem::take(events);
-    EventBatch {
-        sounds: sounds.plan(&events, listener, listener_right),
-        events,
-    }
+    batch.events.clear();
+    std::mem::swap(events, &mut batch.events);
+    batch.sounds.clear();
+    sounds.plan_into(&batch.events, listener, listener_right, &mut batch.sounds);
 }
 
 /// `batch` as the page reads it, written directly to JSON without copying events into
@@ -112,6 +125,45 @@ mod tests {
         let value = drain(&mut events, (1.25, -2.5), (0.5, -0.75));
         assert_eq!(value, json!({"events": [], "sounds": []}));
         assert_eq!(events.capacity(), capacity);
+    }
+
+    /// A shell's kept batch reads what a fresh one would, and hands the queue back the
+    /// vector the previous drain emptied.
+    #[test]
+    fn a_kept_batch_matches_a_fresh_one_and_trades_vectors_with_the_queue() {
+        let event = PendingEvent {
+            event: serde_json::from_value(json!({"type": "shot", "x": 1.0, "z": 2.0})).unwrap(),
+            player_hit: true,
+            own: true,
+            damage_angle: None,
+            feedback: EventFeedback::default(),
+        };
+        let (mut kept, mut kept_sounds) = (EventBatch::default(), SoundPlanner::default());
+        let mut queue = Vec::new();
+        for drain in 0..2 {
+            queue.push(event.clone());
+            let mut fresh_queue = queue.clone();
+            let fresh = take_events(
+                &mut fresh_queue,
+                (0.0, 0.0),
+                (1.0, 0.0),
+                &mut kept_sounds.clone(),
+            );
+            let emptied = kept.events.as_ptr();
+            take_events_into(
+                &mut queue,
+                (0.0, 0.0),
+                (1.0, 0.0),
+                &mut kept_sounds,
+                &mut kept,
+            );
+            assert_eq!(kept, fresh);
+            assert!(queue.is_empty());
+            if drain > 0 {
+                assert_eq!(queue.as_ptr(), emptied);
+            }
+            kept.events.clear();
+        }
     }
 
     #[test]

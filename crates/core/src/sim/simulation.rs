@@ -1,7 +1,7 @@
 //! The authoritative fixed-step simulation: one Rapier world, the entity records, and the
 //! tick order that seeded matches depend on.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use rapier3d::prelude::*;
 use serde::{Deserialize, Serialize, Serializer};
@@ -28,7 +28,7 @@ use super::math::{Point3, Quat4, Random, Vec2, best_by, distance, js_round, to_u
 use super::movable_cover::update_movable_cover;
 use super::navigation::{Footprint, Navigation};
 use super::physics::{
-    ContactForces, convex_hull, from_rotation, from_vector, interaction_groups, query_filter,
+    ContactForces, HandleMap, convex_hull, from_rotation, from_vector, interaction_groups, query_filter,
     vector,
 };
 use super::pickups::collect_pickup;
@@ -226,7 +226,7 @@ pub struct Simulation {
     pub tanks: Vec<Tank>,
     /// Covers are only ever appended during a round, so indices stay stable.
     pub covers: Vec<Cover>,
-    pub cover_by_collider: HashMap<ColliderHandle, usize>,
+    pub cover_by_collider: HandleMap<ColliderHandle, usize>,
     pub shots: Vec<Shot>,
     pub(crate) projectile_tank_positions: Vec<Option<Point3>>,
     /// The fallen structure bodies a shell's low reach can strike, reused per query.
@@ -278,11 +278,36 @@ pub struct Simulation {
     pub round_count: usize,
     pub(crate) bot_names: Vec<&'static str>,
     /// Metadata for bodies whose contact forces feed debris-impact events.
-    pub(crate) debris_contacts: HashMap<RigidBodyHandle, DebrisContact>,
+    pub(crate) debris_contacts: HandleMap<RigidBodyHandle, DebrisContact>,
     /// Falling bodies' blows on standing parts, reused tick to tick.
     pub(crate) crush_scratch: CrushScratch,
     /// The debris budget's ranking and the players' places it scores by, reused.
     pub(crate) cleanup_scratch: (Vec<(f64, usize)>, Vec<Vec2>),
+    /// Working lists of blasts, ruins, routes and reinforcements, reused.
+    pub(crate) scratch: Scratch,
+}
+
+/// Working lists that passes over the field fill and empty, kept so a busy field
+/// allocates nothing for them. A pass takes its list with `mem::take` and puts it back,
+/// so one that runs again inside itself (a blast setting off a mine) starts its own
+/// rather than overwriting the outer one's.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    /// The mines a blast sets off, in mine order ([`Simulation::explode`]).
+    pub chained_mines: Vec<Mine>,
+    /// A blast's damage to one structure's parts: part, damage and gap.
+    pub structure_hits: Vec<(usize, f64, f64)>,
+    /// The landed structure debris a blast may throw: id, and index when listed.
+    pub thrown_debris: Vec<(u32, usize)>,
+    /// A route a bot is weighing, swapped into its brain when kept.
+    pub path: Vec<Vec2>,
+    /// The other resting pieces of one ruin.
+    pub ruin: Vec<usize>,
+    /// The pieces a clearing one takes along, with the life they clear from.
+    pub along: Vec<(usize, f64)>,
+    /// Solo reinforcement: the living enemies and the free spawn slots.
+    pub living: Vec<usize>,
+    pub spawn_slots: Vec<Vec2>,
 }
 
 impl Simulation {
@@ -300,7 +325,7 @@ impl Simulation {
             rng,
             tanks: Vec::new(),
             covers: Vec::new(),
-            cover_by_collider: HashMap::new(),
+            cover_by_collider: HandleMap::default(),
             shots: Vec::new(),
             projectile_tank_positions: Vec::new(),
             projectile_structure_bodies: Vec::new(),
@@ -343,9 +368,10 @@ impl Simulation {
             bot_reroutes: 0,
             round_count: SIMULATION_RULES.default_tank_count,
             bot_names: Vec::new(),
-            debris_contacts: HashMap::new(),
+            debris_contacts: HandleMap::default(),
             crush_scratch: CrushScratch::default(),
             cleanup_scratch: (Vec::new(), Vec::new()),
+            scratch: Scratch::default(),
         };
         setup.apply(&mut simulation);
         // reset advances the round (its number and the seed of the bot names), so start one
@@ -413,6 +439,11 @@ impl Simulation {
 
     pub fn map_name(&self) -> String {
         map_option_for(self.current_map.id).name.to_uppercase()
+    }
+
+    /// The map the arena is built from, which [`Simulation::map_name`] names.
+    pub fn map_id(&self) -> MapId {
+        self.current_map.id
     }
 
     /// Compact maps shrink the shared spawn lanes, pickups and patrol routes about the centre.
@@ -490,7 +521,7 @@ impl Simulation {
                 }
             })
             .collect();
-        self.nav = Navigation::new();
+        self.nav.clear();
         self.nav.rebuild(&self.covers, None);
         if self.game_mode == GameMode::Solo {
             self.add_tank(self.human_team, true, self.human_kind, 2);
@@ -667,15 +698,16 @@ impl Simulation {
             {
                 let body = self.covers[index].body;
                 for hull in bed.props(&design, GARDEN_PROPS_HEIGHT) {
-                    let points: Vec<_> = hull
+                    // A cottage stands in the same place every round, so each reset and
+                    // rebuild takes its props' hulls from the authored ones.
+                    let points: Vec<f32> = hull
                         .into_iter()
-                        .map(|p| {
+                        .flat_map(|p| {
                             let p = design.to_world(p);
-                            vector(p.x, p.y, p.z)
+                            [p.x as f32, p.y as f32, p.z as f32]
                         })
                         .collect();
-                    let collider = ColliderBuilder::convex_hull(&points)
-                        .expect("a garden prop has volume")
+                    let collider = convex_hull(&points)
                         .collision_groups(interaction_groups(group::GARDEN_PROPS))
                         .friction(0.6);
                     self.world.insert_collider(collider, Some(body));
@@ -938,24 +970,31 @@ impl Simulation {
         if self.tanks.iter().filter(|tank| enemy(tank)).count() >= SOLO.active_enemies {
             return;
         }
-        let living: Vec<usize> = (0..self.tanks.len())
-            .filter(|&i| enemy(&self.tanks[i]))
-            .collect();
+        let mut living = std::mem::take(&mut self.scratch.living);
+        living.clear();
+        living.extend((0..self.tanks.len()).filter(|&i| enemy(&self.tanks[i])));
         let team = self.human_team.opponent();
-        let slots: Vec<Vec2> = (0..SOLO.active_enemies)
-            .map(|slot| solo_spawn(team, slot))
-            .filter(|&p| {
-                self.tanks.iter().all(|tank| {
-                    !tank.alive
-                        || distance(
-                            p,
-                            from_vector(self.world.bodies[tank.body].translation()).planar(),
-                        ) > 4.0
-                })
-            })
-            .collect();
-        let human = self.human_index().into_iter().collect::<Vec<_>>();
-        let spawn = best_by(slots, |&p| self.spawn_score(p, &human, &living));
+        let mut slots = std::mem::take(&mut self.scratch.spawn_slots);
+        slots.clear();
+        slots.extend(
+            (0..SOLO.active_enemies)
+                .map(|slot| solo_spawn(team, slot))
+                .filter(|&p| {
+                    self.tanks.iter().all(|tank| {
+                        !tank.alive
+                            || distance(
+                                p,
+                                from_vector(self.world.bodies[tank.body].translation()).planar(),
+                            ) > 4.0
+                    })
+                }),
+        );
+        let human = self.human_index();
+        let spawn = best_by(slots.iter().copied(), |&p| {
+            self.spawn_score(p, human.as_slice(), &living)
+        });
+        self.scratch.living = living;
+        self.scratch.spawn_slots = slots;
         let Some(spawn) = spawn else {
             return;
         };

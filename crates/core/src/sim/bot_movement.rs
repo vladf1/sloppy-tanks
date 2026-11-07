@@ -313,13 +313,15 @@ pub fn recover_bot(simulation: &mut Simulation, tank_index: usize, desired: Vec2
         if simulation.nav.is_blocked(goal) {
             continue;
         }
-        let path = simulation.nav.find(position, goal);
-        if path.is_empty() {
+        simulation
+            .nav
+            .find_into(position, goal, &mut simulation.scratch.path);
+        if simulation.scratch.path.is_empty() {
             continue;
         }
         let nav_version = simulation.nav.version;
         let brain = &mut simulation.tanks[tank_index].brain;
-        brain.path = path;
+        std::mem::swap(&mut brain.path, &mut simulation.scratch.path);
         brain.recovery_goal = goal;
         brain.recovery = RECOVERY_COMMITMENT_SECONDS;
         brain.nav_version = nav_version;

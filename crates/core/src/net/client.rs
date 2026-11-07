@@ -679,7 +679,12 @@ impl NetworkClient {
 
     pub fn socket_message(&mut self, socket: u32, text: &str, now_ms: f64) {
         if self.is_current(socket) && text_length(text) <= MAX_SERVER_MESSAGE_BYTES {
-            self.arrive(Message::Text(text.to_string()), now_ms);
+            // Without a development delay the message is read where it lies.
+            if self.delay.is_some() {
+                self.arrive(Message::Text(text.to_string()), now_ms);
+            } else if self.handle(text, now_ms).is_err() {
+                self.receive_failure();
+            }
         } else if self.is_current(socket) {
             self.unreadable();
         }
@@ -1070,11 +1075,11 @@ impl NetworkClient {
                         }
                         let incoming = shell_hits(&extras.events, control.tank_id);
                         let pushed_frame = rendered.and_then(|state| {
-                            self.timeline.push(
+                            self.timeline.push_from(
                                 state,
                                 self.mirror.tick,
-                                extras.events,
-                                extras.paths,
+                                &mut extras.events,
+                                &mut extras.paths,
                                 &self.prediction,
                             )
                         });
@@ -1097,6 +1102,7 @@ impl NetworkClient {
                         }
                         pushed = true;
                     }
+                    self.mirror.recycle(extras);
                 }
                 if pushed {
                     self.timeline.arrive(self.last_snapshot_ms);

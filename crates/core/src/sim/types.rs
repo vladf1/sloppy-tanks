@@ -407,6 +407,17 @@ impl Shot {
     pub fn combat_y(&self) -> f64 {
         self.y.unwrap_or(1.0)
     }
+
+    /// The shell as it stands for resolving a contact, which reads neither the bodies it
+    /// passes through nor the defenses that tried it: a copy with those lists empty, so
+    /// a contact clones no list.
+    pub(crate) fn contact_copy(&self) -> Shot {
+        Shot {
+            loosened: Vec::new(),
+            laser_checked_by: Vec::new(),
+            ..*self
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

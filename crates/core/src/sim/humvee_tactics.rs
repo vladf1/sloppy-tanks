@@ -219,7 +219,10 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         let Some(escape) = escape_point(simulation, point, threat) else {
             continue;
         };
-        let path = simulation.nav.find(position, point);
+        simulation
+            .nav
+            .find_into(position, point, &mut simulation.scratch.path);
+        let path = &simulation.scratch.path;
         if (path.is_empty() && distance(position, point) > ARRIVAL)
             || path
                 .iter()
@@ -234,7 +237,7 @@ pub fn update_humvee_goal(simulation: &mut Simulation, tank_index: usize) -> boo
         tactics.firing_point = point;
         tactics.planned_threat = Some(threat);
         brain.goal = point;
-        brain.path = path;
+        std::mem::swap(&mut brain.path, &mut simulation.scratch.path);
         brain.nav_version = nav_version;
         simulation.bot_reroutes += 1;
         return true;

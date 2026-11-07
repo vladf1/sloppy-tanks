@@ -15,7 +15,7 @@ use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
 use crate::preferences::{Preferences, TouchSetting};
 use sloppy_core::sim::{GameMode, Team};
-use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone, pause_report};
+use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone};
 use sloppy_web::catalog::{
     ControlLine, DEFAULT_VOLUME, GRAPHICS_OPTIONS, KEYBOARD_CONTROLS, SLIDER_STEP, TOUCH_CONTROLS,
 };
@@ -128,7 +128,10 @@ pub(super) fn dialog_with_padding(
             // No drop shadow: the page's armour plate clips its own box shadow away
             // (`:is(.menu:not(.start), .settings)` keeps only inset ones under its
             // `clip-path`), so the plate sits straight on the blurred arena.
-            painter.set(slot, Shape::Vec(paint::plate_shapes(rect, 14.0, None)));
+            painter.set(
+                slot,
+                Shape::Vec(paint::plate_shapes(painter.ctx(), rect, 14.0, None)),
+            );
             ui.allocate_rect(rect, Sense::hover());
         });
     let size = shown.response.rect.size();
@@ -178,25 +181,36 @@ fn centred_lines(
     width: f32,
     line: f32,
 ) -> Arc<Galley> {
-    let widest_word = text
-        .split_whitespace()
-        .map(|word| paint::text_width(painter, word, font.clone(), spacing))
-        .fold(0.0, f32::max);
-    let mut job = LayoutJob::default();
-    job.append(
-        text,
-        0.0,
-        TextFormat {
-            font_id: font,
-            color,
-            extra_letter_spacing: spacing,
-            line_height: Some(line),
-            ..Default::default()
-        },
-    );
-    job.wrap.max_width = width.max(widest_word);
-    job.halign = egui::Align::Center;
-    painter.layout_job(job)
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    "centred lines".hash(&mut hasher);
+    text.hash(&mut hasher);
+    font.hash(&mut hasher);
+    color.hash(&mut hasher);
+    for value in [spacing, width, line, painter.ctx().pixels_per_point()] {
+        value.to_bits().hash(&mut hasher);
+    }
+    paint::kept_galley(painter, hasher.finish(), text, || {
+        let widest_word = text
+            .split_whitespace()
+            .map(|word| paint::text_width(painter, word, font.clone(), spacing))
+            .fold(0.0, f32::max);
+        let mut job = LayoutJob::default();
+        job.append(
+            text,
+            0.0,
+            TextFormat {
+                font_id: font,
+                color,
+                extra_letter_spacing: spacing,
+                line_height: Some(line),
+                ..Default::default()
+            },
+        );
+        job.wrap.max_width = width.max(widest_word);
+        job.halign = egui::Align::Center;
+        painter.layout_job(job)
+    })
 }
 
 /// Draw lines from [`centred_lines`] from `top_center` down; returns their height.
@@ -222,13 +236,12 @@ const YOURS_GLOW: [(f32, f32); 7] = [
 ];
 
 /// A score plate's name, with YOU on the viewer's side.
-fn plate_label(names: &[&str; 2], team: Team, index: usize) -> String {
-    let name = names[index].to_uppercase();
+fn plate_label(names: &[&str; 2], team: Team, index: usize) -> paint::ShortText {
+    let mut label = paint::upper(names[index]);
     if index == team.index() {
-        format!("{name} · YOU")
-    } else {
-        name
+        let _ = std::fmt::Write::write_str(&mut label, " · YOU");
     }
+    label
 }
 
 /// Each score plate's width: its score or its name, whichever is wider.
@@ -236,7 +249,7 @@ fn plate_widths(painter: &Painter, scores: [u32; 2], names: &[&str; 2], team: Te
     [0, 1].map(|index| {
         let score = paint::text_width(
             painter,
-            &format!("{}", scores[index]),
+            &paint::short(format_args!("{}", scores[index])),
             display_font(34.0),
             0.0,
         );
@@ -310,9 +323,15 @@ pub fn score_plates(
         } else {
             (hex(0xff5367), hex(0xb01b33))
         };
-        painter.add(paint::gradient_polygon(&band(0.0, height), light, deep));
+        painter.add(paint::gradient_polygon(
+            painter.ctx(),
+            &band(0.0, height),
+            light,
+            deep,
+        ));
         // The glossy top half (`#ffffff33` to clear at 50%).
         painter.add(paint::gradient_polygon(
+            painter.ctx(),
             &band(0.0, height / 2.0),
             hexa(0xffffff, 0.2),
             Color32::TRANSPARENT,
@@ -323,6 +342,7 @@ pub fn score_plates(
             for pair in YOURS_GLOW.windows(2) {
                 let [(from, from_alpha), (to, to_alpha)] = [pair[0], pair[1]];
                 painter.add(paint::gradient_polygon(
+                    painter.ctx(),
                     &band(from, to),
                     hexa(0xffcf38, from_alpha),
                     hexa(0xffcf38, to_alpha),
@@ -338,12 +358,12 @@ pub fn score_plates(
             painter,
             pos2(center, top + 22.0),
             Align2::CENTER_CENTER,
-            &format!("{}", scores[index]),
+            &paint::short(format_args!("{}", scores[index])),
             score_font.clone(),
             Color32::WHITE,
             0.0,
         );
-        let name = names[index].to_uppercase();
+        let name = paint::upper(names[index]);
         let name_width = paint::text_width(painter, &label(index), name_font.clone(), 1.6);
         let name_left = center - name_width / 2.0;
         let rect = paint::text(
@@ -568,7 +588,7 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f3
         .map(|fact| {
             let caption = centred_lines(
                 painter,
-                &fact.label.to_uppercase(),
+                &paint::upper(fact.label),
                 bold_font(12.0),
                 hex(0xa9c6dc),
                 1.4,
@@ -588,7 +608,7 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f3
             let note = (!fact.note.is_empty()).then(|| {
                 centred_lines(
                     painter,
-                    &fact.note.to_uppercase(),
+                    &paint::upper(fact.note),
                     bold_font(12.0),
                     hex(0xa9c6dc),
                     1.0,
@@ -769,7 +789,7 @@ pub fn pause(
     dim_backdrop(context);
     let solo = hud.game_mode == GameMode::Solo;
     let mode = if solo { "SOLO ASSAULT" } else { "TEAM BATTLE" };
-    let pause = pause_report(&hud);
+    let pause = state.pause_report(&hud);
     let mut tab = state.pause_tab;
     let hidden = state.settings_draft.is_some();
     if hidden {
@@ -796,7 +816,8 @@ pub fn pause(
                 let clear = close.left() - 6.0 - origin.x;
                 y += phone_head(painter, origin, width, clear, "PAUSED", score);
             } else {
-                let eyebrow = format!("{mode} · {}", hud.map_name.to_uppercase());
+                let mut eyebrow = paint::short(format_args!("{mode} · "));
+                eyebrow.push_upper(hud.map_name);
                 y += dialog_head(
                     painter,
                     origin,
@@ -808,9 +829,11 @@ pub fn pause(
                 );
             }
             // Over the head, so no score plate ever covers it.
-            if paint::close_button(ui, art, close, Id::unique("pause close"))
-                .on_hover_text("Resume (Esc)")
-                .clicked()
+            if paint::on_hover_text_with(
+                paint::close_button(ui, art, close, Id::unique("pause close")),
+                || "Resume (Esc)".to_owned(),
+            )
+            .clicked()
             {
                 actions.push(Action::Resume);
             }
@@ -894,7 +917,7 @@ pub fn pause(
             let resume_left = origin.x + end_width + END_BATTLE_MARGIN + action_gap;
             let secondary_width = (origin.x + width - resume_left - action_gap) / 2.4;
             let resume_width = secondary_width * 1.4;
-            if paint::button_at(
+            let end = paint::button_at(
                 ui,
                 art,
                 Rect::from_min_size(pos2(origin.x, y), vec2(end_width, button_height)),
@@ -902,9 +925,9 @@ pub fn pause(
                 Some("end"),
                 ButtonStyle::Danger,
                 true,
-            )
-            .on_hover_text("End the battle and see the report")
-            .clicked()
+            );
+            if paint::on_hover_text_with(end, || "End the battle and see the report".to_owned())
+                .clicked()
             {
                 actions.push(Action::EndBattle);
             }

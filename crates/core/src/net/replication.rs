@@ -895,6 +895,24 @@ impl StateMirror {
         extras
     }
 
+    /// Hands back the extras [`apply_snapshot`](Self::apply_snapshot) returned once they
+    /// are read, so later frames decode their events and path entries into the same
+    /// buffers.
+    pub fn recycle(&mut self, extras: FrameExtras) {
+        let FrameExtras {
+            mut events,
+            mut paths,
+        } = extras;
+        if events.capacity() > self.scratch.events.capacity() {
+            events.clear();
+            self.scratch.events = events;
+        }
+        if paths.capacity() > self.scratch.paths.capacity() {
+            paths.clear();
+            self.scratch.paths = paths;
+        }
+    }
+
     /// Reads and validates the batch's next frame without changing the mirror. With
     /// `view`, the frame also lists every record it changed.
     pub fn decode(&self, batch: &mut SnapshotBatch<'_>, view: bool) -> ReadResult<DecodedFrame> {

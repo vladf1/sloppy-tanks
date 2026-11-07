@@ -6,13 +6,13 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
 use sloppy_core::sim::Team;
 use sloppy_core::sim::map_options::map_option_for;
+use sloppy_web::events::EventBatch;
 use sloppy_web::hud::Hud;
 use sloppy_web::room_notices::RoomNotice;
 use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
@@ -144,6 +144,9 @@ pub struct RoomSession {
     last_poll: f64,
     last_frame: f64,
     hud_dt: f64,
+    /// The engine's events of the latest frame that had any, kept so their vectors go
+    /// back to the engine's queue rather than freed and allocated again.
+    events: EventBatch,
     /// The renderer stopped; the room is given up.
     stopped: bool,
     /// Battle Setup is wanted, with this reason to show there.
@@ -234,6 +237,7 @@ impl RoomSession {
             last_poll: now,
             last_frame: now,
             hud_dt: 0.0,
+            events: EventBatch::default(),
             stopped: false,
             exit: None,
         };
@@ -663,18 +667,18 @@ impl RoomSession {
             match_state: room.match_state.clone(),
             human_team,
             human: room.human,
-            scoreboard: room.scoreboard.into_owned(),
+            scoreboard: room.scoreboard,
             score_pill: room.score_pill,
             ..Hud::default()
         };
         if let Some(lobby) = &self.menu.lobby {
             hud.map_mode = lobby.settings.map_mode;
-            hud.map_name = map_option_for(lobby.settings.map_mode).name.to_owned();
+            hud.map_name = map_option_for(lobby.settings.map_mode).name;
             hud.difficulty = lobby.settings.difficulty;
         }
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
-        self.ui.hud = Some(Rc::new(hud));
+        self.ui.keep_hud(hud);
     }
 
     /// One step of compiling the arena the room asked for, between frames.
@@ -713,7 +717,10 @@ impl RoomSession {
     fn frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
-        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
+        let result = self
+            .game
+            .frame_slots(now, &input.pack())
+            .map_err(engine_error)?;
         if let Some(error) = self.game.error() {
             return Err(error);
         }
@@ -735,17 +742,19 @@ impl RoomSession {
                 self.refresh_hud();
             }
             if value(slot::EVENTS) > 0.0 {
-                let batch = self.game.take_events();
+                self.game.take_events_into(&mut self.events);
                 if let Some(audio) = &mut self.audio {
-                    audio.play(&batch);
+                    audio.play(&self.events);
                 }
-                for event in &batch.events {
+                for event in &self.events.events {
                     self.ui.event(event);
                     self.menu.event(event);
                 }
+                self.events.events.clear();
             }
         } else if value(slot::EVENTS) > 0.0 {
-            self.game.take_events();
+            self.game.take_events_into(&mut self.events);
+            self.events.events.clear();
         }
         Ok(())
     }

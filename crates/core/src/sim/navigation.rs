@@ -84,6 +84,17 @@ impl Navigation {
         }
     }
 
+    /// Return to the state of [`Self::new`] in place, keeping the grids' storage.
+    pub fn clear(&mut self) {
+        self.blocked.fill(0);
+        self.cells.fill(SearchCell::default());
+        self.search = 0;
+        self.discovered.fill(0);
+        self.open.clear();
+        self.obstacles.clear();
+        self.version = 0;
+    }
+
     /// Recompute occupancy for the whole grid, or only the cells around `region`. Living
     /// cover blocks its footprint; a felled tree keeps blocking its stump.
     pub fn rebuild(&mut self, covers: &[Cover], region: Option<Footprint>) {

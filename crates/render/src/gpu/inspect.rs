@@ -29,13 +29,31 @@ impl Renderer {
     /// The state of a live instance, or `None` once it was removed.
     pub fn instance_state(&self, id: InstanceId) -> Option<InstanceState> {
         let instance = self.instances.get(id.index, id.generation)?;
+        // An instance keeps per-joint state only once a joint was posed or shown;
+        // report every joint, as the model's nodes leave the rest.
+        let nodes = self
+            .models
+            .at(instance.model)
+            .map_or(&[][..], |model| &model.skeleton.nodes[..]);
         Some(InstanceState {
             visible: instance.visible,
             opacity: instance.opacity,
             data: instance.data,
             world: instance.world,
-            node_visible: instance.node_visible.clone(),
-            overrides: instance.overrides.clone(),
+            node_visible: nodes
+                .iter()
+                .enumerate()
+                .map(|(index, node)| {
+                    instance
+                        .node_visible
+                        .get(index)
+                        .copied()
+                        .unwrap_or(node.visible)
+                })
+                .collect(),
+            overrides: (0..nodes.len())
+                .map(|index| instance.overrides.get(index).copied().flatten())
+                .collect(),
         })
     }
 

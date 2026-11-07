@@ -585,7 +585,7 @@ fn joining(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Ve
         .constrain(false)
         .fade_in(false)
         .show(context, |ui| {
-            ui.painter().extend(paint::plate_shapes(card, 14.0, None));
+            paint::plate(ui.painter(), card, 14.0, None);
             let content =
                 Rect::from_min_max(card.min + vec2(side, top), card.max - vec2(side, bottom));
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(content));
@@ -912,14 +912,14 @@ fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [u32; 
         let x = left + if index == 0 { 0.0 } else { widths[0] + colon };
         let rect = Rect::from_min_size(pos2(x, top), vec2(widths[index], 45.0));
         let polygon = if index == 0 {
-            vec![
+            [
                 rect.left_top() + vec2(10.0, 0.0),
                 rect.right_top(),
                 rect.right_bottom(),
                 rect.left_bottom(),
             ]
         } else {
-            vec![
+            [
                 rect.left_top(),
                 rect.right_top(),
                 rect.right_bottom() - vec2(10.0, 0.0),
@@ -927,6 +927,7 @@ fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [u32; 
             ]
         };
         painter.add(paint::gradient_polygon(
+            painter.ctx(),
             &polygon,
             if index == 0 {
                 hex(0x2f8ff2)

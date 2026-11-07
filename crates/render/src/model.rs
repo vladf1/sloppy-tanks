@@ -112,6 +112,13 @@ pub fn shared_vertices(mesh: &Mesh, range: Range<usize>) -> Vec<Vertex> {
     vertices
 }
 
+/// [`shared_vertices`] into `vertices`, replacing what it held, so an upload reuses
+/// one buffer for every piece.
+pub fn write_shared_vertices(vertices: &mut Vec<Vertex>, mesh: &Mesh, range: Range<usize>) {
+    vertices.clear();
+    push_vertices(vertices, mesh, range, None, None);
+}
+
 /// One InstancedMesh instance relative to its part.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct InstanceData {

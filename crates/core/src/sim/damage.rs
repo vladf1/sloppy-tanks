@@ -333,13 +333,18 @@ impl Simulation {
         let throw = outside_structure_blast(cause, radius, damage).throw;
         throw_structure_debris(self, Point3::new(position.x, BLAST_HEIGHT, position.z), radius, throw);
         // Blast-triggered mines retain the initiator of this chain, like drums.
-        let (chained, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.mines)
-            .into_iter()
-            .partition(|mine| distance(position, Vec2::new(mine.x, mine.z)) < radius);
-        self.mines = rest;
-        for mine in chained {
+        // Out of `mines` in order before any goes off, so a chained blast cannot set one
+        // off twice; a chained blast takes its own list.
+        let mut chained = std::mem::take(&mut self.scratch.chained_mines);
+        chained.clear();
+        chained.extend(
+            self.mines
+                .extract_if(.., |mine| distance(position, Vec2::new(mine.x, mine.z)) < radius),
+        );
+        for mine in chained.drain(..) {
             self.detonate_mine(&mine, owner, team, owner_life);
         }
+        self.scratch.chained_mines = chained;
         for i in 0..self.tanks.len() {
             if !self.tanks[i].alive {
                 continue;

@@ -564,7 +564,7 @@ fn resolve_contact(
     fraction: f64,
     elapsed: f64,
 ) -> bool {
-    let shot = simulation.shots[si].clone();
+    let shot = simulation.shots[si].contact_copy();
     let shot_color = weapon(shot.weapon).color;
     let mut remove = true;
     match next {
@@ -593,7 +593,7 @@ fn resolve_contact(
             // A successful zap vaporizes the shell without triggering a rocket blast.
         }
         Contact::Pair { other: oi } => {
-            let other = simulation.shots[oi].clone();
+            let other = simulation.shots[oi].contact_copy();
             let a_pierces = shot.piercing > 0;
             let b_pierces = other.piercing > 0;
             if a_pierces || b_pierces {
@@ -873,7 +873,7 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
 /// one that flies on through shows only the part breaking, and a fused round striking a
 /// wall from inside shows no hit on its outer face. Returns whether the shell is spent.
 fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, part: usize) -> bool {
-    let shot = simulation.shots[si].clone();
+    let shot = simulation.shots[si].contact_copy();
     let point = Point3::new(shot.x, shot.combat_y(), shot.z);
     let along = shell_heading(&shot);
     let by = Some((shot.owner, shot.team));
