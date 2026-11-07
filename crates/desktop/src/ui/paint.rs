@@ -2,6 +2,8 @@
 //! the armour plates (top-left and bottom-right corners cut, a steel hairline round the
 //! cut), spaced type, key caps, timer rings, vignettes and the dialogs' buttons.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
@@ -38,6 +40,78 @@ pub fn fade(color: Color32, alpha: f32) -> Color32 {
 /// `a` mixed toward `b` by `t`.
 pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     a.lerp_to_gamma(b, t.clamp(0.0, 1.0))
+}
+
+/// Meshes the screens build every frame from the same inputs (a stick's lit knob, a key
+/// cap's rounded gradient), each by the inputs it was built from and the last pass that
+/// drew it. A builder's mesh depends on its inputs alone, so a kept one is the mesh it
+/// would build again.
+#[derive(Default)]
+struct MeshMemo {
+    pass: u64,
+    meshes: HashMap<Box<[u32]>, (Arc<Mesh>, u64)>,
+    /// The key being looked up, kept to look up the next without allocating.
+    key: Vec<u32>,
+}
+
+thread_local! {
+    static MESHES: RefCell<MeshMemo> = RefCell::default();
+}
+
+/// A kind of mesh in [`memo_mesh`]'s keys, so two builders' inputs never meet.
+#[derive(Clone, Copy)]
+pub enum MeshKind {
+    RoundedGradient = 1,
+    Vignette,
+    LitDisc,
+}
+
+/// The words of a mesh's key: a builder's float inputs by their bits and colours by
+/// their bytes.
+pub fn key_floats(values: impl IntoIterator<Item = f32>) -> impl Iterator<Item = u32> {
+    values.into_iter().map(f32::to_bits)
+}
+
+pub fn key_stops(stops: &[(f32, Color32)]) -> impl Iterator<Item = u32> + '_ {
+    stops
+        .iter()
+        .flat_map(|&(share, color)| [share.to_bits(), u32::from_le_bytes(color.to_array())])
+}
+
+/// The mesh `build` makes from the inputs `key` holds, built only when no pass drew it
+/// last time: a mesh not drawn in a pass is let go at the next. `build` must not draw
+/// kept meshes itself.
+pub fn memo_mesh(
+    context: &egui::Context,
+    kind: MeshKind,
+    key: impl IntoIterator<Item = u32>,
+    build: impl FnOnce() -> Mesh,
+) -> Shape {
+    let pass = context.cumulative_pass_nr();
+    let kept = MESHES.with_borrow_mut(|memo| {
+        if memo.pass != pass {
+            let last = memo.pass;
+            memo.meshes.retain(|_, (_, used)| *used == last);
+            memo.pass = pass;
+        }
+        memo.key.clear();
+        memo.key.push(kind as u32);
+        memo.key.extend(key);
+        let (meshes, key) = (&mut memo.meshes, &memo.key);
+        meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
+            *used = pass;
+            Arc::clone(mesh)
+        })
+    });
+    let mesh = kept.unwrap_or_else(|| {
+        let mesh = Arc::new(build());
+        MESHES.with_borrow_mut(|memo| {
+            let key = memo.key.as_slice().into();
+            memo.meshes.insert(key, (Arc::clone(&mesh), pass));
+        });
+        mesh
+    });
+    Shape::Mesh(mesh)
 }
 
 /// An untextured mesh with room for `vertices` and `triangles`, so building it never
@@ -79,7 +153,15 @@ pub fn rounded_vgradient(
     stops: &[(f32, Color32)],
 ) {
     let feather = 1.0 / painter.pixels_per_point();
-    painter.add(rounded_vgradient_mesh(rect, radius, stops, feather));
+    let key = key_floats([rect.min.x, rect.min.y, rect.max.x, rect.max.y, feather])
+        .chain(key_floats(radius))
+        .chain(key_stops(stops));
+    painter.add(memo_mesh(
+        painter.ctx(),
+        MeshKind::RoundedGradient,
+        key,
+        || rounded_vgradient_mesh(rect, radius, stops, feather),
+    ));
 }
 
 /// The mesh of [`rounded_vgradient`], its corners faded out over `feather` points.
@@ -725,6 +807,15 @@ pub fn vignette_at(
         return;
     }
     let radius = vec2(rect.width() * radii.x, rect.height() * radii.y);
+    let key = key_floats([center.x, center.y, radius.x, radius.y, opacity]).chain(key_stops(stops));
+    let mesh = memo_mesh(painter.ctx(), MeshKind::Vignette, key, || {
+        vignette_mesh(center, radius, stops, opacity)
+    });
+    painter.with_clip_rect(rect).add(mesh);
+}
+
+/// The mesh of [`vignette_at`]: rings of `radius` round `center`.
+fn vignette_mesh(center: Pos2, radius: Vec2, stops: &[(f32, Color32)], opacity: f32) -> Mesh {
     let segments = 48;
     // The last stop's colour carries on past the corners.
     let mut rings: Vec<(f32, Color32)> = Vec::with_capacity(stops.len() + 1);
@@ -753,7 +844,7 @@ pub fn vignette_at(
             mesh.add_triangle(b, d, c);
         }
     }
-    painter.with_clip_rect(rect).add(Shape::mesh(mesh));
+    mesh
 }
 
 /// How a dialog button looks.

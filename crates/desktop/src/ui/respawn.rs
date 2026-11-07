@@ -503,13 +503,14 @@ fn countdown(
     );
     // The face inside the band, lit from above its middle, shaded under its top edge.
     let face = radius - RING_BAND;
-    painter.add(lit_disc(
+    lit_disc(
+        painter,
         ring,
         face,
         ring - vec2(0.0, face * 0.4),
         face.hypot(face * 1.4),
         &[(0.0, hex(0x1d3a66)), (1.0, hex(0x07122a))],
-    ));
+    );
     painter.add(inner_edge(ring, face, 5.0, hexa(0x000000, 0.35)));
     // The seconds over a dark gold drop and a soft gold glow.
     painter.add(paint::radial(
