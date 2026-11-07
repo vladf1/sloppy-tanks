@@ -125,6 +125,10 @@ enum Source {
 /// material changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DrawState {
+    /// It stays out of ambient occlusion (`EffectDefinition::skips_occlusion`): its
+    /// draws follow every other opaque draw, so a backend whose occlusion reads the
+    /// main view's own depth (WebGL2) can copy that depth just before them.
+    pub skips_occlusion: bool,
     /// A stable rank of the class's pipeline in the view; the pipeline itself may
     /// still be compiling when the lists are sorted.
     pub pipeline: u32,
@@ -154,12 +158,19 @@ pub enum Grouping {
 
 impl DrawState {
     /// Where a class binding this state sorts, before its index.
-    fn key(&self, grouping: Grouping) -> [u32; 5] {
+    fn key(&self, grouping: Grouping) -> [u32; 6] {
         let (first, second) = match grouping {
             Grouping::MaterialFirst => (self.material, self.vertex_page),
             Grouping::PageFirst => (self.vertex_page, self.material),
         };
-        [self.pipeline, first, second, self.pool, self.index_page]
+        [
+            u32::from(self.skips_occlusion),
+            self.pipeline,
+            first,
+            second,
+            self.pool,
+            self.index_page,
+        ]
     }
 }
 
@@ -172,7 +183,7 @@ impl DrawState {
 pub struct ClassOrder {
     grouping: Grouping,
     /// Live classes in draw order, by their [`DrawState::key`] and index.
-    by_state: Vec<([u32; 5], u32)>,
+    by_state: Vec<([u32; 6], u32)>,
     /// Each class's position in `by_state`, indexed by class; free slots keep a
     /// stale one, which no draw reads.
     positions: Vec<u32>,
@@ -695,6 +706,7 @@ mod tests {
                 pool: u32::MAX,
                 material: [3, 4, 3, 3, 3, 4][class],
                 index_page: [0, 1, 0, 0, 0, 0][class],
+                ..DrawState::default()
             }
         };
         let mut builder = DrawListBuilder::default();
@@ -787,6 +799,23 @@ mod tests {
     }
 
     #[test]
+    fn classes_skipping_occlusion_draw_after_every_other() {
+        let state = |pipeline, skips_occlusion| DrawState {
+            skips_occlusion,
+            pipeline,
+            ..DrawState::default()
+        };
+        let mut order = ClassOrder::default();
+        for (class, (pipeline, skips)) in [(0, true), (5, false), (1, false), (2, true)]
+            .into_iter()
+            .enumerate()
+        {
+            order.insert(class as u32, state(pipeline, skips));
+        }
+        assert_eq!(order.positions(), [2, 1, 0, 3]);
+    }
+
+    #[test]
     fn class_order_matches_a_sort_of_the_live_classes() {
         let mut random = crate::effects::random::CosmeticRandom::seeded(11);
         let mut pick = |n: f64| (random.next_f64() * n) as u32;
@@ -802,6 +831,7 @@ mod tests {
                 }
                 None => {
                     let state = DrawState {
+                        skips_occlusion: pick(4.0) == 0,
                         pipeline: pick(4.0),
                         material: pick(6.0),
                         vertex_page: pick(3.0),
@@ -812,7 +842,7 @@ mod tests {
                     live[class as usize] = Some(state);
                 }
             }
-            let mut expected: Vec<([u32; 5], u32)> = (0..60)
+            let mut expected: Vec<([u32; 6], u32)> = (0..60)
                 .filter_map(|class| live[class as usize].map(|state| (state.key(grouping), class)))
                 .collect();
             expected.sort();
