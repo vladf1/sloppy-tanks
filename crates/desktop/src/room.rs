@@ -6,6 +6,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
@@ -481,7 +482,7 @@ impl RoomSession {
                 &self.overlay.context,
                 self.touch_showing(),
                 self.first_person,
-                self.ui.hud.as_ref(),
+                self.ui.hud.as_deref(),
             ),
         }
     }
@@ -673,7 +674,7 @@ impl RoomSession {
         }
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
-        self.ui.hud = Some(hud);
+        self.ui.hud = Some(Rc::new(hud));
     }
 
     /// One step of compiling the arena the room asked for, between frames.

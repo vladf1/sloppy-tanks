@@ -127,6 +127,7 @@ fn main() {
         let mut state = RenderState::default();
         let mut display = RenderState::default();
         let mut timeline = NetworkTimeline::default();
+        let mut events = Vec::new();
         let mut effects = EffectSystems::default();
         let mut samples: BTreeMap<&str, Vec<Sample>> = BTreeMap::new();
         let mut hashes = [0xcbf29ce484222325; 3];
@@ -164,12 +165,14 @@ fn main() {
             });
             let (_, read) = measure(|| {
                 for frame in 0..3 {
+                    events.clear();
                     timeline.read(
                         now + frame as f64 * 1000.0 / 60.0,
                         40.0,
                         1.0 / 60.0,
                         &mut display,
                         None,
+                        &mut events,
                     );
                 }
             });

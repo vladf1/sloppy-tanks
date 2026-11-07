@@ -610,6 +610,26 @@ impl Art {
         }
     }
 
+    /// Paint icon `name` at each of `copies`' rects in its tint, as one mesh: what as
+    /// many [`Self::icon`] calls draw, without a mesh and a texture lookup for each.
+    pub fn icon_copies(
+        &self,
+        painter: &egui::Painter,
+        name: &str,
+        copies: impl ExactSizeIterator<Item = (Rect, Color32)>,
+    ) {
+        if let Some(texture) = self.texture(painter.ctx(), name) {
+            let mut mesh = egui::Mesh::with_texture(texture);
+            mesh.reserve_vertices(copies.len() * 4);
+            mesh.reserve_triangles(copies.len() * 2);
+            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+            for (rect, tint) in copies {
+                mesh.add_rect_with_uv(rect, uv, tint);
+            }
+            painter.add(egui::Shape::mesh(mesh));
+        }
+    }
+
     /// Paint icon `name` mirrored left to right.
     pub fn icon_flipped(&self, painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
         if let Some(texture) = self.texture(painter.ctx(), name) {

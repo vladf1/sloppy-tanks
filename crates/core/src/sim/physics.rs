@@ -54,15 +54,35 @@ pub fn to_rotation(value: Quat4) -> Rotation {
     .normalize()
 }
 
+/// The authored hulls built so far, by their points' bits: a hull never changes, and
+/// every drum, tooth and hedgehog of a size and variant shares one (each reset and
+/// each client's predicted copy took its quickhull again).
+static AUTHORED_HULLS: Mutex<Vec<(Vec<u32>, SharedShape)>> = Mutex::new(Vec::new());
+
 /// A convex hull from xyz triples.
 pub fn convex_hull(points: &[f32]) -> ColliderBuilder {
-    let points: Vec<Vector> = points
+    let key: Vec<u32> = points.iter().map(|value| value.to_bits()).collect();
+    let built = |hulls: &[(Vec<u32>, SharedShape)]| {
+        hulls
+            .iter()
+            .find(|(other, _)| *other == key)
+            .map(|(_, shape)| shape.clone())
+    };
+    if let Some(shape) = built(&AUTHORED_HULLS.lock().expect("authored hulls")) {
+        return ColliderBuilder::new(shape);
+    }
+    let vectors: Vec<Vector> = points
         .as_chunks::<3>()
         .0
         .iter()
         .map(|p| Vector::new(p[0], p[1], p[2]))
         .collect();
-    ColliderBuilder::convex_hull(&points).expect("authored hull points are not degenerate")
+    let shape = SharedShape::convex_hull(&vectors).expect("authored hull points are not degenerate");
+    AUTHORED_HULLS
+        .lock()
+        .expect("authored hulls")
+        .push((key, shape.clone()));
+    ColliderBuilder::new(shape)
 }
 
 /// Contact-force events collected during a world step, drained in report order.

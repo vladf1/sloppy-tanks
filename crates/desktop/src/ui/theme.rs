@@ -5,7 +5,7 @@
 //! (`public/fonts/interface.ttc`, made by `scripts/build-fonts.py`): Anton (OFL), widened
 //! to Impact's width, for Impact and Roboto (Apache 2.0) for the UI face.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use egui::epaint::text::Blob;
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontTweak, Stroke};
@@ -29,9 +29,14 @@ pub const TEXT_LABEL: Color32 = Color32::from_rgb(0x8e, 0xd4, 0xff);
 /// The window behind the menus between rounds.
 pub const BACKDROP: Color32 = INK_1;
 
+/// The families' names, made once: the HUD asks for its fonts many times a frame, and a
+/// fresh name is an allocation each time.
+static DISPLAY: LazyLock<FontFamily> = LazyLock::new(|| FontFamily::Name("display".into()));
+static BOLD: LazyLock<FontFamily> = LazyLock::new(|| FontFamily::Name("bold".into()));
+
 /// The family of display type (Impact where the system has it).
 pub fn display() -> FontFamily {
-    FontFamily::Name("display".into())
+    DISPLAY.clone()
 }
 
 /// Display type at `size` points.
@@ -41,7 +46,7 @@ pub fn display_font(size: f32) -> egui::FontId {
 
 /// Bold UI type at `size` points.
 pub fn bold_font(size: f32) -> egui::FontId {
-    egui::FontId::new(size, FontFamily::Name("bold".into()))
+    egui::FontId::new(size, BOLD.clone())
 }
 
 /// The colour of `team`.
@@ -204,10 +209,9 @@ pub fn install(context: &egui::Context) {
         family.extend(fallback.iter().cloned());
         family
     };
-    fonts.families.insert(
-        FontFamily::Name("bold".into()),
-        with(has_bold.then_some("ui-bold")),
-    );
+    fonts
+        .families
+        .insert(BOLD.clone(), with(has_bold.then_some("ui-bold")));
     fonts.families.insert(
         display(),
         with(if has_display {

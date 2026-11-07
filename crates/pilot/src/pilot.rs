@@ -178,7 +178,7 @@ impl Pilot {
         self.input = match self.client.frame(now_ms, &input) {
             Some(frame) => self
                 .cockpit
-                .fly(frame.state, &frame.events, frame.dt, now_ms),
+                .fly(frame.state, frame.events, frame.dt, now_ms),
             None => LocalInput {
                 aim_angle: input.aim_angle,
                 ..LocalInput::default()

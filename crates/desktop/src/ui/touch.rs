@@ -115,12 +115,31 @@ fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
 /// be its centre (`radial-gradient(circle at …)`): `stops` are shares of `reach`, where
 /// the gradient ends. Its edge fades over a point, as egui's own shapes do.
 pub(super) fn lit_disc(
+    painter: &Painter,
     center: Pos2,
     radius: f32,
     light: Pos2,
     reach: f32,
     stops: &[(f32, Color32)],
-) -> Shape {
+) {
+    let key = paint::key_floats([center.x, center.y, radius, light.x, light.y, reach])
+        .chain(paint::key_stops(stops));
+    painter.add(paint::memo_mesh(
+        painter.ctx(),
+        paint::MeshKind::LitDisc,
+        key,
+        || lit_disc_mesh(center, radius, light, reach, stops),
+    ));
+}
+
+/// The mesh of [`lit_disc`].
+fn lit_disc_mesh(
+    center: Pos2,
+    radius: f32,
+    light: Pos2,
+    reach: f32,
+    stops: &[(f32, Color32)],
+) -> Mesh {
     const RINGS: u32 = 12;
     const SEGMENTS: u32 = 48;
     const FEATHER: f32 = 1.0;
@@ -136,7 +155,10 @@ pub(super) fn lit_disc(
         }
         previous.1
     };
-    let mut mesh = Mesh::default();
+    let mut mesh = paint::mesh_with_capacity(
+        1 + ((RINGS + 1) * SEGMENTS) as usize,
+        ((1 + 2 * RINGS) * SEGMENTS) as usize,
+    );
     mesh.colored_vertex(center, color_at(center));
     // The last ring is the feather's outside, its colours gone to nothing.
     for ring in 1..=RINGS + 1 {
@@ -167,7 +189,7 @@ pub(super) fn lit_disc(
             mesh.add_triangle(b, b + SEGMENTS, a + SEGMENTS);
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// An inset shade along a disc's top edge (`depth` above zero) or bottom edge (below):
@@ -175,7 +197,7 @@ pub(super) fn lit_disc(
 /// vertically.
 pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) -> Shape {
     const STEPS: u32 = 32;
-    let mut mesh = Mesh::default();
+    let mut mesh = paint::mesh_with_capacity(2 * (STEPS as usize + 1), 2 * STEPS as usize);
     for step in 0..=STEPS {
         let x = radius * (2.0 * step as f32 / STEPS as f32 - 1.0);
         let half = (radius * radius - x * x).max(0.0).sqrt();
@@ -336,7 +358,8 @@ fn stick(
     let face = KNOB_RADIUS - KNOB_RIM;
     let light = knob - vec2(0.0, face * (1.0 - 2.0 * KNOB_LIGHT_TOP));
     let reach = face.hypot(face * (1.0 + (1.0 - 2.0 * KNOB_LIGHT_TOP)));
-    painter.add(lit_disc(
+    lit_disc(
+        painter,
         knob,
         KNOB_RADIUS,
         light,
@@ -346,7 +369,7 @@ fn stick(
             (0.45, hex(look.knob[1])),
             (0.8, hex(look.knob[2])),
         ],
-    ));
+    );
     painter.add(inner_edge(knob, face, 3.0, hexa(0xffffff, 0.28)));
     painter.add(inner_edge(knob, face, -7.0, hexa(0x000000, 0.3)));
     if look.sight {

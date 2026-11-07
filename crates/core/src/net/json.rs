@@ -124,9 +124,13 @@ impl<'a> ObjectWriter<'a> {
     }
 }
 
+/// Room for the usual message, a frame's `input` or a `ping` and its `pong`, so writing
+/// one allocates once instead of growing the text field by field.
+const MESSAGE_CAPACITY: usize = 256;
+
 /// Builds one JSON object as an owned string.
 pub fn object(build: impl FnOnce(&mut ObjectWriter<'_>)) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(MESSAGE_CAPACITY);
     let mut writer = ObjectWriter::new(&mut out);
     build(&mut writer);
     writer.finish();

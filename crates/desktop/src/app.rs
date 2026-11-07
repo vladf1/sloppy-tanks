@@ -10,6 +10,7 @@
 //! natively at once, in a page once the browser has given it a GPU device.
 
 use std::future::Future;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -755,7 +756,7 @@ impl Session {
             overlay,
             input: WindowInput::default(),
             ui: UiState {
-                hud: Some(hud),
+                hud: Some(Rc::new(hud)),
                 status: "Building the arena…".into(),
                 rooms,
                 ..UiState::default()
@@ -867,7 +868,7 @@ impl Session {
                 &self.overlay.context,
                 self.touch_showing(),
                 self.first_person,
-                self.ui.hud.as_ref(),
+                self.ui.hud.as_deref(),
             ),
         }
     }
@@ -1050,7 +1051,7 @@ impl Session {
         self.alive = hud.human.alive;
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
-        self.ui.hud = Some(hud);
+        self.ui.hud = Some(Rc::new(hud));
     }
 
     fn begin_round(&mut self) {
@@ -1099,7 +1100,7 @@ impl Session {
                 self.bakes_started.retain(|started| *started != key);
                 self.bake = None;
             }
-            self.ui.hud = Some(self.game.hud().into_owned());
+            self.ui.hud = Some(Rc::new(self.game.hud().into_owned()));
         }
         if !self.preparation.preparing {
             if self.ui.starting {

@@ -3,7 +3,7 @@
 //! grows, rises and drifts as grey smoke and fades; the trail outlives the missile
 //! for a moment. One bounded draw; when it is full the oldest puff makes room.
 
-use std::collections::HashMap;
+use crate::fixed_hash::HashMap;
 
 use glam::{Mat4, Vec3};
 use sloppy_core::sim::Weapon;
@@ -63,7 +63,7 @@ impl Default for RocketSmoke {
     fn default() -> Self {
         Self {
             puffs: Vec::with_capacity(ROCKET_SMOKE_CAPACITY),
-            trails: HashMap::new(),
+            trails: HashMap::default(),
             records: PoolBuffer::new(ROCKET_SMOKE_CAPACITY),
         }
     }

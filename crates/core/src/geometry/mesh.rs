@@ -286,15 +286,20 @@ impl Mesh {
                 .map(|p| p.map(|v| to_int32(f64::from(v) * hash_multiplier))),
         );
         let mut normals = vec![[0.0f32; 3]; result.positions.len()];
-        for (vertex, normal) in normals.iter_mut().enumerate() {
-            let own = face_normals[vertex / 3];
-            let sum: DVec3 = buckets
-                .with(vertex)
-                .iter()
-                .map(|&corner| face_normals[corner / 3])
-                .filter(|other| own.dot(*other) > crease_dot)
-                .sum();
-            *normal = narrow(normalize(sum));
+        // A position's face normals gathered once for all its corners, in corner
+        // order: each corner sums them as before, without looking each up again.
+        let mut around: Vec<DVec3> = Vec::new();
+        for corners in buckets.groups() {
+            around.clear();
+            around.extend(corners.iter().map(|&corner| face_normals[corner / 3]));
+            for (&vertex, &own) in corners.iter().zip(&around) {
+                let sum: DVec3 = around
+                    .iter()
+                    .copied()
+                    .filter(|other| own.dot(*other) > crease_dot)
+                    .sum();
+                normals[vertex] = narrow(normalize(sum));
+            }
         }
         result.normals = normals;
         result
