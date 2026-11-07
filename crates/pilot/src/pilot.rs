@@ -202,6 +202,17 @@ impl Pilot {
         std::mem::take(&mut self.actions)
     }
 
+    /// The actions [`Self::take_actions`] would move out, for a runner that serializes
+    /// them where they are and then [clears](Self::clear_actions) them, keeping their
+    /// buffer for the next frame.
+    pub fn actions(&self) -> &[ClientAction] {
+        &self.actions
+    }
+
+    pub fn clear_actions(&mut self) {
+        self.actions.clear();
+    }
+
     /// Whether the pilot has a seat in the room: welcomed, with the lobby seen.
     pub fn seated(&self) -> bool {
         self.client.connected && self.phase.is_some()

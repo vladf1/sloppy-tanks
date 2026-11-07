@@ -1,5 +1,7 @@
 //! Frame parsing and message assembly (RFC 6455 section 5), independent of I/O.
 
+use std::borrow::Cow;
+
 use bytes::{Buf, BufMut, BytesMut};
 
 use super::deflate::{BINARY_COMPRESSION_THRESHOLD, COMPRESSION_THRESHOLD, Deflate};
@@ -92,16 +94,23 @@ impl Codec {
     /// Takes the next complete event out of `buffer`; `Ok(None)` when more bytes are needed.
     pub fn decode(&mut self, buffer: &mut BytesMut) -> Result<Option<Event>, ProtocolError> {
         loop {
-            let Some((header, payload)) = self.next_frame(buffer)? else {
+            let Some((header, length)) = self.next_frame(buffer)? else {
                 return Ok(None);
             };
-            if let Some(event) = self.frame(header, payload)? {
+            // The payload is read where it arrived: only a message's own bytes (or a
+            // fragment's, kept for the rest) are copied out of the buffer.
+            let event = self.frame(header, &buffer[..length]);
+            buffer.advance(length);
+            if let Some(event) = event? {
                 return Ok(Some(event));
             }
         }
     }
 
-    fn next_frame(&self, buffer: &mut BytesMut) -> Result<Option<(u8, Vec<u8>)>, ProtocolError> {
+    /// Reads the next frame's header out of `buffer` once its whole payload has arrived,
+    /// and unmasks the payload in place: `(header byte, payload length)`, the payload
+    /// being the buffer's first `length` bytes.
+    fn next_frame(&self, buffer: &mut BytesMut) -> Result<Option<(u8, usize)>, ProtocolError> {
         if buffer.len() < 2 {
             return Ok(None);
         }
@@ -142,16 +151,15 @@ impl Codec {
             return Ok(None);
         }
         buffer.advance(offset);
-        let mut payload = buffer.split_to(length).to_vec();
         if let Some(mask) = mask {
-            for (index, byte) in payload.iter_mut().enumerate() {
+            for (index, byte) in buffer[..length].iter_mut().enumerate() {
                 *byte ^= mask[index % 4];
             }
         }
-        Ok(Some((first, payload)))
+        Ok(Some((first, length)))
     }
 
-    fn frame(&mut self, header: u8, payload: Vec<u8>) -> Result<Option<Event>, ProtocolError> {
+    fn frame(&mut self, header: u8, payload: &[u8]) -> Result<Option<Event>, ProtocolError> {
         let fin = header & 0x80 != 0;
         let rsv1 = header & 0x40 != 0;
         let opcode = header & 0x0f;
@@ -163,52 +171,75 @@ impl Codec {
                 return Err(protocol("Invalid control frame"));
             }
             return match opcode {
-                OP_CLOSE => close_event(&payload).map(Some),
-                OP_PING => Ok(Some(Event::Ping(payload))),
+                OP_CLOSE => close_event(payload).map(Some),
+                OP_PING => Ok(Some(Event::Ping(payload.to_vec()))),
                 OP_PONG => Ok(Some(Event::Pong)),
                 _ => Err(protocol("Invalid opcode")),
             };
         }
-        let mut partial = match (opcode, self.partial.take()) {
-            (OP_CONTINUATION, Some(partial)) if !rsv1 => partial,
-            (OP_CONTINUATION, _) => return Err(protocol("Unexpected continuation frame")),
+        match (opcode, self.partial.take()) {
+            (OP_CONTINUATION, Some(mut partial)) if !rsv1 => {
+                if partial.payload.len() + payload.len() > self.max_message_bytes {
+                    return Err(TOO_LARGE);
+                }
+                partial.payload.extend_from_slice(payload);
+                if !fin {
+                    self.partial = Some(partial);
+                    return Ok(None);
+                }
+                self.message(
+                    partial.opcode,
+                    partial.compressed,
+                    Cow::Owned(partial.payload),
+                )
+                .map(Some)
+            }
+            (OP_CONTINUATION, _) => Err(protocol("Unexpected continuation frame")),
             (OP_TEXT | OP_BINARY, None) => {
                 if rsv1 && self.deflate.is_none() {
                     return Err(protocol("RSV1 must be clear"));
                 }
-                Partial {
-                    opcode,
-                    compressed: rsv1,
-                    payload: Vec::new(),
+                if payload.len() > self.max_message_bytes {
+                    return Err(TOO_LARGE);
                 }
+                if !fin {
+                    self.partial = Some(Partial {
+                        opcode,
+                        compressed: rsv1,
+                        payload: payload.to_vec(),
+                    });
+                    return Ok(None);
+                }
+                // An unfragmented message, the usual one, inflates or copies straight
+                // from the buffer.
+                self.message(opcode, rsv1, Cow::Borrowed(payload)).map(Some)
             }
-            (OP_TEXT | OP_BINARY, Some(_)) => {
-                return Err(protocol("Expected a continuation frame"));
-            }
-            _ => return Err(protocol("Invalid opcode")),
-        };
-        if partial.payload.len() + payload.len() > self.max_message_bytes {
-            return Err(TOO_LARGE);
+            (OP_TEXT | OP_BINARY, Some(_)) => Err(protocol("Expected a continuation frame")),
+            _ => Err(protocol("Invalid opcode")),
         }
-        partial.payload.extend_from_slice(&payload);
-        if !fin {
-            self.partial = Some(partial);
-            return Ok(None);
-        }
-        let data = if partial.compressed {
+    }
+
+    /// The event of a whole data message's payload.
+    fn message(
+        &mut self,
+        opcode: u8,
+        compressed: bool,
+        payload: Cow<'_, [u8]>,
+    ) -> Result<Event, ProtocolError> {
+        let data = if compressed {
             let deflate = self
                 .deflate
                 .as_mut()
                 .expect("compressed frames need the extension");
-            deflate.decompress(&partial.payload, self.max_message_bytes)?
+            deflate.decompress(&payload, self.max_message_bytes)?
         } else {
-            partial.payload
+            payload.into_owned()
         };
-        if partial.opcode == OP_BINARY {
-            return Ok(Some(Event::Binary(data)));
+        if opcode == OP_BINARY {
+            return Ok(Event::Binary(data));
         }
         String::from_utf8(data)
-            .map(|text| Some(Event::Text(text)))
+            .map(Event::Text)
             .map_err(|_| INVALID_UTF8)
     }
 
@@ -410,6 +441,109 @@ mod tests {
         assert_eq!(
             events,
             [Event::Ping(b"p".to_vec()), Event::Text("hello".into())]
+        );
+    }
+
+    #[test]
+    fn decodes_several_messages_from_one_buffer_with_control_frames_between_fragments() {
+        let params = DeflateParams::default();
+        let (mut server, mut client) = pair(Some(&params));
+        let text = "{\"type\":\"input\"}".repeat(80);
+        let compressed = client
+            .deflate
+            .as_mut()
+            .expect("negotiated")
+            .compress(text.as_bytes())
+            .to_vec();
+        let (head, tail) = compressed.split_at(compressed.len() / 2);
+        let state: Vec<u8> = (0..300u32).map(|i| (i * 7) as u8).collect();
+        let mut wire = BytesMut::new();
+        client.encode_binary(&[1, 2, 3], &mut wire);
+        // A compressed message in two fragments: RSV1 on the first alone.
+        encode_frame(Role::Client, 0x40 | OP_TEXT, head, &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_PING, b"a", &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_CONTINUATION, tail, &mut wire);
+        // A plain binary message in three, with a pong and a close-free gap.
+        encode_frame(Role::Client, OP_BINARY, &state[..100], &mut wire);
+        encode_frame(Role::Client, OP_CONTINUATION, &state[100..250], &mut wire);
+        encode_frame(Role::Client, 0x80 | OP_PONG, b"", &mut wire);
+        encode_frame(
+            Role::Client,
+            0x80 | OP_CONTINUATION,
+            &state[250..],
+            &mut wire,
+        );
+        client.encode_text("short", &mut wire);
+        client.encode_binary(&state, &mut wire);
+        client.encode_close(Some(1000), "bye", &mut wire);
+        assert_eq!(
+            decode_all(&mut server, &wire).unwrap(),
+            [
+                Event::Binary(vec![1, 2, 3]),
+                Event::Ping(b"a".to_vec()),
+                Event::Text(text),
+                Event::Pong,
+                Event::Binary(state.clone()),
+                Event::Text("short".into()),
+                Event::Binary(state),
+                Event::Close(Some(1000), "bye".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn fragments_obey_the_continuation_rules() {
+        let params = DeflateParams::default();
+        let code = |frames: &[(u8, &[u8])]| {
+            let mut wire = BytesMut::new();
+            for &(header, payload) in frames {
+                encode_frame(Role::Client, header, payload, &mut wire);
+            }
+            decode_all(&mut Codec::new(Role::Server, Some(&params), 8192), &wire)
+                .unwrap_err()
+                .code
+        };
+        assert_eq!(
+            code(&[(OP_TEXT, b"a"), (0x80 | OP_TEXT, b"b")]),
+            1002,
+            "a new message before the last one finished"
+        );
+        assert_eq!(
+            code(&[(OP_TEXT, b"a"), (0x80 | 0x40 | OP_CONTINUATION, b"b")]),
+            1002,
+            "RSV1 on a continuation"
+        );
+        assert_eq!(
+            code(&[(OP_TEXT, b"a"), (OP_PING, b"p")]),
+            1002,
+            "a fragmented control frame"
+        );
+        assert_eq!(
+            code(&[(0x80 | OP_PING, &[b'p'; 126])]),
+            1002,
+            "a control frame over 125 bytes"
+        );
+        assert_eq!(
+            code(&[
+                (OP_BINARY, &[0; 6000]),
+                (0x80 | OP_CONTINUATION, &[0; 3000])
+            ]),
+            1009,
+            "fragments past the message limit"
+        );
+        assert_eq!(
+            code(&[(OP_TEXT, &[b'a', 0xc3]), (0x80 | OP_CONTINUATION, &[0xff])]),
+            1007,
+            "invalid UTF-8 across fragments"
+        );
+        let mut wire = BytesMut::new();
+        encode_frame(Role::Client, 0x80 | 0x40 | OP_BINARY, &[0xff; 8], &mut wire);
+        assert_eq!(
+            decode_all(&mut Codec::new(Role::Server, Some(&params), 8192), &wire)
+                .unwrap_err()
+                .code,
+            1007,
+            "corrupt compressed data"
         );
     }
 

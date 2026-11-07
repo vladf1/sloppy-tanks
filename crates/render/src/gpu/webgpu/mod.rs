@@ -753,7 +753,7 @@ impl Frame {
         #[cfg(not(target_arch = "wasm32"))]
         let _ = device.poll(wgpu::PollType::Poll);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("scene"),
+            label: frame_label("scene"),
         });
         self.encode_scene(&mut encoder, scene, stats);
         let submitted = self.gpu_frames.now_ms();
@@ -793,7 +793,7 @@ impl Frame {
         };
         let view = output.texture.create_view(&Default::default());
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("output"),
+            label: frame_label("output"),
         });
         self.encode_output(gpu, &mut encoder, &view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
@@ -862,7 +862,7 @@ impl Frame {
         };
         if scene.rebuild_static {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("fixed scenery shadow"),
+                label: frame_label("fixed scenery shadow"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &static_shadow().view,
@@ -901,7 +901,7 @@ impl Frame {
         }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("sun shadow"),
+                label: frame_label("sun shadow"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.shadow_map.view,
@@ -1047,7 +1047,7 @@ impl Frame {
     ) {
         let scene = draws.scene;
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("occlusion depth"),
+            label: frame_label("occlusion depth"),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: &self.post.occlusion_depth.view,
@@ -1149,7 +1149,7 @@ impl Frame {
         pipelines: &Pipelines,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("output"),
+            label: frame_label("output"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: output,
                 depth_slice: None,
@@ -1191,7 +1191,7 @@ fn post_draw(
     instance: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
+        label: frame_label(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             depth_slice: None,
@@ -1544,6 +1544,12 @@ impl Drop for WaterGpu {
     }
 }
 
+/// The debug label of a pass or encoder made every frame: in debug builds only, since
+/// wgpu's browser backend hands each label to JavaScript as a new string.
+fn frame_label(label: &str) -> wgpu::Label<'_> {
+    cfg!(debug_assertions).then_some(label)
+}
+
 /// A pass into a scene target, which keeps only its color, resolved when multisampled.
 fn scene_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
@@ -1553,7 +1559,7 @@ fn scene_pass<'a>(
 ) -> wgpu::RenderPass<'a> {
     let resolve_target = target.resolve_target();
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
+        label: frame_label(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: &target.color_view,
             depth_slice: None,

@@ -838,7 +838,12 @@ struct InstanceEntry {
     tint: [f32; 3],
     data: [f32; 4],
     reflected: bool,
+    /// Per joint: the local transform replacing its rest pose. Empty until a joint is
+    /// first posed (most instances never are: debris, wreck parts, pickups), and a
+    /// joint past its end keeps its rest pose.
     overrides: Vec<Option<Mat4>>,
+    /// Per joint: whether it draws. Empty until a joint is first shown or hidden, and
+    /// a joint past its end draws as its model's node says.
     node_visible: Vec<bool>,
     /// Scenery only: persistent records of its instanced parts.
     static_ranges: Vec<Option<StaticRange>>,
@@ -1824,13 +1829,6 @@ impl Renderer {
         if entry.scenery {
             self.static_dirty = true;
         }
-        let joints = entry.skeleton.nodes.len();
-        let node_visible = entry
-            .skeleton
-            .nodes
-            .iter()
-            .map(|node| node.visible)
-            .collect();
         let scenery = entry.scenery;
         let (index, generation) = self.instances.insert(InstanceEntry {
             model: model.index,
@@ -1842,8 +1840,8 @@ impl Renderer {
             tint: [1.0; 3],
             data: [0.0; 4],
             reflected: true,
-            overrides: vec![None; joints],
-            node_visible,
+            overrides: Vec::new(),
+            node_visible: Vec::new(),
             static_ranges: Vec::new(),
         });
         Some(InstanceId { index, generation })
@@ -1945,21 +1943,52 @@ impl Renderer {
     /// Replace a joint's local transform (relative to its parent joint), or
     /// restore the rest pose with `None`.
     pub fn set_node_transform(&mut self, id: InstanceId, node: usize, local: Option<Mat4>) {
-        if let Some(slot) = self
-            .instance_mut(id)
-            .and_then(|i| i.overrides.get_mut(node))
-        {
-            *slot = local;
+        let Some(instance) = self.instances.get_mut(id.index, id.generation) else {
+            return;
+        };
+        let Some(joints) = self
+            .models
+            .at(instance.model)
+            .map(|model| model.skeleton.nodes.len())
+        else {
+            return;
+        };
+        if node >= joints {
+            return;
         }
+        if instance.overrides.len() < joints {
+            if local.is_none() {
+                return;
+            }
+            instance.overrides.resize(joints, None);
+        }
+        instance.overrides[node] = local;
+        // Scenery bakes its instance state into the static records.
+        self.static_dirty |= instance.scenery;
     }
 
     pub fn set_node_visible(&mut self, id: InstanceId, node: usize, visible: bool) {
-        if let Some(slot) = self
-            .instance_mut(id)
-            .and_then(|i| i.node_visible.get_mut(node))
-        {
-            *slot = visible;
+        let Some(instance) = self.instances.get_mut(id.index, id.generation) else {
+            return;
+        };
+        let Some(model) = self.models.at(instance.model) else {
+            return;
+        };
+        let nodes = &model.skeleton.nodes;
+        if node >= nodes.len() {
+            return;
         }
+        if instance.node_visible.len() < nodes.len() {
+            if nodes[node].visible == visible {
+                return;
+            }
+            instance.node_visible.clear();
+            instance
+                .node_visible
+                .extend(nodes.iter().map(|node| node.visible));
+        }
+        instance.node_visible[node] = visible;
+        self.static_dirty |= instance.scenery;
     }
 
     /// Replace the instances of an InstancedMesh part of a model instance's model
@@ -2844,7 +2873,12 @@ impl Renderer {
             joint_visible.clear();
             for (index, node) in model.skeleton.nodes.iter().enumerate() {
                 let parent = node.parent.is_none_or(|parent| joint_visible[parent]);
-                joint_visible.push(parent && instance.node_visible[index]);
+                let shown = instance
+                    .node_visible
+                    .get(index)
+                    .copied()
+                    .unwrap_or(node.visible);
+                joint_visible.push(parent && shown);
             }
             let faded = instance.opacity < 1.0;
             let tint = [

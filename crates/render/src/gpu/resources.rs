@@ -25,7 +25,7 @@ use crate::mesh_pages::{
     MeshPlacement, MeshRange, MeshSize, Page, PageFamily, PagePlanner, Placement, rebase_indices,
     stream_shared_indices,
 };
-use crate::model::MeshData;
+use crate::model::{MeshData, Vertex};
 use crate::shader::MaterialUniform;
 use crate::shadow_merge::ShadowGroup;
 
@@ -107,12 +107,15 @@ pub struct MeshStore {
     plan: PagePlanner,
     /// Each page's buffers, by page id.
     pages: Vec<Option<PageBuffers>>,
+    /// A shared mesh's vertices converted for one write, reused by every upload.
+    upload_vertices: Vec<Vertex>,
+    /// The meshes a collection frees, reused by every collection.
+    unused: Vec<u32>,
 }
 
-/// Vertices converted per write when a shared mesh streams to the GPU. The converted
-/// chunk is a passing heap allocation (384 KiB of vertices), small enough to fit the
-/// free space loading leaves rather than grow the Wasm memory, which keeps any growth
-/// for good.
+/// Vertices converted per write when a shared mesh streams to the GPU, which bounds
+/// the store's reused conversion buffer at 384 KiB: small enough to fit the free space
+/// loading leaves rather than grow the Wasm memory, which keeps any growth for good.
 const UPLOAD_CHUNK_VERTICES: usize = 8 * 1024;
 
 /// Indices rebased per write when a shared mesh streams to the GPU: 16 KiB on the
@@ -259,13 +262,15 @@ impl MeshStore {
         let index_count = size.indices;
         let vertex = self.place(gpu, family, vertex_count, None);
         let index = self.place(gpu, PageFamily::Index, index_count, None);
+        let mut vertices = std::mem::take(&mut self.upload_vertices);
         let page = self.page(vertex.page).0;
         for start in (0..vertex_count as usize).step_by(UPLOAD_CHUNK_VERTICES) {
             let range = start..(start + UPLOAD_CHUNK_VERTICES).min(vertex_count as usize);
-            let vertices = crate::model::shared_vertices(mesh, range);
+            crate::model::write_shared_vertices(&mut vertices, mesh, range);
             let at = u64::from(vertex.first) + start as u64;
             page.write(gpu, at * family.stride(), bytemuck::cast_slice(&vertices));
         }
+        self.upload_vertices = vertices;
         let indices = self.page(index.page).0;
         stream_shared_indices(
             mesh.indices.as_deref(),
@@ -436,14 +441,17 @@ impl MeshStore {
 
     /// Free shared meshes no draw uses and no caller still holds.
     pub fn collect_unused(&mut self) {
-        let unused: Vec<u32> = self
-            .slots
-            .iter()
-            .filter_map(|(index, mesh)| mesh.unused().then_some(index))
-            .collect();
-        for index in unused {
+        let mut unused = std::mem::take(&mut self.unused);
+        unused.extend(
+            self.slots
+                .iter()
+                .filter_map(|(index, mesh)| mesh.unused().then_some(index)),
+        );
+        for &index in &unused {
             self.release(index);
         }
+        unused.clear();
+        self.unused = unused;
     }
 
     pub fn count(&self) -> usize {
