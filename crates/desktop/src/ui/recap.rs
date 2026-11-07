@@ -67,69 +67,71 @@ fn banner_ground(painter: &Painter, banner: Rect, outcome: Outcome, light: Color
             ],
         ));
     }
-    in_banner(painter, banner, |clip| {
-        if won {
-            clip.add(paint::radial(
-                banner.min,
-                vec2(banner.width() * 0.7, banner.height() * 1.9),
-                &[(0.0, fade(light, 0.34)), (0.7, Color32::TRANSPARENT)],
-            ));
-            clip.add(paint::radial(
-                pos2(banner.left() + banner.width() * 0.06, banner.top()),
-                vec2(banner.width() * 0.4, banner.height() * 1.4),
-                &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
-            ));
-        }
-        // `repeating-linear-gradient(-60deg, …)`: a 2 point stripe every 12 points across.
-        let slant = banner.height() / 3.0_f32.sqrt();
-        let spacing = 12.0 / std::f32::consts::FRAC_PI_6.cos();
-        let mut x = banner.left() - slant;
-        while x < banner.right() {
-            clip.line_segment(
-                [pos2(x, banner.bottom()), pos2(x + slant, banner.top())],
-                Stroke::new(2.0, hexa(0xffffff, 0.024)),
-            );
-            x += spacing;
-        }
-        if won {
-            // Rays from above the title, fading out from their middle (the CSS mask).
-            let center = banner.min + vec2(220.0, 80.0);
-            let strength = if early { 0.6 } else { 1.0 };
-            for ray in 0..24 {
-                let angle = ray as f32 * std::f32::consts::TAU / 24.0;
-                let next = angle + 5.0_f32.to_radians();
-                let mut mesh = Mesh::default();
-                mesh.colored_vertex(center, hexa(0xffcf38, 0.14 * strength));
-                for edge in [angle, next] {
-                    mesh.colored_vertex(
-                        center + vec2(edge.cos(), edge.sin()) * RAY_REACH,
-                        Color32::TRANSPARENT,
-                    );
-                }
-                mesh.add_triangle(0, 1, 2);
-                clip.add(Shape::mesh(mesh));
+    // The same shapes through each of the banner's clips, built once.
+    let mut shapes = Vec::new();
+    if won {
+        shapes.push(paint::radial(
+            banner.min,
+            vec2(banner.width() * 0.7, banner.height() * 1.9),
+            &[(0.0, fade(light, 0.34)), (0.7, Color32::TRANSPARENT)],
+        ));
+        shapes.push(paint::radial(
+            pos2(banner.left() + banner.width() * 0.06, banner.top()),
+            vec2(banner.width() * 0.4, banner.height() * 1.4),
+            &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
+        ));
+    }
+    // `repeating-linear-gradient(-60deg, …)`: a 2 point stripe every 12 points across.
+    let slant = banner.height() / 3.0_f32.sqrt();
+    let spacing = 12.0 / std::f32::consts::FRAC_PI_6.cos();
+    let mut x = banner.left() - slant;
+    while x < banner.right() {
+        shapes.push(Shape::LineSegment {
+            points: [pos2(x, banner.bottom()), pos2(x + slant, banner.top())],
+            stroke: Stroke::new(2.0, hexa(0xffffff, 0.024)),
+        });
+        x += spacing;
+    }
+    if won {
+        // Rays from above the title, fading out from their middle (the CSS mask).
+        let center = banner.min + vec2(220.0, 80.0);
+        let strength = if early { 0.6 } else { 1.0 };
+        for ray in 0..24 {
+            let angle = ray as f32 * std::f32::consts::TAU / 24.0;
+            let next = angle + 5.0_f32.to_radians();
+            let mut mesh = paint::mesh_with_capacity(3, 1);
+            mesh.colored_vertex(center, hexa(0xffcf38, 0.14 * strength));
+            for edge in [angle, next] {
+                mesh.colored_vertex(
+                    center + vec2(edge.cos(), edge.sin()) * RAY_REACH,
+                    Color32::TRANSPARENT,
+                );
             }
+            mesh.add_triangle(0, 1, 2);
+            shapes.push(Shape::mesh(mesh));
         }
-    });
+    }
+    in_banner(painter, banner, &shapes);
 }
 
 /// Draw through clips that cover `banner` but for its cut corner: a staircase of strips
 /// down the cut, two points a step, then the rest.
-fn in_banner(painter: &Painter, banner: Rect, draw: impl Fn(&Painter)) {
+fn in_banner(painter: &Painter, banner: Rect, shapes: &[Shape]) {
     const STEPS: usize = 7;
     let step = BANNER_CUT / STEPS as f32;
+    let draw = |clip: Rect| painter.with_clip_rect(clip).extend(shapes.iter().cloned());
     for index in 0..STEPS {
         let top = banner.top() + index as f32 * step;
         let left = banner.left() + BANNER_CUT - (index as f32 + 0.5) * step;
-        draw(&painter.with_clip_rect(Rect::from_min_max(
+        draw(Rect::from_min_max(
             pos2(left, top),
             pos2(banner.right(), top + step),
-        )));
+        ));
     }
-    draw(&painter.with_clip_rect(Rect::from_min_max(
+    draw(Rect::from_min_max(
         pos2(banner.left(), banner.top() + BANNER_CUT),
         banner.max,
-    )));
+    ));
 }
 
 /// How far the victory rays reach before they fade out.
