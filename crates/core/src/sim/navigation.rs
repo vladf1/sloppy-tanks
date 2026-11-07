@@ -107,6 +107,13 @@ impl Navigation {
                 });
             }
         }
+        self.occupy(region);
+        self.version += 1;
+    }
+
+    /// Mark the cells of the grid, or of those around `region`, that an obstacle's
+    /// inflated footprint covers.
+    fn occupy(&mut self, region: Option<Footprint>) {
         let last = GRID_SIZE as f64 - 1.0;
         let (x0, x1, z0, z1) = match region {
             Some(r) => (
@@ -120,15 +127,33 @@ impl Navigation {
         let (x0, x1, z0, z1) = (x0 as i64, x1 as i64, z0 as i64, z1 as i64);
         for z in z0..=z1 {
             for x in x0..=x1 {
-                let cell = (z * GRID_SIZE as i64 + x) as usize;
-                let position = self.point(cell);
-                self.blocked[cell] = self.obstacles.iter().any(|cover| {
-                    (position.x - cover.x).abs() < cover.w / 2.0 + HULL_CLEARANCE
-                        && (position.z - cover.z).abs() < cover.d / 2.0 + HULL_CLEARANCE
-                }) as u8;
+                self.blocked[(z * GRID_SIZE as i64 + x) as usize] = 0;
             }
         }
-        self.version += 1;
+        // Each obstacle tests only the cells about it (a cell beyond the farthest
+        // centre it can reach on each side), not every cell every obstacle.
+        let index = |at: f64| ((at + HALF_ARENA) / CELL_SIZE - 0.5).floor() as i64;
+        for cover in &self.obstacles {
+            let (reach_x, reach_z) = (
+                cover.w / 2.0 + HULL_CLEARANCE,
+                cover.d / 2.0 + HULL_CLEARANCE,
+            );
+            let from_x = index(cover.x - reach_x).saturating_sub(1);
+            let to_x = index(cover.x + reach_x).saturating_add(1);
+            let from_z = index(cover.z - reach_z).saturating_sub(1);
+            let to_z = index(cover.z + reach_z).saturating_add(1);
+            for z in from_z.max(z0)..=to_z.min(z1) {
+                for x in from_x.max(x0)..=to_x.min(x1) {
+                    let cell = (z * GRID_SIZE as i64 + x) as usize;
+                    let position = self.point(cell);
+                    if (position.x - cover.x).abs() < reach_x
+                        && (position.z - cover.z).abs() < reach_z
+                    {
+                        self.blocked[cell] = 1;
+                    }
+                }
+            }
+        }
     }
 
     pub fn index(&self, position: Vec2) -> usize {
@@ -311,5 +336,61 @@ mod tests {
             assert_eq!(wrapping.find(from, to), expected);
         }
         assert!(wrapping.search < 4, "the stamp wrapped during the routes");
+    }
+
+    /// Every cell any obstacle covers, testing every obstacle at every cell.
+    fn occupied_everywhere(obstacles: &[Footprint], nav: &Navigation) -> Vec<u8> {
+        (0..CELLS)
+            .map(|cell| {
+                let position = nav.point(cell);
+                obstacles.iter().any(|cover| {
+                    (position.x - cover.x).abs() < cover.w / 2.0 + HULL_CLEARANCE
+                        && (position.z - cover.z).abs() < cover.d / 2.0 + HULL_CLEARANCE
+                }) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn occupancy_matches_testing_every_obstacle_at_every_cell() {
+        // Footprints of every size, some on cell edges and centres, some reaching past
+        // the arena, and degenerate ones.
+        let mut random = super::super::math::Random::new(7.0);
+        let mut obstacles: Vec<Footprint> = (0..300)
+            .map(|_| Footprint {
+                x: (random.next() - 0.5) * 140.0,
+                z: (random.next() - 0.5) * 140.0,
+                w: random.next() * random.next() * 30.0,
+                d: random.next() * 4.0,
+            })
+            .collect();
+        obstacles.extend([
+            Footprint { x: 0.0, z: 0.0, w: 0.0, d: 0.0 },
+            Footprint { x: 1.5, z: -0.75, w: 0.3, d: 3.0 },
+            Footprint { x: -60.0, z: 60.0, w: 2.0, d: 2.0 },
+            Footprint { x: 10.0, z: 5.0, w: f64::NAN, d: 1.0 },
+            Footprint { x: 0.0, z: 20.0, w: f64::INFINITY, d: 1.0 },
+        ]);
+        let mut nav = Navigation::new();
+        nav.obstacles = obstacles.clone();
+        nav.occupy(None);
+        let expected = occupied_everywhere(&obstacles, &nav);
+        assert_eq!(nav.blocked, expected);
+        assert!(expected.iter().any(|&b| b == 0) && expected.iter().any(|&b| b == 1));
+        // A region rebuild clears and marks only its cells.
+        nav.blocked.fill(1);
+        let region = Footprint { x: 12.0, z: -7.0, w: 9.0, d: 5.0 };
+        nav.occupy(Some(region));
+        let changed: Vec<usize> = (0..CELLS).filter(|&cell| nav.blocked[cell] != expected[cell]).collect();
+        let region_cells = |cell: usize| {
+            let p = nav.point(cell);
+            (p.x - region.x).abs() < region.w / 2.0 + REBUILD_PADDING
+                && (p.z - region.z).abs() < region.d / 2.0 + REBUILD_PADDING
+        };
+        assert!(changed.iter().all(|&cell| !region_cells(cell)), "{changed:?}");
+        assert!(
+            (0..CELLS).filter(|&cell| region_cells(cell)).any(|cell| expected[cell] == 0),
+            "the region holds an open cell"
+        );
     }
 }
