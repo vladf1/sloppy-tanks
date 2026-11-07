@@ -7,7 +7,9 @@
 //!
 //! A hash of what each measured frame handed the GPU (`Renderer::frame_digest`, and the
 //! effect pools' records) is printed per map, so before/after runs prove they drew the
-//! same frames. With `SLOPPY_ALLOCATION_SITES=n` it also lists where the measured
+//! same frames. The peak of the live heap above what was live at GO is printed too: a
+//! native measure, but the page's Wasm heap never shrinks below its peak. With
+//! `SLOPPY_ALLOCATION_SITES=n` it also lists where the measured
 //! frames allocate, from a backtrace of every `n`th allocation (build with line tables
 //! for names).
 //!
@@ -25,7 +27,7 @@ use std::backtrace::Backtrace;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
@@ -52,6 +54,9 @@ static COUNTING: AtomicBool = AtomicBool::new(false);
 static TRACING: AtomicBool = AtomicBool::new(false);
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
 static BYTES: AtomicU64 = AtomicU64::new(0);
+/// Bytes live on the heap, and the most live since the last reset.
+static LIVE: AtomicI64 = AtomicI64::new(0);
+static PEAK: AtomicI64 = AtomicI64::new(0);
 /// Every this many allocations is traced (`SLOPPY_ALLOCATION_SITES`).
 static TRACE_EVERY: AtomicU64 = AtomicU64::new(1);
 static TRACE_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -61,6 +66,11 @@ static STAGE: Mutex<&'static str> = Mutex::new("");
 thread_local! {
     /// Set while a trace is taken, whose own allocations are not traced.
     static IN_TRACE: Cell<bool> = const { Cell::new(false) };
+}
+
+fn grow(bytes: i64) {
+    let live = LIVE.fetch_add(bytes, Relaxed) + bytes;
+    PEAK.fetch_max(live, Relaxed);
 }
 
 fn record(bytes: usize) {
@@ -87,20 +97,24 @@ fn record(bytes: usize) {
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         record(layout.size());
+        grow(layout.size() as i64);
         unsafe { System.alloc(layout) }
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         record(layout.size());
+        grow(layout.size() as i64);
         unsafe { System.alloc_zeroed(layout) }
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        LIVE.fetch_sub(layout.size() as i64, Relaxed);
         unsafe { System.dealloc(pointer, layout) }
     }
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         record(size);
+        grow(size as i64 - layout.size() as i64);
         unsafe { System.realloc(pointer, layout, size) }
     }
 }
@@ -261,6 +275,8 @@ fn main() {
         let mut state = sim.render_state(None);
         build_arena(&mut view, &state);
         sim.start();
+        let start_live = LIVE.load(Relaxed);
+        PEAK.store(start_live, Relaxed);
         let mut samples: BTreeMap<&str, Vec<Sample>> = BTreeMap::new();
         let mut frame_hash = DefaultHasher::new();
         let mut pool_hash = DefaultHasher::new();
@@ -298,9 +314,15 @@ fn main() {
             }
         }
         let (frame_hash, pool_hash) = (frame_hash.finish(), pool_hash.finish());
+        let peak = PEAK.load(Relaxed) - start_live;
         println!(
             "{}: frames {frame_hash:016x} pools {pool_hash:016x}",
             map.as_str()
+        );
+        println!(
+            "  heap    {:.2} MB live at GO, peak {:.2} MB above it",
+            start_live as f64 / 1e6,
+            peak as f64 / 1e6,
         );
         for (stage, list) in &samples {
             let count = list.len() as f64;
@@ -310,9 +332,10 @@ fn main() {
             micros.sort_by(f64::total_cmp);
             let mean = micros.iter().sum::<f64>() / count;
             println!(
-                "  {stage:7} {allocations:8.1} allocations/frame {bytes:10.0} B/frame  µs mean {mean:7.1} median {:7.1} p90 {:7.1} max {:7.1}",
+                "  {stage:7} {allocations:8.1} allocations/frame {bytes:10.0} B/frame  µs mean {mean:7.1} median {:7.1} p90 {:7.1} p99 {:7.1} max {:7.1}",
                 micros[micros.len() / 2],
                 micros[micros.len() * 9 / 10],
+                micros[micros.len() * 99 / 100],
                 micros[micros.len() - 1],
             );
         }
@@ -320,6 +343,7 @@ fn main() {
             "map": map.as_str(),
             "frameHash": format!("{frame_hash:016x}"),
             "poolHash": format!("{pool_hash:016x}"),
+            "peakHeapAboveGo": peak,
             "samples": samples,
             "digests": digests,
         }));
