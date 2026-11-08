@@ -819,7 +819,7 @@ impl NetGame {
             .and_then(|state| room_hud(state, timers))
     }
 
-    /// The name tags over the other human players' tanks this frame, into `tags`.
+    /// The name tags over the other players' and pilots' tanks this frame, into `tags`.
     pub fn name_tags(&self, tags: &mut Vec<NameTag>) {
         match self.client.display() {
             Some(state) => fill_name_tags(state, |id| self.view.tag_point(id), tags),
