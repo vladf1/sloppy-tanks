@@ -39,7 +39,7 @@ use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::{STEP, TEAM_COLORS, weapon};
 use crate::sim::hitboxes::HIT_HALF_HEIGHT;
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
-use crate::sim::projectiles::RocketThrust;
+use crate::sim::projectiles::{RocketThrust, arena_exit_distance};
 use crate::sim::render_state::{RenderShot, RenderTank};
 use crate::sim::simulation_rules::SIMULATION_RULES;
 use crate::sim::tank_dimensions::{tank_muzzle, tank_visual_muzzle};
@@ -95,6 +95,11 @@ pub trait CoverCast {
     ) -> Option<CoverHit> {
         let _ = past;
         self.cast_cover(origin, direction, distance)
+    }
+
+    /// Where shells leave the arena (`projectiles::arena_edge`); a world without one has none.
+    fn arena_edge(&self) -> f64 {
+        f64::INFINITY
     }
 }
 
@@ -409,7 +414,10 @@ pub(super) fn forecast(
             .thrust
             .map_or(speed, |thrust| thrust.top_speed.max(speed));
         let origin = Point3::new(current.x, current.launch.y.unwrap_or(1.0), current.z);
-        let range = top_speed * COMBAT.projectile_lifetime;
+        let lifetime_range = top_speed * COMBAT.projectile_lifetime;
+        // The host ends a shell where it leaves the arena, as it does when its life runs out.
+        let exit = arena_exit_distance(origin.x, origin.z, direction, cover.arena_edge());
+        let range = lifetime_range.min(exit);
         // The parts the shell broke through on this leg, in order.
         let mut through = [0u64; MAX_PARTS_PAST];
         let mut passed = 0;
@@ -456,6 +464,8 @@ pub(super) fn forecast(
                 let burst_tick = current.tick + flight_ticks(&current, at);
                 end_leg(&mut result, burst_tick);
                 result.strikes.push(burst(&current, burst_tick, entry));
+            } else if exit < lifetime_range {
+                end_leg(&mut result, current.tick + flight_ticks(&current, exit));
             }
             break;
         };

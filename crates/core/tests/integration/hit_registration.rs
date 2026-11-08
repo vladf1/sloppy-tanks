@@ -15,7 +15,7 @@ use rapier3d::prelude::Pose;
 use sloppy_core::geometry::math::js_sign;
 use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::combat_rules::MINE;
+use sloppy_core::sim::combat_rules::{COMBAT, MINE};
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
 use sloppy_core::sim::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use sloppy_core::sim::math::{Random, Vec2};
@@ -390,6 +390,42 @@ fn cover_still_blocks_shots_at_the_widened_hull_and_protected_targets_do_not_los
     step_projectiles(&mut s, STEP, false);
     assert_eq!(s.tanks[0].hp, 100.0);
     assert_eq!(s.tanks[0].shield_points, 0.0);
+}
+
+/// A standard round fired across the arena by an absent blue shooter, from `x` along +x
+/// at the target's depth.
+fn cross_arena_shell(s: &mut Simulation, x: f64, z: f64) {
+    let mut p = shot(s, x, z, weapon(Weapon::Standard).speed, 0.0, Team::Blue);
+    p.owner = 999;
+    p.life = COMBAT.projectile_lifetime;
+    s.shots.push(p);
+}
+
+#[test]
+fn a_shell_fired_from_one_lower_corner_damages_a_tank_parked_in_the_other() {
+    // Spawns sit at x = +-53: a 106 m shot that used to expire 30 m short.
+    let mut s = fixture(VehicleKind::Balanced, 0.0);
+    set_translation(&mut s, 0, 53.0, 46.0);
+    s.world.step();
+    cross_arena_shell(&mut s, -53.0, 46.0);
+    for _ in 0..(COMBAT.projectile_lifetime / STEP) as usize {
+        step_projectiles(&mut s, STEP, false);
+    }
+    assert_eq!(s.tanks[0].hp, 60.0);
+    assert!(s.shots.is_empty());
+}
+
+#[test]
+fn a_shell_that_leaves_the_arena_ends_at_its_edge() {
+    let mut s = fixture(VehicleKind::Balanced, 0.0);
+    // No boundary walls are left to stop it.
+    cross_arena_shell(&mut s, 55.0, 30.0);
+    step_projectiles(&mut s, STEP, false);
+    assert_eq!(s.shots.len(), 1, "still inside the walls' outer face");
+    for _ in 0..30 {
+        step_projectiles(&mut s, STEP, false);
+    }
+    assert!(s.shots.is_empty(), "flew on past the arena");
 }
 
 #[test]
