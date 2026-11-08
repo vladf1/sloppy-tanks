@@ -211,9 +211,11 @@ pub struct NameTag {
     pub point: TagPoint,
 }
 
-/// Refill `tags` with the name tags over the other human players' tanks in `state`, at
-/// the points `tag_point` gives (`None` where a tank's bar is hidden). A bot, pilot or
-/// stand-in wears none, nor the viewer's own tank. The tags' names keep their buffers.
+/// Refill `tags` with the name tags over the other seated tanks in `state`, at the
+/// points `tag_point` gives (`None` where a tank's bar is hidden): players' and pilots'
+/// (a bot standing in for an away player keeps the seat, so it wears its bot's name
+/// too). A fill bot wears none, nor the viewer's own tank. The tags' names keep their
+/// buffers.
 pub fn fill_name_tags(
     state: &RenderState,
     tag_point: impl Fn(u32) -> Option<TagPoint>,
@@ -223,7 +225,7 @@ pub fn fill_name_tags(
     let players = state
         .tanks
         .iter()
-        .filter(|tank| tank.human && !tank.bot && tank.id != state.viewer_id);
+        .filter(|tank| tank.human && tank.id != state.viewer_id);
     for tank in players {
         let Some(point) = tag_point(tank.id) else {
             continue;
@@ -952,7 +954,7 @@ mod tests {
     use sloppy_core::sim::{RenderState, Simulation, SimulationSetup, Team};
 
     #[test]
-    fn only_other_human_players_wear_name_tags_and_their_names_keep_their_buffers() {
+    fn other_players_and_pilots_wear_name_tags_and_their_names_keep_their_buffers() {
         let tank = |id: u32, name: &str, human: bool, bot: bool| RenderTank {
             id,
             name: name.into(),
@@ -966,8 +968,8 @@ mod tests {
             tanks: vec![
                 tank(1, "Me", true, false),
                 tank(2, "Vlad F", true, false),
-                tank(3, "Rex", false, true),
-                tank(4, "Stand In", true, true),
+                tank(3, "Fill Bot", false, true),
+                tank(4, "Pilot", true, true),
                 tank(5, "Hidden", true, false),
                 tank(6, "Swift Falcon", true, false),
             ],
@@ -987,9 +989,9 @@ mod tests {
         let buffer = tags[0].name.as_ptr();
         fill_name_tags(&state, point, &mut tags);
         let names: Vec<&str> = tags.iter().map(|tag| tag.name.as_str()).collect();
-        assert_eq!(names, ["Vlad F", "Swift Falcon"]);
+        assert_eq!(names, ["Vlad F", "Pilot", "Swift Falcon"]);
         assert_eq!(tags[0].name.as_ptr(), buffer);
-        assert_eq!((tags[0].team, tags[1].point.x), (Team::Red, 6.0));
+        assert_eq!((tags[0].team, tags[2].point.x), (Team::Red, 6.0));
 
         fill_name_tags(&RenderState::default(), point, &mut tags);
         assert!(tags.is_empty());

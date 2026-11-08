@@ -190,7 +190,7 @@ name you type (up to 21 ASCII letters, digits, spaces and `-_.'`) or one drawn f
 two fixed word lists (`Swift Falcon`), kept between visits; the dice beside it draws
 another. The App Store apps only draw names, and their servers seat any other name
 under a drawn one, so they show no text a player wrote. Other players' names float
-over their tanks in a room; bots wear none. Bots show **BOT** beside their names in the
+over their tanks in a room, pilots' too; fill bots wear none. Bots show **BOT** beside their names in the
 kill feed, the scoreboards and the room's player list: fill bots, pilots, and a bot
 standing in for a player who left or paused, which plays under a bot's name and score
 until the player returns. **Auto**
