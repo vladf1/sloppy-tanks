@@ -11,6 +11,8 @@
 //! innuendo words, nationalities and anything the bots are called (their names are
 //! one capitalised word or two, `BOT_NAMES`), so a name alone never passes for a bot.
 
+use crate::net::protocol::MAX_PLAYER_NAME_LENGTH;
+use crate::net::schema::text_length;
 use crate::sim::bot_personalities::BOT_NAMES;
 
 /// First words. Each at most [`MAX_WORD`] characters.
@@ -55,9 +57,9 @@ pub fn is_player_name(name: &str) -> bool {
     })
 }
 
-/// The longest name a player may type: as long as the longest drawn one, so a drawn
-/// name edited a little still plays, and with a room's " 99" suffix within
-/// `MAX_PLAYER_NAME_LENGTH`.
+/// The longest name a player may type: as long as the longest a drawn one may be, so a
+/// drawn name edited a little still plays. A room numbering it shortens it to fit
+/// ([`numbered_name`]).
 pub const MAX_TYPED_NAME: usize = 2 * MAX_WORD + 1;
 
 /// Which names a room host seats.
@@ -96,6 +98,20 @@ pub fn typed_player_name(text: &str) -> Option<String> {
     (fits && !bot).then_some(name)
 }
 
+/// `name` numbered `number` for a room where someone already shows it, "Swift Falcon 2":
+/// shortened as much as the suffix needs to stay within `MAX_PLAYER_NAME_LENGTH`, since a
+/// round's departed players keep their names and a popular name can reach " 100".
+pub fn numbered_name(name: &str, number: u32) -> String {
+    let suffix = format!(" {number}");
+    let room = MAX_PLAYER_NAME_LENGTH.saturating_sub(text_length(&suffix));
+    let mut base = name;
+    while text_length(base) > room {
+        let last = base.chars().next_back().map_or(0, char::len_utf8);
+        base = &base[..base.len() - last];
+    }
+    format!("{}{suffix}", base.trim_end())
+}
+
 /// A hash of `text` for drawing a name from a random token (FNV-1a).
 pub fn name_seed(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
@@ -106,7 +122,6 @@ pub fn name_seed(text: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::protocol::MAX_PLAYER_NAME_LENGTH;
     use std::collections::BTreeSet;
 
     #[test]
@@ -172,7 +187,6 @@ mod tests {
         assert_eq!(typed_player_name("Swift Falcon"), Some("Swift Falcon".into()));
         let longest = "A".repeat(MAX_TYPED_NAME);
         assert_eq!(typed_player_name(&longest), Some(longest.clone()));
-        assert!(longest.len() + " 99".len() <= MAX_PLAYER_NAME_LENGTH);
         for name in [
             "",
             "   ",
@@ -195,5 +209,19 @@ mod tests {
             assert_eq!(typed_player_name(name), None, "{name}");
             assert_eq!(typed_player_name(&name.to_ascii_lowercase()), None, "{name}");
         }
+    }
+
+    #[test]
+    fn a_numbered_name_shortens_to_fit_its_suffix() {
+        assert_eq!(numbered_name("Swift Falcon", 2), "Swift Falcon 2");
+        let longest = "A".repeat(MAX_TYPED_NAME);
+        for number in [2, 99, 100, 128, 1000, u32::MAX] {
+            let name = numbered_name(&longest, number);
+            assert!(text_length(&name) <= MAX_PLAYER_NAME_LENGTH, "{name}");
+            assert!(name.ends_with(&format!("A {number}")), "{name}");
+        }
+        // A cut that lands after a space leaves no double space before the number.
+        let spaced = format!("{} B", "A".repeat(19));
+        assert_eq!(numbered_name(&spaced, 100), format!("{} 100", "A".repeat(19)));
     }
 }

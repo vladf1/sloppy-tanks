@@ -15,7 +15,9 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::{ControlInput, PlayerControls, read_input_record};
-use super::player_names::{NameRule, is_player_name, name_seed, player_name, typed_player_name};
+use super::player_names::{
+    NameRule, is_player_name, name_seed, numbered_name, player_name, typed_player_name,
+};
 use super::prediction::{HullState, MovingBody};
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
@@ -865,13 +867,13 @@ impl MatchHost {
     }
 
     /// `name`, or `name 2`, `name 3`... when another seat, tank or departed player of the
-    /// round shows it.
+    /// round shows it ([`numbered_name`]).
     fn numbered(&self, name: String) -> String {
         if !self.name_shown(&name) {
             return name;
         }
         (2..)
-            .map(|number| format!("{name} {number}"))
+            .map(|number| numbered_name(&name, number))
             .find(|numbered| !self.name_shown(numbered))
             .expect("numbered names never run out")
     }
