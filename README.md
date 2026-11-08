@@ -379,7 +379,10 @@ The App Store's builds play online in the `app-store` environment, whose machine
 the released apps' content version rather than main's: release the iOS and Mac versions
 together in App Store Connect, then run `bun run server:release-app`
 ([App Store machines](crates/server/README.md#app-store-machines)). Only the latest
-release plays online; an older app offers UPDATE, which opens its App Store page.
+release plays online; an older app offers UPDATE, which opens its App Store page. A
+release without multiplayer starts the workflow with its single-player input
+(`gh workflow run desktop.yml --ref main -f single-player=true`), which builds both apps
+with `--single-player` and leaves the App Store machines alone.
 
 `--single-player` builds any of the apps without multiplayer (the `single-player` feature
 of `sloppy-desktop`): Battle Setup shows the Single player tab alone, labelled Battle

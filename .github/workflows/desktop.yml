@@ -10,6 +10,9 @@
 # checks that main's build pushed this commit's server image (sha-<commit>) and, after
 # both uploads, points :app-store-candidate at it; `bun run server:release-app` moves
 # :app-store there once Apple has approved and released them (crates/server/README.md).
+# Started with the single-player input (`gh workflow run desktop.yml --ref main -f
+# single-player=true`), it builds them without multiplayer instead, which need no server,
+# so it neither checks for the image nor moves the candidate.
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -48,6 +51,11 @@ on:
     branches: [main]
     paths: *paths
   workflow_dispatch:
+    inputs:
+      single-player:
+        description: Build the App Store apps without multiplayer
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -233,7 +241,7 @@ jobs:
       # pushes; a run started before that build finished fails here and can be run again.
       - name: Check this commit's server image
         id: server-image
-        if: steps.signing.outputs.ready == 'true'
+        if: steps.signing.outputs.ready == 'true' && !inputs.single-player
         run: |
           tag="sha-${GITHUB_SHA::12}"
           token=$(curl -fsS "https://ghcr.io/token?scope=repository:$NAME:pull" |
@@ -249,7 +257,7 @@ jobs:
           MANIFEST_TYPES: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
       # processed the build and fails if Apple finds it invalid.
-      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload ${{ inputs.single-player && '--single-player' || '' }}
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}
