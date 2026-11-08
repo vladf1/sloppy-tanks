@@ -45,8 +45,6 @@ export const controlPage = `<!doctype html>
   .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
   h1 { font-size: 26px; letter-spacing: -0.01em; }
   .top-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-weight: 600; }
-  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
   .intro { margin: 14px 0 24px; max-width: 760px; color: var(--muted); }
 
   /* Cards and sections */
@@ -203,7 +201,6 @@ export const controlPage = `<!doctype html>
       <div><p class="eyebrow">Sloppy Tanks</p><h1>Bots and pilots</h1></div>
     </div>
     <div class="top-meta">
-      <span class="pill" id="target" title="The servers a run plays on unless it picks others">Servers…</span>
       <span class="muted" id="updated" aria-live="polite">Loading…</span>
       <button type="button" class="ghost icon-button" id="refresh" title="Refresh now" aria-label="Refresh now">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
@@ -240,7 +237,7 @@ export const controlPage = `<!doctype html>
         <span class="hint">Where on Cloudflare they run from</span>
       </label>
       <label class="field"><span>Servers</span>
-        <select id="environment"><option value="" id="defaultServers">Default</option><option>production</option><option>dev</option></select>
+        <select id="environment"><option>production</option><option>dev</option></select>
         <span class="hint">The game servers to play on</span>
       </label>
       <label class="field"><span id="countLabel">Bots</span>
@@ -341,6 +338,9 @@ const MISSION_HINTS = {
 };
 const TEAMS = ["blue", "red"];
 let lastStatus = null;
+/** Servers stays on the Worker's own environment until someone picks one. */
+let serversPicked = false;
+$("environment").addEventListener("change", () => { serversPicked = true; });
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -680,8 +680,10 @@ function render(status) {
   lastStatus = status;
   let environment = "";
   try { environment = new URL(status.server).searchParams.get("environment") || ""; } catch {}
-  $("target").textContent = environment ? environment + " servers" : "Servers";
-  $("defaultServers").textContent = environment ? "Default (" + environment + ")" : "Default";
+  if (!serversPicked && environment && $("environment").value !== environment) {
+    $("environment").value = environment;
+    showForm();
+  }
   const regions = new Map();
   const entry = (code) => regions.get(code) || regions.set(code, {}).get(code);
   for (const region of status.regions) entry(region.region).bots = region;
