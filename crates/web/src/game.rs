@@ -128,6 +128,7 @@ use sloppy_core::sim::{
     CoverKind, FragmentShape, GameMode, MatchPhase, RenderState, Shot, SimEventType, Simulation,
     SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
+use sloppy_render::presentation::aim_line::TouchAim;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
@@ -447,11 +448,17 @@ impl Game {
             let steps = self.steps.advance(dt);
             let position = self.human_position();
             // Autoplay's turret answers to its brain, not the pointer: the reticle
-            // follows the gun and the camera leans with it.
+            // follows the gun and the camera leans with it. A touch screen draws the
+            // aim as its line, which follows the gun too rather than the last touch.
             let angle = match self.autoplay_aim_point() {
                 Some(point) if !self.view.rig.first_person.enabled => {
                     self.view.rig.track_aim(point, dt);
-                    self.sim.human().aim
+                    let angle = self.sim.human().aim;
+                    self.view.touch_aim = self.view.hide_reticle.then_some(TouchAim {
+                        angle,
+                        target: None,
+                    });
+                    angle
                 }
                 _ => aim(&mut self.view, &self.state, &input, position, dt, alive).0,
             };
