@@ -20,6 +20,7 @@ use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
 use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::Tank;
+use sloppy_core::sim::combat_rules::COMBAT;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, distance};
@@ -1228,7 +1229,9 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
     let mut reads: Vec<(f64, Vec<RenderShot>)> = Vec::new();
     let mut baseline = None;
     let mut frames = net.peers[bob].frames;
-    for _ in 0..240 {
+    // Long enough for every shell in flight at the join to end, plus a display buffer.
+    let watch = (COMBAT.projectile_lifetime * 1000.0 / FRAME_MS) as usize + 60;
+    for _ in 0..watch {
         net.run(FRAME_MS);
         let peer = &net.peers[bob];
         if baseline.is_none() && peer.client.mirror().state.is_some() {

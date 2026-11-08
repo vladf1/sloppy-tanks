@@ -838,6 +838,10 @@ impl CoverCast for HullPrediction {
         CoverCast::cast_cover(&self.predictor, origin, direction, distance)
     }
 
+    fn arena_edge(&self) -> f64 {
+        CoverCast::arena_edge(&self.predictor)
+    }
+
     fn cast_cover_past(
         &self,
         origin: Point3,

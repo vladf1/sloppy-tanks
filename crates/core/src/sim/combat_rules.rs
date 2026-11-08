@@ -1,6 +1,9 @@
 //! Shared combat distances are metres; durations are seconds.
 
 pub struct CombatRules {
+    /// Only a bound for pooled flight: a round flies until it strikes something or
+    /// leaves the arena (`projectiles.rs`), and this lets the slowest one (a Spread
+    /// pellet, about 20 m/s) cross the standard arena's 170 m diagonal first.
     pub projectile_lifetime: f64,
     pub spread_angle: f64,
     pub rocket_blast_radius: f64,
@@ -69,7 +72,7 @@ impl BlastFalloff {
 const DRUM_BLAST_RADIUS: f64 = 6.0;
 
 pub const COMBAT: CombatRules = CombatRules {
-    projectile_lifetime: 3.5,
+    projectile_lifetime: 10.0,
     spread_angle: 0.19,
     rocket_blast_radius: 5.3,
     rocket_top_speed_multiplier: 2.5,

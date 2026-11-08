@@ -6,6 +6,7 @@ use rapier3d::parry::query::ShapeCastOptions;
 use rapier3d::parry::shape::{Ball, Capsule};
 use rapier3d::prelude::{ColliderHandle, Pose, Ray, RigidBodyHandle};
 
+use super::arena::BOUNDARY_THICKNESS;
 use super::combat_rules::COMBAT;
 use super::data::{
     INTERCEPTION_BLAST_RADIUS, INTERCEPTION_RADIUS, LASER_DEFENSE, MINE_RADIUS, group, pickup,
@@ -15,6 +16,7 @@ use super::debris_physics::{blast_debris, hit_movable_cover, hit_projectile_debr
 use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
+use super::model_data::ARENA;
 use super::physics::{from_vector, query_filter, vector};
 use super::shooter_rewind::{ShooterRewind, target_ticks};
 use super::simulation::{ProjectileMove, Simulation, SweptShot};
@@ -280,7 +282,30 @@ enum Contact {
     },
     /// An HE shell's fuse after striking a cottage has run out.
     Fuse,
+    /// Its lifetime ran out, or it left the arena.
     Expiry,
+}
+
+/// How far out (m) from the centre, along either axis, a shell leaves the arena: past the
+/// boundary walls' outer face (a shell may clear a low harbour wall) it can meet nothing
+/// more, so it ends there rather than flying out its lifetime.
+pub fn arena_edge(map_scale: f64) -> f64 {
+    ARENA * map_scale + BOUNDARY_THICKNESS
+}
+
+/// How far (m) a shell at `x`, `z` flies along the unit `direction` before it leaves the
+/// square inside `edge`.
+pub fn arena_exit_distance(x: f64, z: f64, direction: Vec2, edge: f64) -> f64 {
+    let along = |at: f64, toward: f64| {
+        if toward > 0.0 {
+            (edge - at) / toward
+        } else if toward < 0.0 {
+            (-edge - at) / toward
+        } else {
+            f64::INFINITY
+        }
+    };
+    along(x, direction.x).min(along(z, direction.z)).max(0.0)
 }
 
 /// Query without moving entities; equal-time contacts preserve the original priority order.
@@ -330,12 +355,19 @@ fn find_next_contact(
                 .is_ok()
         })
     };
+    let edge = arena_edge(simulation.map_scale());
     for (si, shot) in simulation.shots.iter().enumerate() {
-        if shot.life <= time {
-            time = shot.life;
+        let speed = shot.vx.hypot(shot.vz);
+        let exit = if speed > 0.0 {
+            let direction = Vec2::new(shot.vx / speed, shot.vz / speed);
+            arena_exit_distance(shot.x, shot.z, direction, edge) / speed
+        } else {
+            f64::INFINITY
+        };
+        if shot.life.min(exit) <= time {
+            time = shot.life.min(exit);
             next = Some((si, Contact::Expiry));
         }
-        let speed = shot.vx.hypot(shot.vz);
         if let Some(fuse) = shot.fuse
             && speed > 0.0
             && (fuse / speed).max(0.0) <= time

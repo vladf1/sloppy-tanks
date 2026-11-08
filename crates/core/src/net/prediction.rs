@@ -27,6 +27,7 @@ use crate::sim::structure_physics::{
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
+use crate::sim::projectiles::arena_edge;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::{DebrisMaterial, debris_material};
 use crate::sim::math::{Point3, Quat4, Vec2};
@@ -489,6 +490,8 @@ pub struct TankPredictor {
     gone: Vec<u32>,
     /// Storage reused for the colliders of a structure's parts that broke.
     broken: Vec<ColliderHandle>,
+    /// Where the scene's shells leave its arena.
+    arena_edge: f64,
 }
 
 impl Default for TankPredictor {
@@ -502,6 +505,7 @@ impl Default for TankPredictor {
             sync: 0,
             gone: Vec::new(),
             broken: Vec::new(),
+            arena_edge: arena_edge(1.0),
         }
     }
 }
@@ -523,6 +527,7 @@ impl TankPredictor {
     /// Matches the cover to a received scene: standing cover and stumps, and movable cover
     /// at its replicated pose.
     pub fn sync_covers(&mut self, state: &RenderState) {
+        self.arena_edge = arena_edge(state.map_scale);
         self.sync += 1;
         let sync = self.sync;
         for cover in &state.covers {
@@ -1035,6 +1040,10 @@ impl TankPredictor {
 impl CoverCast for TankPredictor {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
         self.cast_cover_past(origin, direction, distance, &[])
+    }
+
+    fn arena_edge(&self) -> f64 {
+        self.arena_edge
     }
 
     fn cast_cover_past(
