@@ -15,7 +15,7 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::{ControlInput, PlayerControls, read_input_record};
-use super::player_names::{is_player_name, name_seed, player_name};
+use super::player_names::{NameRule, is_player_name, name_seed, player_name, typed_player_name};
 use super::prediction::{HullState, MovingBody};
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
@@ -76,6 +76,8 @@ pub struct MatchHostOptions {
     pub seed: u32,
     /// Content version joins must present; [`CONTENT_VERSION`] when `None`.
     pub content_version: Option<String>,
+    /// Whether players play under names they typed or only under drawn ones.
+    pub names: NameRule,
 }
 
 struct Seat {
@@ -218,6 +220,7 @@ pub struct MatchHost {
     token: Box<dyn FnMut() -> String + Send>,
     seed: u32,
     content_version: String,
+    names: NameRule,
     seats: Vec<Seat>,
     /// In connection order, like the TypeScript `Map`.
     clients: Vec<(ConnectionId, Client)>,
@@ -269,6 +272,7 @@ impl MatchHost {
             content_version: options
                 .content_version
                 .unwrap_or_else(|| CONTENT_VERSION.to_string()),
+            names: options.names,
             seats: Vec::new(),
             clients: Vec::new(),
             participants: Vec::new(),
@@ -836,13 +840,18 @@ impl MatchHost {
     }
 
     /// A new player seat's name: the join's own if it is one a page draws
-    /// ([`is_player_name`]), or one drawn for the seat; numbered when someone in the room
-    /// already shows it. Nothing a client typed reaches other players.
+    /// ([`is_player_name`]) or, where this room seats typed names, one a player may type
+    /// ([`typed_player_name`]); else one drawn for the seat. Numbered when someone in the
+    /// room already shows it.
     fn player_seat_name(&self, requested: &str, player_id: &str) -> String {
+        let typed = match self.names {
+            NameRule::Typed => typed_player_name(requested),
+            NameRule::DrawnOnly => None,
+        };
         let name = if is_player_name(requested) {
             requested.to_string()
         } else {
-            player_name(name_seed(player_id))
+            typed.unwrap_or_else(|| player_name(name_seed(player_id)))
         };
         self.numbered(name)
     }

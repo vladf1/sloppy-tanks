@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use sloppy_core::net::fixed_step_clock;
 use sloppy_core::net::match_host::{ConnectionId, HostEvent, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::room_list::{RoomListing, RoomPhase};
 
 use crate::host::{HostFactory, HostOutput, RoomHost};
@@ -215,6 +216,8 @@ struct Load {
 pub struct RoomSession<F: HostFactory, S: RoomSocket> {
     room: String,
     factory: Arc<F>,
+    /// The names its hosts seat players under.
+    names: NameRule,
     clock: Clock,
     events: Box<dyn RoomEvents>,
     host: Option<F::Host>,
@@ -236,12 +239,14 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
     pub fn new(
         room: impl Into<String>,
         factory: Arc<F>,
+        names: NameRule,
         clock: Clock,
         events: Box<dyn RoomEvents>,
     ) -> Self {
         Self {
             room: room.into(),
             factory,
+            names,
             clock,
             events,
             host: None,
@@ -286,6 +291,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
                 seed: random::seed(),
                 // MatchHost defaults to this build's CONTENT_VERSION.
                 content_version: None,
+                names: self.names,
             }));
             self.failure = None;
             self.host_created_ms = now;

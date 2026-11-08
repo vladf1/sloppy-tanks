@@ -11,6 +11,7 @@ use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use sloppy_core::net::match_host::{ConnectionId, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::room_list::RoomListing;
 use sloppy_server::config::BuildInfo;
 use sloppy_server::dashboard::MAX_DASHBOARD_VIEWERS;
@@ -824,6 +825,7 @@ impl RoomHost for EchoHost {
             token: Box::new(String::new),
             seed: 0,
             content_version: None,
+            names: NameRule::Typed,
         });
         RoomListing {
             players: self.clients.len() as u32,

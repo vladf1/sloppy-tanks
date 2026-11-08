@@ -1,5 +1,7 @@
 //! Settings from the environment.
 
+use sloppy_core::net::player_names::NameRule;
+
 use crate::directory::DirectoryUrl;
 
 const DEFAULT_HOST: &str = "127.0.0.1";
@@ -54,12 +56,25 @@ pub struct Settings {
     /// the environment that lists this server: where it announces itself. An unset or
     /// empty `DIRECTORY_URL` announces nothing.
     pub directory: Option<DirectoryUrl>,
-    /// `SERVER_ENVIRONMENT`, when set: production or dev.
+    /// `SERVER_ENVIRONMENT`, when set: production, dev or app-store.
     pub environment: Option<String>,
     pub build: BuildInfo,
 }
 
+/// The environment the App Store apps play in.
+pub const APP_STORE_ENVIRONMENT: &str = "app-store";
+
 impl Settings {
+    /// The names this server's rooms seat: only drawn ones in the App Store apps'
+    /// environment, whose apps show no text a player wrote; typed ones elsewhere.
+    pub fn names(&self) -> NameRule {
+        if self.environment.as_deref() == Some(APP_STORE_ENVIRONMENT) {
+            NameRule::DrawnOnly
+        } else {
+            NameRule::Typed
+        }
+    }
+
     /// Reads `HOST`, `PORT`, `MAX_ROOMS`, `DIRECTORY_URL`, `SERVER_ENVIRONMENT` and the
     /// [`BuildInfo`] stamps. A typo must stop
     /// startup, not silently turn a limit off.
@@ -159,6 +174,21 @@ mod tests {
         assert!(settings(&[("MAX_ROOMS", "0")]).is_err());
         assert!(settings(&[("MAX_ROOMS", "ten")]).is_err());
         assert!(settings(&[("PORT", "http")]).is_err());
+    }
+
+    #[test]
+    fn only_the_app_store_environment_seats_drawn_names_alone() {
+        let names = |pairs: &[(&str, &str)]| settings(pairs).unwrap().names();
+        assert_eq!(names(&[]), NameRule::Typed);
+        assert_eq!(
+            names(&[("SERVER_ENVIRONMENT", "production")]),
+            NameRule::Typed
+        );
+        assert_eq!(names(&[("SERVER_ENVIRONMENT", "dev")]), NameRule::Typed);
+        assert_eq!(
+            names(&[("SERVER_ENVIRONMENT", APP_STORE_ENVIRONMENT)]),
+            NameRule::DrawnOnly
+        );
     }
 
     #[test]

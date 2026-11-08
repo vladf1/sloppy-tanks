@@ -162,6 +162,13 @@ try {
   const a = await player("a", { pointerLock: false });
   await openShell(a, `directory=${server.directory}&multiplayer`);
   await untilState(a, (state) => state.multiplayerTab, { what: "the Multiplayer tab" });
+  // A plays under a name it types in place of the drawn one.
+  await clickWidget(a, "Your name");
+  await a.keyboard.press("ControlOrMeta+A");
+  await a.keyboard.type("  Tank   Ace<>");
+  await untilState(a, async () => (await findWidget(a, "Your name"))?.value === "  Tank   Ace", {
+    what: "the typed name, kept to the characters a name may hold",
+  });
   await clickWidget(a, "Blue");
   await clickWidget(a, "CREATE ROOM");
   let aState = await inRoom(a);
@@ -215,6 +222,19 @@ try {
   assert.notEqual(aTank, bTank);
   assert.equal(tank(aState, aTank).team, 0, "A plays Blue");
   assert.equal(tank(aState, bTank).team, 1, "B plays Red");
+  // A plays under its typed name, trimmed. A name tag shows only over the other
+  // player's tank, and only while it is in sight (the teams start apart).
+  assert.equal(tank(bState, aTank).name, "Tank Ace", "A's typed name, trimmed");
+  const bName = tank(aState, bTank).name;
+  for (const [state, other] of [
+    [aState, bName],
+    [bState, "Tank Ace"],
+  ]) {
+    assert.ok(
+      state.room.nameTags.every((name) => name === other),
+      `only the other player's tag: ${JSON.stringify(state.room.nameTags)}`,
+    );
+  }
 
   // Unchanged input is refreshed about once a second, and the idle player keeps its tank.
   await wait(2000);

@@ -6,9 +6,10 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the room timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
-browser engine runs. Nobody types a name other players read: the host seats a join
-under a name drawn from fixed word lists (`sloppy_core::net::player_names`), or a
-bot's for a pilot, whatever the join asked for. Production and
+browser engine runs. The host seats a join under the name it typed, when a player may
+type it, or one drawn from fixed word lists (`sloppy_core::net::player_names`), or a
+bot's for a pilot, whatever the join asked for. A server whose `SERVER_ENVIRONMENT` is
+`app-store` seats only drawn names, so the App Store apps show no text a player wrote. Production and
 the dev site each run it on their own Vultr machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
 the server directory (https://directory.sloppytanks.com) lists them.
 

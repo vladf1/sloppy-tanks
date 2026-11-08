@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use sloppy_core::net::match_host::ConnectionId;
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::room_list::RoomListing;
 use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
@@ -111,10 +112,12 @@ impl RoomEvents for ServerRoomEvents {
 }
 
 /// Starts a room task; the caller inserts the handle into `registry`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_room<F: HostFactory>(
     code: String,
     instance: u64,
     factory: Arc<F>,
+    names: NameRule,
     clock: Clock,
     epoch: Instant,
     events: ServerRoomEvents,
@@ -122,7 +125,7 @@ pub fn spawn_room<F: HostFactory>(
 ) -> RoomHandle {
     let (sender, inbox) = mpsc::channel(ROOM_INBOX);
     let connections = Arc::new(AtomicUsize::new(0));
-    let session = RoomSession::new(code.clone(), factory, clock, Box::new(events));
+    let session = RoomSession::new(code.clone(), factory, names, clock, Box::new(events));
     tokio::spawn(run(
         code,
         instance,

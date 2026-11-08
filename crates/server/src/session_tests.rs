@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::Value;
 use sloppy_core::net::fixed_step_clock::BATCH_TICKS;
 use sloppy_core::net::match_host::{ConnectionId, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::room_list::RoomListing;
 
 use crate::host::{HostOutput, RoomHost};
@@ -111,6 +112,7 @@ impl Harness {
         let room = RoomSession::new(
             "ABCDEFGH",
             Arc::new(factory),
+            NameRule::Typed,
             Arc::new(move || reader.load(Ordering::Relaxed)),
             Box::new(Recorder(events.clone())),
         );
@@ -476,6 +478,7 @@ fn a_panicking_host_ends_its_room_with_simulation_error() {
         let mut room: RoomSession<_, FakeSocket> = RoomSession::new(
             "PANICKED",
             Arc::new(factory),
+            NameRule::Typed,
             Arc::new(move || reader.load(Ordering::Relaxed)),
             Box::new(Recorder(events.clone())),
         );

@@ -32,6 +32,7 @@ fn main() -> ExitCode {
 
 async fn serve(settings: Settings) -> ExitCode {
     let mut options = ServerOptions::new(settings.trust_proxy);
+    options.names = settings.names();
     options.build = settings.build;
     options.directory = settings.directory.map(DirectoryOptions::new);
     options.environment = settings.environment;

@@ -117,6 +117,36 @@ pub fn bar_scale(distance: f64, fov_y: f64, rim_width: f64, css_height: f64) -> 
     (1f64.min(cap) * boost).max(BAR_MIN_SCALE)
 }
 
+/// The bar's top and a meter's top over its centre, in the bar's own units (its rim is
+/// 0.32 tall; a meter's badge reaches 0.16 over its row), and the gap a name tag keeps
+/// over the highest of them.
+const BAR_TOP: f64 = 0.16;
+const METER_TOP: f64 = 0.16;
+const NAME_TAG_GAP: f64 = 0.1;
+
+/// How far over an overhead bar's centre a name tag's foot sits, in the bar's units:
+/// just over the bar, or over the highest meter showing above it.
+pub fn name_tag_lift(meters: &ProtectionMeters) -> f32 {
+    let top = if meters.spawn_visible {
+        meters.spawn_y + METER_TOP
+    } else if meters.shield_visible {
+        METER_LOW_Y + METER_TOP
+    } else {
+        BAR_TOP
+    };
+    (top + NAME_TAG_GAP) as f32
+}
+
+/// Where a tank's name tag goes this frame: the point over its bar (NDC, y up), the
+/// bar's width there in NDC, and the bar's opacity, so the tag fades behind cover with it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TagPoint {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub opacity: f32,
+}
+
 /// Seconds the damage trail holds the chunk a hit took before it drains, and how much
 /// of the bar it drains per second: the chunk reads for a beat and is gone in about
 /// 0.4 s, so a wounded bar never looks fuller than it is.
@@ -191,6 +221,22 @@ pub fn spawn_pulse(cue: f64) -> (f64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_name_tag_clears_the_meters_showing() {
+        let bare = protection_meters(true, 0.0, 0.0, 0.0);
+        let shield = protection_meters(true, 5.0, 40.0, 0.0);
+        let both = protection_meters(true, 5.0, 40.0, 1.0);
+        let lifts = [&bare, &shield, &both].map(name_tag_lift);
+        assert!(
+            lifts[0] > 0.16 && lifts[0] < lifts[1] && lifts[1] < lifts[2],
+            "{lifts:?}"
+        );
+        assert_eq!(
+            name_tag_lift(&protection_meters(true, 0.0, 0.0, 1.0)),
+            lifts[1]
+        );
+    }
 
     #[test]
     fn health_colors_follow_the_thresholds() {

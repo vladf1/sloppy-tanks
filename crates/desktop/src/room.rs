@@ -736,6 +736,7 @@ impl RoomSession {
             self.ui.hull_angle = f64::from(value(slot::HULL_ANGLE));
             let viewer = (value(slot::VIEWER_X), value(slot::VIEWER_Y));
             self.ui.viewer = (viewer.0.is_finite() && viewer.1.is_finite()).then_some(viewer);
+            self.game.name_tags(&mut self.ui.name_tags);
             self.hud_dt += f64::from(value(slot::DT));
             let hud_due = value(slot::HUD_DUE) == 1.0;
             if hud_due {
@@ -792,6 +793,7 @@ impl RoomSession {
                 "joining": menu.joining,
                 "status": menu.status,
                 "players": menu.lobby.as_ref().map(|lobby| lobby.players.len()),
+                "nameTags": self.ui.name_tags.iter().map(|tag| &tag.name).collect::<Vec<_>>(),
                 "polledAt": self.last_poll,
                 "now": now,
             })),

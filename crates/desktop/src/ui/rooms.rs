@@ -20,8 +20,8 @@ use super::{Action, View};
 use crate::directory::{self, DirectoryRequest};
 use crate::links::{self, Place};
 use crate::preferences::Preferences;
-use crate::room_api::{RoomSelection, preferred_player_name};
-use sloppy_core::net::player_names::player_name;
+use crate::room_api::{RoomSelection, TYPED_NAMES, preferred_player_name};
+use sloppy_core::net::player_names::{MAX_TYPED_NAME, player_name, typed_name_character};
 use sloppy_core::net::protocol::{
     DEFAULT_ROUND_MINUTES, JoinChoice, RoomPhase, RoomSettings, read_room_code, room_code,
     stepped_minutes,
@@ -589,7 +589,18 @@ fn field(
     size: f32,
 ) -> egui::Response {
     well(ui.painter(), rect, 9);
-    let inner = rect.shrink2(vec2(12.0, 0.0));
+    text_input(ui, rect.shrink2(vec2(12.0, 0.0)), text, limit, hint, size)
+}
+
+/// [`field`]'s text entry alone, filling `inner`, for a well that holds more than it.
+fn text_input(
+    ui: &mut egui::Ui,
+    inner: Rect,
+    text: &mut String,
+    limit: usize,
+    hint: &str,
+    size: f32,
+) -> egui::Response {
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
     child
         .centered_and_justified(|ui| {
@@ -956,8 +967,9 @@ pub fn multiplayer(
         );
     }
 
-    // YOUR NAME: the drawn name in a well like the room code's field, which nobody
-    // types in, and the dice that draws another at its right end.
+    // YOUR NAME: the name in a well like the room code's field, and the dice that draws
+    // another at its right end. The App Store apps only draw names, so nobody types in
+    // theirs.
     paint::section_label(
         &painter,
         pos2(name_field.left(), name_field.top() - HEADING_ROW),
@@ -977,16 +989,28 @@ pub fn multiplayer(
         ),
         Vec2::splat(DICE_BUTTON),
     );
-    paint::text_fit(
-        &painter,
-        pos2(name_field.left() + 12.0, name_field.center().y),
-        Align2::LEFT_CENTER,
-        state.player_name(prefs),
-        bold_font(15.0),
-        hex(0xf5faff),
-        0.0,
-        dice.left() - name_field.left() - 18.0,
-    );
+    if TYPED_NAMES {
+        state.player_name(prefs);
+        let text = state.name.as_mut().expect("the name was just drawn");
+        let entry = Rect::from_min_max(
+            pos2(name_field.left() + 12.0, name_field.top()),
+            pos2(dice.left() - 6.0, name_field.bottom()),
+        );
+        if text_input(ui, entry, text, MAX_TYPED_NAME, "Your name", 15.0).changed() {
+            text.retain(typed_name_character);
+        }
+    } else {
+        paint::text_fit(
+            &painter,
+            pos2(name_field.left() + 12.0, name_field.center().y),
+            Align2::LEFT_CENTER,
+            state.player_name(prefs),
+            bold_font(15.0),
+            hex(0xf5faff),
+            0.0,
+            dice.left() - name_field.left() - 18.0,
+        );
+    }
     if icon_button(
         ui,
         dice,
@@ -1603,7 +1627,13 @@ pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
 /// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play. A new
 /// room opens on `map`.
 fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<RoomSelection> {
-    let name = state.player_name(prefs).to_owned();
+    // What the field holds, trimmed, or a drawn name in place of one nobody may play
+    // under (an empty field).
+    let name = preferred_player_name(
+        state.player_name(prefs),
+        u64::from_le_bytes(directory::random_bytes()),
+    );
+    state.name = Some(name.clone());
     let (room, server, create) = if state.selected.is_empty() {
         let server = state.list.new_room_server()?.to_owned();
         // A phone offers no room rules: its room fills its teams with bots, Easy as its

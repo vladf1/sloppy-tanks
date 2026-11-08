@@ -23,7 +23,7 @@ use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind}
 use sloppy_web::battle_report::PauseReport;
 use sloppy_web::events::PendingEvent;
 pub use sloppy_web::feedback::{DeathReport, ToastTone};
-use sloppy_web::hud::Hud;
+use sloppy_web::hud::{Hud, NameTag};
 
 use crate::preferences::Preferences;
 use crate::room_api::RoomSelection;
@@ -172,6 +172,8 @@ pub struct UiState {
     pub hull_angle: f64,
     /// The player's tank on screen (NDC, y up), for the damage ring.
     pub viewer: Option<(f32, f32)>,
+    /// The other players' names over their tanks in a room, this frame.
+    pub name_tags: Vec<NameTag>,
     /// Battle Setup's Multiplayer tab: the room list and the join choices.
     pub rooms: rooms::RoomsState,
     /// The viewer's latest death, until the tank respawns.
