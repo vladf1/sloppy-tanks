@@ -2815,8 +2815,8 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
 /// A name tag's type size as a share of its bar's width on screen, and the sizes it
 /// keeps between, so a name reads over a far tank and stays a tag over a near one.
 const NAME_TAG_TYPE_SHARE: f32 = 0.17;
-const NAME_TAG_MIN_TYPE: f32 = 11.0;
-const NAME_TAG_MAX_TYPE: f32 = 16.0;
+const NAME_TAG_MIN_TYPE: f32 = 12.0;
+const NAME_TAG_MAX_TYPE: f32 = 17.0;
 /// Type sizes step by this much, so a zoom lays a name out a few times, not every frame.
 const NAME_TAG_TYPE_STEP: f32 = 0.5;
 

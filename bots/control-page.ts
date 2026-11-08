@@ -263,7 +263,7 @@ export const controlPage = `<!doctype html>
         </div>
         <label class="field" id="roomField"><span>Code</span><input id="room" type="text" maxlength="8" placeholder="8 characters" autocomplete="off" spellcheck="false"></label>
         <label class="field" id="mapField"><span>Map</span><select id="map"><option>village</option><option>harbor</option><option>quarry</option></select></label>
-        <label class="field" id="perRoomField"><span>At most per room</span><input id="perRoom" type="number" min="1" max="8" value="1" inputmode="numeric"></label>
+        <label class="field" id="perRoomField"><span>At most per room</span><input id="perRoom" type="number" min="1" max="8" value="5" inputmode="numeric"></label>
       </div>
       <p class="hint" id="whereHint" style="margin-top: 8px"></p>
     </fieldset>
@@ -477,7 +477,7 @@ form.addEventListener("submit", (event) => {
       style: $("style").value || undefined, map: $("map").value,
     });
   } else {
-    body.perRoom = Number($("perRoom").value) || 1;
+    body.perRoom = Number($("perRoom").value) || 5;
   }
   busy($("submit"), async () => {
     try {
