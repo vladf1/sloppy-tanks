@@ -93,9 +93,11 @@ export const controlPage = `<!doctype html>
   .chip { padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 550; color: var(--muted); white-space: nowrap; }
   .chip:hover { color: var(--fg); }
   .choice-input:checked + .chip { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
-  .room-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+  /* The room choices and the fields beside them each carry a label, so labels share
+     a line and the controls under them line up. */
+  .room-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
   .room-row .field { width: 170px; }
-  .room-row .segmented { align-self: flex-end; }
+  .room-row .room-choice { width: auto; }
   .field > .segmented { align-self: flex-start; }
   .orders { padding: 18px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
   .orders .segmented { background: var(--surface); }
@@ -250,20 +252,22 @@ export const controlPage = `<!doctype html>
       </label>
     </div>
 
-    <fieldset>
-      <legend class="block-label">Room</legend>
+    <div role="group" aria-labelledby="roomTitle">
       <div class="room-row">
-        <div class="segmented">
-          <input class="choice-input" type="radio" name="where" id="where-open" value="open" checked><label class="chip" for="where-open">Open rooms</label>
-          <input class="choice-input" type="radio" name="where" id="where-code" value="code"><label class="chip" for="where-code">Room code</label>
-          <input class="choice-input" type="radio" name="where" id="where-create" value="create"><label class="chip" for="where-create" id="createLabel">Create rooms</label>
+        <div class="field room-choice">
+          <span id="roomTitle">Room</span>
+          <div class="segmented">
+            <input class="choice-input" type="radio" name="where" id="where-open" value="open" checked><label class="chip" for="where-open">Open rooms</label>
+            <input class="choice-input" type="radio" name="where" id="where-code" value="code"><label class="chip" for="where-code">Room code</label>
+            <input class="choice-input" type="radio" name="where" id="where-create" value="create"><label class="chip" for="where-create" id="createLabel">Create rooms</label>
+          </div>
         </div>
         <label class="field" id="roomField"><span>Code</span><input id="room" type="text" maxlength="8" placeholder="8 characters" autocomplete="off" spellcheck="false"></label>
         <label class="field" id="mapField"><span>Map</span><select id="map"><option>village</option><option>harbor</option><option>quarry</option></select></label>
         <label class="field" id="perRoomField"><span>At most per room</span><input id="perRoom" type="number" min="1" max="8" value="5" inputmode="numeric"></label>
       </div>
       <p class="hint" id="whereHint" style="margin-top: 8px"></p>
-    </fieldset>
+    </div>
 
     <div class="orders" id="orders" role="group" aria-labelledby="ordersTitle">
       <p class="block-label" id="ordersTitle">Orders</p>
