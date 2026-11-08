@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use sloppy_core::net::client::ClientAction;
 use sloppy_core::net::fixed_step_clock::HOST_INTERVAL_MS;
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::protocol::{Message, RoomSettings};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
@@ -69,6 +70,7 @@ impl Room {
                 }),
                 seed,
                 content_version: None,
+                names: NameRule::Typed,
             }),
             now: 0.0,
             seats: Vec::new(),

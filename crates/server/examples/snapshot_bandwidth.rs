@@ -25,6 +25,7 @@ use bytes::BytesMut;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::protocol::{CONTENT_VERSION, Message, PROTOCOL_VERSION};
 use sloppy_core::net::replication::{BinaryMessage, StateMirror, read_binary_message};
 use sloppy_core::net::scene_codec::Scene;
@@ -250,6 +251,7 @@ fn run(label: &str, room: &str, map: &str, seed: u32, seconds: u64, output: &Pat
         }),
         seed,
         content_version: None,
+        names: NameRule::Typed,
     });
     let verify = std::env::var_os("SLOPPY_VERIFY").is_some();
     let truth = Truth::default();

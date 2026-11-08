@@ -42,7 +42,8 @@ use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::geometry_cache;
 use super::house_rest::HousePiles;
 use super::hud::{
-    BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
+    BAR_FADE_RATE, BarTrail, TagPoint, approach, bar_scale, health_bar_state, name_tag_lift,
+    protection_meters, spawn_pulse,
 };
 use super::model_catalog::{
     self, CoverModel, SceneryModel, SceneryMover, SceneryWater, TreeParts, cover_key,
@@ -322,6 +323,10 @@ struct Library {
 /// their height; open or small cover (trees, towers on legs, drums) never hides one.
 /// Cover meshes bulge a little past their nav footprints.
 const SIGHT_MARGIN: f64 = 0.3;
+
+/// How far past the screen's edge (NDC) a name tag still counts as shown, so a name
+/// slides off the edge rather than vanishing as its foot crosses it.
+const TAG_SCREEN_MARGIN: f32 = 1.2;
 
 fn sight_blocked(eye: Vec3, target: Vec3, covers: &[RenderCover]) -> bool {
     let (ex, ey, ez) = (f64::from(eye.x), f64::from(eye.y), f64::from(eye.z));
@@ -684,6 +689,10 @@ struct TankView {
     bar_anchor: Vec3,
     /// The bar's opacity, easing out behind cover and back in (0..1).
     bar_fade: f64,
+    /// How far over the bar's centre a name tag sits, in the bar's units.
+    tag_lift: f32,
+    /// Where a name tag over the bar goes on screen, while the bar shows.
+    tag: Option<TagPoint>,
     /// The pale chunk of hull the last hit took; `None` until the tank is drawn alive.
     trail: Option<BarTrail>,
     /// Drawn-pose motion (suspension, hit shove and flash, treads); `None` while
@@ -1236,7 +1245,9 @@ impl Presentation {
     ) {
         let eye = camera.position;
         let fov_y = f64::from(camera.fov_y_degrees).to_radians();
+        let view_projection = camera.view_projection();
         for view in self.tanks.values_mut() {
+            view.tag = None;
             if self.bars_hidden {
                 self.renderer.set_visible(view.bar, false);
                 continue;
@@ -1267,7 +1278,27 @@ impl Presentation {
                 view.bar,
                 Mat4::from_scale_rotation_translation(Vec3::splat(size), rotation, view.bar_anchor),
             );
+            let foot = view.bar_anchor + rotation * Vec3::Y * (view.tag_lift * size);
+            let point = view_projection.project_point3(foot);
+            let side = view_projection
+                .project_point3(foot + rotation * Vec3::X * (own::BAR_RIM_WIDTH as f32 * size));
+            let on_screen = point.z > 0.0
+                && point.z < 1.0
+                && point.x.abs() < TAG_SCREEN_MARGIN
+                && point.y.abs() < TAG_SCREEN_MARGIN;
+            view.tag = on_screen.then_some(TagPoint {
+                x: point.x,
+                y: point.y,
+                width: (side.x - point.x).abs(),
+                opacity: fade as f32,
+            });
         }
+    }
+
+    /// Where the name tag over tank `id`'s bar goes this frame; `None` while its bar is
+    /// hidden or behind the lens.
+    pub fn tag_point(&self, id: u32) -> Option<TagPoint> {
+        self.tanks.get(&id).and_then(|view| view.tag)
     }
 
     /// Where the viewer's tank sits on screen (NDC, y up), so the page's damage ring
@@ -1633,6 +1664,8 @@ impl Presentation {
                 bar_shown: false,
                 bar_anchor: Vec3::ZERO,
                 bar_fade: 0.0,
+                tag_lift: 0.0,
+                tag: None,
                 trail: None,
                 motion: None,
                 pose: vec![None; joints],
@@ -2406,6 +2439,7 @@ impl Presentation {
             view.bar_shown = tank.alive && !(viewer && seat_blend > 0.0);
             let meters =
                 protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
+            view.tag_lift = name_tag_lift(&meters);
             renderer.set_node_visible(view.bar, bar.shield, meters.shield_visible);
             renderer.set_node_transform(
                 view.bar,

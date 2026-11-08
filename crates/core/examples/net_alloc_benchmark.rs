@@ -23,6 +23,7 @@ use sloppy_core::net::client::{
 };
 use sloppy_core::net::fixed_step_clock::HOST_INTERVAL_MS;
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomSettings};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::house_structure::PartKind;
@@ -394,6 +395,7 @@ fn main() {
         }),
         seed: 4242,
         content_version: None,
+        names: NameRule::Typed,
     });
     let marks = Arc::new(Mutex::new(HookMarks {
         entered: Vec::with_capacity(16),

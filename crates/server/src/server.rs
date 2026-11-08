@@ -17,6 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Serialize;
+use sloppy_core::net::player_names::NameRule;
 use sloppy_core::net::room_list::RoomListing;
 use tokio::net::{TcpListener, ToSocketAddrs};
 use tokio::sync::{Notify, mpsc, oneshot, watch};
@@ -76,6 +77,8 @@ pub struct ServerOptions {
     pub directory: Option<DirectoryOptions>,
     /// The environment this server serves (`SERVER_ENVIRONMENT`), which titles the dashboard.
     pub environment: Option<String>,
+    /// The names its rooms seat players under.
+    pub names: NameRule,
 }
 
 impl ServerOptions {
@@ -88,6 +91,7 @@ impl ServerOptions {
             build: BuildInfo::default(),
             directory: None,
             environment: None,
+            names: NameRule::Typed,
         }
     }
 }
@@ -169,6 +173,7 @@ impl MultiplayerServer {
         let registry: Arc<Registry> = Arc::default();
         let rooms_changed = Arc::new(Notify::new());
         let factory = Arc::new(factory);
+        let names = options.names;
         let spawn_room: SpawnRoom = {
             let (clock, catalog, monitor, registry, rooms_changed) = (
                 clock.clone(),
@@ -189,6 +194,7 @@ impl MultiplayerServer {
                     code.to_string(),
                     instance,
                     factory.clone(),
+                    names,
                     clock.clone(),
                     epoch,
                     events,

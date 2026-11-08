@@ -1,18 +1,26 @@
-//! Names in a room: players play under drawn names whatever they send, pilots under a
-//! bot's, and a bot standing in for an away player under a bot's name with its own score.
+//! Names in a room: players play under drawn names or, where the server seats them,
+//! names they typed; pilots under a bot's, and a bot standing in for an away player
+//! under a bot's name with its own score.
 
 use crate::net_support;
 
-use net_support::{Harness, harness, shown};
+use net_support::{Harness, harness, shown, test_host_seating};
 use serde_json::{Value, json};
-use sloppy_core::net::player_names::is_player_name;
+use sloppy_core::net::player_names::{MAX_TYPED_NAME, NameRule, is_player_name};
 use sloppy_core::net::protocol::EMPTY_GRACE_MS;
+use sloppy_core::net::protocol::MAX_PLAYER_NAME_LENGTH;
+use sloppy_core::net::schema::text_length;
 use sloppy_core::sim::bot_personalities::BOT_NAMES;
 
 const ROOM: &str = r#"{ "mapMode": "village", "difficulty": "normal", "humansOnly": false }"#;
 
 fn room() -> Harness {
+    room_seating(NameRule::Typed)
+}
+
+fn room_seating(names: NameRule) -> Harness {
     let mut h = harness();
+    h.host = test_host_seating("test-room", 4242, None, names);
     let create: Value = serde_json::from_str(ROOM).unwrap();
     h.join("alice", json!({ "team": 0, "create": create }));
     h.join("bob", json!({ "team": 1 }));
@@ -55,7 +63,61 @@ fn destroy(h: &mut Harness, killer: usize, victim: usize) {
 }
 
 #[test]
-fn a_typed_name_never_reaches_the_room_and_a_shared_name_is_numbered() {
+fn a_typed_name_plays_trimmed_and_numbered_where_the_server_seats_typed_names() {
+    let mut h = room();
+    h.join("typed", json!({ "name": "  Vlad   F " }));
+    assert_eq!(lobby_player(&h, "alice", "typed")["name"], "Vlad F");
+    let tank = h.tank_of("typed");
+    assert_eq!(h.sim().tanks[tank].name, "Vlad F");
+    assert!(h.sim().tanks[tank].human && !h.sim().tanks[tank].bot);
+
+    h.join("again", json!({ "name": "Vlad F" }));
+    assert_eq!(lobby_player(&h, "alice", "again")["name"], "Vlad F 2");
+}
+
+#[test]
+fn a_long_name_taken_over_a_hundred_times_stays_within_the_name_limit() {
+    let mut h = room();
+    let long = "A".repeat(MAX_TYPED_NAME);
+    for i in 0..105 {
+        let key = format!("p{i}");
+        h.join(&key, json!({ "name": long, "team": 1 }));
+        let name = lobby_player(&h, "alice", &key)["name"].clone();
+        let name = name.as_str().unwrap();
+        assert!(text_length(name) <= MAX_PLAYER_NAME_LENGTH, "{name}");
+        if i > 0 {
+            assert!(name.ends_with(&format!(" {}", i + 1)), "{name}");
+        }
+        h.action(&key, "leave", json!({}));
+    }
+    let lobby = h.latest("alice", "lobby");
+    let names: Vec<&str> = lobby["scoreboard"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["name"].as_str())
+        .filter(|name| name.starts_with('A'))
+        .collect();
+    let distinct: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(
+        distinct.len(),
+        names.len(),
+        "every departed player keeps a name of their own"
+    );
+}
+
+#[test]
+fn an_app_store_server_seats_a_typed_name_under_a_drawn_one() {
+    let mut h = room_seating(NameRule::DrawnOnly);
+    h.join("typed", json!({ "name": "Vlad F" }));
+    let name = lobby_player(&h, "alice", "typed")["name"].clone();
+    let name = name.as_str().unwrap();
+    assert!(is_player_name(name), "{name} is drawn for the seat");
+    assert_eq!(lobby_player(&h, "alice", "alice")["name"], shown("alice"));
+}
+
+#[test]
+fn a_name_nobody_may_type_never_reaches_the_room_and_a_shared_name_is_numbered() {
     let mut h = room();
     h.join("typed", json!({ "name": "Vlad <b>was</b> here" }));
     let typed = lobby_player(&h, "alice", "typed");

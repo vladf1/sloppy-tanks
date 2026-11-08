@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use sloppy_core::net::match_host::{HostEvent, MatchHost, MatchHostOptions};
 use sloppy_core::net::player_controls::Ack;
-use sloppy_core::net::player_names::{name_seed, player_name};
+use sloppy_core::net::player_names::{NameRule, name_seed, player_name};
 use sloppy_core::net::protocol::{CONTENT_VERSION, FULL_MESSAGE, Message, PROTOCOL_VERSION};
 use sloppy_core::net::replication::{
     Baseline, BinaryMessage, FrameExtras, SnapshotBatch, StateMirror, read_binary_message,
@@ -73,6 +73,16 @@ pub fn shown(key: &str) -> String {
 }
 
 pub fn test_host(room_epoch: &str, seed: u32, content_version: Option<&str>) -> MatchHost {
+    test_host_seating(room_epoch, seed, content_version, NameRule::Typed)
+}
+
+/// [`test_host`] seating the names `names` allows.
+pub fn test_host_seating(
+    room_epoch: &str,
+    seed: u32,
+    content_version: Option<&str>,
+    names: NameRule,
+) -> MatchHost {
     let mut token = 0;
     MatchHost::new(MatchHostOptions {
         room_epoch: room_epoch.to_string(),
@@ -83,6 +93,7 @@ pub fn test_host(room_epoch: &str, seed: u32, content_version: Option<&str>) -> 
         }),
         seed,
         content_version: content_version.map(str::to_string),
+        names,
     })
 }
 

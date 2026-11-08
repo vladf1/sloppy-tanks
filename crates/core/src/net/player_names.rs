@@ -1,13 +1,19 @@
-//! Players' names in a room: two words from fixed lists, "Swift Falcon". Nobody types
-//! a name other players read, so a room shows no user-written text to moderate. A page
-//! or app draws one with [`player_name`] and rerolls it on request; the room host
-//! accepts a join's name only if [`is_player_name`] holds, and draws one otherwise, so
-//! a modified client cannot show other players a name of its own.
+//! Players' names in a room: two words from fixed lists, "Swift Falcon", or on the web
+//! a name the player typed. A page or app draws one with [`player_name`] and rerolls it
+//! on request. The room host accepts a join's drawn name ([`is_player_name`]), and a
+//! typed one ([`typed_player_name`]) only where it seats [`NameRule::Typed`]; otherwise
+//! it draws one, so a modified client cannot show other players a name of its own. The
+//! App Store apps play on servers of their own that seat only drawn names
+//! ([`NameRule::DrawnOnly`]), so they show no user-written text to moderate.
 //!
 //! The lists are curated as pairs, not only as words: every adjective must read as
 //! harmless before every noun. Keep them free of colours that name people, body or
 //! innuendo words, nationalities and anything the bots are called (their names are
 //! one capitalised word or two, `BOT_NAMES`), so a name alone never passes for a bot.
+
+use crate::net::protocol::MAX_PLAYER_NAME_LENGTH;
+use crate::net::schema::text_length;
+use crate::sim::bot_personalities::BOT_NAMES;
 
 /// First words. Each at most [`MAX_WORD`] characters.
 pub const ADJECTIVES: [&str; 64] = [
@@ -51,6 +57,61 @@ pub fn is_player_name(name: &str) -> bool {
     })
 }
 
+/// The longest name a player may type: as long as the longest a drawn one may be, so a
+/// drawn name edited a little still plays. A room numbering it shortens it to fit
+/// ([`numbered_name`]).
+pub const MAX_TYPED_NAME: usize = 2 * MAX_WORD + 1;
+
+/// Which names a room host seats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameRule {
+    /// Drawn names and names players typed (the web's servers).
+    Typed,
+    /// Drawn names only: a typed name gives way to a drawn one (the App Store apps').
+    DrawnOnly,
+}
+
+/// Whether a player may type `character` in a name: ASCII letters and digits, spaces and
+/// a little punctuation. Every face of the interface draws them, and no invisible,
+/// combining or right-to-left character can disguise a name.
+pub fn typed_name_character(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, ' ' | '-' | '_' | '.' | '\'')
+}
+
+/// The name `text` gives, trimmed and with its spaces single, when a player may play
+/// under it: at most [`MAX_TYPED_NAME`] characters a player may type, at least one a
+/// letter or digit, and not a bot's name, which would pass the player off as a bot.
+pub fn typed_player_name(text: &str) -> Option<String> {
+    let mut name = String::with_capacity(text.len());
+    for word in text.split(' ').filter(|word| !word.is_empty()) {
+        if !name.is_empty() {
+            name.push(' ');
+        }
+        name.push_str(word);
+    }
+    let fits = (1..=MAX_TYPED_NAME).contains(&name.len())
+        && name.chars().all(typed_name_character)
+        && name.chars().any(|character| character.is_ascii_alphanumeric());
+    let bot = BOT_NAMES
+        .iter()
+        .any(|bot| bot.eq_ignore_ascii_case(&name));
+    (fits && !bot).then_some(name)
+}
+
+/// `name` numbered `number` for a room where someone already shows it, "Swift Falcon 2":
+/// shortened as much as the suffix needs to stay within `MAX_PLAYER_NAME_LENGTH`, since a
+/// round's departed players keep their names and a popular name can reach " 100".
+pub fn numbered_name(name: &str, number: u32) -> String {
+    let suffix = format!(" {number}");
+    let room = MAX_PLAYER_NAME_LENGTH.saturating_sub(text_length(&suffix));
+    let mut base = name;
+    while text_length(base) > room {
+        let last = base.chars().next_back().map_or(0, char::len_utf8);
+        base = &base[..base.len() - last];
+    }
+    format!("{}{suffix}", base.trim_end())
+}
+
 /// A hash of `text` for drawing a name from a random token (FNV-1a).
 pub fn name_seed(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
@@ -61,8 +122,6 @@ pub fn name_seed(text: &str) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::protocol::MAX_PLAYER_NAME_LENGTH;
-    use crate::sim::bot_personalities::BOT_NAMES;
     use std::collections::BTreeSet;
 
     #[test]
@@ -119,5 +178,50 @@ mod tests {
         ] {
             assert!(!is_player_name(name), "{name:?}");
         }
+    }
+
+    #[test]
+    fn a_typed_name_is_trimmed_and_kept_within_its_characters() {
+        assert_eq!(typed_player_name("  Vlad   the  Tank "), Some("Vlad the Tank".into()));
+        assert_eq!(typed_player_name("O'Neil-2_x."), Some("O'Neil-2_x.".into()));
+        assert_eq!(typed_player_name("Swift Falcon"), Some("Swift Falcon".into()));
+        let longest = "A".repeat(MAX_TYPED_NAME);
+        assert_eq!(typed_player_name(&longest), Some(longest.clone()));
+        for name in [
+            "",
+            "   ",
+            "...",
+            "- _ '",
+            &"A".repeat(MAX_TYPED_NAME + 1),
+            "<b>bold</b>",
+            "Tab\there",
+            "Vlad\u{200b}",
+            "Zoë",
+            "\u{202e}reversed",
+        ] {
+            assert_eq!(typed_player_name(name), None, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn a_typed_name_never_takes_a_bots() {
+        for name in BOT_NAMES {
+            assert_eq!(typed_player_name(name), None, "{name}");
+            assert_eq!(typed_player_name(&name.to_ascii_lowercase()), None, "{name}");
+        }
+    }
+
+    #[test]
+    fn a_numbered_name_shortens_to_fit_its_suffix() {
+        assert_eq!(numbered_name("Swift Falcon", 2), "Swift Falcon 2");
+        let longest = "A".repeat(MAX_TYPED_NAME);
+        for number in [2, 99, 100, 128, 1000, u32::MAX] {
+            let name = numbered_name(&longest, number);
+            assert!(text_length(&name) <= MAX_PLAYER_NAME_LENGTH, "{name}");
+            assert!(name.ends_with(&format!("A {number}")), "{name}");
+        }
+        // A cut that lands after a space leaves no double space before the number.
+        let spaced = format!("{} B", "A".repeat(19));
+        assert_eq!(numbered_name(&spaced, 100), format!("{} 100", "A".repeat(19)));
     }
 }

@@ -45,8 +45,6 @@ export const controlPage = `<!doctype html>
   .eyebrow { font-size: 12px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
   h1 { font-size: 26px; letter-spacing: -0.01em; }
   .top-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; }
-  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); font-weight: 600; }
-  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--good); }
   .intro { margin: 14px 0 24px; max-width: 760px; color: var(--muted); }
 
   /* Cards and sections */
@@ -95,9 +93,11 @@ export const controlPage = `<!doctype html>
   .chip { padding: 6px 14px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 550; color: var(--muted); white-space: nowrap; }
   .chip:hover { color: var(--fg); }
   .choice-input:checked + .chip { background: var(--surface); color: var(--fg); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
-  .room-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 16px; }
+  /* The room choices and the fields beside them each carry a label, so labels share
+     a line and the controls under them line up. */
+  .room-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 16px; }
   .room-row .field { width: 170px; }
-  .room-row .segmented { align-self: flex-end; }
+  .room-row .room-choice { width: auto; }
   .field > .segmented { align-self: flex-start; }
   .orders { padding: 18px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); }
   .orders .segmented { background: var(--surface); }
@@ -203,7 +203,6 @@ export const controlPage = `<!doctype html>
       <div><p class="eyebrow">Sloppy Tanks</p><h1>Bots and pilots</h1></div>
     </div>
     <div class="top-meta">
-      <span class="pill" id="target" title="The servers a run plays on unless it picks others">Servers…</span>
       <span class="muted" id="updated" aria-live="polite">Loading…</span>
       <button type="button" class="ghost icon-button" id="refresh" title="Refresh now" aria-label="Refresh now">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg>
@@ -240,7 +239,7 @@ export const controlPage = `<!doctype html>
         <span class="hint">Where on Cloudflare they run from</span>
       </label>
       <label class="field"><span>Servers</span>
-        <select id="environment"><option value="" id="defaultServers">Default</option><option>production</option><option>dev</option></select>
+        <select id="environment"><option>production</option><option>dev</option></select>
         <span class="hint">The game servers to play on</span>
       </label>
       <label class="field"><span id="countLabel">Bots</span>
@@ -253,20 +252,22 @@ export const controlPage = `<!doctype html>
       </label>
     </div>
 
-    <fieldset>
-      <legend class="block-label">Room</legend>
+    <div role="group" aria-labelledby="roomTitle">
       <div class="room-row">
-        <div class="segmented">
-          <input class="choice-input" type="radio" name="where" id="where-open" value="open" checked><label class="chip" for="where-open">Open rooms</label>
-          <input class="choice-input" type="radio" name="where" id="where-code" value="code"><label class="chip" for="where-code">Room code</label>
-          <input class="choice-input" type="radio" name="where" id="where-create" value="create"><label class="chip" for="where-create" id="createLabel">Create rooms</label>
+        <div class="field room-choice">
+          <span id="roomTitle">Room</span>
+          <div class="segmented">
+            <input class="choice-input" type="radio" name="where" id="where-open" value="open" checked><label class="chip" for="where-open">Open rooms</label>
+            <input class="choice-input" type="radio" name="where" id="where-code" value="code"><label class="chip" for="where-code">Room code</label>
+            <input class="choice-input" type="radio" name="where" id="where-create" value="create"><label class="chip" for="where-create" id="createLabel">Create rooms</label>
+          </div>
         </div>
         <label class="field" id="roomField"><span>Code</span><input id="room" type="text" maxlength="8" placeholder="8 characters" autocomplete="off" spellcheck="false"></label>
         <label class="field" id="mapField"><span>Map</span><select id="map"><option>village</option><option>harbor</option><option>quarry</option></select></label>
-        <label class="field" id="perRoomField"><span>At most per room</span><input id="perRoom" type="number" min="1" max="8" value="1" inputmode="numeric"></label>
+        <label class="field" id="perRoomField"><span>At most per room</span><input id="perRoom" type="number" min="1" max="8" value="5" inputmode="numeric"></label>
       </div>
       <p class="hint" id="whereHint" style="margin-top: 8px"></p>
-    </fieldset>
+    </div>
 
     <div class="orders" id="orders" role="group" aria-labelledby="ordersTitle">
       <p class="block-label" id="ordersTitle">Orders</p>
@@ -341,6 +342,9 @@ const MISSION_HINTS = {
 };
 const TEAMS = ["blue", "red"];
 let lastStatus = null;
+/** Servers stays on the Worker's own environment until someone picks one. */
+let serversPicked = false;
+$("environment").addEventListener("change", () => { serversPicked = true; });
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -477,7 +481,7 @@ form.addEventListener("submit", (event) => {
       style: $("style").value || undefined, map: $("map").value,
     });
   } else {
-    body.perRoom = Number($("perRoom").value) || 1;
+    body.perRoom = Number($("perRoom").value) || 5;
   }
   busy($("submit"), async () => {
     try {
@@ -680,8 +684,10 @@ function render(status) {
   lastStatus = status;
   let environment = "";
   try { environment = new URL(status.server).searchParams.get("environment") || ""; } catch {}
-  $("target").textContent = environment ? environment + " servers" : "Servers";
-  $("defaultServers").textContent = environment ? "Default (" + environment + ")" : "Default";
+  if (!serversPicked && environment && $("environment").value !== environment) {
+    $("environment").value = environment;
+    showForm();
+  }
   const regions = new Map();
   const entry = (code) => regions.get(code) || regions.set(code, {}).get(code);
   for (const region of status.regions) entry(region.region).bots = region;

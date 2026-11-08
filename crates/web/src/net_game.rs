@@ -96,7 +96,7 @@ use sloppy_render::quality::GraphicsSetting;
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
-use crate::hud::{EffectTimers, RoomHud, Scoreboard, room_hud};
+use crate::hud::{EffectTimers, NameTag, RoomHud, Scoreboard, fill_name_tags, room_hud};
 use crate::nerd_rows::{
     ConnectionStats, FeelStats, NetworkSampler, RoomStats, SceneStats, StatsSection, room_sections,
 };
@@ -817,6 +817,14 @@ impl NetGame {
         self.client
             .display()
             .and_then(|state| room_hud(state, timers))
+    }
+
+    /// The name tags over the other human players' tanks this frame, into `tags`.
+    pub fn name_tags(&self, tags: &mut Vec<NameTag>) {
+        match self.client.display() {
+            Some(state) => fill_name_tags(state, |id| self.view.tag_point(id), tags),
+            None => tags.clear(),
+        }
     }
 
     /// Displayed events for audio and HUD, heard from the viewer's tank.

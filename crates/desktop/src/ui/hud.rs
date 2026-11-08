@@ -169,6 +169,7 @@ pub fn hud(
             (1.0, Color32::TRANSPARENT),
         ],
     ));
+    name_tags(&painter, viewport, state);
     if crate::touch::phone() {
         phone_hud(context, art, state, &hud, view, actions);
         return;
@@ -2808,6 +2809,53 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
             COMPASS_KEY,
         );
         paint::kbd_in(painter, key, "V", 12.0);
+    }
+}
+
+/// A name tag's type size as a share of its bar's width on screen, and the sizes it
+/// keeps between, so a name reads over a far tank and stays a tag over a near one.
+const NAME_TAG_TYPE_SHARE: f32 = 0.17;
+const NAME_TAG_MIN_TYPE: f32 = 13.0;
+const NAME_TAG_MAX_TYPE: f32 = 18.0;
+/// Type sizes step by this much, so a zoom lays a name out a few times, not every frame.
+const NAME_TAG_TYPE_STEP: f32 = 0.5;
+
+/// The other players' names in a room, each over its tank's overhead bar in its team's
+/// colour, fading with the bar behind cover. `viewport` is the whole canvas the scene
+/// fills, which the tags' NDC points span.
+fn name_tags(painter: &Painter, viewport: Rect, state: &UiState) {
+    for tag in &state.name_tags {
+        let point = tag.point;
+        let foot = pos2(
+            viewport.center().x + point.x * viewport.width() / 2.0,
+            viewport.center().y - point.y * viewport.height() / 2.0,
+        );
+        let bar_width = point.width * viewport.width() / 2.0;
+        let size = (bar_width * NAME_TAG_TYPE_SHARE).clamp(NAME_TAG_MIN_TYPE, NAME_TAG_MAX_TYPE)
+            / NAME_TAG_TYPE_STEP;
+        let font = bold_font(size.round() * NAME_TAG_TYPE_STEP);
+        let ink = mix(theme::team_color(tag.team), Color32::WHITE, 0.55);
+        // `paint::shadowed`'s drop shadow, fading with the name.
+        let shadow = hexa(0x000000, 0.6 * point.opacity);
+        let (name, centre) = (tag.name.as_str(), Align2::CENTER_BOTTOM);
+        paint::text(
+            painter,
+            foot + vec2(0.0, 1.5),
+            centre,
+            name,
+            font.clone(),
+            shadow,
+            0.0,
+        );
+        paint::text(
+            painter,
+            foot,
+            centre,
+            name,
+            font,
+            fade(ink, point.opacity),
+            0.0,
+        );
     }
 }
 

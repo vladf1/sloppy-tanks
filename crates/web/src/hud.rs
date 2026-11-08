@@ -24,7 +24,7 @@ use sloppy_core::sim::{
     AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
     Weapon,
 };
-use sloppy_render::presentation::hud::{HealthColor, health_bar_state};
+use sloppy_render::presentation::hud::{HealthColor, TagPoint, health_bar_state};
 
 use crate::battle_report::duration;
 use crate::recap::RoundRecap;
@@ -201,6 +201,48 @@ pub struct RoomHud<'a> {
     /// The score pill's clock; a room has no goal line under it.
     #[serde(rename = "scorePill")]
     pub score_pill: ScorePill,
+}
+
+/// A player's name over their tank in a room, where the shell draws it this frame.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NameTag {
+    pub name: String,
+    pub team: Team,
+    pub point: TagPoint,
+}
+
+/// Refill `tags` with the name tags over the other human players' tanks in `state`, at
+/// the points `tag_point` gives (`None` where a tank's bar is hidden). A bot, pilot or
+/// stand-in wears none, nor the viewer's own tank. The tags' names keep their buffers.
+pub fn fill_name_tags(
+    state: &RenderState,
+    tag_point: impl Fn(u32) -> Option<TagPoint>,
+    tags: &mut Vec<NameTag>,
+) {
+    let mut count = 0;
+    let players = state
+        .tanks
+        .iter()
+        .filter(|tank| tank.human && !tank.bot && tank.id != state.viewer_id);
+    for tank in players {
+        let Some(point) = tag_point(tank.id) else {
+            continue;
+        };
+        match tags.get_mut(count) {
+            Some(tag) => {
+                tag.name.clone_from(&tank.name);
+                tag.team = tank.team;
+                tag.point = point;
+            }
+            None => tags.push(NameTag {
+                name: tank.name.clone(),
+                team: tank.team,
+                point,
+            }),
+        }
+        count += 1;
+    }
+    tags.truncate(count);
 }
 
 /// The room HUD for `state`, or `None` before the scene has its viewer; `timers` learn
@@ -908,6 +950,50 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sloppy_core::sim::{RenderState, Simulation, SimulationSetup, Team};
+
+    #[test]
+    fn only_other_human_players_wear_name_tags_and_their_names_keep_their_buffers() {
+        let tank = |id: u32, name: &str, human: bool, bot: bool| RenderTank {
+            id,
+            name: name.into(),
+            team: Team::Red,
+            human,
+            bot,
+            ..RenderTank::default()
+        };
+        let state = RenderState {
+            viewer_id: 1,
+            tanks: vec![
+                tank(1, "Me", true, false),
+                tank(2, "Vlad F", true, false),
+                tank(3, "Rex", false, true),
+                tank(4, "Stand In", true, true),
+                tank(5, "Hidden", true, false),
+                tank(6, "Swift Falcon", true, false),
+            ],
+            ..RenderState::default()
+        };
+        let point = |id: u32| {
+            (id != 5).then_some(TagPoint {
+                x: id as f32,
+                ..TagPoint::default()
+            })
+        };
+        let mut tags = vec![NameTag {
+            name: String::with_capacity(64),
+            team: Team::Blue,
+            point: TagPoint::default(),
+        }];
+        let buffer = tags[0].name.as_ptr();
+        fill_name_tags(&state, point, &mut tags);
+        let names: Vec<&str> = tags.iter().map(|tag| tag.name.as_str()).collect();
+        assert_eq!(names, ["Vlad F", "Swift Falcon"]);
+        assert_eq!(tags[0].name.as_ptr(), buffer);
+        assert_eq!((tags[0].team, tags[1].point.x), (Team::Red, 6.0));
+
+        fill_name_tags(&RenderState::default(), point, &mut tags);
+        assert!(tags.is_empty());
+    }
 
     #[test]
     fn self_repair_requires_a_living_wounded_veteran_past_the_delay() {
