@@ -35,18 +35,18 @@ use crate::sim::house_layout::{HouseDesign, SENDA_STYLES, wall_frames};
 use crate::sim::kinds::{CoverKind, Team};
 use crate::sim::model_data::ARENA;
 use crate::sim::senda_layout::{
-    self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, HOUSE_WIDTH, LAMP_HEIGHT, Line,
-    MEDIAN_HALF, PARKWAY, Row, SENDA_PICKUPS, SIDE_YARD, SIDEWALK, SOUTH_LANE, SPLITTER_ISLAND,
-    STREET_LAMP_COLORS, SendaHouse, Street, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH,
-    greenbelt_mouth, house_front, in_arena, in_median_opening, inside_boundary, is_senda_paved,
-    lamp_is_cover, lamp_sites, left, neblina_bend, oak_site, outer_way_tree_sites, senda_boundary,
-    senda_houses, way_tree_sites,
+    self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, DRIVEWAY_PAST_DOOR, HOUSE_DEPTH, HOUSE_WIDTH,
+    LAMP_HEIGHT, Line, MEDIAN_HALF, PARKWAY, Row, SENDA_PICKUPS, SIDE_YARD, SIDEWALK, SOUTH_LANE,
+    SPLITTER_ISLAND, STREET_LAMP_COLORS, SendaHouse, Street, WAY_LAMP_HEIGHT, WAY_PARKWAY,
+    WAY_PATH, greenbelt_mouth, house_front, in_arena, in_median_opening, inside_boundary,
+    is_senda_paved, lamp_is_cover, lamp_sites, left, neblina_bend, oak_site, outer_way_tree_sites,
+    senda_boundary, senda_houses, way_tree_sites,
 };
 use crate::sim::senda_yards::{
     LOGGIA_COLUMN, LOGGIA_EAVE, Lot, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover,
     YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_PLANTER, YARD_VIEW_COLOR, YARD_WALL_COLOR,
-    YARD_WALL_THICKNESS, greenbelt_lane, house_back, park_corners, patio_depth, senda_lots,
-    turf_side,
+    YARD_WALL_THICKNESS, greenbelt_lane, house_back, park_corners, patio_depth, porch, porch_depth,
+    senda_lots, turf_side,
 };
 use crate::sim::tree_proportions::tree_proportions;
 
@@ -80,9 +80,8 @@ const KERB_WIDTH: f64 = 0.16;
 /// (raised over the asphalt they cross so junctions do not flicker).
 const STREET_TOP: f64 = 0.045;
 const WALK_TOP: f64 = 0.06;
-/// How much wider a driveway is than its garage door, the front walk's width, and the
-/// strip of brown pavers bordering the driveway on the front walk's side (width, paint).
-const DRIVEWAY_PAST_DOOR: f64 = 0.15;
+/// The front walk's width, and the strip of brown pavers bordering the driveway on the
+/// front walk's side (width, paint).
 const FRONT_WALK: f64 = 0.9;
 const PAVER_STRIP: (f64, u32) = (0.25, 0x8e7764);
 /// Ground tints over the dry-grass tile, linear: they multiply its mustard straw, and a
@@ -187,18 +186,13 @@ const TRAIL_WALL_ROOM: f64 = 1.0 + TRAIL_WIDTH / 2.0;
 /// middle.
 const TRAIL_SHRUBS: (f64, f64) = (1.0, 2.4);
 /// The lots' yards inside their walls: decomposed granite over the side and back
-/// yards, a patio against the house's back wall (concrete and pavers by turns) about
-/// this share of the yard deep, but no deeper than the tract's patios (m) nor shallower
-/// than the least (m), on every other lot a lawn behind it over this share of the lot's
-/// width (a dark watered green over the grass tile, linear), a planted bed of bark mulch
-/// along the back wall (its width, m) and narrower ones along the side walls behind the
-/// patio.
+/// yards, a patio against the house's back wall (concrete and pavers by turns) out to
+/// the planted bed of bark mulch along the back wall, and narrower beds along the side
+/// walls (their width, m).
 const YARD_GRAVEL: u32 = 0x9d907a;
 const PATIO_CONCRETE: u32 = 0xd2cbbd;
 const PATIO_PAVERS: u32 = 0xb59f86;
-const TURF: [f32; 3] = [0.42, 1.12, 1.25];
-const TURF_SHARE: f64 = 0.55;
-const SIDE_PLANTER: f64 = 0.6;
+const SIDE_PLANTER: f64 = 0.4;
 /// The back yards' planting: low shrubs along the beds, about one every this many metres
 /// (their size range, m, and leaves, dark glossy greens with a flowering one), and a small
 /// tree in a back corner of each yard (its crown's breadth and height, m): a citrus's dark
@@ -296,13 +290,14 @@ const TALL_GRASS_LEAVES: [u32; 3] = [0x5a6236, 0x6a6a42, 0x60673a];
 const CORNER_ALOES: [(f64, f64); 3] = [(0.4, 1.5), (1.7, 2.4), (2.4, 1.3)];
 const ALOE: (f64, u32) = (0.3, 0x6f7d58);
 const ALOE_SPIKE: (f64, u32) = (0.7, 0xd0582c);
-/// The band of trees down the slope behind Gaviota's south row, past the level's wall:
-/// one every this many metres in staggered rows, out to this far (m) from the wall,
-/// their crowns' breadth and their heights at least and at most (m).
-const CANOPY_SPACING: f64 = 5.2;
-const CANOPY_BAND: f64 = 9.0;
-const CANOPY_CROWN: (f64, f64) = (3.8, 4.8);
-const CANOPY_HEIGHT: (f64, f64) = (4.5, 6.2);
+/// The line of trees down the slope behind Gaviota's south row and Neblina's west row,
+/// past the level's wall: one about every this many metres along the wall, this far (m)
+/// out from its outer face, their footprints (an oak's crown spreads to 1.2-1.45 times
+/// it) and their heights at least and at most (m), the bank trees' sizes.
+const CANOPY_SPACING: f64 = 12.0;
+const CANOPY_REACH: f64 = 3.5;
+const CANOPY_CROWN: (f64, f64) = (2.2, 2.9);
+const CANOPY_HEIGHT: (f64, f64) = (3.2, 3.6);
 /// How far (m) a slope tree's trunk keeps from the outer face of the level's wall.
 const CANOPY_WALL_ROOM: f64 = 1.0;
 /// The greenbelt's path: a straight concrete walk along the foot of Gaviota's north row's
@@ -378,7 +373,7 @@ const MAT_BUSH_LEAVES: [u32; 5] = [0x46523a, 0x8a9150, 0x6f7a5c, 0x3e4a34, 0x5b6
 /// and the greenbelt's cover trees.
 const CREEK_TREE_STEP: f64 = 8.0;
 const CREEK_TREE_CROWN: (f64, f64) = (2.4, 3.2);
-const CREEK_TREE_HEIGHT: (f64, f64) = (3.6, 5.0);
+const CREEK_TREE_HEIGHT: (f64, f64) = (3.2, 3.8);
 const CREEK_TREE_ROOM: f64 = 3.5;
 /// The broadleaf family [`tree_proportions`] grows as a pale-barked, open-crowned tree,
 /// standing in for the creek's sycamores and willows.
@@ -467,24 +462,17 @@ const OLIVE_LEAVES: [u32; 3] = [0x5c6450, 0x535b48, 0x646b56];
 const OLIVE_BARK: u32 = 0x4a4036;
 /// The band of tree crowns down the slope behind Gaviota's south row, between the cover
 /// oaks: two staggered lines this far (m) out past the back walls (the strip to the
-/// level's wall is about 7.5 m, its outer [`SOUTH_LANE`] kept for tanks), a crown every
+/// level's wall is about 10 m, its outer [`SOUTH_LANE`] kept for tanks), a crown every
 /// this many metres along each, none nearer a cover tree's trunk than this (m).
 const SOUTH_CANOPY_REACH: [f64; 2] = [2.0, 3.0];
 const SOUTH_CANOPY_STEP: f64 = 4.0;
 const SOUTH_CANOPY_ROOM: f64 = 2.4;
-/// Small trees along the foot of Rumbo's north row's rear fences on the bank, one where
-/// each pair of neighbours' lot lines meet, by turns this far (m) out from the fence; their
-/// crowns' breadth and heights (m); none within this far (m) of a pickup.
-const BANK_TOE_REACH: [f64; 2] = [1.6, 2.6];
-const BANK_TOE_CROWN: (f64, f64) = (3.0, 3.8);
-const BANK_TOE_HEIGHT: (f64, f64) = (4.0, 5.0);
-const BANK_TOE_PICKUP_ROOM: f64 = 3.0;
 /// The small trees inside the level's west wall, between the spawn pads (scenery): this
 /// far (m) inside the wall's face, their crowns' breadth and heights (m), two to a gap
 /// between pads.
 const WEST_TREE_INSET: f64 = 2.8;
-const WEST_TREE_CROWN: (f64, f64) = (2.2, 3.0);
-const WEST_TREE_HEIGHT: (f64, f64) = (3.8, 4.8);
+const WEST_TREE_CROWN: (f64, f64) = (2.2, 2.8);
+const WEST_TREE_HEIGHT: (f64, f64) = (3.2, 3.7);
 /// The hillside's scrub gathers in patches where a slow noise passes this level.
 const HILL_PATCH: f64 = 0.35;
 /// The hillside's coastal sage inside the arena: a clump every this many metres.
@@ -516,11 +504,14 @@ const MAILBOX_PEDESTAL: f64 = 0.45;
 const MAILBOX_PAINT: u32 = 0x4a554c;
 const MAILBOX_PAD: u32 = 0xc4bfb3;
 /// Each house's entry bed beside its front walk, on the side away from the driveway, at
-/// the street end of the front yard: its size along the front and out from it (m), the
+/// the street end of the front yard before its porch: its size along the front and out
+/// from it (m) and the room (m) it keeps from the sidewalk, the
 /// low stucco seat wall in the house's own stucco along its street side and down the
 /// walk (height, thickness, m), the capped pilasters at its ends (side and height, m),
 /// the cap's paint and the bed's mulch.
-const ENTRY_BED: (f64, f64) = (1.3, 1.0);
+const ENTRY_BED: (f64, f64) = (1.3, 0.4);
+const LEAST_ENTRY_BED: f64 = 0.15;
+const ENTRY_BED_WALK_ROOM: f64 = 0.05;
 const SEAT_WALL: (f64, f64) = (0.35, 0.18);
 const SEAT_PILASTER: (f64, f64) = (0.3, 0.45);
 /// What an entry bed holds, by spot (`u` from the walk's far end toward it and `v` out to
@@ -2294,51 +2285,6 @@ fn outer_slopes() -> Node {
         .filter(|cover| cover.kind == CoverKind::Tree)
         .map(|cover| DVec2::new(cover.x, cover.z))
         .collect();
-    // Small trees at the foot of the bank behind Rumbo's north row, where neighbours'
-    // lot lines meet the rear fences.
-    let mut turn = 0usize;
-    for (i, lot) in lines.lots.iter().enumerate() {
-        if lot.house.row != Row::RumboNorth {
-            continue;
-        }
-        for side in &lot.sides {
-            if side.neighbour.is_none_or(|j| j < i) {
-                continue;
-            }
-            let reach = BANK_TOE_REACH[turn % BANK_TOE_REACH.len()];
-            turn += 1;
-            let at = side.rear - lot.front * (YARD_WALL_THICKNESS / 2.0 + reach);
-            let seed = i as f64 * 6.1 + reach;
-            let (least, most) = BANK_TOE_CROWN;
-            let crown = least + (most - least) * hash(seed);
-            let clear_here = outer
-                .pickups
-                .iter()
-                .all(|pickup| pickup.distance(at) > BANK_TOE_PICKUP_ROOM)
-                && oaks.iter().all(|oak| oak.distance(at) > SOUTH_CANOPY_ROOM)
-                && clear(at, crown);
-            if !clear_here {
-                continue;
-            }
-            let (low, high) = BANK_TOE_HEIGHT;
-            // Oaks, never the village's conifers, whatever the spot's seed would grow.
-            let (x, z) = oak_site(at.x, at.y);
-            let shape = TreeShape {
-                x,
-                z,
-                w: crown,
-                d: crown,
-                h: low + (high - low) * hash(seed + 0.8),
-            };
-            put(
-                &mut group,
-                tree_model(&shape, TreeDetail::Background),
-                x,
-                0.0,
-                z,
-            );
-        }
-    }
     // The band of crowns behind Gaviota's south row, between the cover oaks.
     let (least, most) = CANOPY_CROWN;
     let (low, high) = CANOPY_HEIGHT;
@@ -2758,21 +2704,35 @@ fn driveway(group: &mut Node, design: &HouseDesign, house: &SendaHouse) {
     let plan = design.wall_plan(design.door_wall);
     let out = design.to_world(out);
     let yaw = out.x.atan2(out.z);
-    let mut slab = |u: f64, width: f64, length: f64, color: u32, top: f64| {
+    let mut slab = |u: f64, width: f64, (from, length): (f64, f64), color: u32, top: f64| {
         let face = design.to_world(centre + along * u);
-        let middle = face + out * (length / 2.0);
+        let middle = face + out * (from + length / 2.0);
         let piece = rotated(box_part(width, SLAB, length, color, 0.0), 0.0, yaw, 0.0);
         put(group, piece, x + middle.x, top - SLAB / 2.0, z + middle.z);
     };
     if let (Some(garage), Some(door)) = (plan.garage(), plan.door()) {
         let width = plan.garage_width() + DRIVEWAY_PAST_DOOR;
-        slab(garage, width, setback + SIDEWALK + PARKWAY, DRIVEWAY, 0.055);
+        slab(
+            garage,
+            width,
+            (0.0, setback + SIDEWALK + PARKWAY),
+            DRIVEWAY,
+            0.055,
+        );
         // The paver border on the walk's side, across the front yard.
         let edge = garage + (door - garage).signum() * (width + PAVER_STRIP.0) / 2.0;
-        slab(edge, PAVER_STRIP.0, setback, PAVER_STRIP.1, 0.056);
+        slab(edge, PAVER_STRIP.0, (0.0, setback), PAVER_STRIP.1, 0.056);
     }
+    // From the sidewalk to the entry porch the house model stands before its door.
     if let Some(door) = plan.door() {
-        slab(door, FRONT_WALK, setback, SIDEWALK_CONCRETE, 0.052);
+        let porch = porch_depth(setback);
+        slab(
+            door,
+            FRONT_WALK,
+            (porch, setback - porch),
+            SIDEWALK_CONCRETE,
+            0.052,
+        );
     }
 }
 
@@ -2897,14 +2857,10 @@ fn lot_slab(
 }
 
 /// The ground of every walled yard: decomposed granite inside the walls behind the gate
-/// returns, the patio against the house's back wall, on every other lot a turf patch
-/// behind it, the planting strip along the back wall, and outside the back wall the bark
-/// mulch along its foot.
+/// returns, the patio paving the back yard from the house's back wall to the planting
+/// strips along the back and side walls, and outside the back wall the bark mulch along
+/// its foot.
 fn yard_grounds(group: &mut Node, lots: &[Lot]) {
-    let mut lawn = ground_material(GroundKind::DryGrass);
-    lawn.vertex_colors = true;
-    lawn.color = crate::scene::Color(0xffffff);
-    let lawn = Arc::new(lawn);
     for (k, lot) in lots.iter().enumerate() {
         let [low, high] = lot.sides;
         group.children.push(flat(
@@ -2925,15 +2881,18 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
         } else {
             PATIO_CONCRETE
         };
-        lot_slab(
-            group,
-            lot,
-            (0.0, back - depth / 2.0),
-            (2.0 * lot.half_width - 0.2, depth),
-            0.05,
-            paving,
-        );
         let (u0, u1) = (lot.line_u(0), lot.line_u(1));
+        let (inner0, inner1) = (u0 + 0.1 + SIDE_PLANTER, u1 - 0.1 - SIDE_PLANTER);
+        if depth > 0.1 {
+            lot_slab(
+                group,
+                lot,
+                ((inner0 + inner1) / 2.0, back - depth / 2.0),
+                (inner1 - inner0, depth),
+                0.05,
+                paving,
+            );
+        }
         let planter = lot.rear_v() + 0.1 + YARD_PLANTER / 2.0;
         lot_slab(
             group,
@@ -2943,8 +2902,9 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
             0.042,
             BED_MULCH,
         );
-        // Narrower beds along the side walls, from the back bed to the patio.
-        let (from, to) = (lot.rear_v() + 0.1 + YARD_PLANTER, back - depth - 0.1);
+        // Narrower beds along the side walls, beside the patio from the back bed to the
+        // house.
+        let (from, to) = (lot.rear_v() + 0.1 + YARD_PLANTER, back);
         if to - from > 0.4 {
             for edge in [u0 + 0.1 + SIDE_PLANTER / 2.0, u1 - 0.1 - SIDE_PLANTER / 2.0] {
                 lot_slab(
@@ -2956,25 +2916,6 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
                     BED_MULCH,
                 );
             }
-        }
-        let turf = lot.yard - depth - YARD_PLANTER - 0.2;
-        if k.is_multiple_of(2) && turf > 0.5 {
-            let side = turf_side(k);
-            let width = (u1 - u0 - 2.0 * SIDE_PLANTER) * TURF_SHARE;
-            let edge = if side > 0.0 {
-                u1 - 0.2 - SIDE_PLANTER
-            } else {
-                u0 + 0.2 + SIDE_PLANTER
-            };
-            let (u, v) = (edge - side * width / 2.0, back - depth - 0.1 - turf / 2.0);
-            let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-                .map(|(a, b)| lot.at(u + a * width / 2.0, v + b * turf / 2.0));
-            let mut mesh = quad(corners, 0.046);
-            ground_uvs(&mut mesh, 0.0, 0.0);
-            mesh.colors = vec![TURF; mesh.positions.len()];
-            group
-                .children
-                .push(shadow_receiver(Arc::new(mesh), lawn.clone()));
         }
     }
 }
@@ -3020,8 +2961,10 @@ fn front_lawns(group: &mut Node, lots: &[Lot]) {
         let side = (door - garage).signum();
         let from = door + side * (FRONT_WALK / 2.0 + 0.15);
         let to = if side > 0.0 { u1 - 0.25 } else { u0 + 0.25 };
+        // Short of the bed along the house, or of the entry porch over that side.
+        let porch_reach = porch(lot).map_or(0.0, |(_, _, depth)| depth + 0.05);
         let (back, front) = (
-            lot.half_depth + FRONT_BED,
+            lot.half_depth + FRONT_BED.max(porch_reach),
             lot.half_depth + lot.house.setback - 0.05,
         );
         if (to - from) * side > 0.5 && front - back > 0.5 {
@@ -3727,39 +3670,31 @@ fn slope_trees() -> Node {
             !inside_boundary(&boundary, p + DVec2::new(angle.cos(), angle.sin()) * room)
         })
     };
-    let near_wall = |p: DVec2| {
-        (0..12).any(|n| {
-            let angle = f64::from(n) * std::f64::consts::TAU / 12.0;
-            inside_boundary(
-                &boundary,
-                p + DVec2::new(angle.cos(), angle.sin()) * CANOPY_BAND,
-            )
-        })
-    };
+    // One every so far along the wall's outer face, a little in or out by turns.
     let (spacing, (least, most), (low, high)) = (CANOPY_SPACING, CANOPY_CROWN, CANOPY_HEIGHT);
-    let mut row = 0;
-    let mut z = -ARENA - CANOPY_BAND;
-    while z < ARENA + CANOPY_BAND {
-        let mut x = -ARENA - CANOPY_BAND + if row % 2 == 0 { 0.0 } else { spacing / 2.0 };
-        while x < ARENA + 2.0 {
-            let seed = x * 2.17 + z * 3.31;
-            let at = DVec2::new(
-                x + (hash(seed) - 0.5) * spacing * 0.5,
-                z + (hash(seed + 0.4) - 0.5) * spacing * 0.5,
-            );
+    let closed: Vec<DVec2> = boundary.iter().chain(boundary.first()).copied().collect();
+    let mut next = spacing / 2.0;
+    let mut walked = 0.0;
+    for pair in closed.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let span = a.distance(b);
+        let along = (b - a) / span.max(1e-9);
+        while next < walked + span {
+            let seed = next * 1.37;
+            let point = a + along * (next - walked);
+            let reach = BOUNDARY_THICKNESS + CANOPY_REACH * (0.6 + 0.8 * hash(seed));
+            let at = point - left(along) * reach + along * (hash(seed + 0.4) - 0.5) * 3.0;
             if gaviota.signed_distance(at) < -rows
                 && way.signed_distance(at) < -way_reach
                 && outside(at, BOUNDARY_THICKNESS + CANOPY_WALL_ROOM)
-                && near_wall(at)
             {
                 let crown = least + (most - least) * hash(seed + 1.7);
                 let height = low + (high - low) * hash(seed + 2.9);
                 place(at.x, at.y, (crown, height));
             }
-            x += spacing;
+            next += spacing;
         }
-        z += spacing * 0.87;
-        row += 1;
+        walked += span;
     }
     // Inside the west wall, small trees between the spawn pads.
     let pads: Vec<DVec2> = [Team::Blue, Team::Red]
@@ -4280,7 +4215,7 @@ fn shrubs() -> Node {
     }
     // The entry beds: mounded shrubs of three sizes, a red-flowering one and an agave.
     for (k, bed) in entry_beds(&houses).into_iter().enumerate() {
-        let (length, deep) = ENTRY_BED;
+        let (length, deep) = (ENTRY_BED.0, bed.deep);
         for (n, &(u, v, plant)) in ENTRY_PLANTS.iter().enumerate() {
             let at = bed.middle - bed.toward_walk * (u * length) + bed.out * (v * deep);
             let seed = (k * 7 + n) as f64;
@@ -4373,13 +4308,20 @@ fn front_bed_shrubs(group: &mut Node, (bush, ball): (&Arc<Mesh>, &Arc<Mesh>), lo
         };
         let (door, garage) = (in_lot(door), in_lot(garage));
         let side = (door - garage).signum();
+        // Nothing grows under the entry porch's roof.
+        let entry = porch(lot);
+        let under_porch =
+            |u: f64| entry.is_some_and(|(middle, width, _)| (u - middle).abs() < width / 2.0 + 0.1);
         let spots = [
             door - side * (FRONT_WALK / 2.0 + 0.35),
             door + side * (FRONT_WALK / 2.0 + 0.4),
             door + side * (FRONT_WALK / 2.0 + 1.1),
         ];
         for (n, u) in spots.into_iter().enumerate() {
-            if u.abs() > lot.half_width - 0.2 || (u - garage).abs() < GARAGE_BED_ROOM {
+            if u.abs() > lot.half_width - 0.2
+                || (u - garage).abs() < GARAGE_BED_ROOM
+                || under_porch(u)
+            {
                 continue;
             }
             let at = lot.at(u, lot.half_depth + FRONT_BED * 0.5);
@@ -4398,7 +4340,10 @@ fn front_bed_shrubs(group: &mut Node, (bush, ball): (&Arc<Mesh>, &Arc<Mesh>), lo
         // Clipped boxwood along the house's front, clear of the walk and the driveway.
         let mut u = -lot.half_width + 0.3;
         while u < lot.half_width - 0.25 {
-            if (u - door).abs() > FRONT_WALK / 2.0 + 0.2 && (u - garage).abs() > GARAGE_BED_ROOM {
+            if (u - door).abs() > FRONT_WALK / 2.0 + 0.2
+                && (u - garage).abs() > GARAGE_BED_ROOM
+                && !under_porch(u)
+            {
                 let at = lot.at(u, lot.half_depth + BOXWOOD.1 + 0.08);
                 boxwood(group, ball, at, k as f64 * 7.7 + u * 2.3);
             }
@@ -4412,6 +4357,7 @@ fn front_bed_shrubs(group: &mut Node, (bush, ball): (&Arc<Mesh>, &Arc<Mesh>), lo
             let seed = (k * 37 + n) as f64 * 1.9;
             let clear = (u - door).abs() > FRONT_WALK / 2.0 + 0.25
                 && (u - garage).abs() > GARAGE_BED_ROOM
+                && !under_porch(u)
                 && spots.iter().all(|spot| (u - spot).abs() > 0.45);
             if clear {
                 let at = lot.at(u, lot.half_depth + FRONT_BED * (0.6 + 0.25 * hash(seed)));
@@ -4630,6 +4576,8 @@ struct EntryBed {
     middle: DVec2,
     out: DVec2,
     toward_walk: DVec2,
+    /// How far (m) it runs out toward the street, between the porch and the sidewalk.
+    deep: f64,
     stucco: u32,
     /// Whether the house's porch is brick, and the seat wall's cap with it.
     brick: bool,
@@ -4647,13 +4595,21 @@ fn entry_beds(houses: &[SendaHouse]) -> Vec<EntryBed> {
             let (door, garage) = (plan.door()?, plan.garage()?);
             let away = -(garage - door).signum();
             let u = door + away * (FRONT_WALK / 2.0 + 0.2 + ENTRY_BED.0 / 2.0);
-            let reach = house.setback - ENTRY_BED.1 / 2.0 - 0.15;
+            // Between the entry porch's roof and the sidewalk, where they leave it room.
+            let deep = ENTRY_BED
+                .1
+                .min(house.setback - porch_depth(house.setback) - ENTRY_BED_WALK_ROOM);
+            if deep < LEAST_ENTRY_BED {
+                return None;
+            }
+            let reach = house.setback - deep / 2.0 - ENTRY_BED_WALK_ROOM;
             let at = design.to_world(centre + along * u + out * reach);
             let (out, along) = (design.to_world(out), design.to_world(along));
             Some(EntryBed {
                 middle: DVec2::new(house.x + at.x, house.z + at.z),
                 out: DVec2::new(out.x, out.z),
                 toward_walk: DVec2::new(along.x, along.z) * -away,
+                deep,
                 stucco: design.style.siding,
                 brick: design.style.arched_porch,
             })
@@ -4668,7 +4624,7 @@ fn entry_beds(houses: &[SendaHouse]) -> Vec<EntryBed> {
 fn entry_bed_beds(group: &mut Node, houses: &[SendaHouse]) {
     for bed in entry_beds(houses) {
         let yaw = bed.out.x.atan2(bed.out.y);
-        let (length, deep) = ENTRY_BED;
+        let (length, deep) = (ENTRY_BED.0, bed.deep);
         let mut piece = |node: Node, at: DVec2, y: f64| {
             put(group, rotated(node, 0.0, yaw, 0.0), at.x, y, at.y);
         };

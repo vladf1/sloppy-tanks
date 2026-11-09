@@ -36,9 +36,9 @@ pub const YARD_GATE_COLOR: u32 = 0x6b5442;
 /// The tract's perimeter block behind Neblina's west row, along the top of Senda Parkway's
 /// west branch's planted slope: a dark brown split-face block.
 pub const YARD_PERIMETER_COLOR: u32 = 0x5e4a3c;
-/// A wall's height and thickness (m): the tract's are about 1.8 m of 8-inch block, a
-/// little lower here so a tank's turret still looks over into the yards.
-pub const YARD_WALL_HEIGHT: f64 = 1.6;
+/// A wall's height and thickness (m): the tract's 1.8 m of 8-inch block at the tank's
+/// scale, so a tank's turret looks over into the yards.
+pub const YARD_WALL_HEIGHT: f64 = 1.0;
 pub const YARD_WALL_THICKNESS: f64 = 0.2;
 /// A run's health: one standard shell breaches it.
 const YARD_WALL_HEALTH: f64 = 40.0;
@@ -47,17 +47,17 @@ const WALL_RUN: f64 = 3.5;
 /// How far back from a house's front (as a share of its depth) the gate returns close
 /// its side yards.
 const GATE_SHARE: f64 = 1.0 / 3.0;
-/// How deep (m) the back yard of the row's furthest-set house runs behind it to the back
-/// wall, the rest of the row's yards as much deeper as their houses stand forward, so a
-/// row's back walls run in one line: the tract's run 4-6 m from the house to the wall,
-/// deep enough for a patio under its loggia, a lawn, a fire pit and a spa to show from the
-/// bank.
-const YARD: f64 = 4.5;
+/// How deep (m) the back yard of the row's furthest-set house runs behind a large plan's
+/// back wall to the lot's, the rest of the row's yards as much deeper as their houses
+/// stand forward or are shallower, so a row's back walls run in one line, 14 m from the
+/// kerb: the tract's run 1.5-6 m from the house to the block wall, paved, with a planter
+/// along the wall.
+const YARD: f64 = 2.2;
 /// A yard is cut short of the greenbelt's lane, a pickup, a spawn pad and the level's
 /// wall by the room each keeps from a lot's wall and this much more (m), but never under
 /// the least yard (m).
 const YARD_MARGIN: f64 = 0.3;
-const LEAST_YARD: f64 = 1.5;
+const LEAST_YARD: f64 = 1.0;
 /// A back wall keeps this much room (m) from the level's wall behind it, a way through
 /// for a tank.
 const PASSAGE: f64 = 4.5;
@@ -596,18 +596,24 @@ fn wall_run(a: DVec2, b: DVec2, look: WallLook) -> CoverDef {
     }
 }
 
-/// How deep (m) a lot's patio runs out from the house's back wall: this share of its back
-/// yard, between these depths, short of the planting strip along its back wall.
-pub const PATIO_SHARE: f64 = 0.62;
-pub const PATIO_DEPTH: f64 = 2.5;
-pub const LEAST_PATIO: f64 = 0.9;
-pub const YARD_PLANTER: f64 = 0.9;
+/// The planting strip (m) along a back yard's walls; the rest of the yard is paved.
+pub const YARD_PLANTER: f64 = 0.5;
 /// The one-storey rear loggias over part of the patio on most lots, and the pergolas on a
 /// few: their posts' side, the roof's height at its outer beam and where it meets the
-/// house (m), and how wide across the lot and how far out from the house at most (m).
+/// house (m), how wide across the lot and how far out from the house their roofs reach at
+/// most (m), and the least depth (m) one is built at.
 pub const PATIO_POST: f64 = 0.12;
-pub const PATIO_ROOF: (f64, f64) = (2.35, 2.65);
-pub const PATIO_COVER: (f64, f64) = (3.6, 2.6);
+pub const PATIO_ROOF: (f64, f64) = (1.75, 2.1);
+pub const PATIO_COVER: (f64, f64) = (3.6, 2.0);
+const LEAST_PATIO_COVER: f64 = 1.2;
+/// The patch the house model's single-storey projecting room and entry porch take before
+/// its front, on the half of the front away from the garage (the model's is about 2.8 by
+/// 1.6): its width along the front and how far it stands out from the wall (m), the least
+/// wall (m) it keeps to the house's corner, and the least room (m) it leaves before the
+/// sidewalk. The front yard keeps that patch clear of its driveway, beds and shrubs.
+pub const PORCH: (f64, f64) = (3.0, 1.8);
+const PORCH_CORNER: f64 = 0.05;
+const PORCH_WALK_ROOM: f64 = 0.2;
 /// The rear loggias' square stucco columns and the depth of the beam they carry (m), and
 /// how far (m) their tile roof overhangs past the beam and the ends.
 pub const LOGGIA_COLUMN: (f64, f64) = (0.3, 0.3);
@@ -628,11 +634,53 @@ pub fn house_back(lot: &Lot) -> f64 {
     -lot.half_depth + (HOUSE_DEPTH - lot.house.d)
 }
 
-/// How deep (m) a lot's patio runs out from the house's back wall.
+/// How deep (m) the back yard runs from the house's back wall to the lot's.
+pub fn back_yard(lot: &Lot) -> f64 {
+    house_back(lot) - lot.rear_v()
+}
+
+/// How deep (m) a lot's patio runs out from the house's back wall: up to the planting
+/// strip along the back wall.
 pub fn patio_depth(lot: &Lot) -> f64 {
-    (lot.yard * PATIO_SHARE)
-        .clamp(LEAST_PATIO, PATIO_DEPTH)
-        .min(lot.yard - YARD_PLANTER)
+    (back_yard(lot) - YARD_PLANTER - 0.1).max(0.0)
+}
+
+/// Where the front door and the garage door stand across `lot`'s front (`u`).
+pub fn front_openings(lot: &Lot) -> Option<(f64, f64)> {
+    let design = lot.house.design();
+    let (centre, _, along, _) = wall_frames(design.w, design.d)[design.door_wall];
+    let plan = design.wall_plan(design.door_wall);
+    let in_lot = |u: f64| {
+        let at = design.to_world(centre + along * u);
+        lot.local(DVec2::new(lot.house.x + at.x, lot.house.z + at.z))
+            .0
+    };
+    Some((in_lot(plan.door()?), in_lot(plan.garage()?)))
+}
+
+/// The patch a lot's entry porch takes: its middle across the front (`u`), its width and
+/// how far it stands out from the house's front. It stands over the front door, as far
+/// as the half of the front away from the garage holds it.
+pub fn porch(lot: &Lot) -> Option<(f64, f64, f64)> {
+    let (door, garage) = front_openings(lot)?;
+    let side = (door - garage).signum();
+    let width = PORCH.0;
+    // From the middle of the front, or the driveway's edge where the garage door reaches
+    // past it, to the corner.
+    let design = lot.house.design();
+    let driveway = design.wall_plan(design.door_wall).garage_width() / 2.0;
+    let start = ((garage + side * driveway) * side).max(0.0);
+    let width = width.min(lot.half_width - PORCH_CORNER - start);
+    let near = start + width / 2.0;
+    let far = (lot.half_width - PORCH_CORNER - width / 2.0).max(near);
+    let middle = (door * side).clamp(near, far) * side;
+    Some((middle, width, porch_depth(lot.house.setback)))
+}
+
+/// How far (m) the porch patch stands out from a house's front that stands `setback` (m)
+/// behind the sidewalk.
+pub fn porch_depth(setback: f64) -> f64 {
+    PORCH.1.min(setback - PORCH_WALK_ROOM)
 }
 
 /// The side of a lot (+1 its `+across` side) its turf patch and patio cover take; its
@@ -672,7 +720,8 @@ impl PatioCover {
 /// The loggias and pergolas over the lots' patios, as destructible covers: each a box
 /// against the house's back wall, from its posts out past its roof's overhang, turned
 /// square to its lot (the plan carries the turn and, for a loggia, the house's style,
-/// whose paint and tile it wears). Its box's own +z points at the house.
+/// whose paint and tile it wears), short of the planting strip along the back wall; a
+/// yard too shallow for one keeps none. Its box's own +z points at the house.
 pub fn patio_covers(houses: &[SendaHouse]) -> Vec<CoverDef> {
     let (low, eave) = PATIO_ROOF;
     senda_lots(houses)
@@ -680,48 +729,60 @@ pub fn patio_covers(houses: &[SendaHouse]) -> Vec<CoverDef> {
         .enumerate()
         .filter_map(|(k, lot)| {
             let look = PatioCover::of_lot(k)?;
-            let cover = PATIO_COVER.0.min(2.0 * lot.half_width - 0.4);
-            let middle = turf_side(k) * (lot.half_width - cover / 2.0 - 0.2);
-            let reach = patio_depth(lot).min(PATIO_COVER.1);
-            let (w, d, h, color, health) = match look {
-                PatioCover::Loggia => (
-                    cover + 2.0 * LOGGIA_EAVE,
-                    reach + LOGGIA_EAVE,
-                    eave + 0.2,
-                    LOGGIA_COLOR,
-                    LOGGIA_HEALTH,
-                ),
-                PatioCover::Pergola => (
-                    cover + 0.1,
-                    reach + 0.1,
-                    low + 0.2,
-                    PERGOLA_WOOD,
-                    PERGOLA_HEALTH,
-                ),
+            let width = PATIO_COVER.0.min(2.0 * lot.half_width - 0.4);
+            let middle = turf_side(k) * (lot.half_width - width / 2.0 - 0.2);
+            let reach = (back_yard(lot) - YARD_PLANTER - 0.2).min(PATIO_COVER.1);
+            if reach < LEAST_PATIO_COVER {
+                return None;
+            }
+            let (h, color, health) = match look {
+                PatioCover::Loggia => (eave + 0.2, LOGGIA_COLOR, LOGGIA_HEALTH),
+                PatioCover::Pergola => (low + 0.2, PERGOLA_WOOD, PERGOLA_HEALTH),
             };
-            let at = lot.at(middle, house_back(lot) - d / 2.0);
-            let turn = lot.front.x.atan2(lot.front.y).to_degrees();
-            let quarter = (turn / 90.0).round();
-            Some(CoverDef {
-                house_plan: Some(HousePlan {
-                    style: lot.house.plan.style,
-                    street: quarter as i8,
-                    angle: (turn - quarter * 90.0).round() as i8,
-                    garage: GarageSide::Left,
-                }),
-                ..CoverDef::new(
-                    CoverKind::Concrete,
-                    (at.x * 100.0).round() / 100.0,
-                    (at.y * 100.0).round() / 100.0,
-                    w,
-                    d,
-                    h,
-                    health,
-                    color,
-                )
-            })
+            let at = lot.at(middle, house_back(lot) - reach / 2.0);
+            Some(roofed_cover(
+                lot,
+                at,
+                lot.front,
+                (width, reach, h),
+                color,
+                health,
+            ))
         })
         .collect()
+}
+
+/// A loggia's or pergola's cover box at `at`, `size` across its lot, out from the house
+/// and high, turned so its own +z points along `toward_house`; its plan carries the turn
+/// and its house's style.
+fn roofed_cover(
+    lot: &Lot,
+    at: DVec2,
+    toward_house: DVec2,
+    (w, d, h): (f64, f64, f64),
+    color: u32,
+    health: f64,
+) -> CoverDef {
+    let turn = toward_house.x.atan2(toward_house.y).to_degrees();
+    let quarter = (turn / 90.0).round();
+    CoverDef {
+        house_plan: Some(HousePlan {
+            style: lot.house.plan.style,
+            street: quarter as i8,
+            angle: (turn - quarter * 90.0).round() as i8,
+            garage: GarageSide::Left,
+        }),
+        ..CoverDef::new(
+            CoverKind::Concrete,
+            (at.x * 100.0).round() / 100.0,
+            (at.y * 100.0).round() / 100.0,
+            w,
+            d,
+            h,
+            health,
+            color,
+        )
+    }
 }
 
 #[cfg(test)]

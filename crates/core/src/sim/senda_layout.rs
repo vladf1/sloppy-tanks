@@ -140,45 +140,40 @@ pub const STREET_HALF: f64 = 2.8;
 pub const SENDA_PARKWAY_HALF: f64 = 4.2;
 pub const MEDIAN_HALF: f64 = 0.8;
 /// The grass parkway (with its street trees) and sidewalk between the kerb and the
-/// front yards.
-pub const PARKWAY: f64 = 1.0;
-pub const SIDEWALK: f64 = 0.8;
+/// front yards, each the tract's 1.3 m at the tank's scale.
+pub const PARKWAY: f64 = 0.7;
+pub const SIDEWALK: f64 = 0.7;
 /// A cul-de-sac's kerb radius and the planted island in its middle.
 pub const CUL_DE_SAC_RADIUS: f64 = 4.6;
 pub const CUL_DE_SAC_ISLAND: f64 = 1.4;
 
-/// A house's box along its street and from front to back (deeper than wide, as the
-/// tract's footprints are, about 11 by 15 m), the least its front stands back from the
-/// sidewalk (a car's length of driveway), and the lots' spacing along the street. The
-/// streets are drawn at under a third of their length, so the houses are narrowed with
-/// them (less than the streets, to keep a two-car garage and the front door), but the
-/// side yards between them stay over a quarter of the lot, wider than the tract's, so
-/// every house reads as detached from the overhead camera past its walls and eaves; and
-/// their walls stay low ([`WALL_PLATES`]), so a front is wider than its eaves are high.
-pub const HOUSE_WIDTH: f64 = 5.0;
-pub const HOUSE_DEPTH: f64 = 7.0;
-pub const SETBACK: f64 = 3.0;
-pub const LOT_PITCH: f64 = 7.0;
+/// A house's box along its street and its lot's depth from the house's front (the
+/// large plan's, [`plan_depth`]), the least its front stands back from the sidewalk,
+/// and the lots' least spacing along the street: the tract's at the tank's scale (0.533
+/// game m a real metre), an 11.7 m wide two-storey box 14-15 m deep whose garage door
+/// stands 6.4 m from the kerb, on lots about 15 m apart. Its walls stay low
+/// ([`WALL_PLATES`]), so a front is about twice as wide as its eaves are high.
+pub const HOUSE_WIDTH: f64 = 6.2;
+pub const HOUSE_DEPTH: f64 = 8.0;
+pub const SETBACK: f64 = 2.0;
+pub const LOT_PITCH: f64 = 7.8;
 /// How much further back (m) than [`SETBACK`] a lot's house stands, lot by lot, so the
-/// fronts step as the tract's different plans do rather than lining up as a terrace;
-/// Neblina's west row steps deeper, every other house set back, since the overhead
-/// camera looks down that row and only a deep step shows its fronts apart; its corner
-/// lot on Senda Parkway, hemmed in behind by the spawn lane, takes the shallow step.
-const STAGGER: [f64; 3] = [0.0, 0.8, 0.4];
-const WEST_ROW_STAGGER: [f64; 2] = [-0.5, 0.9];
-/// The least side yard (m) between two houses' walls, where a row turns or meets
-/// another, and how far along its street a row looks on for room when a lot is taken.
-pub const SIDE_YARD: f64 = 2.2;
-const LOT_SEARCH: f64 = 0.5;
+/// fronts step a little as the tract's different plans do rather than lining up as a
+/// terrace; Neblina's west row steps every other house.
+const STAGGER: [f64; 3] = [0.0, 0.4, 0.2];
+const WEST_ROW_STAGGER: [f64; 2] = [0.0, 0.4];
+/// The least side yard (m) between two houses' walls (the tract's 3-3.5 m, too narrow
+/// for a tank), and how far along its street a row looks on for room when a lot is
+/// taken.
+pub const SIDE_YARD: f64 = 1.6;
+const LOT_SEARCH: f64 = 0.1;
 /// How far (m) up Neblina from its bend Gaviota's north row begins: the greenbelt
 /// opens onto Neblina above it.
 const GREENBELT_MOUTH: f64 = 12.0;
 /// Neblina's west row from Senda Parkway round to the bend, in [`senda_houses`]' rows,
-/// its lots' spacing and its houses' width. It holds eight houses between Senda Parkway
-/// and the park at the bend, two of them round the curve's outside, the first on the
-/// corner of Senda Parkway, narrower than the curving rows' houses (still with a two-car garage and the
-/// front door), so each pair keeps a side yard of about three metres: the overhead
-/// camera looks down the row, and a narrower yard hides under the eaves in front of it.
+/// its lots' spacing and its houses' width: between Senda Parkway and the park at the
+/// bend, some round the curve's outside, the first on the corner of Senda Parkway, its
+/// houses the tract's narrower plan (10.9 m), each a side yard from the next.
 const NEBLINA_WEST_ROW: usize = 3;
 /// Gaviota's north row in [`senda_houses`]' rows, its lots' spacing and the most (m)
 /// its fronts step back. It holds about as many houses as Rumbo's south row across
@@ -191,20 +186,19 @@ const NEBLINA_WEST_ROW: usize = 3;
 const GAVIOTA_NORTH_ROW: usize = 2;
 const GAVIOTA_NORTH_PITCH: f64 = WEST_ROW_WIDTH + SIDE_YARD;
 const GAVIOTA_NORTH_STEP: f64 = 0.2;
-const WEST_ROW_PITCH: f64 = 7.0;
-pub const WEST_ROW_WIDTH: f64 = 4.6;
+const WEST_ROW_PITCH: f64 = WEST_ROW_WIDTH + SIDE_YARD;
+pub const WEST_ROW_WIDTH: f64 = 5.8;
 /// Where along its street a row's first lot stands (m from the street's start).
 const FIRST_LOT: f64 = 3.0;
 /// How much nearer (m) than a lot's pitch two houses of a row may stand, for rounding.
 const PITCH_TOLERANCE: f64 = 0.01;
 /// Wall plate heights (m), varied lot by lot so the rows do not read as copies: two
-/// low storeys (the tract's are about half as high to the eaves as the houses are
-/// wide), the least that keeps the upper windows, under a shallow tile roof whose ridge
-/// rises over them by half the house's width at [`GARAGE_HOUSE_PITCH`].
-const WALL_PLATES: [f64; 4] = [3.15, 3.1, 3.25, 3.15];
-/// The highest wall plate (m) of a house on a narrower lot, so its front stays wider
-/// than its eaves are high.
-const NARROW_PLATE: f64 = 3.15;
+/// storeys of 1.6 m (the tract's eaves stand 6 m up, about half the house's width) under
+/// a tile roof whose ridge rises over them by half the house's width at
+/// [`GARAGE_HOUSE_PITCH`].
+const WALL_PLATES: [f64; 4] = [3.2, 3.15, 3.25, 3.2];
+/// The highest wall plate (m) of a house on a narrower lot.
+const NARROW_PLATE: f64 = 3.2;
 /// Room (m) a house keeps from another street's paving, from a spawn pad's rim, from a
 /// pickup's centre, and from the arena's edge.
 const STREET_ROOM: f64 = 0.4;
@@ -230,14 +224,20 @@ const CUL_DE_SAC_SOUTH_ROW_END: f64 = 11.0;
 /// block, which its model knows it by.
 pub const SENDA_WALL_COLOR: u32 = 0xc8b28c;
 const TREE_COLOR: u32 = 0x3f7a3a;
-/// The young parkway trees, one before each house: their footprint (a slim pale trunk
-/// under a thin, open crown that leaves the houses behind it in view, as the tract's
-/// young street trees do) and height, and the least room (m) between two of them.
-const STREET_TREE: f64 = 1.2;
-const STREET_TREE_HEIGHT: f64 = 4.5;
-const STREET_TREE_ROOM: f64 = 3.0;
-/// How far (m) a parkway tree's trunk keeps inside its parkway's edges.
+/// The parkway trees, one before most lots: their footprint, no wider than the parkway
+/// strip they stand in, and height, the least room (m) between two of them and between
+/// one and a driveway, and how often a lot keeps none (every this many lots, one).
+const STREET_TREE: f64 = PARKWAY;
+const STREET_TREE_HEIGHT: f64 = 3.5;
+const STREET_TREE_ROOM: f64 = 2.5;
+const STREET_TREE_DRIVEWAY_ROOM: f64 = 0.2;
+const STREET_TREE_SKIP: usize = 4;
+/// A driveway's width past its garage door's (m), as the scenery paves it.
+pub const DRIVEWAY_PAST_DOOR: f64 = 0.15;
+/// How far (m) a Senda Parkway tree's trunk keeps inside its parkway's edges, and a
+/// residential street tree's inside its narrower strip's.
 const TREE_KERB_ROOM: f64 = 0.25;
+const STREET_TREE_KERB_ROOM: f64 = 0.15;
 
 /// An aerial pixel's place in the arena.
 pub fn from_aerial((px, py): (f64, f64)) -> DVec2 {
@@ -470,8 +470,8 @@ impl SendaHouse {
 /// plan's stands, so a smaller house leaves a deeper back yard.
 pub fn plan_depth(plan: Plan) -> f64 {
     match plan {
-        Plan::Small => 6.2,
-        Plan::Medium => 6.6,
+        Plan::Small => 7.4,
+        Plan::Medium => 7.7,
         Plan::Large => HOUSE_DEPTH,
     }
 }
@@ -576,19 +576,28 @@ impl Footprint {
         ]
     }
 
-    /// Whether the two stand closer than a side yard (separating axes).
+    /// Whether the two stand closer than a side yard: they overlap (separating axes) or a
+    /// corner of one stands nearer than that to a wall of the other.
     fn crowds(&self, other: &Footprint) -> bool {
-        let (a, b) = (
-            self.corners(SIDE_YARD / 2.0),
-            other.corners(SIDE_YARD / 2.0),
-        );
+        let (a, b) = (self.corners(0.0), other.corners(0.0));
+        let to_walls = |p: DVec2, quad: &[DVec2; 4]| {
+            (0..4)
+                .map(|i| {
+                    let (s, e) = (quad[i], quad[(i + 1) % 4]);
+                    let u = ((p - s).dot(e - s) / (e - s).length_squared()).clamp(0.0, 1.0);
+                    p.distance(s + (e - s) * u)
+                })
+                .fold(f64::INFINITY, f64::min)
+        };
+        let near = a.iter().any(|&p| to_walls(p, &b) < SIDE_YARD)
+            || b.iter().any(|&p| to_walls(p, &a) < SIDE_YARD);
         let axes = [
             self.facing,
             left(self.facing),
             other.facing,
             left(other.facing),
         ];
-        axes.into_iter().all(|axis| {
+        near || axes.into_iter().all(|axis| {
             let span = |corners: &[DVec2; 4]| {
                 corners
                     .iter()
@@ -804,36 +813,84 @@ pub fn oak_site(x: f64, z: f64) -> (f64, f64) {
     tree_site(x, z, OAK)
 }
 
-/// The parkway trees, young slender broadleaves: one in front of each house, in the parkway before its front walk
-/// (clear of its driveway), wherever that is clear of the pickups, the asphalt and the
-/// sidewalks of every street, the turning circles and the trees already placed.
+/// The parkway trees, small round-crowned broadleaves: one in the parkway strip before
+/// most lots, between its driveway and its lot line (or, where that has no room, on the
+/// front door's side), never before a driveway, wherever that is clear of the pickups,
+/// the asphalt and the sidewalks of every street, the turning circles and the trees
+/// already placed.
 fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
     let mut trees: Vec<CoverDef> = Vec::new();
     let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
-    for house in houses {
-        let design = house.design();
-        let (centre, out, along, _) = wall_frames(design.w, design.d)[design.door_wall];
-        let Some(door) = design.wall_plan(design.door_wall).door() else {
+    let lots = super::senda_yards::senda_lots(houses);
+    // Each lot's driveway, kerb to garage door, in its own frame: its span across and
+    // from its house's front out to the kerb.
+    let driveways: Vec<(f64, f64, f64)> = lots
+        .iter()
+        .map(|lot| {
+            let design = lot.house.design();
+            let plan = design.wall_plan(design.door_wall);
+            let half = (plan.garage_width() + DRIVEWAY_PAST_DOOR) / 2.0;
+            let garage = super::senda_yards::front_openings(lot).map_or(f64::NAN, |(_, g)| g);
+            (
+                garage - half,
+                garage + half,
+                lot.house.setback + SIDEWALK + PARKWAY,
+            )
+        })
+        .collect();
+    let off_driveways = |spot: DVec2| {
+        let room = STREET_TREE / 2.0 + STREET_TREE_DRIVEWAY_ROOM;
+        lots.iter()
+            .zip(&driveways)
+            .all(|(lot, &(low, high, length))| {
+                let (u, v) = lot.local(spot);
+                let v = v - lot.half_depth;
+                u < low - room || u > high + room || v < -room || v > length + room
+            })
+    };
+    for (k, lot) in lots.iter().enumerate() {
+        let Some((door, garage)) = super::senda_yards::front_openings(lot) else {
             continue;
         };
-        let face = design.to_world(centre + along * door);
-        let out = design.to_world(out);
-        let reach = house.setback + SIDEWALK + PARKWAY / 2.0;
-        let (x, z) = tree_site(
-            house.x + face.x + out.x * reach,
-            house.z + face.z + out.z * reach,
-            BIRCH,
-        );
-        let spot = DVec2::new(x, z);
+        if k % STREET_TREE_SKIP == STREET_TREE_SKIP - 1 {
+            continue;
+        }
+        let (low, high, _) = driveways[k];
+        let side = (garage - door).signum();
+        // The lot lines' places across its front, at the gates.
+        let line = |side: f64| lot.local(lot.sides[usize::from(side > 0.0)].gate).0;
+        let beyond = if side > 0.0 { high } else { low };
+        let candidates = [(beyond + line(side)) / 2.0, (door + line(-side)) / 2.0];
+        let street = match lot.house.row {
+            Row::RumboNorth | Row::RumboSouth => Street::Rumbo,
+            _ => Street::NeblinaGaviota,
+        };
+        let street_line = &lines[Street::ALL.iter().position(|&s| s == street).unwrap_or(0)].1;
+        // On a parkway: off every street's asphalt and sidewalks.
+        let in_parkway = |spot: DVec2| {
+            lines.iter().all(|(street, line)| {
+                let off = line.distance(spot) - street.half();
+                off > STREET_TREE_KERB_ROOM
+                    && !(off > PARKWAY - STREET_TREE_KERB_ROOM
+                        && off < PARKWAY + SIDEWALK + STREET_TREE_KERB_ROOM)
+            })
+        };
+        let Some(spot) = candidates.into_iter().find_map(|u| {
+            // Straight out from the lot's front to its own street's parkway.
+            let front = lot.at(u, lot.half_depth);
+            let (point, along) = street_line.at(street_line.along(front));
+            let out = left(along) * street_line.signed_distance(front).signum();
+            let wanted = point + out * (street.half() + PARKWAY / 2.0);
+            let (x, z) = tree_site(wanted.x, wanted.y, OAK);
+            let spot = DVec2::new(x, z);
+            (spot.distance(wanted) < 0.3 && off_driveways(spot) && in_parkway(spot)).then_some(spot)
+        }) else {
+            continue;
+        };
+        let (x, z) = (spot.x, spot.y);
         let crowded = SENDA_PICKUPS
             .iter()
             .any(|p| DVec2::new(p.x, p.z).distance(spot) < PICKUP_ROOM + 1.5)
-            || lines.iter().any(|(street, line)| {
-                let off = line.distance(spot) - street.half();
-                // On the asphalt or a sidewalk, not in a parkway.
-                off < TREE_KERB_ROOM
-                    || (off > PARKWAY - TREE_KERB_ROOM && off < PARKWAY + SIDEWALK + TREE_KERB_ROOM)
-            })
             || Street::ALL
                 .into_iter()
                 .filter_map(Street::cul_de_sac)
@@ -951,7 +1008,7 @@ fn trash_bins(houses: &[SendaHouse]) -> Vec<CoverDef> {
 const LAMP_EVERY: usize = 5;
 const WAY_LAMP_SPACING: f64 = 2.0 * MEDIAN_TREE_SPACING;
 const LAMP_ROOM: f64 = 8.0;
-const LAMP_KERB_ROOM: f64 = 0.35;
+const LAMP_KERB_ROOM: f64 = 0.3;
 pub const LAMP_HEIGHT: f64 = 2.8;
 pub const WAY_LAMP_HEIGHT: f64 = 4.6;
 /// A lamp inside the level is cover a tank cannot drive through: a pole this many metres
@@ -1229,22 +1286,64 @@ pub fn greenbelt_line(room: f64) -> Vec<DVec2> {
 /// either side of it by turns, how far off the middle, and their heights.
 const GREENBELT_TREE_SPACING: f64 = 24.0;
 const GREENBELT_TREE_OFFSET: f64 = 1.6;
-const GREENBELT_TREE_HEIGHTS: [f64; 3] = [6.2, 5.6, 6.6];
-/// The trees on the bank below Senda Parkway (arena x, z, height).
-const BANK_OAKS: [(f64, f64, f64); 3] = [(-2.0, -44.0, 6.0), (9.0, -47.0, 6.2), (30.0, -47.0, 5.8)];
+/// The neighbourhood's bigger trees (the greenbelt's, the bank's, the slope band's and
+/// the cul-de-sac islands'), as the tract's: crowns 5-8 m across and 6-9 m tall at the
+/// tank's scale, none over a house's ridge. Their heights in turn, and their footprints
+/// (an oak's crown spreads to about 1.2-1.45 times it).
+const BIG_TREE_HEIGHTS: [f64; 3] = [3.5, 3.2, 3.6];
+const BIG_TREE: f64 = 2.4;
+const BANK_TREES: [f64; 3] = [2.3, 2.6, 2.4];
+/// The bank behind Rumbo's north row: a clump of small trees behind every
+/// [`BANK_CLUMP_EVERY`]th lot from the corner at Neblina, scattered on its mulch,
+/// each tree along the row from the lot's middle and behind its back wall (m), by turns
+/// of the clumps' shapes; a tree whose spot is taken moves this far (m) along the row
+/// either way.
+const BANK_CLUMP_EVERY: usize = 2;
+const BANK_CLUMPS: [&[(f64, f64)]; 3] = [
+    &[(-1.2, 1.9), (1.6, 3.4), (-0.3, 6.0)],
+    &[(0.9, 2.6), (-1.5, 4.9)],
+    &[(-0.6, 3.0), (1.8, 5.6)],
+];
+const BANK_TREE_SHIFT: f64 = 2.2;
 /// The band of oaks and peppers on the top of the slope down to Gardenia, behind the back
 /// walls of Gaviota's south row: one behind each lot line, this far (m) past the walls,
 /// their crowns over the gardens' corners, wherever it leaves a tank's lane (m) along the
 /// level's wall.
 const BACK_TREE_REACH: f64 = 1.5;
 pub const SOUTH_LANE: f64 = 4.5;
-const BIG_TREE: f64 = 2.6;
+
+/// The trees on the bank behind Rumbo's north row ([`BANK_CLUMPS`]): where each wants to
+/// stand, its footprint and height.
+fn bank_trees(houses: &[SendaHouse]) -> Vec<(Vec<DVec2>, f64, f64)> {
+    let rumbo = Street::Rumbo.line();
+    let mut row: Vec<_> = super::senda_yards::senda_lots(houses)
+        .into_iter()
+        .filter(|lot| lot.house.row == Row::RumboNorth)
+        .collect();
+    row.sort_by(|a, b| rumbo.along(a.centre).total_cmp(&rumbo.along(b.centre)));
+    let mut wanted = Vec::new();
+    for (k, lot) in row.iter().step_by(BANK_CLUMP_EVERY).enumerate() {
+        let rear = lot.rear_v();
+        for (n, &(u, reach)) in BANK_CLUMPS[k % BANK_CLUMPS.len()].iter().enumerate() {
+            let turn = k * 3 + n;
+            wanted.push((
+                [0.0, BANK_TREE_SHIFT, -BANK_TREE_SHIFT]
+                    .map(|shift| lot.at(u + shift, rear - reach))
+                    .into(),
+                BANK_TREES[turn % BANK_TREES.len()],
+                BIG_TREE_HEIGHTS[turn % BIG_TREE_HEIGHTS.len()],
+            ));
+        }
+    }
+    wanted
+}
 
 /// The greenbelt's trees, the bank's and the band behind Gaviota's south row: oaks, at
-/// spots clear of the spawn pads, the pickups, the paving and each other, the band a lane
-/// short of the level's wall at `boundary`.
-fn big_trees(boundary: &[DVec2]) -> Vec<CoverDef> {
-    let mut wanted: Vec<(DVec2, f64)> = Vec::new();
+/// spots clear of the spawn pads, the pickups, the paving, the lots and each other, the
+/// band a lane short of the level's wall at `boundary`.
+fn big_trees(boundary: &[DVec2], houses: &[SendaHouse]) -> Vec<CoverDef> {
+    // Each tree's spots in order of preference, its footprint and its height.
+    let mut wanted: Vec<(Vec<DVec2>, f64, f64)> = Vec::new();
     let middle = Line(greenbelt_line(0.0));
     if middle.0.len() > 1 {
         let mut s = GREENBELT_TREE_SPACING / 2.0;
@@ -1252,43 +1351,54 @@ fn big_trees(boundary: &[DVec2]) -> Vec<CoverDef> {
         while s < middle.length() {
             let (point, along) = middle.at(s);
             let side = if k % 2 == 0 { 1.0 } else { -1.0 };
-            let height = GREENBELT_TREE_HEIGHTS[k % GREENBELT_TREE_HEIGHTS.len()];
-            wanted.push((point + left(along) * side * GREENBELT_TREE_OFFSET, height));
+            let height = BIG_TREE_HEIGHTS[k % BIG_TREE_HEIGHTS.len()];
+            wanted.push((
+                vec![point + left(along) * side * GREENBELT_TREE_OFFSET],
+                BIG_TREE,
+                height,
+            ));
             s += GREENBELT_TREE_SPACING;
             k += 1;
         }
     }
-    wanted.extend(BANK_OAKS.map(|(x, z, h)| (DVec2::new(x, z), h)));
+    wanted.extend(bank_trees(houses));
     for (k, at) in behind_gaviota_south(BACK_TREE_REACH)
         .into_iter()
         .enumerate()
     {
-        let height = GREENBELT_TREE_HEIGHTS[k % GREENBELT_TREE_HEIGHTS.len()] - 0.4;
+        let height = BIG_TREE_HEIGHTS[k % BIG_TREE_HEIGHTS.len()];
         if clear_of_wall(boundary, at, BIG_TREE / 2.0 + SOUTH_LANE) {
-            wanted.push((at, height));
+            wanted.push((vec![at], BIG_TREE, height));
         }
     }
     let way = Street::SendaParkway.line();
+    let lots = super::senda_yards::senda_lots(houses);
     let mut trees: Vec<CoverDef> = Vec::new();
-    for (at, height) in wanted {
-        let (x, z) = oak_site(at.x, at.y);
-        let at = DVec2::new(x, z);
-        // Off the paving and Senda Parkway's wide path along its south side.
-        let off_way = way.distance(at) > Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + 1.0;
-        let clear = in_arena(at)
-            && off_pads_and_pickups(at, BIG_TREE)
-            && off_way
-            && !is_senda_paved(x, z)
-            && trees
-                .iter()
-                .all(|tree| DVec2::new(tree.x, tree.z).distance(at) > BIG_TREE * 1.5);
-        if clear {
+    for (spots, size, height) in wanted {
+        let clear = |at: DVec2| {
+            // Off the paving and Senda Parkway's wide path along its south side.
+            let off_way =
+                way.distance(at) > Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + 1.0;
+            in_arena(at)
+                && off_pads_and_pickups(at, size)
+                && off_way
+                && !is_senda_paved(at.x, at.y)
+                && lots.iter().all(|lot| lot.inside(at) < -size / 2.0)
+                && trees.iter().all(|tree| {
+                    DVec2::new(tree.x, tree.z).distance(at) > (tree.w + size) / 2.0 * 1.1
+                })
+        };
+        let found = spots.into_iter().find_map(|at| {
+            let (x, z) = oak_site(at.x, at.y);
+            clear(DVec2::new(x, z)).then_some((x, z))
+        });
+        if let Some((x, z)) = found {
             trees.push(CoverDef::new(
                 CoverKind::Tree,
                 x,
                 z,
-                BIG_TREE,
-                BIG_TREE,
+                size,
+                size,
                 height,
                 80.0,
                 TREE_COLOR,
@@ -1298,11 +1408,12 @@ fn big_trees(boundary: &[DVec2]) -> Vec<CoverDef> {
     trees
 }
 
-/// The tract's wall: its height (m), and how far (m) its south run stands behind the back
-/// walls of Gaviota's south row, across the planted top of the slope down to Gardenia with
-/// its one band of trees, a tank's lane between them and the wall.
+/// The tract's wall: its height (m), and how far (m) from Gaviota's centre line its south
+/// run stands behind the lots of Gaviota's south row, across the planted top of the
+/// slope down to Gardenia with its one band of trees, a tank's lane between them and the
+/// wall (where it has stood since the level was laid out, whatever depth the lots take).
 const WALL_HEIGHT: f64 = 1.8;
-const SOUTH_WALL_ROOM: f64 = 7.5;
+const SOUTH_WALL_FROM_STREET: f64 = 27.4;
 /// The least distance (m) south of the arena's middle the south run keeps behind the bend
 /// park and the row's west end, where the row stands furthest north: the bots' southern
 /// flank points (38 m south) stay well inside it.
@@ -1310,7 +1421,7 @@ const SOUTH_WALL_LEAST: f64 = 40.0;
 /// How far (m) from Senda Parkway's middle the wall runs along its north side: past the
 /// north sidewalk and a planted strip, at the top of the bank up to the neighbouring
 /// tract.
-const WAY_NORTH_WALL: f64 = SENDA_PARKWAY_HALF + PARKWAY + SIDEWALK + 3.2;
+const WAY_NORTH_WALL: f64 = SENDA_PARKWAY_HALF + 5.0;
 /// How far (m) from Senda Parkway's middle the wall runs along the top of the bank on its
 /// south side, past the wide path and a planted strip, where the Way's north-eastern
 /// stretch lies outside the level.
@@ -1607,7 +1718,7 @@ fn north_wall(corner_pad: DVec2) -> Vec<DVec2> {
 /// the back walls of Gaviota's south row, and round the south-eastern pad to the east
 /// edge.
 fn south_wall(west_pad: DVec2, east_pad: DVec2) -> Vec<DVec2> {
-    let mut behind = behind_gaviota_south(SOUTH_WALL_ROOM);
+    let mut behind = behind_gaviota_south(SOUTH_WALL_FROM_STREET - back_wall());
     for point in &mut behind {
         point.y = point.y.clamp(SOUTH_WALL_LEAST, ARENA);
     }
@@ -1616,6 +1727,7 @@ fn south_wall(west_pad: DVec2, east_pad: DVec2) -> Vec<DVec2> {
         round_pad(west_pad, 180.0, touch_angle(west_pad, behind[0], true)).collect();
     // Behind the row to where it comes within its lead of the south-eastern pad's circle.
     let leave = PAD_WALL_ROUND + PAD_WALL_LEAD;
+    let row_start = points.len();
     for next in behind {
         let last = points[points.len() - 1];
         if next.distance(east_pad) < leave {
@@ -1626,6 +1738,9 @@ fn south_wall(west_pad: DVec2, east_pad: DVec2) -> Vec<DVec2> {
     }
     let entry = touch_angle(east_pad, points[points.len() - 1], false);
     points.extend(round_pad(east_pad, entry, 0.0));
+    // Where it leaves the pad's circle for the row it turns in short runs, as where it
+    // crosses the Way.
+    round_corner(&mut points, row_start, CROSSING_ROUND);
     whole_degree_chain(&points, ARENA)
 }
 
@@ -1822,7 +1937,7 @@ fn senda_layout() -> Vec<CoverDef> {
     covers.extend(trash_bins(&houses));
     covers.extend(street_lamp_covers(&boundary));
     covers.extend(way_trees(&boundary));
-    covers.extend(big_trees(&boundary));
+    covers.extend(big_trees(&boundary, &houses));
     // One on each cul-de-sac's island.
     for middle in Street::ALL.into_iter().filter_map(Street::cul_de_sac) {
         let (x, z) = oak_site(middle.x, middle.y);
@@ -1832,7 +1947,7 @@ fn senda_layout() -> Vec<CoverDef> {
             z,
             BIG_TREE,
             BIG_TREE,
-            5.6,
+            BIG_TREE_HEIGHTS[0],
             80.0,
             TREE_COLOR,
         ));

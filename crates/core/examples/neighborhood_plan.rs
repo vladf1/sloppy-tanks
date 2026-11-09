@@ -213,6 +213,9 @@ fn range(values: &[f64]) -> String {
     }
 }
 
+/// A cover tree's kind, trunk radius, crown radius, height, footprint and family.
+type TreeRow = (TreeKind, f64, f64, f64, f64, &'static str);
+
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 enum TreeKind {
     Street,
@@ -459,7 +462,7 @@ fn main() {
     );
 
     // Covers by what they are.
-    let mut tree_rows: Vec<(TreeKind, f64, f64, f64, f64, &'static str)> = Vec::new();
+    let mut tree_rows: Vec<TreeRow> = Vec::new();
     let mut tree_kinds: Vec<(DVec2, TreeKind)> = Vec::new();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut wall_heights: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
@@ -541,7 +544,10 @@ fn main() {
             }
         }
         if c.kind == CoverKind::Tree {
-            let kind = if (c.w - 1.2).abs() < 1e-6 {
+            let in_parkway = [Street::Rumbo, Street::NeblinaGaviota]
+                .into_iter()
+                .any(|street| street.line().distance(at) < street.half() + PARKWAY + 0.2);
+            let kind = if in_parkway || c.w < 1.0 {
                 TreeKind::Street
             } else if (c.w - 1.4).abs() < 1e-6 {
                 let off = way.signed_distance(at);
@@ -948,8 +954,8 @@ fn main() {
     // Houses per row.
     writeln!(w, "## House rows\n").unwrap();
     writeln!(w, "Pitch = centre to centre of consecutive houses in the row. Side gap = least distance between neighbours' wall rectangles. Front setback = front-wall middle to its own street's kerb (or the cul-de-sac kerb if nearer). Back yard = house back wall to the lot's back wall line (`Lot::rear_v`); min / median / max.\n").unwrap();
-    writeln!(w, "| row | houses | pitch (m) | side-wall gap (m) | kerb → front wall (m) | back of sidewalk → front wall (m) | back yard depth (m) |").unwrap();
-    writeln!(w, "|---|---|---|---|---|---|---|").unwrap();
+    writeln!(w, "| row | houses | pitch (m) | side-wall gap (m) | kerb → front wall (m) | back of sidewalk → front wall (m) | back yard depth (m) | kerb → back wall (m) |").unwrap();
+    writeln!(w, "|---|---|---|---|---|---|---|---|").unwrap();
     let mut surprises: Vec<String> = Vec::new();
     let mut csv = String::from(
         "house,garage,x,z,front_faces_bearing_deg,front_w,depth,wall_top,ridge,kerb_to_front,back_yard,setback_field,pitch_to_prev,gap_to_prev\n",
@@ -960,8 +966,8 @@ fn main() {
             .collect();
         let street = row_street(row);
         let line = street.line();
-        let (mut pitch, mut gap, mut kerb, mut walk, mut yard) =
-            (vec![], vec![], vec![], vec![], vec![]);
+        let (mut pitch, mut gap, mut kerb, mut walk, mut yard, mut depth) =
+            (vec![], vec![], vec![], vec![], vec![], vec![]);
         let label_of = |k: usize| house_labels[k].clone();
         for (n, &k) in members.iter().enumerate() {
             let house = &houses[k];
@@ -974,6 +980,7 @@ fn main() {
             walk.push(to_kerb - PARKWAY - SIDEWALK);
             let lot = &lots[k];
             yard.push(house_back(lot) - lot.rear_v());
+            depth.push(to_kerb + lot.half_depth - lot.rear_v());
             let design = house.design();
             let frames = wall_frames(design.w, design.d);
             let roof = design.roof();
@@ -1010,14 +1017,15 @@ fn main() {
         }
         writeln!(
             w,
-            "| {:?} | {} | {} | {} | {} | {} | {} |",
+            "| {:?} | {} | {} | {} | {} | {} | {} | {} |",
             row,
             members.len(),
             stats(&mut pitch),
             stats(&mut gap),
             stats(&mut kerb),
             stats(&mut walk),
-            stats(&mut yard)
+            stats(&mut yard),
+            stats(&mut depth)
         )
         .unwrap();
     }
@@ -1073,7 +1081,7 @@ fn main() {
     writeln!(w, "Trunk radius = `tree_proportions().radius` (the stump collider is 1.25× it). Crown radius = half the larger horizontal side of the built `tree_model(Full)` bounds (whole model, so it includes any trunk lean). Height = model bounds' height. Cover footprint = the cover box's side.\n").unwrap();
     writeln!(w, "| kind | count | cover footprint (m) | trunk radius (m) | crown radius (m) | height (m) | families |").unwrap();
     writeln!(w, "|---|---|---|---|---|---|---|").unwrap();
-    let mut kinds: BTreeMap<TreeKind, Vec<&(TreeKind, f64, f64, f64, f64, &str)>> = BTreeMap::new();
+    let mut kinds: BTreeMap<TreeKind, Vec<&TreeRow>> = BTreeMap::new();
     for row in &tree_rows {
         kinds.entry(row.0).or_default().push(row);
     }

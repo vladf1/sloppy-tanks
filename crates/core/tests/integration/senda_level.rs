@@ -19,14 +19,14 @@ use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::model_data::ARENA;
 use sloppy_core::sim::navigation::GRID_SIZE;
 use sloppy_core::sim::senda_layout::{
-    CUL_DE_SAC_RADIUS, HOUSE_DEPTH, HOUSE_WIDTH, LOT_PITCH, Line, PARKWAY, Row, SENDA_FENCE_COLOR,
-    SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDEWALK, STREET_HALF, SendaHouse, Street,
+    CUL_DE_SAC_RADIUS, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row, SENDA_FENCE_COLOR, SENDA_MAP,
+    SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDE_YARD, SIDEWALK, STREET_HALF, SendaHouse, Street,
     WALL_THICKNESS, WallFace, bend_park, greenbelt_mouth, house_front, inside_boundary,
     is_senda_paved, left, neblina_bend, senda_boundary, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{
-    YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR, greenbelt_lane,
-    park_corners, senda_lots, yard_walls,
+    YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR, back_yard,
+    greenbelt_lane, park_corners, senda_lots, yard_walls,
 };
 use sloppy_core::sim::{CoverKind, Simulation, SimulationSetup, Team};
 use support::{assert_spawns_and_pickups_clear, fell_cottage};
@@ -132,7 +132,7 @@ fn every_spawn_pickup_and_flank_is_clear_and_reachable_from_both_spawn_lines() {
 #[test]
 fn every_house_fronts_its_street_with_a_garage_and_the_rows_mix_types_and_mirrors() {
     let houses = senda_houses();
-    assert!((40..=80).contains(&houses.len()), "{} houses", houses.len());
+    assert!((35..=80).contains(&houses.len()), "{} houses", houses.len());
     let mut styles = HashSet::new();
     let mut sides = HashSet::new();
     // How far `p` stands from the nearest kerb, of a street or a turning circle.
@@ -292,18 +292,33 @@ fn gap(a: &[DVec2; 4], b: &[DVec2; 4]) -> f64 {
 #[test]
 fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold() {
     let houses = senda_houses();
-    // Every pair of neighbours keeps a side yard that shows from overhead between
-    // their walls and eaves (the real lots' is about a third of a house's width).
+    // Every pair of neighbours keeps the tract's side yard between their walls (3-3.5 m,
+    // about a quarter of a house's width), and most stand no further apart: too narrow
+    // for a tank, which crosses a block only by breaching it.
     let footprints: Vec<[DVec2; 4]> = houses.iter().map(corners).collect();
+    let hull =
+        sloppy_core::sim::tank_dimensions::tank_hull(sloppy_core::sim::VehicleKind::Balanced)
+            .size
+            .x;
+    let mut neighbours = 0;
+    let mut tight = 0;
     for (i, a) in footprints.iter().enumerate() {
         for b in &footprints[i + 1..] {
             let yard = gap(a, b);
             assert!(
-                yard >= 0.36 * HOUSE_WIDTH,
+                yard >= SIDE_YARD - 0.01,
                 "a side yard of {yard:.2} m between {a:?} and {b:?}"
             );
+            if yard < 3.0 {
+                neighbours += 1;
+                tight += usize::from(yard < hull);
+            }
         }
     }
+    assert!(
+        tight * 10 > neighbours * 8,
+        "{tight} of {neighbours} side yards narrower than a {hull:.2} m hull"
+    );
     // The rows: Rumbo's north and south sides, Gaviota's (with the houses on the inside
     // of Neblina's curve), and Neblina's west side from Senda Parkway round the outside
     // of the curve to the park, where it becomes Gaviota's south row. No street runs on
@@ -312,7 +327,7 @@ fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold
     let gaviota = Street::NeblinaGaviota.line();
     let count = |row: Row| houses.iter().filter(|house| house.row == row).count();
     let rows = Row::ALL.map(count);
-    let least = [10, 9, 8, 8, 8];
+    let least = [9, 8, 7, 7, 7];
     assert!(
         rows.iter().zip(least).all(|(&count, least)| count >= least),
         "houses per row (Rumbo north, south, Gaviota north, Neblina west, Gaviota south): \
@@ -514,7 +529,8 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
     // Not the square edge all round: it follows the tract's edges. On the south it runs
     // a lane behind the back walls of Gaviota's south row, over the slope's band of trees:
     // each lot's back wall, from the bend park to the turning circle, keeps a tank's way
-    // to the level's wall and stands within a lane and a tree of it.
+    // to the level's wall and stands within a lane, a band of trees and the slope's top of
+    // it (the wall keeps its course from the street as the lots' depth changes).
     assert!(
         !inside_boundary(&boundary, DVec2::new(0.0, 56.0)),
         "the wall runs round the square edge"
@@ -540,7 +556,7 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
             );
             if (-20.0..40.0).contains(&rear.x) {
                 assert!(
-                    room < 8.0,
+                    room < 11.0,
                     "the level's wall stands {room:.1} m behind the back wall at {rear:?}"
                 );
             }
@@ -837,9 +853,11 @@ fn the_lots_are_walled_behind_and_between_and_their_gates_close_the_side_yards()
                 v < lot.half_depth,
                 "a gate behind the house's front: {v:.2}"
             );
+            // (A shared corner is the mean of both neighbours' frames, a little nearer
+            // the house where they turn apart.)
             let (_, rear) = lot.local(side.rear);
             assert!(
-                rear < -lot.half_depth - 1.0,
+                rear < -lot.half_depth - 0.4,
                 "a back yard behind the house: {rear:.2}"
             );
         }
@@ -847,16 +865,21 @@ fn the_lots_are_walled_behind_and_between_and_their_gates_close_the_side_yards()
 }
 
 #[test]
-fn the_back_yards_run_deep_but_leave_the_greenbelt_its_lane_and_the_bend_park_is_walled() {
+fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_the_park_walled() {
     let houses = senda_houses();
     let lots = senda_lots(&houses);
-    // Most yards show from the bank and the slopes: the tract's run 4.5-6 m, about
-    // 2-4 m at the level's scale; only a pickup, a spawn pad, the level's wall or the
-    // greenbelt's lane cuts one short.
-    let deep = lots.iter().filter(|lot| lot.yard >= 3.0).count();
+    // The tract's back yards run 1.5-6 m from the house to the block wall, 1-3.2 m at
+    // the level's scale; most run 2 m or more, and only a pickup, a spawn pad, the
+    // level's wall or the greenbelt's lane cuts one shorter.
+    let yards: Vec<f64> = lots.iter().map(back_yard).collect();
     assert!(
-        deep * 2 > lots.len(),
-        "{deep} of {} back yards run 3 m or more",
+        yards.iter().all(|&yard| (0.99..3.25).contains(&yard)),
+        "back yards {yards:?}"
+    );
+    let deep = yards.iter().filter(|&&yard| yard >= 2.0).count();
+    assert!(
+        deep * 4 > lots.len() * 3,
+        "{deep} of {} back yards run 2 m or more",
         lots.len()
     );
     // Across the greenbelt the back walls keep a tank's lane between them.
@@ -941,9 +964,16 @@ fn the_rows_run_straight_to_the_cul_de_sacs_and_their_far_rims_open_onto_the_hil
                 assert!(south && house.z > middle.y, "{house:?}");
             }
         }
+        // Gaviota's south row holds a lot past its circle's middle; Rumbo's reaches
+        // within a lot of it, the spawn lane's pad taking the lot past it.
+        let reach = if street == Street::Rumbo {
+            middle.x - LOT_PITCH
+        } else {
+            middle.x
+        };
         let past = houses
             .iter()
-            .filter(|house| house.row == sides[1] && house.x > middle.x)
+            .filter(|house| house.row == sides[1] && house.x > reach)
             .count();
         assert!(past >= 1, "no lot past the {street:?} circle's middle");
     }
@@ -964,7 +994,7 @@ fn the_reference_house_is_the_fourth_on_rumbos_north_side_past_the_corner_lot() 
         along(a).total_cmp(&along(b))
     });
     assert!(
-        north.len() >= 10,
+        north.len() >= 9,
         "{} houses on Rumbo's north side",
         north.len()
     );
@@ -1138,6 +1168,117 @@ fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
             .count(),
         2
     );
+}
+
+#[test]
+fn each_porch_patch_is_clear_and_each_loggia_fits_its_yard() {
+    use sloppy_core::sim::senda_yards::{
+        PATIO_COVER, PATIO_ROOF, PORCH, front_openings, patio_covers, porch,
+    };
+    let houses = senda_houses();
+    let lots = senda_lots(&houses);
+    let layout = (SENDA_MAP.layout)();
+    let (low, eave) = PATIO_ROOF;
+    assert!((low, eave) == (1.75, 2.1), "single-storey roofs");
+    for lot in &lots {
+        // The patch the house model's entry porch stands on: on the front door's half,
+        // within the front yard, off the driveway and clear of every cover but the house.
+        let (middle, width, depth) = porch(lot).expect("a porch before every house");
+        assert!(width <= PORCH.0 && depth <= PORCH.1 && depth < lot.house.setback);
+        let (door, garage) = front_openings(lot).expect("a door and a garage");
+        let design = lot.house.design();
+        let driveway = design.wall_plan(design.door_wall).garage_width() / 2.0;
+        assert!(
+            (middle - garage).signum() == (door - garage).signum()
+                && middle.abs() + width / 2.0 <= lot.half_width + 1e-9
+                && (middle - garage).abs() > driveway + width / 2.0 - 1e-9,
+            "a porch at {middle:.2} across a front with its door at {door:.2}, garage at \
+             {garage:.2}"
+        );
+        // Trees, bins and lamps (the walls run along the lot lines and the level's edge).
+        let small = |c: &&sloppy_core::sim::arena::CoverDef| {
+            c.kind == CoverKind::Tree || c.kind == CoverKind::Drum || c.w.max(c.d) < 0.5
+        };
+        for c in layout.iter().filter(small) {
+            let (u, v) = lot.local(DVec2::new(c.x, c.z));
+            let reach = c.w.max(c.d) / 2.0;
+            assert!(
+                (u - middle).abs() > width / 2.0 + reach
+                    || v - reach > lot.half_depth + depth
+                    || v + reach < lot.half_depth,
+                "{:?} at {},{} on the porch of {:?}",
+                c.kind,
+                c.x,
+                c.z,
+                lot.house
+            );
+        }
+    }
+    for (lot, cover) in patio_covers(&houses).iter().map(|cover| {
+        let lot = lots
+            .iter()
+            .min_by(|a, b| {
+                let at = DVec2::new(cover.x, cover.z);
+                a.centre.distance(at).total_cmp(&b.centre.distance(at))
+            })
+            .expect("a lot");
+        (lot, cover)
+    }) {
+        // A rear wing 1.2-2.0 m deep and no wider than 3.6 m, short of the back bed.
+        assert!(cover.w <= PATIO_COVER.0 && (1.2..=PATIO_COVER.1).contains(&cover.d));
+        assert!(cover.d <= back_yard(lot) - 0.5, "{cover:?} fills its yard");
+    }
+}
+
+#[test]
+fn street_trees_stand_in_the_parkway_strips_before_most_lots_never_before_a_driveway() {
+    let houses = senda_houses();
+    let lots = senda_lots(&houses);
+    let lines = Street::ALL.map(|street| (street, street.line()));
+    let layout = (SENDA_MAP.layout)();
+    let street_trees: Vec<_> = layout
+        .iter()
+        .filter(|c| c.kind == CoverKind::Tree)
+        .filter(|c| {
+            let at = DVec2::new(c.x, c.z);
+            lines.iter().any(|(street, line)| {
+                *street != Street::SendaParkway && line.distance(at) - street.half() < PARKWAY
+            })
+        })
+        .collect();
+    assert!(
+        street_trees.len() * 2 > houses.len(),
+        "{} street trees for {} lots",
+        street_trees.len(),
+        houses.len()
+    );
+    for tree in &street_trees {
+        let at = DVec2::new(tree.x, tree.z);
+        // No wider than its strip, wholly between the kerb and the sidewalk.
+        assert!(tree.w <= PARKWAY && tree.d <= PARKWAY, "{tree:?}");
+        for (street, line) in &lines {
+            let off = line.distance(at) - street.half();
+            assert!(
+                off > 0.0 && !(PARKWAY..PARKWAY + SIDEWALK).contains(&off),
+                "a tree at {at:?} off {street:?}'s parkway"
+            );
+        }
+        // Never before a driveway: clear of every garage door's span out to the kerb.
+        for lot in &lots {
+            let Some((_, garage)) = sloppy_core::sim::senda_yards::front_openings(lot) else {
+                continue;
+            };
+            let design = lot.house.design();
+            let half = design.wall_plan(design.door_wall).garage_width() / 2.0;
+            let (u, v) = lot.local(at);
+            let reach = lot.half_depth + lot.house.setback + SIDEWALK + PARKWAY;
+            assert!(
+                (u - garage).abs() > half + tree.w / 2.0 || v < lot.half_depth || v > reach,
+                "a tree at {at:?} before the driveway of {:?}",
+                lot.house
+            );
+        }
+    }
 }
 
 #[test]

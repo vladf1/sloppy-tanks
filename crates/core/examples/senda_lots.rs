@@ -1,6 +1,6 @@
 //! Senda's houses by style: how many, their widths and heights, garage sides, turns.
 use sloppy_core::sim::house_layout::SENDA_STYLES;
-use sloppy_core::sim::senda_layout::senda_houses;
+use sloppy_core::sim::senda_layout::{HOUSE_DEPTH, HOUSE_WIDTH, senda_houses};
 
 fn main() {
     let mut rows: std::collections::BTreeMap<u8, Vec<String>> = Default::default();
@@ -34,7 +34,8 @@ fn main() {
             design.roof().low_storeys
         ));
     }
-    // Each style on the lot a model is drawn for: 5 m front, 7 m deep, ridge 4 m, garage right.
+    // Each style on the lot a model is drawn for: a full lot's front and depth, ridge 4.5 m,
+    // garage right.
     for style in 0..SENDA_STYLES.len() as u8 {
         let plan = sloppy_core::sim::house_layout::HousePlan {
             style,
@@ -42,8 +43,14 @@ fn main() {
             angle: 0,
             garage: sloppy_core::sim::house_layout::GarageSide::Right,
         };
-        let design =
-            sloppy_core::sim::house_layout::HouseDesign::planned(0.0, 0.0, 5.0, 7.0, 4.0, plan);
+        let design = sloppy_core::sim::house_layout::HouseDesign::planned(
+            0.0,
+            0.0,
+            HOUSE_WIDTH,
+            HOUSE_DEPTH,
+            4.5,
+            plan,
+        );
         let roof = design.roof();
         println!(
             "authoring lot style {style}: w {} d {} door_wall {} wall {:.4} ridge {:.4} eave_y {:.4} pitch {:.4} ridge_half {:.3} end_run {:.3} eave_x {:.3} rake_z {:.3}",
