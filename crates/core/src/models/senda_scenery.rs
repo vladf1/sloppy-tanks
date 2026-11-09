@@ -1185,25 +1185,47 @@ fn splitter_island(group: &mut Node) {
 }
 
 /// Senda Parkway's raised median, kerbed, planted and mulched under its trees, and its
-/// bike lanes' solid lines.
+/// bike lanes' solid lines. The median opens across Neblina's mouth for the turn into it,
+/// each side of the opening ending in a round nose its kerb wraps.
 fn senda_parkway(group: &mut Node, line: &[DVec2]) {
     let nothing = |_: DVec2| false;
-    // The median opens across Neblina's mouth for the turn into it.
-    let opening = |p: DVec2| in_median_opening(p, 0.0);
     let top = KERB_HEIGHT + 0.01;
-    group.children.push(flat(
-        ribbon(line, -MEDIAN_HALF, MEDIAN_HALF, top, &opening),
-        MEDIAN,
-    ));
-    for side in [-1.0, 1.0] {
-        let kerb = ribbon(
-            line,
-            side * MEDIAN_HALF,
-            side * (MEDIAN_HALF + KERB_WIDTH),
-            KERB_HEIGHT,
-            &opening,
-        );
-        group.children.push(flat(kerb, KERB));
+    let way = Line(line.to_vec());
+    let reach = MEDIAN_HALF + KERB_WIDTH;
+    for (from, to) in median_spans(&way) {
+        let span = cut_line(&way, from + reach, to - reach);
+        if span.len() < 2 {
+            continue;
+        }
+        group.children.push(flat(
+            ribbon(&span, -MEDIAN_HALF, MEDIAN_HALF, top, &nothing),
+            MEDIAN,
+        ));
+        for side in [-1.0, 1.0] {
+            let kerb = ribbon(
+                &span,
+                side * MEDIAN_HALF,
+                side * reach,
+                KERB_HEIGHT,
+                &nothing,
+            );
+            group.children.push(flat(kerb, KERB));
+        }
+        // A nose where the median meets the opening, not where it runs off the level.
+        for (end, outward) in [(from, -1.0), (to, 1.0)] {
+            if end <= 0.0 || end >= way.length() {
+                continue;
+            }
+            let (centre, along) = way.at(end - outward * reach);
+            let out = along * outward;
+            group
+                .children
+                .push(flat(nose(centre, out, (0.0, MEDIAN_HALF), top), MEDIAN));
+            group.children.push(flat(
+                nose(centre, out, (MEDIAN_HALF, reach), KERB_HEIGHT),
+                KERB,
+            ));
+        }
     }
     let half = Street::SendaParkway.half();
     let middle = half - BIKE_LANE;
@@ -2779,6 +2801,87 @@ fn quad(corners: [DVec2; 4], y: f64) -> Mesh {
         normals.extend([0.0, 1.0, 0.0]);
         uvs.extend([p.x / 4.0, p.y / 4.0]);
     }
+    Mesh::from_f64(&positions, &normals, &uvs, None)
+}
+
+/// The stretches (from, to metres along it) of Senda Parkway's median: all of its line
+/// but the opening across Neblina's mouth, found to a few centimetres.
+fn median_spans(way: &Line) -> Vec<(f64, f64)> {
+    const STEP: f64 = 0.05;
+    let length = way.length();
+    let mut spans = Vec::new();
+    let mut start = None;
+    let mut s = 0.0;
+    while s <= length {
+        let open = in_median_opening(way.at(s).0, 0.0);
+        match (open, start) {
+            (false, None) => start = Some(s),
+            (true, Some(from)) => {
+                spans.push((from, s));
+                start = None;
+            }
+            _ => {}
+        }
+        s += STEP;
+    }
+    if let Some(from) = start {
+        spans.push((from, length));
+    }
+    spans
+}
+
+/// The part of `line` from `from` to `to` metres along it.
+fn cut_line(line: &Line, from: f64, to: f64) -> Vec<DVec2> {
+    if to <= from {
+        return Vec::new();
+    }
+    let mut points = vec![line.at(from).0];
+    let mut along = 0.0;
+    for pair in line.0.windows(2) {
+        along += pair[0].distance(pair[1]);
+        if along > from && along < to {
+            points.push(pair[1]);
+        }
+    }
+    points.push(line.at(to).0);
+    points
+}
+
+/// A round nose's half ring about `centre`, bulging toward `out`, from radius `inner`
+/// (0 for its top) to `outer`, flat at height `y`.
+fn nose(centre: DVec2, out: DVec2, (inner, outer): (f64, f64), y: f64) -> Mesh {
+    const SEGMENTS: usize = 12;
+    let side = left(out);
+    let point = |k: usize, radius: f64| {
+        let angle = std::f64::consts::PI * k as f64 / SEGMENTS as f64;
+        centre + (side * angle.cos() + out * angle.sin()) * radius
+    };
+    let mut positions = Vec::new();
+    for k in 0..SEGMENTS {
+        let corners = [
+            point(k, inner.max(1e-3)),
+            point(k, outer),
+            point(k + 1, outer),
+            point(k + 1, inner.max(1e-3)),
+        ];
+        let [a, b, c, _] = corners;
+        // Up-facing when the corners turn clockwise seen from above (+z south).
+        let turn = (b.y - a.y) * (c.x - a.x) - (b.x - a.x) * (c.y - a.y);
+        let order = if turn > 0.0 {
+            [0, 1, 2, 0, 2, 3]
+        } else {
+            [0, 2, 1, 0, 3, 2]
+        };
+        for index in order {
+            positions.extend([corners[index].x, y, corners[index].y]);
+        }
+    }
+    let count = positions.len() / 3;
+    let normals: Vec<f64> = (0..count).flat_map(|_| [0.0, 1.0, 0.0]).collect();
+    let uvs: Vec<f64> = positions
+        .chunks(3)
+        .flat_map(|p| [p[0] / 4.0, p[2] / 4.0])
+        .collect();
     Mesh::from_f64(&positions, &normals, &uvs, None)
 }
 
