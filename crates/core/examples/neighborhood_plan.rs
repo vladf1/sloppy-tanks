@@ -17,7 +17,7 @@ use sloppy_core::sim::senda_layout::{
     SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SIDEWALK, STREET_LAMP_COLORS,
     SendaHouse, Street, TRASH_BIN_COLORS, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, bend_park,
     greenbelt_line, in_median_opening, inside_boundary, lamp_sites, left, outer_way_tree_sites,
-    senda_boundary, senda_houses, splitter_island,
+    past_sidewalk, senda_boundary, senda_houses, splitter_island,
 };
 use sloppy_core::sim::senda_yards::{
     LOGGIA_COLOR, PERGOLA_WOOD, YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR,
@@ -1030,6 +1030,81 @@ fn main() {
         .unwrap();
     }
     writeln!(w).unwrap();
+
+    // Garage doors, turning circles and corner lots.
+    writeln!(w, "## Garage doors, turning circles and corners\n").unwrap();
+    for street in Street::ALL {
+        if let Some(middle) = street.cul_de_sac() {
+            let facing: Vec<String> = (0..houses.len())
+                .filter(|&k| {
+                    let (_, front, out) = house_frame(&houses[k]);
+                    (middle - front).normalize().dot(out) > 0.97
+                        && middle.distance(front) < CUL_DE_SAC_RADIUS + 5.0
+                })
+                .map(|k| house_labels[k].clone())
+                .collect();
+            writeln!(
+                w,
+                "- {street:?} turning circle: middle ({:.2}, {:.2}), kerb radius {CUL_DE_SAC_RADIUS:.1}, island {CUL_DE_SAC_ISLAND:.1}; homes facing it: {}",
+                middle.x,
+                middle.y,
+                facing.join(", ")
+            )
+            .unwrap();
+        }
+    }
+    writeln!(w).unwrap();
+    writeln!(w, "Garage door = middle of the garage door to the kerb it faces (street or circle). Side street = least distance from any wall corner to another street's sidewalk back edge (Senda Parkway's south side: its wide path's).\n").unwrap();
+    writeln!(
+        w,
+        "| house | garage door → kerb (m) | walls → other street's sidewalk (m) |"
+    )
+    .unwrap();
+    writeln!(w, "|---|---|---|").unwrap();
+    let mut doors = Vec::new();
+    for (k, house) in houses.iter().enumerate() {
+        let design = house.design();
+        let (centre, out, along, _) = wall_frames(design.w, design.d)[design.door_wall];
+        let plan = design.wall_plan(design.door_wall);
+        let Some(garage) = plan.garage() else {
+            continue;
+        };
+        let door = design.to_world(centre + along * garage);
+        let door = DVec2::new(house.x + door.x, house.z + door.z);
+        let out = design.to_world(out);
+        let out = DVec2::new(out.x, out.z).normalize();
+        // March out from the door to the first kerb.
+        let paved = |p: DVec2| {
+            Street::ALL.into_iter().any(|street| {
+                street.line().distance(p) < street.half()
+                    || street
+                        .cul_de_sac()
+                        .is_some_and(|m| m.distance(p) < CUL_DE_SAC_RADIUS)
+            })
+        };
+        let mut t = 0.0;
+        while t < 20.0 && !paved(door + out * t) {
+            t += 0.01;
+        }
+        doors.push(t);
+        let own = row_street(house.row);
+        let side = Street::ALL
+            .into_iter()
+            .filter(|&street| street != own)
+            .flat_map(|street| {
+                house_frame(house)
+                    .0
+                    .map(|corner| past_sidewalk(street, corner))
+            })
+            .fold(f64::INFINITY, f64::min);
+        writeln!(w, "| {} | {t:.2} | {side:.2} |", house_labels[k]).unwrap();
+    }
+    writeln!(
+        w,
+        "\nGarage door → kerb over all homes: {}\n",
+        stats(&mut doors)
+    )
+    .unwrap();
 
     // Plans.
     writeln!(w, "## House plans\n").unwrap();

@@ -19,10 +19,11 @@ use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::model_data::ARENA;
 use sloppy_core::sim::navigation::GRID_SIZE;
 use sloppy_core::sim::senda_layout::{
-    CUL_DE_SAC_RADIUS, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row, SENDA_FENCE_COLOR, SENDA_MAP,
-    SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDE_YARD, SIDEWALK, STREET_HALF, SendaHouse, Street,
-    WALL_THICKNESS, WallFace, bend_park, greenbelt_mouth, house_front, inside_boundary,
-    is_senda_paved, left, neblina_bend, senda_boundary, senda_houses,
+    CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row,
+    SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDE_YARD, SIDEWALK,
+    STREET_HALF, SendaHouse, Street, WALL_THICKNESS, WallFace, bend_park, faces_circle,
+    greenbelt_mouth, house_front, inside_boundary, is_senda_paved, left, neblina_bend,
+    senda_boundary, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{
     YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR, back_yard,
@@ -870,17 +871,31 @@ fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_t
     let lots = senda_lots(&houses);
     // The tract's back yards run 1.5-6 m from the house to the block wall, 1-3.2 m at
     // the level's scale; most run 2 m or more, and only a pickup, a spawn pad, the
-    // level's wall or the greenbelt's lane cuts one shorter.
+    // level's wall or the greenbelt's lane cuts one shorter. (A pie-shaped lot round a
+    // turning circle widens behind its house, past the depth measured down its middle.)
     let yards: Vec<f64> = lots.iter().map(back_yard).collect();
     assert!(
         yards.iter().all(|&yard| (0.99..3.25).contains(&yard)),
         "back yards {yards:?}"
     );
-    let deep = yards.iter().filter(|&&yard| yard >= 2.0).count();
+    let bulbs: Vec<DVec2> = Street::ALL
+        .into_iter()
+        .filter_map(Street::cul_de_sac)
+        .collect();
+    let square: Vec<f64> = lots
+        .iter()
+        .filter(|lot| {
+            !bulbs
+                .iter()
+                .any(|&middle| faces_circle(lot.centre, lot.front, middle))
+        })
+        .map(back_yard)
+        .collect();
+    let deep = square.iter().filter(|&&yard| yard >= 2.0).count();
     assert!(
-        deep * 4 > lots.len() * 3,
-        "{deep} of {} back yards run 2 m or more",
-        lots.len()
+        deep * 4 > square.len() * 3,
+        "{deep} of {} back yards on the streets run 2 m or more",
+        square.len()
     );
     // Across the greenbelt the back walls keep a tank's lane between them.
     let lane = Line(greenbelt_lane());
@@ -918,13 +933,29 @@ fn a_shell_breaches_a_lot_wall_and_the_way_opens_through_it() {
     assert!(!sim.covers[wall].alive, "one shell's worth breaches it");
 }
 
+/// A house's front wall middle and the way it faces, in the world.
+fn front(house: &SendaHouse) -> (DVec2, DVec2) {
+    let design = house.design();
+    let (centre, out, _, _) = wall_frames(design.w, design.d)[design.door_wall];
+    let (face, out) = (design.to_world(centre), design.to_world(out));
+    (
+        DVec2::new(house.x + face.x, house.z + face.z),
+        DVec2::new(out.x, out.z).normalize(),
+    )
+}
+
 #[test]
-fn the_rows_run_straight_to_the_cul_de_sacs_and_their_far_rims_open_onto_the_hillside() {
-    // As the tract's do: each row runs on square to its street beside the turning
-    // circle, a house on either side at its rim; the north rows end short of the
-    // circle's far side, which opens onto the hillside, and the south rows hold one lot
-    // more, under its south-east rim.
+fn the_rows_run_on_round_true_size_turning_circles_whose_far_ends_open_onto_the_hillside() {
+    // As the tract's do: each row's last lots turn round the turning circle, pie-shaped,
+    // their homes facing its middle across the same front yard as on the street; the
+    // circle's far end, toward the spawn lane on the hillside, stays open.
+    assert_eq!((CUL_DE_SAC_RADIUS, CUL_DE_SAC_ISLAND), (6.8, 2.0));
     let houses = senda_houses();
+    let pads: Vec<DVec2> = [Team::Blue, Team::Red]
+        .into_iter()
+        .flat_map(|team| spawn_positions(team, 1.0))
+        .map(|spawn| DVec2::new(spawn.x, spawn.z))
+        .collect();
     for (street, sides) in [
         (Street::Rumbo, [Row::RumboNorth, Row::RumboSouth]),
         (
@@ -933,49 +964,147 @@ fn the_rows_run_straight_to_the_cul_de_sacs_and_their_far_rims_open_onto_the_hil
         ),
     ] {
         let middle = street.cul_de_sac().expect("a turning circle");
-        for row in sides {
-            let rim = houses
-                .iter()
-                .filter(|house| house.row == row)
-                .map(|house| {
-                    corners(house)
-                        .iter()
-                        .map(|corner| corner.distance(middle) - CUL_DE_SAC_RADIUS)
-                        .fold(f64::INFINITY, f64::min)
-                })
-                .fold(f64::INFINITY, f64::min);
-            assert!(rim < 6.0, "{row:?} keeps {rim:.1} m off its turning circle");
-        }
-        for house in houses.iter().filter(|house| sides.contains(&house.row)) {
-            let south = house.row == sides[1];
-            let reach = if south {
-                CUL_DE_SAC_RADIUS + LOT_PITCH
-            } else {
-                CUL_DE_SAC_RADIUS
-            };
+        // Its sidewalk ring keeps clear of the spawn pads and pickups.
+        let ring = CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK;
+        for &pad in &pads {
             assert!(
-                house.x < middle.x + reach,
-                "a house at {},{} past the {street:?} circle's far rim",
-                house.x,
-                house.z
+                pad.distance(middle) > ring + 2.3 + 0.5,
+                "the {street:?} circle's sidewalk at the pad {pad:?}"
             );
-            // Past the circle's far rim only on its south side.
-            if house.x > middle.x + CUL_DE_SAC_RADIUS {
-                assert!(south && house.z > middle.y, "{house:?}");
+        }
+        for pickup in SENDA_PICKUPS.iter() {
+            let at = DVec2::new(pickup.x, pickup.z);
+            assert!(
+                at.distance(middle) > ring + HULL_CLEARANCE,
+                "{pickup:?} on the {street:?} circle"
+            );
+        }
+        let facing: Vec<&SendaHouse> = houses
+            .iter()
+            .filter(|house| {
+                let (face, out) = front(house);
+                faces_circle(face - out * HOUSE_DEPTH / 2.0, out, middle)
+            })
+            .collect();
+        for row in sides {
+            assert!(
+                facing.iter().any(|house| house.row == row),
+                "no home of {row:?} faces the {street:?} circle"
+            );
+        }
+        let line = street.line();
+        let (_, heading) = line.at(line.length());
+        for house in &facing {
+            // Its front, and so its garage door, a front yard, sidewalk and parkway from
+            // the circle's kerb, no nearer than a street's homes stand.
+            let (face, _) = front(house);
+            let kerb = face.distance(middle) - CUL_DE_SAC_RADIUS;
+            assert!(
+                (3.39..4.0).contains(&kerb),
+                "{house:?} stands {kerb:.2} m from the {street:?} circle's kerb"
+            );
+        }
+        // Past the circle's middle the homes stand to either side of its far end, none
+        // across it.
+        for house in &houses {
+            let from = DVec2::new(house.x, house.z) - middle;
+            let ahead = from.dot(heading);
+            let aside = from.perp_dot(heading).abs();
+            assert!(
+                ahead < 0.0 || aside > ahead * 0.5 || from.length() > 25.0,
+                "{house:?} closes the {street:?} circle's far end"
+            );
+        }
+    }
+}
+
+#[test]
+fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island() {
+    let houses = senda_houses();
+    let layout = (SENDA_MAP.layout)();
+    let sim = senda(5.0);
+    let hull =
+        sloppy_core::sim::tank_dimensions::tank_hull(sloppy_core::sim::VehicleKind::Balanced).size;
+    // A Bruiser 1.95 m wide and 4.27 m long, its middle on a circle round the island: its
+    // inner side clears the island's kerb and its outer corners the circle's.
+    let (width, length) = (hull.x, hull.z);
+    assert!(
+        (width - 1.95).abs() < 0.05 && (length - 4.27).abs() < 0.05,
+        "{hull:?}"
+    );
+    let drive = (CUL_DE_SAC_ISLAND + CUL_DE_SAC_RADIUS) / 2.0;
+    let inner = drive - width / 2.0;
+    let outer = (drive + width / 2.0).hypot(length / 2.0);
+    assert!(
+        inner > CUL_DE_SAC_ISLAND + 0.2 && outer < CUL_DE_SAC_RADIUS - 0.2,
+        "a Bruiser round the island spans {inner:.2} to {outer:.2} m"
+    );
+    for middle in Street::ALL.into_iter().filter_map(Street::cul_de_sac) {
+        let homes = houses
+            .iter()
+            .filter(|house| {
+                let (face, out) = front(house);
+                faces_circle(face - out * HOUSE_DEPTH / 2.0, out, middle)
+            })
+            .count();
+        assert!(homes >= 2, "{homes} homes face the circle at {middle:?}");
+        // Nothing stands in the ring it drives, and the way round is open.
+        for c in &layout {
+            // The circle's middle in the cover's turned box frame: the box's nearest and
+            // furthest reach from it.
+            let (sin, cos) = cover_turn(c.kind, c.house_plan).sin_cos();
+            let (x, z) = (middle.x - c.x, middle.y - c.z);
+            let local = DVec2::new(x * cos - z * sin, x * sin + z * cos);
+            let half = DVec2::new(c.w, c.d) / 2.0;
+            let nearest = (local.abs() - half).max(DVec2::ZERO).length();
+            let furthest = (local.abs() + half).length();
+            assert!(
+                furthest < inner || nearest > outer,
+                "{:?} at {},{} in the way round the circle at {middle:?}",
+                c.kind,
+                c.x,
+                c.z
+            );
+        }
+        // The navigation's open cells between the island's kerb and the circle's join up
+        // all the way round.
+        let size = GRID_SIZE as i64;
+        let in_ring = |cell: usize| {
+            let p = sim.nav.point(cell);
+            let gap = DVec2::new(p.x, p.z).distance(middle);
+            (CUL_DE_SAC_ISLAND..CUL_DE_SAC_RADIUS).contains(&gap) && sim.nav.blocked[cell] == 0
+        };
+        let start = (0..sim.nav.blocked.len())
+            .find(|&cell| in_ring(cell))
+            .expect("an open cell round the island");
+        let mut seen = HashSet::from([start]);
+        let mut open = vec![start];
+        while let Some(cell) = open.pop() {
+            let (x, z) = ((cell % GRID_SIZE) as i64, (cell / GRID_SIZE) as i64);
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
+                let (nx, nz) = (x + dx, z + dz);
+                if nx < 0 || nz < 0 || nx >= size || nz >= size {
+                    continue;
+                }
+                let next = (nz * size + nx) as usize;
+                if in_ring(next) && seen.insert(next) {
+                    open.push(next);
+                }
             }
         }
-        // Gaviota's south row holds a lot past its circle's middle; Rumbo's reaches
-        // within a lot of it, the spawn lane's pad taking the lot past it.
-        let reach = if street == Street::Rumbo {
-            middle.x - LOT_PITCH
-        } else {
-            middle.x
-        };
-        let past = houses
+        let sectors: HashSet<i64> = seen
             .iter()
-            .filter(|house| house.row == sides[1] && house.x > reach)
-            .count();
-        assert!(past >= 1, "no lot past the {street:?} circle's middle");
+            .map(|&cell| {
+                let p = sim.nav.point(cell);
+                let angle = (p.z - middle.y).atan2(p.x - middle.x);
+                (angle.to_degrees() / 30.0).floor() as i64
+            })
+            .collect();
+        assert_eq!(
+            sectors.len(),
+            12,
+            "the way round the circle at {middle:?} is shut: open in {sectors:?}"
+        );
     }
 }
 
@@ -1241,9 +1370,22 @@ fn street_trees_stand_in_the_parkway_strips_before_most_lots_never_before_a_driv
         .filter(|c| c.kind == CoverKind::Tree)
         .filter(|c| {
             let at = DVec2::new(c.x, c.z);
-            lines.iter().any(|(street, line)| {
-                *street != Street::SendaParkway && line.distance(at) - street.half() < PARKWAY
-            })
+            // In a street's parkway or a turning circle's (its island's tree is not one).
+            let on_island = Street::ALL
+                .into_iter()
+                .filter_map(Street::cul_de_sac)
+                .any(|middle| middle.distance(at) < CUL_DE_SAC_ISLAND);
+            !on_island
+                && lines.iter().any(|(street, line)| {
+                    *street != Street::SendaParkway && line.distance(at) - street.half() < PARKWAY
+                })
+                || Street::ALL
+                    .into_iter()
+                    .filter_map(Street::cul_de_sac)
+                    .any(|middle| {
+                        (CUL_DE_SAC_RADIUS..CUL_DE_SAC_RADIUS + PARKWAY)
+                            .contains(&middle.distance(at))
+                    })
         })
         .collect();
     assert!(
@@ -1255,7 +1397,10 @@ fn street_trees_stand_in_the_parkway_strips_before_most_lots_never_before_a_driv
     for tree in &street_trees {
         let at = DVec2::new(tree.x, tree.z);
         // Its trunk between the kerb and the sidewalk, its box a quarter metre over each.
-        assert!(tree.w <= PARKWAY + 0.5 && tree.d <= PARKWAY + 0.5, "{tree:?}");
+        assert!(
+            tree.w <= PARKWAY + 0.5 && tree.d <= PARKWAY + 0.5,
+            "{tree:?}"
+        );
         for (street, line) in &lines {
             let off = line.distance(at) - street.half();
             assert!(
