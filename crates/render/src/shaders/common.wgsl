@@ -73,6 +73,14 @@ struct Frame {
     // x their features around the horizon, y flat mesa tops 0..1, z the share of the
     // horizon left open between them 0..1.
     ridge_shape: vec4f,
+    // A third range between the two, nearest the haze's warm foot (`horizon_ridges`):
+    // rgb the near range's colour, the middle one's between it and `ridge`; w 1 when
+    // the backdrop has three ranges (0: two, both in `ridge`'s colour).
+    ridge_near: vec4f,
+    // A massif's twin summits over the far range: xy the unit heading of the saddle
+    // between them, z their height in ray slope (0 for none), w half the angle (radians)
+    // between them.
+    ridge_summit: vec4f,
     // x haze per metre that does not thin with height (the long-range aerial
     // perspective that softens far peaks as much as their feet), y the distance from
     // the eye where it begins, z how strongly haze toward the sun glows with its color,
@@ -358,9 +366,12 @@ const RIDGE_STRATA_CONTRAST: f32 = 0.07;
 // One range of the horizon backdrop over `color`: a silhouette whose faces turned
 // toward the sun catch light and those turned away fall into shade, banded into
 // strata where it is a mesa, its crest crisp and its foot melting into the haze.
-fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, scale: f32, share: f32, aa: f32) -> vec3f {
+fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, scale: f32, share: f32, aa: f32, tint: vec3f, summit: bool) -> vec3f {
     let height = frame.ridge.w * scale;
-    let top = height * ridge_profile(heading, offset);
+    var top = height * ridge_profile(heading, offset);
+    if summit {
+        top = max(top, summit_top(heading) + top * SUMMIT_RIDGE_SHARE);
+    }
     // Low headlands fade in with their height, so where a range ends its haze-thick
     // foot leaves no hard edge down to the horizon.
     let cover = (1.0 - smoothstep(top - aa, top + aa, direction.y)) * smoothstep(0.0, height * 0.3, top);
@@ -381,7 +392,12 @@ fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, sc
         let s = sin(RIDGE_SLOPE_STEP);
         let left = vec2f(heading.x * c - heading.y * s, heading.x * s + heading.y * c);
         let right = vec2f(heading.x * c + heading.y * s, -heading.x * s + heading.y * c);
-        let slope = (ridge_profile(right, offset) - ridge_profile(left, offset)) * height / (2.0 * RIDGE_SLOPE_STEP);
+        var slope = (ridge_profile(right, offset) - ridge_profile(left, offset)) * height / (2.0 * RIDGE_SLOPE_STEP);
+        if summit {
+            let high = max(height * ridge_profile(right, offset), summit_top(right) + height * ridge_profile(right, offset) * SUMMIT_RIDGE_SHARE);
+            let low = max(height * ridge_profile(left, offset), summit_top(left) + height * ridge_profile(left, offset) * SUMMIT_RIDGE_SHARE);
+            slope = (high - low) / (2.0 * RIDGE_SLOPE_STEP);
+        }
         let side = vec2f(-heading.y, heading.x);
         let sun = frame.sun_direction.xyz;
         let toward_sun = dot(side, sun.xz) * clamp(slope * 6.0, -1.0, 1.0) - dot(heading, sun.xz) * 0.35;
@@ -392,7 +408,7 @@ fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, sc
     }
     // The air thickens toward the foot, while the crest stays crisp.
     let foot = 1.0 - rise;
-    let ridge = mix(frame.ridge.rgb * shade, color, RIDGE_FOOT_HAZE * foot * foot);
+    let ridge = mix(tint * shade, color, RIDGE_FOOT_HAZE * foot * foot);
     return mix(color, mix(color, ridge, share), cover);
 }
 
@@ -400,12 +416,47 @@ fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, sc
 // recedes into the haze where the scenery's own hills end.
 fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
     let height = frame.ridge.w;
-    if height <= 0.0 || direction.y > height {
+    if height <= 0.0 || direction.y > max(height, frame.ridge_summit.z) {
         return color;
     }
     let heading = normalize(direction.xz + vec2f(1e-5));
-    let far = ridge_layer(color, direction, heading, vec2f(0.0, 0.0), 1.0, FAR_RIDGE_SHARE, aa);
-    return ridge_layer(far, direction, heading, vec2f(31.7, -12.4), NEAR_RIDGE_SCALE, NEAR_RIDGE_SHARE, aa);
+    let layered = frame.ridge_near.w > 0.0;
+    let far = ridge_layer(color, direction, heading, vec2f(0.0, 0.0), 1.0, FAR_RIDGE_SHARE, aa, frame.ridge.rgb, frame.ridge_summit.z > 0.0);
+    var middle = far;
+    if layered {
+        let tint = mix(frame.ridge.rgb, frame.ridge_near.rgb, MIDDLE_RIDGE_TINT);
+        middle = ridge_layer(far, direction, heading, vec2f(-17.3, 5.9), MIDDLE_RIDGE_SCALE, MIDDLE_RIDGE_SHARE, aa, tint, false);
+    }
+    let near_tint = select(frame.ridge.rgb, frame.ridge_near.rgb, layered);
+    return ridge_layer(middle, direction, heading, vec2f(31.7, -12.4), NEAR_RIDGE_SCALE, NEAR_RIDGE_SHARE, aa, near_tint, false);
+}
+
+// A third range between the far and near ones (`frame.ridge_near`): its height beside
+// the far range's, its share of its colour over the sky and how far its colour lies from
+// the far range's toward the near one's.
+const MIDDLE_RIDGE_SCALE: f32 = 0.8;
+const MIDDLE_RIDGE_SHARE: f32 = 0.75;
+const MIDDLE_RIDGE_TINT: f32 = 0.45;
+// The massif's twin summits (`frame.ridge_summit`): the half width (radians) of its
+// broad base and of each summit's cone, the base's share of the summits' height, the
+// lower summit's share of the higher, and the share of the range's own crest line
+// that roughens the massif's.
+const SUMMIT_BASE: f32 = 0.42;
+const SUMMIT_PEAK: f32 = 0.11;
+const SUMMIT_MASS: f32 = 0.6;
+const SUMMIT_SECOND: f32 = 0.9;
+const SUMMIT_RIDGE_SHARE: f32 = 0.3;
+
+// The massif's crest along `heading`, in ray slope: a broad base swelling into two
+// summits either side of its saddle, their flanks concave as a weathered range's are.
+fn summit_top(heading: vec2f) -> f32 {
+    let toward = frame.ridge_summit.xy;
+    let angle = atan2(heading.x * toward.y - heading.y * toward.x, dot(heading, toward));
+    let base = max(1.0 - abs(angle) / SUMMIT_BASE, 0.0);
+    let first = max(1.0 - abs(angle - frame.ridge_summit.w) / SUMMIT_PEAK, 0.0);
+    let second = max(1.0 - abs(angle + frame.ridge_summit.w) / SUMMIT_PEAK, 0.0);
+    let peaks = max(first * first, second * second * SUMMIT_SECOND);
+    return frame.ridge_summit.z * (SUMMIT_MASS * base * base + (1.0 - SUMMIT_MASS) * peaks);
 }
 
 // The colour haze takes on along `ray`: thin haze shifts surfaces toward the cool

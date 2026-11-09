@@ -215,6 +215,11 @@ pub struct Ridges {
     /// Share of the horizon left open between them, 0..1: 0 a continuous range,
     /// higher values scattered headlands and islands.
     pub gaps: f32,
+    /// Three ranges instead of two, stepping back from this colour (the nearest, before
+    /// the haze, times the sky intensity) to `color` (the farthest).
+    pub near: Option<u32>,
+    /// A massif standing over the far range.
+    pub summit: Option<Summit>,
 }
 
 impl Ridges {
@@ -224,7 +229,20 @@ impl Ridges {
         features: 0.0,
         mesa: 0.0,
         gaps: 0.0,
+        near: None,
+        summit: None,
     };
+}
+
+/// A lone massif's two summits over the far range, the saddle between them toward
+/// `toward` (world x and z, from the arena's middle).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Summit {
+    pub toward: [f32; 2],
+    /// The higher summit's height in ray slope.
+    pub height: f32,
+    /// The angle between the summits, radians.
+    pub separation: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -353,6 +371,11 @@ pub struct ThemeLook {
 
 /// Senda's ground bounce ([`ThemeLook::fill_ground`]).
 const SENDA_FILL_GROUND: u32 = 0xa08e74;
+/// Senda's late-afternoon sun, about 27 degrees up in the west-south-west and warmer
+/// than the village's, and its sky fill, a little bluer and stronger so the longer
+/// shadows stay cool and open rather than dark.
+const SENDA_SUN: (Vec3, u32, f32) = (Vec3::new(-50.0, 31.0, 32.0), 0xffdab2, 4.1);
+const SENDA_FILL: (u32, f32) = (0x94b0e0, 1.9);
 
 pub fn theme_look(theme: Theme) -> ThemeLook {
     /// The theme's value; extra levels take the village look.
@@ -366,12 +389,17 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
     let quarry = theme == Theme::Quarry;
     // A late-morning sun over the village, a low golden late-afternoon one over the
     // harbor and a raking one across the quarry's layered rock.
-    let sun_position = pick(
-        theme,
-        Vec3::new(-50.0, 34.0, 29.0),
-        Vec3::new(-50.0, 30.0, 38.0),
-        Vec3::new(-45.0, 46.0, 28.0),
-    );
+    let senda = theme == Theme::Senda;
+    let sun_position = if senda {
+        SENDA_SUN.0
+    } else {
+        pick(
+            theme,
+            Vec3::new(-50.0, 34.0, 29.0),
+            Vec3::new(-50.0, 30.0, 38.0),
+            Vec3::new(-45.0, 46.0, 28.0),
+        )
+    };
     let shadow = if quarry {
         ShadowCamera::fit_square(
             sun_position,
@@ -396,19 +424,35 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         sky: pick(theme, 0xd6c9b0, 0xa7bdc5, 0xaacbc2),
         fog_near: pick(theme, 110.0, 150.0, 210.0),
         fog_far: pick(theme, 380.0, 260.0, 380.0),
-        sun_color: pick(theme, 0xffeedc, 0xffcf9c, 0xffeacc),
-        sun_intensity: pick(theme, 4.1, 3.9, 4.0),
+        sun_color: if senda {
+            SENDA_SUN.1
+        } else {
+            pick(theme, 0xffeedc, 0xffcf9c, 0xffeacc)
+        },
+        sun_intensity: if senda {
+            SENDA_SUN.2
+        } else {
+            pick(theme, 4.1, 3.9, 4.0)
+        },
         sun_position,
-        fill_color: pick(theme, 0x9cb4da, 0xa0b2cc, 0x9eb6da),
+        fill_color: if senda {
+            SENDA_FILL.0
+        } else {
+            pick(theme, 0x9cb4da, 0xa0b2cc, 0x9eb6da)
+        },
         // Senda's bounce comes off driveways, sidewalks and stucco as much as lawn: a
         // warm grey, under which its cream and tan walls keep their colour in shade
         // rather than turning mint under the village's olive bounce and blue sky.
-        fill_ground: if theme == Theme::Senda {
+        fill_ground: if senda {
             SENDA_FILL_GROUND
         } else {
             pick(theme, 0xb89a72, 0x8e8a82, 0x8c8c5e)
         },
-        fill_intensity: pick(theme, 1.55, 1.85, 1.8),
+        fill_intensity: if senda {
+            SENDA_FILL.1
+        } else {
+            pick(theme, 1.55, 1.85, 1.8)
+        },
         shadow,
         atmosphere: theme_atmosphere(theme),
     }
@@ -465,7 +509,8 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
         sharpen: 0.6,
     };
     match theme {
-        Theme::Village | Theme::Senda | Theme::Custom => Atmosphere {
+        Theme::Senda => senda_atmosphere(theme_atmosphere(Theme::Village)),
+        Theme::Village | Theme::Custom => Atmosphere {
             enabled: true,
             zenith: 0x2e6cc6,
             horizon: 0xc6dcee,
@@ -499,6 +544,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 features: 5.0,
                 mesa: 0.0,
                 gaps: 0.0,
+                ..Ridges::NONE
             },
             ground: Ground {
                 relief: 1.0,
@@ -547,6 +593,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 features: 4.0,
                 mesa: 0.0,
                 gaps: 0.42,
+                ..Ridges::NONE
             },
             ground: Ground {
                 relief: 0.35,
@@ -602,6 +649,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 features: 4.0,
                 mesa: 1.0,
                 gaps: 0.0,
+                ..Ridges::NONE
             },
             ground: Ground {
                 relief: 1.3,
@@ -622,6 +670,55 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 ..GRADE
             },
         },
+    }
+}
+
+/// Senda's late afternoon in the foothills: the village's sky and light warmed and
+/// lowered, a clear sky with a few fair-weather clouds over a warm haze along the
+/// horizon, and behind the scenery's hills three ranges stepping back from olive-brown
+/// to a pale blue-violet, a twin-summited massif over the far one to the east-north-east.
+fn senda_atmosphere(village: Atmosphere) -> Atmosphere {
+    Atmosphere {
+        zenith: 0x3270c4,
+        horizon: 0xdcd8cc,
+        sun_glow: 0xffdcb0,
+        sun_glow_intensity: 1.15,
+        clouds: Clouds {
+            coverage: 0.4,
+            lit: 0xfff6ea,
+            shade: 0x9ea6b6,
+            shadow: 0.3,
+        },
+        haze: Haze {
+            aerial: 0x92a2bc,
+            density: 0.0018,
+            far_density: 0.007,
+            sun_scatter: 0.4,
+            ..village.haze
+        },
+        ridges: Ridges {
+            color: 0x8c96b4,
+            height: 0.085,
+            features: 4.0,
+            mesa: 0.0,
+            gaps: 0.0,
+            near: Some(0x6c6448),
+            summit: Some(Summit {
+                toward: [0.924, -0.383],
+                height: 0.125,
+                separation: 0.11,
+            }),
+        },
+        ground: Ground {
+            dry_bleach: 0.2,
+            ..village.ground
+        },
+        grade: Grade {
+            highlight_tint: 0xffecd2,
+            highlight_toning: 0.11,
+            ..village.grade
+        },
+        ..village
     }
 }
 

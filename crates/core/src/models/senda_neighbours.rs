@@ -17,7 +17,10 @@ use crate::sim::senda_layout::{
 };
 
 use super::batching::batch;
-use super::model_primitives::{box_part, paint, put, rotated, shadowed};
+use super::model_primitives::{
+    box_part, material as model_material, paint, put, rotated, shadowed,
+};
+use super::senda_hills::HillRow;
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 
 /// The neighbours' homes: their pitch along the wall, their depths (front to back, m) by
@@ -36,9 +39,19 @@ const NEIGHBOUR_YARD: f64 = 1.8;
 const NEIGHBOUR_WALL: f64 = 1.0;
 /// How far (m) the row keeps from Senda Parkway's paving where the Way leaves the level.
 const NEIGHBOUR_WAY_ROOM: f64 = 4.0;
-/// The tract's stucco and its three roof tiles: terracotta, a brown blend and a grey tan.
-const NEIGHBOUR_STUCCO: [u32; 3] = [0xc9b594, 0xbea783, 0xcdbd9f];
-const NEIGHBOUR_TILE: [u32; 3] = [0x8a6150, 0x735a4b, 0x857d72];
+/// The tract's stucco (the homes' apricot, cream and tan) and its three roof tiles (their
+/// rose-brown clay, grey-brown flat tile and dark clay), in the homes' satin tile finish.
+const NEIGHBOUR_STUCCO: [u32; 3] = [0xdcb48c, 0xe6d9bf, 0xc9a57a];
+const NEIGHBOUR_TILE: [u32; 3] = [0x8e6c5e, 0x8a7f70, 0x6b4540];
+const TILE_FINISH: (f64, f64) = (0.0, 0.6);
+/// How much (m) the ridges vary from house to house, either way, and the houses' widths.
+const NEIGHBOUR_RIDGE_VARIES: f64 = 0.35;
+const NEIGHBOUR_WIDTHS: [f64; 3] = [0.0, -0.3, 0.25];
+/// A solar array on every this-many-th house: dark glass on the roof's sunward slope,
+/// its share of the slope across and up.
+const NEIGHBOUR_SOLAR_EVERY: usize = 3;
+const NEIGHBOUR_SOLAR: ((f64, f64), (f64, f64)) = ((0.2, 0.62), (0.15, 0.6));
+const SOLAR_GLASS: u32 = 0x1c2433;
 const NEIGHBOUR_DOOR: u32 = 0x5b4636;
 const NEIGHBOUR_BLOCK: u32 = 0x8f7762;
 const NEIGHBOUR_PATIO: u32 = 0xc9c1b2;
@@ -54,6 +67,10 @@ struct Neighbour {
     back: DVec2,
     out: DVec2,
     k: usize,
+    /// The ground's height under it: on the hills, its row's pad.
+    y: f64,
+    /// A house of a row up the hills, with no back yard against the level's wall.
+    on_hill: bool,
 }
 
 /// Whether a stretch of the level's wall whose outside lies toward `out` backs onto the
@@ -101,10 +118,38 @@ fn neighbours() -> Vec<Neighbour> {
                     .iter()
                     .any(|&p| inside_boundary(&boundary, p));
             if !far {
-                houses.push(Neighbour { back: at, out, k });
+                houses.push(Neighbour {
+                    back: at,
+                    out,
+                    k,
+                    y: 0.0,
+                    on_hill: false,
+                });
             }
         }
         walked += span;
+    }
+    houses
+}
+
+/// The houses of the rows up the hills: one every [`NEIGHBOUR_PITCH`] along each row,
+/// counted on from `first` so they vary on from the row along the walls.
+fn hill_houses(rows: &[HillRow], first: usize) -> Vec<Neighbour> {
+    let mut houses = Vec::new();
+    for row in rows {
+        let length = row.from.distance(row.to);
+        let along = (row.to - row.from) / length;
+        let count = (length / NEIGHBOUR_PITCH).floor() as usize;
+        let start = (length - (count - 1) as f64 * NEIGHBOUR_PITCH) / 2.0;
+        for n in 0..count {
+            houses.push(Neighbour {
+                back: row.from + along * (start + n as f64 * NEIGHBOUR_PITCH),
+                out: row.out,
+                k: first + houses.len(),
+                y: row.level,
+                on_hill: true,
+            });
+        }
     }
     houses
 }
@@ -134,11 +179,15 @@ fn quad([a, b, c, d]: [DVec3; 4]) -> [[DVec3; 3]; 2] {
 /// from its back wall), placed and turned onto the ground.
 fn house(group: &mut Node, house: &Neighbour) {
     let k = house.k;
-    let (w, d) = (HOUSE_WIDTH, NEIGHBOUR_DEPTHS[k % NEIGHBOUR_DEPTHS.len()]);
+    let (w, d) = (
+        HOUSE_WIDTH + NEIGHBOUR_WIDTHS[(k * 5 / 3) % NEIGHBOUR_WIDTHS.len()],
+        NEIGHBOUR_DEPTHS[k % NEIGHBOUR_DEPTHS.len()],
+    );
+    let ridge = NEIGHBOUR_RIDGE + NEIGHBOUR_RIDGE_VARIES * ((k as f64 * 2.39).sin());
     let across = left(house.out);
     let to_world = |p: DVec3| {
         let ground = house.back + across * p.x + house.out * p.z;
-        DVec3::new(ground.x, p.y, ground.y)
+        DVec3::new(ground.x, p.y + house.y, ground.y)
     };
     let world = |tris: Vec<[DVec3; 3]>| -> Vec<[DVec3; 3]> {
         tris.into_iter().map(|t| t.map(to_world)).collect()
@@ -164,22 +213,22 @@ fn house(group: &mut Node, house: &Neighbour) {
     // ridge runs front to back, as most of the tract's do.
     let o = NEIGHBOUR_OVERHANG;
     let (x0, x1, z0, z1) = (-hw - o, hw + o, -o, d + o);
-    let rise = NEIGHBOUR_RIDGE - eave;
+    let rise = ridge - eave;
     let low = eave - o * rise / hw;
     let mut roof: Vec<[DVec3; 3]> = Vec::new();
+    // One slope's eave and ridge corners, for its solar array.
+    let slope: [DVec3; 4];
     let mut gable_ends: Vec<[DVec3; 3]> = Vec::new();
     if k % 3 == 1 {
-        let (r0, r1) = (
-            corner(0.0, NEIGHBOUR_RIDGE, z0),
-            corner(0.0, NEIGHBOUR_RIDGE, z1),
-        );
+        let (r0, r1) = (corner(0.0, ridge, z0), corner(0.0, ridge, z1));
         roof.extend(quad([corner(x0, low, z1), r1, r0, corner(x0, low, z0)]));
         roof.extend(quad([corner(x1, low, z0), r0, r1, corner(x1, low, z1)]));
+        slope = [corner(x1, low, z0), corner(x1, low, z1), r1, r0];
         // The stucco gables under the roof's ends.
         for (z, flip) in [(0.0, false), (d, true)] {
             let (a, b, c) = (
                 corner(-hw, eave, z),
-                corner(0.0, NEIGHBOUR_RIDGE - 0.1, z),
+                corner(0.0, ridge - 0.1, z),
                 corner(hw, eave, z),
             );
             gable_ends.push(if flip { [c, b, a] } else { [a, b, c] });
@@ -187,8 +236,8 @@ fn house(group: &mut Node, house: &Neighbour) {
     } else {
         let inset = (x1 - x0) / 2.0;
         let (r0, r1) = (
-            corner(0.0, NEIGHBOUR_RIDGE, z0 + inset),
-            corner(0.0, NEIGHBOUR_RIDGE, z1 - inset),
+            corner(0.0, ridge, z0 + inset),
+            corner(0.0, ridge, z1 - inset),
         );
         let (a, b, c, e) = (
             corner(x0, low, z0),
@@ -198,6 +247,7 @@ fn house(group: &mut Node, house: &Neighbour) {
         );
         roof.extend(quad([e, r1, r0, a]));
         roof.extend(quad([b, r0, r1, c]));
+        slope = [b, c, r1, r0];
         roof.push([a, r0, b]);
         roof.push([c, r1, e]);
     }
@@ -240,14 +290,45 @@ fn house(group: &mut Node, house: &Neighbour) {
     let stucco = NEIGHBOUR_STUCCO[k % NEIGHBOUR_STUCCO.len()];
     let tile = NEIGHBOUR_TILE[(k * 2 + k / 3) % NEIGHBOUR_TILE.len()];
     walls.extend(gable_ends);
-    for (tris, color) in [
-        (walls, stucco),
-        (roof, tile),
-        (door.to_vec(), NEIGHBOUR_DOOR),
+    let mut solar: Vec<[DVec3; 3]> = Vec::new();
+    if k % NEIGHBOUR_SOLAR_EVERY == 1 {
+        // Across from the eave's first corner to its second, up from the eave to the ridge.
+        let ((u0, u1), (v0, v1)) = NEIGHBOUR_SOLAR;
+        let [e0, e1, r1, r0] = slope;
+        let at = |u: f64, v: f64| {
+            let eave = e0.lerp(e1, u);
+            let top = r0.lerp(r1, u);
+            eave.lerp(top, v)
+        };
+        let normal = (e1 - e0).cross(r0 - e0).normalize_or_zero();
+        let lift = normal * if normal.y < 0.0 { -0.03 } else { 0.03 };
+        let corners = [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)].map(|p| p + lift);
+        let [a, b, c, e] = corners;
+        // Wound to face up the roof's outside.
+        solar.extend(if normal.y >= 0.0 {
+            quad([a, b, c, e])
+        } else {
+            quad([e, c, b, a])
+        });
+    }
+    for (tris, material) in [
+        (walls, paint(stucco)),
+        (roof, model_material(tile, TILE_FINISH.0, TILE_FINISH.1)),
+        (
+            solar,
+            model_material(SOLAR_GLASS, TILE_FINISH.0, TILE_FINISH.1),
+        ),
+        (door.to_vec(), paint(NEIGHBOUR_DOOR)),
     ] {
+        if tris.is_empty() {
+            continue;
+        }
         group
             .children
-            .push(shadowed(Arc::new(faces(&world(tris))), paint(color)));
+            .push(shadowed(Arc::new(faces(&world(tris))), material));
+    }
+    if house.on_hill {
+        return;
     }
     // The paved back yard, its block back wall and the planting strip along the level's
     // wall behind it.
@@ -260,7 +341,7 @@ fn house(group: &mut Node, house: &Neighbour) {
             yaw,
             0.0,
         );
-        put(group, piece, middle.x, y, middle.y);
+        put(group, piece, middle.x, y + house.y, middle.y);
     };
     flat(
         group,
@@ -287,11 +368,14 @@ fn house(group: &mut Node, house: &Neighbour) {
 
 /// The tract's next row past the level's south and west walls, its houses merged into
 /// one draw, and a tree beside every few of them.
-pub fn senda_neighbours() -> Node {
+pub fn senda_neighbours(hill_rows: &[HillRow]) -> Node {
     let mut group = Node::group("senda-neighbours");
     let row = neighbours();
     for neighbour in &row {
         house(&mut group, neighbour);
+    }
+    for neighbour in hill_houses(hill_rows, row.len()) {
+        house(&mut group, &neighbour);
     }
     batch(&mut group);
     for neighbour in row.iter().filter(|n| n.k % NEIGHBOUR_TREE_EVERY == 2) {
