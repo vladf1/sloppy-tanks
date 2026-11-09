@@ -26,8 +26,10 @@ use super::wire::{
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
+use crate::sim::house_layout::{GarageSide, HousePlan};
 use crate::sim::structure_physics::{Damping, passes_through};
-use crate::sim::map_options::{MapId, is_extra_level};
+use crate::sim::extra_levels::extra_level;
+use crate::sim::map_options::MapId;
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
 use crate::sim::render_state::{
@@ -215,7 +217,7 @@ const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
 const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
 const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
-const MAP_NAMES: [&str; 5] = names(&MAP_MODES);
+const MAP_NAMES: [&str; 6] = names(&MAP_MODES);
 const EVENT_NAMES: [&str; 14] = names(&EVENT_TYPES);
 const CAUSE_NAMES: [&str; 10] = names(&DAMAGE_CAUSES);
 const DEATH_STYLE_NAMES: [&str; 1] = names(&DEATH_STYLES);
@@ -292,6 +294,7 @@ wire_fields!(
         MOTION_W = Field::new("motion.w", POSITION),
         MOTION_D = Field::new("motion.d", POSITION),
         CRACKED = Field::new("cracked", FieldKind::Blob(PART_SET_BYTES, part_set_json)),
+        HOUSE_PLAN = Field::new("housePlan", FieldKind::Blob(HOUSE_PLAN_BYTES, house_plan_json)),
     }
 );
 
@@ -474,6 +477,28 @@ fn read_timber_join(bytes: &[u8]) -> ReadResult<TimberJoin> {
         }),
         _ => Err("Expected object".into()),
     }
+}
+
+/// A house plan travels as its type, its front's quarter turns, its garage side and the
+/// degrees it turns past them.
+const HOUSE_PLAN_BYTES: usize = 4;
+
+fn read_house_plan(bytes: &[u8]) -> ReadResult<HousePlan> {
+    let garage = match bytes.get(2) {
+        Some(0) => GarageSide::Left,
+        Some(1) => GarageSide::Right,
+        _ => return Err("Expected a garage side".into()),
+    };
+    Ok(HousePlan {
+        style: bytes[0],
+        street: bytes[1] as i8,
+        angle: bytes[3] as i8,
+        garage,
+    })
+}
+
+fn house_plan_json(bytes: &[u8]) -> ReadResult<Value> {
+    serde_json::to_value(read_house_plan(bytes)?).map_err(|e| e.to_string())
 }
 
 /// Only set ends travel, as the JSON protocol sent them; a missing end reads as closed.
@@ -659,6 +684,17 @@ fn write_cover(record: &mut WireRecord, simulation: &Simulation, cover: &Cover) 
             );
         }),
         None => record.clear(TIMBER_JOIN),
+    }
+    match cover.house_plan {
+        Some(plan) => record.set_blob(HOUSE_PLAN, |out| {
+            out.extend([
+                plan.style,
+                plan.street as u8,
+                u8::from(plan.garage == GarageSide::Right),
+                plan.angle as u8,
+            ]);
+        }),
+        None => record.clear(HOUSE_PLAN),
     }
     if let Some(motion) = cover.motion {
         record.set_fixed(MOTION_ORIGIN_X, motion.origin_x, POSITION_SCALE);
@@ -1203,6 +1239,11 @@ pub fn read_cover(record: &WireRecord) -> ReadResult<RenderCover> {
             .map(read_timber_join)
             .transpose()
             .map_err(|e| format!("timberJoin: {e}"))?,
+        house_plan: fields
+            .blob(HOUSE_PLAN)
+            .map(read_house_plan)
+            .transpose()
+            .map_err(|e| format!("housePlan: {e}"))?,
         motion,
     })
 }
@@ -1616,7 +1657,7 @@ impl MirrorScene {
         state.map_outer_floor_extent = self.map.outer_floor_extent;
         state.map_scale = self.map.scale.unwrap_or(1.0);
         // Clients learn a level only from the replicated theme.
-        state.custom_map = Some(self.map.theme).filter(|id| is_extra_level(*id));
+        state.custom_map = Some(self.map.theme).filter(|id| extra_level(*id).is_some());
         Ok(())
     }
 }

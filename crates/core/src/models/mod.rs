@@ -55,6 +55,7 @@ beyond_geometry! {
     mod barrel_surfaces;
     mod cover_model;
     mod house_parts_model;
+    pub mod imported_house;
     mod crate_model;
     pub mod effects_props;
     mod flags;
@@ -100,6 +101,7 @@ mod quarry_site_details;
 mod quarry_soil;
 mod quarry_terrain;
 mod scenery;
+mod senda_scenery;
 mod village_atmosphere;
 mod village_ground;
 mod village_landmarks;

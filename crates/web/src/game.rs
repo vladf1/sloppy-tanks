@@ -118,7 +118,7 @@ use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::game_options::{GameOptions, game_choices, initial_game_options};
 use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
-use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::map_options::{MapId, is_extra_level};
 use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
 #[cfg(target_arch = "wasm32")]
@@ -147,10 +147,12 @@ const AUTOPLAY_MIN_AIM_RANGE: f64 = 7.0;
 const AUTOPLAY_MAX_AIM_RANGE: f64 = 26.0;
 
 /// Battle Setup's choices with the map's level rules: extra levels bring their own
-/// arena and play endless.
+/// arena and play endless; a standard map with streets of its own (the Neighborhood)
+/// plays the standard rules on them.
 fn options_setup(options: &GameOptions) -> SimulationSetup {
     let level_rules = match extra_level(options.map_mode) {
-        Some(level) => single_player_rules(level),
+        Some(level) if is_extra_level(options.map_mode) => single_player_rules(level),
+        Some(arena) => standard_rules().merged(arena),
         None => standard_rules(),
     };
     SimulationSetup {

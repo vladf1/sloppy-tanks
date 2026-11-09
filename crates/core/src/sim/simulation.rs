@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::ai::bot_command;
 use super::ammunition::{has_ammo, select_ammo};
-use super::arena::{CoverDef, PICKUP_LAYOUT};
+use super::arena::{CoverDef, cover_turn};
 use super::barrel_physics::barrel_collider;
 use super::bot_personalities::{BotPersonality, shuffled_bot_names};
 use super::combat_record::CombatRecord;
@@ -501,7 +501,9 @@ impl Simulation {
         }
         drop(laid_out);
         let scale = self.map_scale();
-        self.pickups = PICKUP_LAYOUT
+        self.pickups = self
+            .current_map
+            .pickups
             .iter()
             .map(|placement| {
                 let laser = placement.kind == super::types::PickupKind::Laser;
@@ -554,10 +556,24 @@ impl Simulation {
 
     /// Create a cover record and its physics body from an authored placement.
     pub fn add_cover(&mut self, def: &CoverDef) -> usize {
-        let structure = structure_of(def.kind, def.x, def.z, def.w, def.d, def.h, def.timber_join)
-            .map(StructureState::new);
-        let (body, colliders) =
-            self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h, structure.as_ref());
+        let structure = structure_of(
+            def.kind,
+            def.x,
+            def.z,
+            def.w,
+            def.d,
+            def.h,
+            def.timber_join,
+            def.house_plan,
+        )
+        .map(StructureState::new);
+        let turn = cover_turn(def.kind, def.house_plan);
+        let (body, colliders) = self.cover_body(
+            def.kind,
+            (def.x, def.z, turn),
+            (def.w, def.d, def.h),
+            structure.as_ref(),
+        );
         let cover = Cover {
             id: self.allocate_id(),
             kind: def.kind,
@@ -574,6 +590,7 @@ impl Simulation {
             collider: colliders[0],
             color: def.color,
             timber_join: def.timber_join,
+            house_plan: def.house_plan,
             motion: None,
             fallen_at: None,
             structure,
@@ -645,8 +662,9 @@ impl Simulation {
         cover.hp = cover.max_hp;
         cover.alive = true;
         let (kind, x, z, w, d, h) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
+        let turn = cover_turn(kind, cover.house_plan);
         let structure = cover.structure.take();
-        let (body, colliders) = self.cover_body(kind, x, z, w, d, h, structure.as_ref());
+        let (body, colliders) = self.cover_body(kind, (x, z, turn), (w, d, h), structure.as_ref());
         self.covers[index].structure = structure;
         self.covers[index].body = body;
         self.covers[index].collider = colliders[0];
@@ -655,20 +673,17 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// A cover's body standing at `(x, z)` turned `turn` about +y, of size `(w, d, h)`.
     fn cover_body(
         &mut self,
         kind: CoverKind,
-        x: f64,
-        z: f64,
-        w: f64,
-        d: f64,
-        h: f64,
+        (x, z, turn): (f64, f64, f64),
+        (w, d, h): (f64, f64, f64),
         structure: Option<&StructureState>,
     ) -> (RigidBodyHandle, Vec<ColliderHandle>) {
         let parts = match structure {
             Some(state) => structure_parts(&state.layout, x, z, &state.gone),
-            None => cover_parts(kind, x, z, w, d, h),
+            None => cover_parts(kind, x, z, w, d, h, turn),
         };
         let body = self.world.insert_body(parts.body);
         let colliders = parts
@@ -1249,7 +1264,10 @@ pub struct CoverParts {
     pub tank_footprint: Option<ColliderBuilder>,
 }
 
-pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> CoverParts {
+/// A plain cover's body and colliders: `w` × `d` × `h` at `(x, z)`, turned `turn` about
+/// +y ([`cover_turn`]).
+#[allow(clippy::too_many_arguments)]
+pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64, turn: f64) -> CoverParts {
     let drum = kind == CoverKind::Drum;
     let movable = kind.movable();
     let builder = if movable {
@@ -1323,7 +1341,9 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
             .friction(0.8)
     });
     CoverParts {
-        body: builder.translation(vector(x, h / 2.0, z)),
+        body: builder
+            .translation(vector(x, h / 2.0, z))
+            .rotation(vector(0.0, turn, 0.0)),
         colliders,
         tank_footprint,
     }

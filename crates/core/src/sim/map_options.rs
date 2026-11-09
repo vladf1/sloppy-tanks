@@ -11,15 +11,17 @@ pub enum MapId {
     Quarry,
     StressTest,
     Superstress,
+    Neighborhood,
 }
 
 impl MapId {
-    pub const ALL: [MapId; 5] = [
+    pub const ALL: [MapId; 6] = [
         MapId::Village,
         MapId::Harbor,
         MapId::Quarry,
         MapId::StressTest,
         MapId::Superstress,
+        MapId::Neighborhood,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -29,6 +31,7 @@ impl MapId {
             MapId::Quarry => "quarry",
             MapId::StressTest => "stress-test",
             MapId::Superstress => "superstress",
+            MapId::Neighborhood => "neighborhood",
         }
     }
 
@@ -42,11 +45,13 @@ pub struct MapOption {
     pub id: MapId,
     pub name: &'static str,
     /// Offered only with `?debug`. An extra level brings its own arena, bot roster and
-    /// rules from `extra_levels`, which the browser loads once one is chosen.
+    /// rules from `extra_levels`, which the browser loads once one is chosen; a standard
+    /// map may bring its own arena there too (the Neighborhood's streets) and plays the
+    /// standard rules.
     pub extra: bool,
 }
 
-pub const MAP_OPTIONS: [MapOption; 5] = [
+pub const MAP_OPTIONS: [MapOption; 6] = [
     MapOption {
         id: MapId::Village,
         name: "Pine Village",
@@ -71,6 +76,12 @@ pub const MAP_OPTIONS: [MapOption; 5] = [
         id: MapId::Superstress,
         name: "Scrap Yard",
         extra: true,
+    },
+    // A standard map with streets of its own (`extra_level` gives its arena).
+    MapOption {
+        id: MapId::Neighborhood,
+        name: "Neighborhood",
+        extra: false,
     },
 ];
 

@@ -360,6 +360,14 @@ const SOURCES: &[Source] = &[
             "M3 20h18M4 20v-6.5h7.5V20M12.5 20v-6.5H20V20M8.2 13.5V7h7.5v6.5",
         )],
     ),
+    // A two-storey house with its garage door.
+    icon(
+        "neighborhood",
+        &[stroke(
+            2.0,
+            "M3 11 12 4l9 7M5 9.5V20h14V9.5M8 20v-5h8v5M8 17h8M10 8.5h4v3h-4z",
+        )],
+    ),
     // The setup backdrop's two tanks on watch.
     Source {
         name: "backdrop-tank",
@@ -433,6 +441,32 @@ const SOURCES: &[Source] = &[
             colored(0x8a5a2e, "M150 80l6-10h24l6 4h54v6z"),
             colored(0xe3b072, "M124 38h30l-6 4h-20zM192 34h28l-8 4h-18z"),
             colored(0x7a4e28, "M128 70h8l3 4h-14zM206 66h10l2 5h-14z"),
+        ],
+    },
+    // The Neighborhood: a stucco house under clay, its front gable over the garage and a
+    // one-storey wing under its own hip, a street tree and the kerb.
+    Source {
+        name: "art-neighborhood",
+        view: MAP_ART_VIEW,
+        scale: 2.0,
+        tilt: None,
+        layers: &[
+            colored(0x6f9a52, "M60 80c20-10 50-14 90-12s70 6 90 0v12z"),
+            colored(0xd9cfbd, "M60 80v-5h180v5z"),
+            colored(0xd2ad7a, "M146 46h58v29h-58z"),
+            colored(0xc79f6c, "M176 44l15-12 15 12v31h-30z"),
+            colored(0x9a4f3c, "M140 47l13-12h42l13 12z"),
+            colored(0x8a4434, "M172 45l19-15 19 15h-5l-14-10-14 10z"),
+            colored(0xdcb888, "M122 59h30v16h-30z"),
+            colored(0x9a4f3c, "M117 60l17-11 22 11z"),
+            colored(0x5a3b28, "M182 60h20v15h-20zM181 46h20v8h-20z"),
+            colored(
+                0xf1ead8,
+                "M184 48h7v5h-7zM193 48h7v5h-7zM154 51h8v7h-8zM130 64h9v6h-9z",
+            ),
+            colored(0x4e6b78, "M150 51h3v7h-3z"),
+            colored(0x6b4a33, "M226 60h3v15h-3z"),
+            colored(0x2f6a3e, "M227.5 44a11 11 0 1 0 0.1 0z"),
         ],
     },
     // Each word paints its shadows under it, the second word over the first.

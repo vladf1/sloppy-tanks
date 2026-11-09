@@ -30,6 +30,7 @@ fn cover(kind: CoverKind, [w, d, h]: [f64; 3], color: u32) -> CoverShape {
         h,
         color,
         timber_join: None,
+        house_plan: None,
         broken: PartSet::EMPTY,
         cracked: PartSet::EMPTY,
     }
@@ -195,6 +196,7 @@ fn a_toppled_towers_footings_wear_concrete_and_timber() {
         h: 7.5,
         color: 0xbd8a4a,
         timber_join: None,
+        house_plan: None,
         broken,
         cracked: PartSet::EMPTY,
     };

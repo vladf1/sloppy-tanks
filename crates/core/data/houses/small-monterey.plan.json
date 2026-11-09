@@ -1,0 +1,79 @@
+{
+ "w": 7.0,
+ "d": 5.0,
+ "wall": 3.15,
+ "ridge": 4.0,
+ "garage": "right",
+ "door_wall": 2,
+ "walls": [
+  {
+   "ground": [
+    [
+     -1.6,
+     "Window"
+    ],
+    [
+     1.7,
+     "Window"
+    ]
+   ],
+   "upper": [
+    -1.6,
+    1.7
+   ],
+   "garage_bay": 0.0
+  },
+  {
+   "ground": [
+    [
+     -1.7,
+     "Window"
+    ],
+    [
+     1.4,
+     "Window"
+    ]
+   ],
+   "upper": [
+    -1.7,
+    1.4
+   ],
+   "garage_bay": 0.0
+  },
+  {
+   "ground": [
+    [
+     -1.23,
+     "Door"
+    ],
+    [
+     0.93,
+     "Garage"
+    ]
+   ],
+   "upper": [
+    -1.23,
+    0.68,
+    1.18
+   ],
+   "garage_bay": 0.62
+  },
+  {
+   "ground": [
+    [
+     -1.2,
+     "Window"
+    ],
+    [
+     1.2,
+     "Window"
+    ]
+   ],
+   "upper": [
+    -1.2,
+    1.2
+   ],
+   "garage_bay": 0.0
+  }
+ ]
+}

@@ -1507,6 +1507,9 @@ impl Presentation {
             self.renderer.set_water(water);
             self.theme = Some(theme);
         }
+        // The team flags stand on the boundary wall, which Senda does not draw.
+        self.renderer
+            .set_visible(self.flags.instance, theme != Theme::Senda);
         let look = theme_look(theme);
         self.renderer.set_environment(environment(&look));
         self.renderer.set_atmosphere(look.atmosphere);

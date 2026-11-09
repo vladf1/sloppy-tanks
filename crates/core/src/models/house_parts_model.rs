@@ -16,11 +16,11 @@ use glam::{DMat4, DVec2, DVec3};
 use super::batching::batch;
 use super::building_kit::Surface;
 use super::house_collapse::{ShardClip, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
-use super::house_model::{standing_house, CottagePiece, CottagePieces, cottage_pieces, cottage_scale, cottage_shingles, paint_cottage, paint_cottage_whole};
+use super::house_model::{footing, standing_house, CottagePiece, CottagePieces, cottage_scale, cottage_shingles, paint_cottage, paint_cottage_whole};
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
-use crate::sim::house_layout::{HouseDesign, PLINTH, WALL_DEPTH};
+use crate::sim::house_layout::{HouseDesign, HousePlan, WALL_DEPTH};
 use crate::sim::house_structure::{
     PartCell, PartKind, part_outline, part_plane, shared_house_structure,
 };
@@ -48,8 +48,18 @@ const ON_FACE: f64 = 0.01;
 
 /// The standing cottage for a cottage cover box, drawn from its parts not in
 /// `broken`, with its plinth and yard.
-pub fn structural_house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, broken: &PartSet) {
-    let layout = shared_house_structure(&HouseDesign::of(x, z, w, d, h));
+#[allow(clippy::too_many_arguments)]
+pub fn structural_house(
+    group: &mut Node,
+    x: f64,
+    z: f64,
+    w: f64,
+    d: f64,
+    h: f64,
+    plan: Option<HousePlan>,
+    broken: &PartSet,
+) {
+    let layout = shared_house_structure(&HouseDesign::for_cover(x, z, w, d, h, plan));
     let mut build = HouseBuild::new(layout, x, z, broken);
     while !build.step() {}
     group.children.push(build.finish_cottage());
@@ -118,7 +128,9 @@ impl HouseBuild {
         if !self.open {
             // A whole cottage is the standing model, built in one step.
             if self.next == 0 {
-                self.group = standing_house(self.layout.design().expect("a cottage"), self.x, self.z);
+                let design = self.layout.design().expect("a cottage");
+                self.group = super::imported_house::standing_imported(design, self.x, self.z)
+                    .unwrap_or_else(|| standing_house(design, self.x, self.z));
                 self.next = 1;
             }
             return true;
@@ -198,7 +210,8 @@ impl HouseBuild {
 /// lowest parts and the corner posts), from the ground to the plinth's top and a little
 /// proud of the wall's face: one course of the plinth that goes with its part.
 fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
-    let half = DVec2::new(layout.design().expect("a cottage").w / 2.0, layout.design().expect("a cottage").d / 2.0);
+    let design = layout.design().expect("a cottage");
+    let half = DVec2::new(design.w / 2.0, design.d / 2.0);
     for index in standing.iter() {
         let part = &layout.parts[index];
         if !part.grounded || !(part.house().wall.is_some() || part.house().kind == PartKind::Post) {
@@ -213,16 +226,25 @@ fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
                 min[axis] -= PLINTH_LIP;
             }
         }
-        let (min, max) = (min.with_y(0.0), max.with_y(PLINTH));
-        kit.block(Surface::Stone, max - min, DMat4::from_translation((min + max) / 2.0));
+        let (min, max) = (min.with_y(0.0), max.with_y(design.roof().plinth));
+        kit.block(footing(design), max - min, DMat4::from_translation((min + max) / 2.0));
     }
 }
 
 /// The parts `parts` of the cottage for a cover box, fallen together: drawn about the
 /// cottage's ground centre, turned into the world as the cottage stood. A page drawing
 /// several of a cottage's bodies at once builds one [`HouseDebris`] for them all.
-pub fn house_debris(x: f64, z: f64, w: f64, d: f64, h: f64, parts: &PartSet) -> Node {
-    let layout = shared_house_structure(&HouseDesign::of(x, z, w, d, h));
+#[allow(clippy::too_many_arguments)]
+pub fn house_debris(
+    x: f64,
+    z: f64,
+    w: f64,
+    d: f64,
+    h: f64,
+    plan: Option<HousePlan>,
+    parts: &PartSet,
+) -> Node {
+    let layout = shared_house_structure(&HouseDesign::for_cover(x, z, w, d, h, plan));
     HouseDebris::new(layout, x, z).body(parts)
 }
 
@@ -240,13 +262,13 @@ impl HouseDebris {
     /// The pieces of the cottage at `(x, z)` laid out as `layout` (its
     /// [`shared_house_structure`]).
     pub fn new(layout: Arc<Structure>, x: f64, z: f64) -> Self {
-        let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, false);
+        let pieces = super::imported_house::house_pieces(layout.design().expect("a cottage"), x, z, false);
         Self { layout, pieces }
     }
 
     /// [`HouseDebris::new`] with the plinth and yard too, for [`HouseBuild::use_pieces`].
     pub fn with_ground(layout: Arc<Structure>, x: f64, z: f64) -> Self {
-        let pieces = cottage_pieces(layout.design().expect("a cottage"), x, z, true);
+        let pieces = super::imported_house::house_pieces(layout.design().expect("a cottage"), x, z, true);
         Self { layout, pieces }
     }
 
@@ -525,3 +547,76 @@ fn cell_sides(cell: &PartCell, drawn: &[(usize, PartCell)]) -> Vec<Side> {
     sides
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::super::house_model::cottage_pieces;
+    use super::*;
+    use crate::sim::house_layout::{GarageSide, HousePlan, SENDA_STYLES};
+
+    fn senda() -> Vec<HouseDesign> {
+        let mut designs = Vec::new();
+        for style in 0..SENDA_STYLES.len() as u8 {
+            for garage in [GarageSide::Left, GarageSide::Right] {
+                let plan = HousePlan { style, street: 2, angle: 0, garage };
+                for (w, d) in [(5.4, 6.4), (7.0, 7.5)] {
+                    designs.push(HouseDesign::planned(-12.0, 20.0, w, d, 7.0, plan));
+                }
+            }
+        }
+        designs
+    }
+
+    /// Every window, door and garage door leaf the model cuts lies in the cells of one
+    /// window or door part of the structure, so a part drawn alone carries its opening
+    /// whole and a torn edge never runs through glass.
+    #[test]
+    fn a_garage_houses_openings_lie_in_its_structures_window_and_door_parts() {
+        for design in senda() {
+            // A style drawn from a Blender model is not drawn by this coded model;
+            // imported_house's tests check its openings.
+            if crate::sim::house_layout::house_model(&design).is_some() {
+                continue;
+            }
+            let layout = shared_house_structure(&design);
+            let pieces = cottage_pieces(&design, -12.0, 20.0, false);
+            for (wall, openings) in pieces.openings.iter().enumerate() {
+                for &[u0, y0, u1, y1] in openings.iter().filter(|o| o[3] <= pieces.roof.wall) {
+                    let framed = layout.parts.iter().any(|part| {
+                        let role = part.house();
+                        matches!(role.kind, PartKind::Window | PartKind::Door)
+                            && role.wall == Some(wall)
+                            && role.cells.first().is_some_and(|cell| {
+                                cell.min.x <= u0 + 1e-6
+                                    && cell.max.x >= u1 - 1e-6
+                                    && cell.min.y <= y0 + 1e-6
+                                    && cell.max.y >= y1 - 1e-6
+                            })
+                    });
+                    assert!(framed, "{:?} wall {wall}: opening {u0:.2}..{u1:.2} x {y0:.2}..{y1:.2}", design.style.form);
+                }
+            }
+        }
+    }
+
+    /// A garage house builds whole, with its garage door shot out and as fallen bodies of
+    /// its door wall, for both garage sides of every type.
+    #[test]
+    fn a_garage_house_builds_standing_broken_and_fallen() {
+        for design in senda() {
+            let layout = shared_house_structure(&design);
+            let door_wall = PartSet::from_indices(
+                (0..layout.parts.len()).filter(|&index| layout.parts[index].house().wall == Some(design.door_wall)),
+            );
+            let mut whole = HouseBuild::new(layout.clone(), -12.0, 20.0, &PartSet::EMPTY);
+            while !whole.step() {}
+            assert!(!whole.finish().children.is_empty());
+            let leaves = PartSet::from_indices(door_wall.iter().filter(|&index| layout.parts[index].house().kind == PartKind::Door));
+            let mut broken = HouseBuild::new(layout.clone(), -12.0, 20.0, &leaves);
+            while !broken.step() {}
+            assert!(!broken.finish().children.is_empty());
+            let body = HouseDebris::new(layout.clone(), -12.0, 20.0).body(&door_wall);
+            assert!(!body.children.is_empty());
+        }
+    }
+}

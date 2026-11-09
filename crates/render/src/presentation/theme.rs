@@ -36,6 +36,8 @@ pub enum Theme {
     Village,
     Harbor,
     Quarry,
+    /// Senda's stucco streets, under the village's sky.
+    Senda,
     /// An extra level's plain yard.
     Custom,
 }
@@ -46,6 +48,7 @@ impl Theme {
             "village" => Theme::Village,
             "harbor" => Theme::Harbor,
             "quarry" => Theme::Quarry,
+            "neighborhood" => Theme::Senda,
             _ => Theme::Custom,
         }
     }
@@ -56,6 +59,7 @@ impl Theme {
             Theme::Village => Some(MapTheme::Village),
             Theme::Harbor => Some(MapTheme::Harbor),
             Theme::Quarry => Some(MapTheme::Quarry),
+            Theme::Senda => Some(MapTheme::Neighborhood),
             Theme::Custom => None,
         }
     }
@@ -65,6 +69,7 @@ impl Theme {
             Theme::Village => "village",
             Theme::Harbor => "harbor",
             Theme::Quarry => "quarry",
+            Theme::Senda => "neighborhood",
             Theme::Custom => "custom",
         }
     }
@@ -346,13 +351,16 @@ pub struct ThemeLook {
     pub atmosphere: Atmosphere,
 }
 
+/// Senda's ground bounce ([`ThemeLook::fill_ground`]).
+const SENDA_FILL_GROUND: u32 = 0xa08e74;
+
 pub fn theme_look(theme: Theme) -> ThemeLook {
     /// The theme's value; extra levels take the village look.
     fn pick<T>(theme: Theme, quarry: T, harbor: T, village: T) -> T {
         match theme {
             Theme::Quarry => quarry,
             Theme::Harbor => harbor,
-            Theme::Village | Theme::Custom => village,
+            Theme::Village | Theme::Senda | Theme::Custom => village,
         }
     }
     let quarry = theme == Theme::Quarry;
@@ -392,7 +400,14 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         sun_intensity: pick(theme, 4.1, 3.9, 4.0),
         sun_position,
         fill_color: pick(theme, 0x9cb4da, 0xa0b2cc, 0x9eb6da),
-        fill_ground: pick(theme, 0xb89a72, 0x8e8a82, 0x8c8c5e),
+        // Senda's bounce comes off driveways, sidewalks and stucco as much as lawn: a
+        // warm grey, under which its cream and tan walls keep their colour in shade
+        // rather than turning mint under the village's olive bounce and blue sky.
+        fill_ground: if theme == Theme::Senda {
+            SENDA_FILL_GROUND
+        } else {
+            pick(theme, 0xb89a72, 0x8e8a82, 0x8c8c5e)
+        },
         fill_intensity: pick(theme, 1.55, 1.85, 1.8),
         shadow,
         atmosphere: theme_atmosphere(theme),
@@ -450,7 +465,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
         sharpen: 0.6,
     };
     match theme {
-        Theme::Village | Theme::Custom => Atmosphere {
+        Theme::Village | Theme::Senda | Theme::Custom => Atmosphere {
             enabled: true,
             zenith: 0x2e6cc6,
             horizon: 0xc6dcee,

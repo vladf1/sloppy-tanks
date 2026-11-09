@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::arena::{CoverDef, arena_layout};
+use super::arena::{CoverDef, PICKUP_LAYOUT, PickupPlacement, arena_layout};
 use super::harbor_layout::harbor_layout;
 use super::map_options::MapId;
 use super::quarry_layout::quarry_layout;
@@ -20,6 +20,8 @@ pub enum MapTheme {
     Village,
     Harbor,
     Quarry,
+    /// Senda's stucco streets (scenery of its own).
+    Neighborhood,
 }
 
 impl MapTheme {
@@ -28,6 +30,7 @@ impl MapTheme {
             MapTheme::Village => "village",
             MapTheme::Harbor => "harbor",
             MapTheme::Quarry => "quarry",
+            MapTheme::Neighborhood => "neighborhood",
         }
     }
 }
@@ -41,6 +44,9 @@ pub struct ArenaMap {
     /// A compact yard's size relative to the standard arena; see `Simulation::map_scale`.
     pub scale: Option<f64>,
     pub layout: fn() -> Vec<CoverDef>,
+    /// Where its pickups lie, before the map's scale: the shared [`PICKUP_LAYOUT`]
+    /// unless the level lays its own out round its streets.
+    pub pickups: &'static [PickupPlacement],
 }
 
 const fn standard(id: MapId, theme: MapTheme, layout: fn() -> Vec<CoverDef>) -> ArenaMap {
@@ -52,6 +58,7 @@ const fn standard(id: MapId, theme: MapTheme, layout: fn() -> Vec<CoverDef>) -> 
         outer_floor_extent: None,
         scale: None,
         layout,
+        pickups: &PICKUP_LAYOUT,
     }
 }
 

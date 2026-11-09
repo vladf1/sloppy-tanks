@@ -2564,10 +2564,12 @@ fn stack_layout(
     let tank_card = window.tank_rows().height();
     y += HEADING_ROW + 2.0 * WELL_PADDING + tank_card + gap;
     let map_top = y;
-    let map_rows = maps.len().div_ceil(3).max(1);
-    let map_width = (inner_width - 2.0 * WELL_PADDING - 2.0 * WELL_GAP) / 3.0;
+    let per_row = map_row_length(maps.len());
+    let map_rows = maps.len().div_ceil(per_row).max(1);
+    let map_width =
+        (inner_width - 2.0 * WELL_PADDING - (per_row - 1) as f32 * WELL_GAP) / per_row as f32;
     let map_card = maps
-        .chunks(3)
+        .chunks(per_row)
         .map(|row| map_row_height(painter, row, map_width, window.map_layout()))
         .fold(0.0, f32::max);
     y += HEADING_ROW
@@ -2915,12 +2917,13 @@ fn draw_stack(
         ),
     );
     painter.rect_filled(map_well, 14, hexa(0x071328, 0.85));
-    for (row, chunk) in maps.chunks(3).enumerate() {
+    let per_row = map_row_length(maps.len());
+    for (row, chunk) in maps.chunks(per_row).enumerate() {
         let top = map_well.top() + WELL_PADDING + row as f32 * (stack.map_card + WELL_GAP);
         for (map, rect) in chunk.iter().zip(cells(
             pos2(map_well.left() + WELL_PADDING, top),
             inner_width - 2.0 * WELL_PADDING,
-            3,
+            per_row,
             stack.map_card,
             WELL_GAP,
         )) {
@@ -3351,7 +3354,7 @@ fn phone_setup(
     } else {
         (
             PHONE_SIDEWAYS_TANK,
-            maps.len().div_ceil(3),
+            maps.len().div_ceil(map_row_length(maps.len())),
             PHONE_SIDEWAYS_MAP,
         )
     };
@@ -3546,7 +3549,11 @@ fn phone_setup(
                     }
                     y += PHONE_LABEL;
                     let shown_map = room_map.unwrap_or(options.map_mode);
-                    let per_row = if upright { 1 } else { 3 };
+                    let per_row = if upright {
+                        1
+                    } else {
+                        map_row_length(maps.len())
+                    };
                     let map_rows_shown = maps.len().div_ceil(per_row) as f32;
                     well(Rect::from_min_size(
                         pos2(inner.left(), y),
@@ -4084,4 +4091,10 @@ fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Ac
             });
         }
     }
+}
+
+/// Map cards to a row where the maps wrap: three, but four maps (the standard ones) two
+/// by two, so none stands alone on a row of its own.
+fn map_row_length(maps: usize) -> usize {
+    if maps == 4 { 2 } else { 3 }
 }

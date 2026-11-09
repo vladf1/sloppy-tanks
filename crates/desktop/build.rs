@@ -9,7 +9,7 @@ use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
 /// The `public/` folders the native game reads.
-const EMBEDDED: &[&str] = &["textures", "audio", "previews", "icons"];
+const EMBEDDED: &[&str] = &["textures", "audio", "previews", "icons", "models"];
 
 fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -19,10 +19,9 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect(&path, files);
-        } else if path
-            .extension()
-            .is_some_and(|extension| matches!(extension.to_str(), Some("webp" | "mp3" | "png")))
-        {
+        } else if path.extension().is_some_and(|extension| {
+            matches!(extension.to_str(), Some("webp" | "mp3" | "png" | "glb"))
+        }) {
             files.push(path);
         }
     }

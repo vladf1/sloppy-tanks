@@ -90,6 +90,14 @@ pub const MAP_CARDS: [MapCard; MAP_OPTIONS.len()] = [
         tint: 0x8a5a44,
         team_tanks: Some(15),
     },
+    MapCard {
+        id: MapId::Neighborhood,
+        description: "Cul-de-sacs. Clay roofs.",
+        short_description: None,
+        icon: "neighborhood",
+        tint: 0xc0794a,
+        team_tanks: None,
+    },
 ];
 
 pub fn map_card(id: MapId) -> &'static MapCard {

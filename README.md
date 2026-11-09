@@ -96,7 +96,8 @@ Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
 - **Team Battle:** six versus six, with respawns. First to 100 kills or the highest score after five minutes wins; a timed tie enters next-kill overtime.
 - **Solo Assault:** survive ten minutes on one life against up to six enemies at once, with unlimited replacements.
-- **Maps:** Pine Village, Harbor Havoc and Dusty Dig.
+- **Maps:** Pine Village, Harbor Havoc, Dusty Dig and the Neighborhood (Senda's stucco
+  streets, its houses drawn from Blender models in `assets/blender/`).
 - **Difficulty:** Easy, Normal or Hard; fixed for the round and saved locally.
 
 Your tank, single-player mode, map and difficulty are remembered in this browser.

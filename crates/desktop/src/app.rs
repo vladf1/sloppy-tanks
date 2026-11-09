@@ -1085,6 +1085,12 @@ impl Session {
             self.start_bake_early();
             return Ok(());
         }
+        // The arena waits for the reference house's model (a hashed file the page fetches beside the
+        // binary, at high priority): built before it arrives, the round would show the
+        // coded house.
+        if !install_imported_home() {
+            return Ok(());
+        }
         let wanted = self.wanted_options();
         if wanted != self.prepared_options {
             // The rebuild's first step holds this thread for a moment: the player's new
@@ -1527,6 +1533,51 @@ fn window_icon() -> Option<winit::window::Icon> {
     let image = image.into_rgba8();
     let (width, height) = image.dimensions();
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
+/// Hand the Blender-made house models to the core as their runtime files arrive;
+/// `?codedhome` (or `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once every
+/// one is settled: installed, refused, failed to download or never fetched.
+pub(crate) fn install_imported_home() -> bool {
+    use sloppy_core::models::imported_house::{install, model_paths};
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SETTLED: AtomicBool = AtomicBool::new(false);
+    static DONE: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    if SETTLED.load(Ordering::Relaxed) {
+        return true;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let coded = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .is_some_and(|search| search.contains("codedhome"));
+    #[cfg(not(target_arch = "wasm32"))]
+    let coded = std::env::var_os("SLOPPY_CODED_HOME").is_some();
+    if coded {
+        SETTLED.store(true, Ordering::Relaxed);
+        return true;
+    }
+    let mut done = DONE.lock().expect("house models");
+    let mut pending = false;
+    for (name, path) in model_paths() {
+        if done.contains(&name) {
+            continue;
+        }
+        match crate::assets::load(&path) {
+            crate::assets::Asset::Ready(bytes) => {
+                if let Err(error) = install(name, &bytes) {
+                    report!("The house model {name} did not load: {error}");
+                }
+                done.push(name);
+            }
+            crate::assets::Asset::Loading => pending = true,
+            crate::assets::Asset::Missing => done.push(name),
+        }
+    }
+    if !pending {
+        SETTLED.store(true, Ordering::Relaxed);
+    }
+    !pending
 }
 
 #[cfg(test)]

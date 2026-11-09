@@ -340,6 +340,7 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     sim.world.step();
     let script = |tick: u64| match tick {
@@ -538,6 +539,7 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         color: 0x8b5a2b,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     };
     // A wall's beams falling against the hull cost the windows of their fall as well; after
     // it the hull shoves them along, held to the host's loose-piece speed.
@@ -643,6 +645,7 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
         color: 0xaa3322,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     sim.world.step();
     let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 180);

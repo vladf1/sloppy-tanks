@@ -6,7 +6,7 @@ use super::protocol::MAX_PLAYER_NAME_LENGTH;
 use super::schema::text_length;
 use crate::sim::difficulty::Difficulty;
 use crate::sim::extra_levels::extra_level;
-use crate::sim::map_options::{MapId, is_extra_level};
+use crate::sim::map_options::MapId;
 use crate::sim::simulation::{GameMode, Simulation, SimulationSetup};
 use crate::sim::types::{Driver, PlayerAssignment, VehicleCommand, VehicleKind};
 
@@ -61,12 +61,9 @@ pub fn create_multiplayer_simulation(
         round_count: Some(TEAM_SLOTS * 2),
         ..SimulationSetup::default()
     };
-    // An extra level brings its own arena, rules and bot roster; human seats stay the same.
-    if let Some(level) = options
-        .map_mode
-        .filter(|map| is_extra_level(*map))
-        .and_then(extra_level)
-    {
+    // An extra level brings its own arena, rules and bot roster, a standard map with streets
+    // of its own (the Neighborhood) its arena; human seats stay the same.
+    if let Some(level) = options.map_mode.and_then(extra_level) {
         setup = setup.merged(level);
     }
     setup.players = Some(roster);

@@ -35,6 +35,7 @@ use crate::sim::physics::{
     from_vector, interaction_groups, query_filter, to_rotation, to_vector, vector,
 };
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
+use crate::sim::arena::cover_turn;
 use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
@@ -544,7 +545,8 @@ impl TankPredictor {
                 // A structure's layout is built once; a break only changes its parts.
                 let layout = layout.or_else(|| {
                     let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
-                    structure_of(cover.kind, x, z, w, d, cover.h, cover.timber_join)
+                    let (join, plan) = (cover.timber_join, cover.house_plan);
+                    structure_of(cover.kind, x, z, w, d, cover.h, join, plan)
                 });
                 let body = self.insert_cover(cover, form, layout.as_deref());
                 self.world.bodies[body].user_data = Owner::Cover(cover.id).user_data();
@@ -786,7 +788,7 @@ impl TankPredictor {
         };
         let parts = match (form, layout) {
             (CoverForm::Parts(broken), Some(layout)) => structure_parts(layout, x, z, &broken),
-            _ => cover_parts(cover.kind, x, z, w, d, cover.h),
+            _ => cover_parts(cover.kind, x, z, w, d, cover.h, cover_turn(cover.kind, cover.house_plan)),
         };
         let body = self.world.insert_body(parts.body);
         match form {

@@ -149,6 +149,7 @@ impl WorldModel {
             color: cover.color,
             timber_join: cover.timber_join,
             timber_bays: None,
+            house_plan: cover.house_plan,
         });
         simulation.covers[index].id = cover.id;
         let region = Footprint::from(&simulation.covers[index]);
@@ -279,6 +280,7 @@ fn unstepped(simulation: &mut Simulation) {
                 color: cover.color,
                 timber_join: cover.timber_join,
                 timber_bays: None,
+                house_plan: cover.house_plan,
             };
             (cover.id, def)
         })

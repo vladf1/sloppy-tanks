@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use super::crate_structure::{CratePart, crate_structure};
 use super::debris_physics::DebrisMaterial;
-use super::house_layout::{HouseDesign, Roof};
+use super::house_layout::{HouseDesign, HousePlan, Roof};
 use super::house_structure::{HouseRole, shared_house_structure};
 use super::kinds::CoverKind;
 use super::structure_physics::ShapeCache;
@@ -659,6 +659,7 @@ impl<K: PartialEq> HeldLayouts<K> {
 }
 
 /// The structure a cover of `kind` stands for, if it is built of parts.
+#[allow(clippy::too_many_arguments)]
 pub fn structure_of(
     kind: CoverKind,
     x: f64,
@@ -667,9 +668,12 @@ pub fn structure_of(
     d: f64,
     h: f64,
     join: Option<TimberJoin>,
+    plan: Option<HousePlan>,
 ) -> Option<Arc<Structure>> {
     match kind {
-        CoverKind::House => Some(shared_house_structure(&HouseDesign::of(x, z, w, d, h))),
+        CoverKind::House => Some(shared_house_structure(&HouseDesign::for_cover(
+            x, z, w, d, h, plan,
+        ))),
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),

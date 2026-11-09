@@ -353,6 +353,8 @@ pub struct Cover {
     pub collider: ColliderHandle,
     pub color: u32,
     pub timber_join: Option<TimberJoin>,
+    /// A house its map lays out; see [`super::house_layout::HousePlan`].
+    pub house_plan: Option<super::house_layout::HousePlan>,
     pub motion: Option<CoverMotion>,
     /// When level rules first saw this cover destroyed; the base game never reads it.
     pub fallen_at: Option<f64>,

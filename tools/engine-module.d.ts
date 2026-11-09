@@ -15,6 +15,18 @@ declare module "*/generated/engine-labs/engine.js" {
       z: number,
       yaw: number,
     ): void;
+    add_home(name: string, glb: Uint8Array, broken: Uint32Array, x: number, z: number): string;
+    add_planned(
+      name: string,
+      model: string,
+      glb: Uint8Array,
+      style: number,
+      left: boolean,
+      w: number,
+      h: number,
+      x: number,
+      z: number,
+    ): string;
     set_background(color: number): void;
     set_generated_texture(name: string, width: number, height: number, rgba: Uint8Array): void;
     textures_pending(): number;

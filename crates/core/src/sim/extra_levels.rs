@@ -1,6 +1,7 @@
 //! Every extra level's arena, roster and rules, shared by single player and rooms.
 
 use super::map_options::MapId;
+use super::senda_layout::SENDA_MAP;
 use super::simulation::SimulationSetup;
 use super::stress_test_level::stress_test_level;
 use super::superstress_level::superstress_level;
@@ -10,6 +11,11 @@ pub fn extra_level(id: MapId) -> Option<SimulationSetup> {
     match id {
         MapId::StressTest => Some(stress_test_level()),
         MapId::Superstress => Some(superstress_level()),
+        // The Neighborhood, a standard map: only its streets are its own.
+        MapId::Neighborhood => Some(SimulationSetup {
+            custom_map: Some(Some(&SENDA_MAP)),
+            ..SimulationSetup::default()
+        }),
         MapId::Village | MapId::Harbor | MapId::Quarry => None,
     }
 }

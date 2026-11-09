@@ -4,6 +4,7 @@
 //! grit and in the quarry pale sand.
 
 use sloppy_core::models::is_village_dirt;
+use sloppy_core::sim::senda_layout::is_senda_paved;
 
 use crate::color::hex_to_linear;
 
@@ -13,6 +14,7 @@ pub enum Ground {
     Village,
     Harbor,
     Quarry,
+    Senda,
 }
 
 /// The dust raised from a surface and the clods thrown off it, sRGB hex.
@@ -44,6 +46,7 @@ impl Ground {
         match theme {
             "harbor" => Self::Harbor,
             "quarry" => Self::Quarry,
+            "neighborhood" => Self::Senda,
             _ => Self::Village,
         }
     }
@@ -55,6 +58,8 @@ impl Ground {
             Self::Village => MEADOW,
             Self::Harbor => CONCRETE,
             Self::Quarry => SAND,
+            Self::Senda if is_senda_paved(x, z) => CONCRETE,
+            Self::Senda => MEADOW,
         }
     }
 

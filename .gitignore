@@ -10,3 +10,6 @@ src/generated/
 
 # The pilot engine scripts/build-pilot.mjs builds for the bots Worker.
 bots/generated/
+
+# Blender scripts import house_kit.py; Python caches its bytecode beside it.
+__pycache__/

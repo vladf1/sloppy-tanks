@@ -48,6 +48,9 @@ const STAINED_WOOD: u32 = 0x76512f;
 /// lying upturned in the sun shows as boards (darker, it read as a black hole).
 const SHEATHING: u32 = 0x7a6650;
 const LAMP_GLASS: u32 = 0xf1d18f;
+/// Solar cells under their glass: near black with a little blue, satin rather than
+/// glossy (from overhead a glossy array mirrored the sky in streaks).
+const SOLAR_GLASS: u32 = 0x1c2433;
 /// Timber freshly split where a building broke apart, paler than its stain.
 const SPLIT_TIMBER: u32 = 0xb48d5c;
 
@@ -92,6 +95,12 @@ pub(super) enum Surface {
     Splinters,
     /// The raw boards under a roof's covering, which a broken roof shows from inside.
     Sheathing,
+    /// Solar panels' dark glass.
+    Solar,
+    /// A garage door's stained carriage panels.
+    GarageDoor,
+    /// Painted board-and-batten cladding.
+    Cladding,
 }
 
 impl Finishes for Surface {
@@ -115,6 +124,9 @@ impl Finishes for Surface {
         Surface::Lining,
         Surface::Splinters,
         Surface::Sheathing,
+        Surface::Solar,
+        Surface::GarageDoor,
+        Surface::Cladding,
     ];
 }
 
@@ -203,6 +215,9 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
         Surface::Curtain | Surface::Lining => finish(CURTAIN, MATTE),
         Surface::Splinters => finish(SPLIT_TIMBER, MATTE),
         Surface::Sheathing => finish(SHEATHING, MATTE),
+        Surface::Solar => finish(SOLAR_GLASS, SATIN),
+        Surface::GarageDoor => finish(STAINED_WOOD, SATIN),
+        Surface::Cladding => finish(palette.accent, SATIN),
     }
 }
 

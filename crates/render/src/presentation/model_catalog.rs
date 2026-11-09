@@ -104,14 +104,16 @@ pub fn cover_key(cover: &RenderCover) -> String {
         CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
         _ => format!("@{}/{}", cover.x, cover.z),
     };
+    // A plan turns a plain cover laid out in a lot's frame (Senda's yard walls).
     format!(
-        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:x?}{}",
+        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:?}/{:x?}{}",
         cover.kind,
         cover.w,
         cover.h,
         cover.d,
         cover.color,
         cover.timber_join,
+        cover.house_plan,
         cover.broken.0,
         tower_scars(cover),
     )
@@ -274,7 +276,7 @@ fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
             paths.push(vec![root.children.len() - 1]);
             paths
         }
-        Scenery::Quarry(_) => Vec::new(),
+        Scenery::Quarry(_) | Scenery::Neighborhood(_) => Vec::new(),
     }
 }
 
@@ -383,8 +385,10 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
 const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
 
 /// Whether a cottage's chimney is up: it smokes until it breaks or falls.
+/// A village cottage's chimney still standing; a planned house (Senda's) has none, and
+/// its structure's part at the chimney's index is a corner post's foot.
 fn chimney_stands(cover: &RenderCover) -> bool {
-    !cover.broken.contains(CHIMNEY_PART)
+    cover.house_plan.is_none() && !cover.broken.contains(CHIMNEY_PART)
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.

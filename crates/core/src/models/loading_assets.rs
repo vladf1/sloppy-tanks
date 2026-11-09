@@ -31,6 +31,11 @@ pub fn scenery_texture_files(theme: MapTheme) -> &'static [&'static str] {
             "textures/harbor/container-ribbed.webp",
             "textures/harbor/container.webp",
         ],
+        MapTheme::Neighborhood => &[
+            "textures/ground/dry-grass.webp",
+            "textures/ground/packed-dirt.webp",
+            "textures/trees/atlas.webp",
+        ],
         MapTheme::Quarry => &[
             "textures/ground/packed-dirt.webp",
             "textures/tanks/armor-wear.webp",
@@ -49,16 +54,37 @@ const ROUND_TEXTURE_FILES: &[&str] = &[
     "textures/tanks/armor-wear.webp",
     "textures/tanks/armor-scorch.webp",
     "textures/pickups/atlas.webp",
-    "textures/wood/timber.webp",
-    "textures/barrels/painted-drum.webp",
     "textures/trees/bark.webp",
     "textures/trees/rings.webp",
     "textures/houses/siding.webp",
-    "textures/walls/weathered-concrete.webp",
 ];
 
-/// The village's birches, the one cover a theme alone has.
-const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &["textures/trees/birch.webp"];
+/// The standard maps' concrete walls, timber walls, crates and drums.
+const STANDARD_COVER_TEXTURE_FILES: &[&str] = &[
+    "textures/walls/weathered-concrete.webp",
+    "textures/wood/timber.webp",
+    "textures/barrels/painted-drum.webp",
+];
+
+/// The village's birches beside them, the one cover a theme alone has.
+const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &[
+    "textures/walls/weathered-concrete.webp",
+    "textures/wood/timber.webp",
+    "textures/barrels/painted-drum.webp",
+    "textures/trees/birch.webp",
+];
+
+/// Senda's cover: the Craftsman wings' and porches' brick, the stacked stone (sandstone)
+/// of the Prairie porches' piers and the buff wings, the parkways' young birches and the lot
+/// walls' split-face block;
+/// its stucco houses, tile roofs and oaks need no file the round's scenery does not
+/// already fetch.
+const SENDA_COVER_TEXTURE_FILES: &[&str] = &[
+    "textures/houses/brick.webp",
+    "textures/quarry/sandstone.webp",
+    "textures/trees/birch.webp",
+    "textures/walls/weathered-concrete.webp",
+];
 
 /// Every texture file a round on `theme` loads while its arena builds, each once. The
 /// renderer reports a build that asks for a file this leaves out, or none for one it
@@ -66,7 +92,8 @@ const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &["textures/trees/birch.webp"];
 pub fn round_texture_files(theme: MapTheme) -> Vec<&'static str> {
     let covers = match theme {
         MapTheme::Village => VILLAGE_COVER_TEXTURE_FILES,
-        MapTheme::Harbor | MapTheme::Quarry => &[],
+        MapTheme::Harbor | MapTheme::Quarry => STANDARD_COVER_TEXTURE_FILES,
+        MapTheme::Neighborhood => SENDA_COVER_TEXTURE_FILES,
     };
     let mut files: Vec<&'static str> = Vec::new();
     for &file in [scenery_texture_files(theme), ROUND_TEXTURE_FILES, covers]

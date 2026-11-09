@@ -1302,6 +1302,55 @@ fn add_broadleaf_crown(
     }
 }
 
+/// A leafy shrub for scenery: clumps of small-leaved sprig cards over an ellipsoid of
+/// `radii` round `middle` (world space, under a node at the origin), shaded as one
+/// rounded mass like a crown, in `color` (the sRGB its leaves average) with each card a
+/// little lighter or darker. It draws in the background trees' atlas material, so a
+/// cell of shrubs and trees merges into one draw. `seed` picks its cards.
+pub fn leafy_shrub(middle: DVec3, radii: DVec3, color: u32, seed: u32) -> Node {
+    let mut rng = Random::new(f64::from(seed) * 7.31 + 0.5);
+    let (sprig, wanted) = (hex_to_linear(SPRIG_GREEN), hex_to_linear(color));
+    // The crown's skylight dims its leaves by about this much on average.
+    let tint = [0, 1, 2].map(|k| wanted[k] / sprig[k] / 0.82);
+    let clumps = if radii.x.max(radii.z) > 0.6 { 5 } else { 4 };
+    let cards_per_clump = 8;
+    let size = radii.x.max(radii.z);
+    let mut cards = Vec::with_capacity((clumps * cards_per_clump) as usize);
+    for j in 0..clumps {
+        let angle = rng.range(0.0, PI * 2.0);
+        let reach = if j == 0 { 0.0 } else { 0.5 };
+        let tip = middle
+            + DVec3::new(
+                angle.cos() * radii.x * reach,
+                rng.range(-0.15, 0.25) * radii.y,
+                angle.sin() * radii.z * reach,
+            );
+        let clump = radii * 0.6;
+        let phase = rng.range(0.0, PI * 2.0);
+        for k in 0..cards_per_clump {
+            cards.push(sprig_card(
+                &mut rng,
+                tip,
+                clump,
+                k,
+                cards_per_clump,
+                phase,
+                size * 1.05,
+                &OVATE_CELLS,
+            ));
+        }
+    }
+    let shape = CrownShape::Round {
+        center: middle,
+        radii,
+    };
+    let refs: Vec<&Card> = cards.iter().collect();
+    let mesh = foliage_mesh(&refs, &shape, tint);
+    let mut node = shadowed(Arc::new(mesh), tinted_surface(TreeSurface::LeafSprigs));
+    into_atlas(&mut node, false);
+    node
+}
+
 /// The damage stage a tree's boughs show: two drop after the first damage, two
 /// more at 35% health (`setTreeDamage`).
 pub fn tree_branch_stage(health_ratio: f64) -> u32 {

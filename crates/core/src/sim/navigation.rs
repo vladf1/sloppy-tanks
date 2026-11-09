@@ -4,6 +4,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use super::arena::cover_turn;
 use super::data::ARENA;
 use super::structure_physics::ground_footprints;
 use super::math::Vec2;
@@ -30,13 +31,44 @@ pub struct Footprint {
 }
 
 impl From<&Cover> for Footprint {
+    /// The cover's box, or a turned cover's bounds along the world's axes.
     fn from(cover: &Cover) -> Self {
+        let (sin, cos) = cover_turn(cover.kind, cover.house_plan).sin_cos();
+        let (sin, cos) = (sin.abs(), cos.abs());
         Self {
             x: cover.x,
             z: cover.z,
-            w: cover.w,
-            d: cover.d,
+            w: cover.w * cos + cover.d * sin,
+            d: cover.w * sin + cover.d * cos,
         }
+    }
+}
+
+/// How far apart (m) the squares that stand in for a turned cover's footprint lie along
+/// it: well under the hull clearance they are grown by, so their union is the turned box.
+const TURNED_STEP: f64 = 0.5;
+
+/// A turned cover's footprint as a row of squares along its long side (Senda's yard
+/// walls are long and thin, so their bounds along the world's axes would block the side
+/// yards beside them).
+fn turned_footprints(cover: &Cover, obstacles: &mut Vec<Footprint>) {
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // The box's own axes in the world (as a house's build frame turns).
+    let (length, width, along) = if cover.w >= cover.d {
+        (cover.w, cover.d, (cos, -sin))
+    } else {
+        (cover.d, cover.w, (sin, cos))
+    };
+    let steps = ((length - width) / TURNED_STEP).ceil().max(1.0);
+    for k in 0..=steps as usize {
+        let u = (k as f64 / steps - 0.5) * (length - width);
+        obstacles.push(Footprint {
+            x: cover.x + along.0 * u,
+            z: cover.z + along.1 * u,
+            w: width,
+            d: width,
+        });
     }
 }
 
@@ -104,6 +136,8 @@ impl Navigation {
                 // A structure blocks where its standing parts reach the ground, so tanks
                 // drive through its gaps where they fit.
                 ground_footprints(cover, &mut self.obstacles);
+            } else if cover.alive && cover_turn(cover.kind, cover.house_plan) != 0.0 {
+                turned_footprints(cover, &mut self.obstacles);
             } else if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {

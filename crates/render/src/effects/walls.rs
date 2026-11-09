@@ -435,6 +435,11 @@ impl Walls {
         );
         self.boxes.extend(self.fallen.iter().map(|(box_, _)| *box_));
         for cover in state.covers.iter().filter(|cover| cover.alive) {
+            // The marks lie on boxes square to the world; a turned plain cover (Senda's
+            // lot walls) takes none rather than marks floating off its faces.
+            if cover.kind != CoverKind::House && cover.house_plan.is_some() {
+                continue;
+            }
             let material = match cover.kind {
                 CoverKind::Container | CoverKind::Hedgehog => Some(WallMaterial::Steel),
                 CoverKind::Rock | CoverKind::Concrete | CoverKind::Teeth => {
@@ -445,9 +450,10 @@ impl Walls {
                 _ => continue,
             };
             let (color, trim) = if cover.kind == CoverKind::House {
-                let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+                let (x, z, plan) = (cover.x, cover.z, cover.house_plan);
+                let design = HouseDesign::for_cover(x, z, cover.w, cover.d, cover.h, plan);
                 let walls = match design.style.walls {
-                    WallFinish::Clapboard => design.style.siding,
+                    WallFinish::Clapboard | WallFinish::Stucco => design.style.siding,
                     WallFinish::Brick => BRICK,
                 };
                 (walls, design.style.trim)

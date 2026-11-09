@@ -98,7 +98,8 @@ impl TrackDust {
         let theme = state.map_theme.as_str();
         let quarry = theme == "quarry";
         let village = theme == "village";
-        let grass_floor = state.map_floor == Some(GroundKind::DryGrass);
+        // Plain grass floors, and Senda's lawns and asphalt, raise no dust.
+        let grass_floor = state.map_floor == Some(GroundKind::DryGrass) || theme == "neighborhood";
         // Per map: dust color, puff spacing (m, times the vehicle scale) and peak opacity.
         let (color, spacing, peak) = match theme {
             "quarry" => (0xd9bc8b, 1.0, 0.46),

@@ -18,6 +18,7 @@ use super::harbor_surfaces::harbor_parapet;
 use super::house_parts_model::{house_debris, structural_house};
 use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
+use super::senda_scenery::{is_yard_wall, yard_wall};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
@@ -28,7 +29,13 @@ use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
+use crate::sim::house_layout::HousePlan;
 use crate::sim::render_state::RenderCover;
+use crate::sim::arena::cover_turn;
+use crate::sim::senda_layout::{
+    SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
+};
+use crate::sim::senda_yards::{YARD_VIEW_COLOR, YARD_WALL_COLOR};
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
 use crate::sim::structure::{PartSet, Role};
 use crate::sim::timber_layout::{
@@ -56,6 +63,8 @@ pub struct CoverShape {
     pub h: f64,
     pub color: u32,
     pub timber_join: Option<TimberJoin>,
+    /// A house its map lays out; see [`HousePlan`].
+    pub house_plan: Option<HousePlan>,
     /// A structure's parts broken or fallen from it.
     pub broken: PartSet,
     /// A watchtower's parts that have been struck, standing or not (a cottage's look
@@ -74,6 +83,7 @@ impl From<&RenderCover> for CoverShape {
             h: cover.h,
             color: cover.color,
             timber_join: cover.timber_join,
+            house_plan: cover.house_plan,
             broken: cover.broken,
             cracked: cover.cracked,
         }
@@ -116,7 +126,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.broken),
         // The parts of a cottage that still stand; an untouched one keeps its place
         // in the static covers' draws.
-        CoverKind::House => structural_house(group, c.x, c.z, c.w, c.d, c.h, &c.broken),
+        CoverKind::House => {
+            structural_house(group, c.x, c.z, c.w, c.d, c.h, c.house_plan, &c.broken)
+        }
         CoverKind::Timber => {
             let parts = timber_parts(&TimberWall {
                 x: c.x,
@@ -166,13 +178,23 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {
             fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);
         }
+        CoverKind::Boundary if c.color == SENDA_WALL_COLOR || c.color == SENDA_FENCE_COLOR => {
+            tract_wall(group, c);
+            // A run down Senda Parkway's verge turns with its plan, as a lot's wall does.
+            group.rotation = glam::DQuat::from_rotation_y(cover_turn(c.kind, c.house_plan));
+        }
         CoverKind::Boundary if c.color == QUARRY_WALL_COLOR => {
             put(group, cut_stone_wall(c.w, c.h, c.d), 0.0, 0.0, 0.0);
         }
         CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
             put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
         }
-        // Harbor Havoc's precast barriers (the only concrete cover).
+        // Senda's lot walls and gates.
+        CoverKind::Concrete if is_yard_wall(c.color) => {
+            let turn = cover_turn(c.kind, c.house_plan);
+            yard_wall(group, (c.w, c.d, c.h), c.color, turn);
+        }
+        // Harbor Havoc's precast barriers.
         CoverKind::Concrete => {
             put(group, concrete_barrier(c.w, c.h, c.d), 0.0, 0.0, 0.0);
         }
@@ -181,6 +203,62 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         }
     }
     node
+}
+
+/// The most (m) a tract wall's run goes between pilasters.
+const TRACT_PILASTER_SPACING: f64 = 5.5;
+/// A pilaster's side (m), as a lot wall's: the short piece at the far end of a run that
+/// stands one there.
+const TRACT_END_PIECE: f64 = 0.36;
+
+/// Senda's edge, a run of the tract's own wall: capped split-face block, or along the
+/// open ground a black view fence on a low block base, both as the lots' walls are built,
+/// 0.2 m thick on the inside face of the run's cover (which keeps its depth outside it
+/// for the collider alone), from end to end of the run, with a capped pilaster every few
+/// metres and at both ends.
+fn tract_wall(group: &mut Node, c: &CoverShape) {
+    let Some(plan) = c.house_plan else {
+        return;
+    };
+    let face = WallFace::of(plan);
+    let long_x = face.along_x;
+    let (length, thick) = if long_x { (c.w, c.d) } else { (c.d, c.w) };
+    let (from, to) = (-length / 2.0 + face.reach[0], length / 2.0 - face.reach[1]);
+    // On the inside face, and on past the run's ends as far as a wall this thick needs
+    // to close an outer corner.
+    let close = WALL_THICKNESS / thick;
+    let (from, to) = (from - face.reach[0] * close, to + face.reach[1] * close);
+    let across = face.inside * (thick - WALL_THICKNESS) / 2.0;
+    let color = if c.color == SENDA_FENCE_COLOR {
+        YARD_VIEW_COLOR
+    } else {
+        YARD_WALL_COLOR
+    };
+    let pieces = ((to - from) / TRACT_PILASTER_SPACING).ceil().max(1.0) as usize;
+    let piece = (to - from) / pieces as f64;
+    let mut place = |u: f64, length: f64| {
+        let mut run = Node::default();
+        let (w, d) = if long_x {
+            run.position = DVec3::new(u, 0.0, across);
+            (length, WALL_THICKNESS)
+        } else {
+            run.position = DVec3::new(across, 0.0, u);
+            (WALL_THICKNESS, length)
+        };
+        yard_wall(&mut run, (w, d, c.h), color, 0.0);
+        group.children.push(run);
+    };
+    for k in 0..pieces {
+        place(from + piece * (k as f64 + 0.5), piece);
+    }
+    // A lot wall's run stands its pilaster at its start: along x its negative end, along
+    // z (turned a quarter) its positive one; a short piece stands one at the other end.
+    let end = if long_x {
+        to - TRACT_END_PIECE / 2.0
+    } else {
+        from + TRACT_END_PIECE / 2.0
+    };
+    place(end, TRACT_END_PIECE);
 }
 
 fn crate_shape(c: &CoverShape) -> CrateShape {
@@ -232,7 +310,7 @@ fn rock(group: &mut Node, c: &CoverShape) {
 /// drawn as they stood about its ground centre, where their body started, batched.
 pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
     match c.kind {
-        CoverKind::House => house_debris(c.x, c.z, c.w, c.d, c.h, parts),
+        CoverKind::House => house_debris(c.x, c.z, c.w, c.d, c.h, c.house_plan, parts),
         CoverKind::Tower => tower_debris(c.color, parts),
         CoverKind::Timber => {
             let members = timber_parts(&TimberWall {

@@ -715,6 +715,9 @@ impl RoomSession {
 
     /// One engine frame: input in, the drawn scene, its events and HUD out.
     fn frame(&mut self, now: f64) -> Result<(), String> {
+        // A room's arena may build before the reference house's model arrives (its rounds are not
+        // held for it): rounds built after draw it.
+        crate::app::install_imported_home();
         let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
         let result = self
