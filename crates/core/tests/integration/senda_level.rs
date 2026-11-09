@@ -607,7 +607,7 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
         let turn = a.perp_dot(b).atan2(a.dot(b)).to_degrees().abs();
         if after.0.distance(DVec2::new(ARENA, -ARENA)) > 0.01 {
             assert!(
-                turn < 35.0,
+                turn < 32.0,
                 "the wall turns {turn:.0} degrees at {:?}",
                 after.0
             );
@@ -638,7 +638,8 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
             let middle = (a + b) / 2.0;
             let (_, heading) = way.at(way.along(middle));
             let off_square = (b - a).normalize().dot(heading).abs().asin().to_degrees();
-            // The corner's first short runs at the verge lean a little.
+            // Past a bend in the Way the crossing's corner runs lean a little against
+            // the span before it.
             assert!(
                 off_square < 12.0,
                 "the wall from {a:?} to {b:?} crosses the Way {off_square:.0} degrees off square"

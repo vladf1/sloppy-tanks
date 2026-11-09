@@ -165,7 +165,7 @@ for corner, end in (((MAIN_EAVE[0], MAIN_EAVE[1]), RIDGE_HALF_X), ((MAIN_EAVE[0]
 # The array: one block of panels on the street slope left of the front gable, between the
 # ridge and the wing's roof, as the aerial has it.
 street = Slope(front_slope)
-for pu, pv in ((0.72, 1.62), (1.36, 1.62), (0.72, 2.24), (1.36, 2.24)):
+for pu, pv in ((1.05, 1.38), (1.69, 1.38), (1.05, 2.0), (1.69, 2.0)):
     face("FrontRoof__Solar", [street.at(pu, pv, 0.08), street.at(pu + 0.6, pv, 0.08), street.at(pu + 0.6, pv + 0.58, 0.08), street.at(pu, pv + 0.58, 0.08)], street.N)
 
 # The one-storey wing before the lower left and the porch beside it, under one clay hip
