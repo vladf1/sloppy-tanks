@@ -224,11 +224,14 @@ const CUL_DE_SAC_SOUTH_ROW_END: f64 = 11.0;
 /// block, which its model knows it by.
 pub const SENDA_WALL_COLOR: u32 = 0xc8b28c;
 const TREE_COLOR: u32 = 0x3f7a3a;
-/// The parkway trees, one before most lots: their footprint, no wider than the parkway
-/// strip they stand in, and height, the least room (m) between two of them and between
-/// one and a driveway, and how often a lot keeps none (every this many lots, one).
-const STREET_TREE: f64 = PARKWAY;
-const STREET_TREE_HEIGHT: f64 = 3.5;
+/// The parkway trees, one before most lots: their footprint and height, the least room
+/// (m) between two of them and between one and a driveway, and how often a lot keeps
+/// none (every this many lots, one). The trunk stands in the parkway strip; the box,
+/// which the tree's model takes its crown's width from, reaches a quarter metre over the
+/// kerb and the sidewalk, since a box as narrow as the strip grows a crown under a metre
+/// wide where the tract's are three to five (1.6 to 2.7 at the tank's scale).
+pub const STREET_TREE: f64 = PARKWAY + 0.5;
+const STREET_TREE_HEIGHT: f64 = 3.6;
 const STREET_TREE_ROOM: f64 = 2.5;
 const STREET_TREE_DRIVEWAY_ROOM: f64 = 0.2;
 const STREET_TREE_SKIP: usize = 4;

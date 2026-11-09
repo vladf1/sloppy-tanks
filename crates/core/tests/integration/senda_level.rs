@@ -1254,8 +1254,8 @@ fn street_trees_stand_in_the_parkway_strips_before_most_lots_never_before_a_driv
     );
     for tree in &street_trees {
         let at = DVec2::new(tree.x, tree.z);
-        // No wider than its strip, wholly between the kerb and the sidewalk.
-        assert!(tree.w <= PARKWAY && tree.d <= PARKWAY, "{tree:?}");
+        // Its trunk between the kerb and the sidewalk, its box a quarter metre over each.
+        assert!(tree.w <= PARKWAY + 0.5 && tree.d <= PARKWAY + 0.5, "{tree:?}");
         for (street, line) in &lines {
             let off = line.distance(at) - street.half();
             assert!(
