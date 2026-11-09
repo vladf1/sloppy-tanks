@@ -622,7 +622,7 @@ pub const CORNER_SPANISH: u8 = senda_style(Plan::Small, Exterior::Spanish, 0);
 const RUMBO_NORTH_ROW: usize = 0;
 const RUMBO_SOUTH_ROW: usize = 1;
 const NEBLINA_WEST_ROW: usize = 3;
-const NEBLINA_WEST_TOP: usize = 7;
+const NEBLINA_WEST_TOP: usize = 6;
 /// Rumbo's north row from Neblina, lot by lot: the small Spanish on the corner, the
 /// medium Craftsman, the large Craftsman, the reference house, the large Spanish, the
 /// large Monterey, the large Craftsman again, the reference house's design in cream, the
