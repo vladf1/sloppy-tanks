@@ -14,7 +14,10 @@
 //! it cuts the coded meshes. Layout, colliders and navigation stay the coded house's.
 
 use std::collections::HashMap;
+use std::f64::consts::FRAC_PI_2;
 use std::sync::{Arc, Mutex};
+
+use glam::DVec3;
 
 use super::batching::batch;
 use super::building_kit::{Surface, uv_per_metre};
@@ -25,7 +28,12 @@ use super::tank_kit::KitMeshes;
 use crate::geometry::Mesh;
 use crate::geometry::{narrow, widen};
 use crate::scene::Node;
-use crate::sim::house_layout::{HOUSE_MODELS, HouseDesign, HousePart, ModelFit, house_model};
+use crate::sim::arena::cover_turn;
+use crate::sim::house_layout::{
+    HOUSE_MODELS, HouseDesign, HouseModel, HousePart, HousePlan, ModelFit, SENDA_STYLES,
+    house_model,
+};
+use crate::sim::kinds::CoverKind;
 
 /// The runtime file a model downloads as.
 pub fn model_path(name: &str) -> String {
@@ -43,6 +51,9 @@ pub fn model_paths() -> impl Iterator<Item = (&'static str, String)> {
 /// drawn for (ridge along z, front +z, ground at y = 0), or fitted to another lot.
 pub struct ImportedHouse {
     meshes: Vec<(HousePart, Surface, Arc<Mesh>)>,
+    /// The office and entry before the front (`Entry__<Surface>`), drawn as a cover of
+    /// their own ([`standing_entry`]); a fitted house keeps none.
+    entry: Vec<(Surface, Arc<Mesh>)>,
 }
 
 impl ImportedHouse {
@@ -59,14 +70,20 @@ impl ImportedHouse {
         meshes
     }
 
-    /// Each mesh's part, finish and triangle count, for measuring.
+    /// Each mesh's part (`Entry` for the entry's), finish and triangle count, for
+    /// measuring.
     pub fn summary(&self) -> Vec<(String, String, usize)> {
+        let triangles =
+            |mesh: &Mesh| mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len) / 3;
         self.meshes
             .iter()
-            .map(|(part, surface, mesh)| {
-                let triangles = mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len) / 3;
-                (format!("{part:?}"), format!("{surface:?}"), triangles)
-            })
+            .map(|(part, surface, mesh)| (format!("{part:?}"), surface, mesh))
+            .chain(
+                self.entry
+                    .iter()
+                    .map(|(surface, mesh)| (ENTRY_PART.to_string(), surface, mesh)),
+            )
+            .map(|(part, surface, mesh)| (part, format!("{surface:?}"), triangles(mesh)))
             .collect()
     }
 }
@@ -76,6 +93,11 @@ static MODELS: Mutex<Option<HashMap<&'static str, Arc<ImportedHouse>>>> = Mutex:
 /// A fitted model's key: its name and its fit's measures (the mirror folded in).
 type FitKey = (&'static str, [u64; 6]);
 static FITTED: Mutex<Option<HashMap<FitKey, Arc<ImportedHouse>>>> = Mutex::new(None);
+/// The entries' meshes fitted to their covers, by model and fit, in the cover's frame.
+type EntryMeshes = Arc<Vec<(Surface, Arc<Mesh>)>>;
+static ENTRIES: Mutex<Option<HashMap<FitKey, EntryMeshes>>> = Mutex::new(None);
+/// The node prefix of a model's office and entry.
+const ENTRY_PART: &str = "Entry";
 
 /// Install the model `name` from its `.glb` bytes; an error leaves its coded houses.
 pub fn install(name: &str, bytes: &[u8]) -> Result<(), String> {
@@ -90,6 +112,7 @@ pub fn install(name: &str, bytes: &[u8]) -> Result<(), String> {
         .get_or_insert_with(HashMap::new)
         .insert(model.name, Arc::new(house));
     FITTED.lock().expect("fitted models").take();
+    ENTRIES.lock().expect("fitted entries").take();
     Ok(())
 }
 
@@ -97,6 +120,7 @@ pub fn install(name: &str, bytes: &[u8]) -> Result<(), String> {
 pub fn uninstall() {
     MODELS.lock().expect("house models").take();
     FITTED.lock().expect("fitted models").take();
+    ENTRIES.lock().expect("fitted entries").take();
 }
 
 /// Whether the model `name` is installed.
@@ -120,18 +144,7 @@ fn model_for(design: &HouseDesign) -> Option<Arc<ImportedHouse>> {
     if fit.identity() {
         return Some(source);
     }
-    let key = (
-        model.name,
-        [
-            fit.scale_x,
-            fit.scale_z,
-            fit.from.0,
-            fit.from.1,
-            fit.to.0,
-            fit.to.1,
-        ]
-        .map(|v| v.to_bits() ^ u64::from(fit.mirror)),
-    );
+    let key = fit_key(model.name, &fit);
     let mut fitted = FITTED.lock().expect("fitted models");
     Some(
         fitted
@@ -142,9 +155,45 @@ fn model_for(design: &HouseDesign) -> Option<Arc<ImportedHouse>> {
     )
 }
 
+/// A fit's cache key: the model's name and the fit's measures (the mirror folded in).
+fn fit_key(name: &'static str, fit: &ModelFit) -> FitKey {
+    (
+        name,
+        [
+            fit.scale_x,
+            fit.scale_z,
+            fit.from.0,
+            fit.from.1,
+            fit.to.0,
+            fit.to.1,
+        ]
+        .map(|v| v.to_bits() ^ u64::from(fit.mirror)),
+    )
+}
+
+/// `mesh` fitted by `fit`: each point placed, normals with it, a mirror's triangles
+/// turned back to face out.
+fn fitted_mesh(mesh: &Mesh, fit: &ModelFit) -> Mesh {
+    let mut mesh = mesh.clone();
+    for (p, n) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
+        let at = widen(*p);
+        *n = narrow(fit.normal(widen(*n), at.y));
+        *p = narrow(fit.point(at));
+    }
+    if fit.mirror
+        && let Some(indices) = &mut mesh.indices
+    {
+        for triangle in indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+    }
+    mesh
+}
+
 impl ImportedHouse {
     /// The model fitted to a lot: each point placed by `fit`, normals with it, a mirror's
-    /// triangles turned back to face out and its flanks and slopes swapped.
+    /// triangles turned back to face out and its flanks and slopes swapped. The entry is
+    /// fitted for its cover alone ([`standing_entry`]).
     pub fn fitted(&self, fit: &ModelFit) -> ImportedHouse {
         let meshes = self
             .meshes
@@ -155,23 +204,29 @@ impl ImportedHouse {
                 } else {
                     *part
                 };
-                let mut mesh = (**mesh).clone();
-                for (p, n) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
-                    let at = widen(*p);
-                    *n = narrow(fit.normal(widen(*n), at.y));
-                    *p = narrow(fit.point(at));
-                }
-                if fit.mirror
-                    && let Some(indices) = &mut mesh.indices
-                {
-                    for triangle in indices.as_chunks_mut::<3>().0 {
-                        triangle.swap(1, 2);
-                    }
-                }
-                (part, *surface, Arc::new(mesh))
+                (part, *surface, Arc::new(fitted_mesh(mesh, fit)))
             })
             .collect();
-        ImportedHouse { meshes }
+        ImportedHouse {
+            meshes,
+            entry: Vec::new(),
+        }
+    }
+
+    /// The entry's meshes fitted by `fit`, then moved and turned by `place` into its
+    /// cover's frame.
+    fn fitted_entry(&self, fit: &ModelFit, place: impl Fn(DVec3) -> DVec3, turn: f64) -> Vec<(Surface, Arc<Mesh>)> {
+        self.entry
+            .iter()
+            .map(|(surface, mesh)| {
+                let mut mesh = fitted_mesh(mesh, fit);
+                for (p, n) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
+                    *p = narrow(place(widen(*p)));
+                    *n = narrow(turned(widen(*n), turn));
+                }
+                (*surface, Arc::new(mesh))
+            })
+            .collect()
     }
 }
 
@@ -248,6 +303,100 @@ pub(super) fn standing_imported(design: &HouseDesign, x: f64, z: f64) -> Option<
     Some(group)
 }
 
+/// How an office and entry is drawn for its cover: its house's model, the fit that
+/// mirrors and stretches it as its house is, where that fit puts the entry's box centre
+/// in the house's build frame and the turn (radians) from that frame to the cover's.
+struct EntryFit {
+    model: &'static HouseModel,
+    fit: ModelFit,
+    centre: DVec3,
+    turn: f64,
+}
+
+/// [`EntryFit`] for a cover: `plan` is its house's (the cover carries it) and `(w, d, h)`
+/// the cover's box, `w` across the house's front and `d` out from it. The entry stands
+/// below the house's wall top, where its house's fit is a stretch along each axis, so the
+/// box fixes that fit: the entry is mirrored and stretched exactly as its house is.
+fn entry_fit(plan: HousePlan, (w, d, h): (f64, f64, f64)) -> Option<EntryFit> {
+    let style = SENDA_STYLES[usize::from(plan.style) % SENDA_STYLES.len()];
+    let model = HOUSE_MODELS.iter().find(|model| {
+        model
+            .styles
+            .iter()
+            .any(|&other| SENDA_STYLES[usize::from(other)] == style)
+    })?;
+    let authored = model.authored();
+    let entry = authored.entry?;
+    // A house whose door is in its eave wall is built a quarter turn round: its street
+    // front is the build frame's +x wall, and its street frame turns back from it.
+    let along = authored.door_wall == 2;
+    let (build_w, build_d) = if along { (d, w) } else { (w, d) };
+    let lift = h / entry.h;
+    let fit = ModelFit {
+        mirror: plan.garage != authored.garage,
+        mirror_z: along,
+        scale_x: build_w / entry.w,
+        scale_z: build_d / entry.d,
+        from: (authored.wall, authored.ridge),
+        to: (
+            authored.wall * lift,
+            authored.ridge - authored.wall + authored.wall * lift,
+        ),
+    };
+    Some(EntryFit {
+        model,
+        fit,
+        centre: fit.point(DVec3::new(entry.x, 0.0, entry.z)),
+        turn: if along { -FRAC_PI_2 } else { 0.0 },
+    })
+}
+
+/// `p` turned `angle` (radians) about +y, as a house's build frame turns into the world.
+fn turned(p: DVec3, angle: f64) -> DVec3 {
+    let (sin, cos) = angle.sin_cos();
+    DVec3::new(p.x * cos + p.z * sin, p.y, -p.x * sin + p.z * cos)
+}
+
+/// The office and entry before a planned house, standing, for its cover at `(x, z)`
+/// ([`entry_fit`]): drawn in the cover's frame, the house's street frame about the box's
+/// middle, which the cover turns into the world. `None` while the house's model is not
+/// installed.
+pub(super) fn standing_entry(plan: HousePlan, x: f64, z: f64, size: (f64, f64, f64)) -> Option<Node> {
+    let EntryFit {
+        model,
+        fit,
+        centre,
+        turn,
+    } = entry_fit(plan, size)?;
+    let source = MODELS
+        .lock()
+        .expect("house models")
+        .as_ref()?
+        .get(model.name)?
+        .clone();
+    let meshes = ENTRIES
+        .lock()
+        .expect("fitted entries")
+        .get_or_insert_with(HashMap::new)
+        .entry(fit_key(model.name, &fit))
+        .or_insert_with(|| {
+            let mut meshes = source.fitted_entry(&fit, |p| turned(p - centre, turn), turn);
+            grime(&mut meshes, fit.to.1);
+            Arc::new(meshes)
+        })
+        .clone();
+    // The house's centre, for its paint (its roof's shade varies with where it stands).
+    let offset = turned(centre, cover_turn(CoverKind::Concrete, Some(plan)) + turn);
+    let (house_x, house_z) = (x - offset.x, z - offset.z);
+    let authored = model.authored();
+    let design = HouseDesign::planned(house_x, house_z, authored.w, authored.d, authored.ridge, plan);
+    let palette = palette_for(&design, house_x, house_z);
+    let mut group = Node::group("");
+    paint_cottage_whole(&mut group, (*meshes).clone(), &design, &palette);
+    batch(&mut group);
+    Some(group)
+}
+
 fn part_named(name: &str) -> Option<HousePart> {
     HousePart::ALL
         .into_iter()
@@ -262,7 +411,8 @@ fn surface_named(name: &str) -> Option<Surface> {
         .find(|surface| format!("{surface:?}") == name)
 }
 
-/// The meshes of a binary glTF whose nodes are named `<HousePart>__<Surface>`: each
+/// The meshes of a binary glTF whose nodes are named `<HousePart>__<Surface>` (or
+/// `Entry__<Surface>`, the office and entry before the front): each
 /// mesh's first primitive (positions, normals, metre UVs scaled to the finish's texture,
 /// indices), placed by its node's translation. Blender's +Y up and -Z forward export
 /// lands in the build frame as is.
@@ -308,6 +458,7 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
             .collect())
     };
     let mut meshes = Vec::new();
+    let mut entry = Vec::new();
     for node in json["nodes"].as_array().ok_or("no nodes")? {
         let Some(mesh_index) = node["mesh"].as_u64() else {
             continue;
@@ -317,7 +468,11 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
         let Some((part, surface)) = base.split_once("__") else {
             return Err(format!("node {name} is not <HousePart>__<Surface>"));
         };
-        let part = part_named(part).ok_or_else(|| format!("no part {part}"))?;
+        let part = if part == ENTRY_PART {
+            None
+        } else {
+            Some(part_named(part).ok_or_else(|| format!("no part {part}"))?)
+        };
         let surface = surface_named(surface).ok_or_else(|| format!("no surface {surface}"))?;
         let at = node["translation"]
             .as_array()
@@ -376,10 +531,13 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
                 indices: Some(indices),
                 ..Mesh::default()
             };
-            meshes.push((part, surface, Arc::new(mesh)));
+            match part {
+                Some(part) => meshes.push((part, surface, Arc::new(mesh))),
+                None => entry.push((surface, Arc::new(mesh))),
+            }
         }
     }
-    Ok(ImportedHouse { meshes })
+    Ok(ImportedHouse { meshes, entry })
 }
 
 /// Development dump: the coded home's pieces as an OBJ (one group per
@@ -694,6 +852,101 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// How far (m) past its box an entry's model may reach: its steps, piers and planter
+    /// before it, its eaves and the reference house's passage behind the house's front.
+    const ENTRY_REACH: f64 = 1.0;
+
+    #[test]
+    fn every_model_draws_its_entry_apart_inside_its_box() {
+        for model in HOUSE_MODELS {
+            let house = shipped(model.name);
+            let entry = model.authored().entry.expect("an entry box in the plan");
+            assert!(!house.entry.is_empty(), "{}: no Entry__ nodes", model.name);
+            let inside = |p: DVec3, grow: f64, top: f64| {
+                (p.x - entry.x).abs() < entry.w / 2.0 + grow
+                    && (p.z - entry.z).abs() < entry.d / 2.0 + grow
+                    && p.y < top
+            };
+            for (surface, mesh) in &house.entry {
+                for p in mesh.positions.iter().map(|p| widen(*p)) {
+                    assert!(
+                        p.y >= -0.01 && inside(p, ENTRY_REACH, entry.h + 0.01),
+                        "{}: Entry {surface:?} reaches {p}",
+                        model.name
+                    );
+                }
+            }
+            // The house keeps nothing in the entry's box: it stands whole once it is gone.
+            for (part, surface, mesh) in &house.meshes {
+                for p in mesh.positions.iter().map(|p| widen(*p)) {
+                    assert!(
+                        !inside(p, -0.05, entry.h - 0.05),
+                        "{}: {part:?} {surface:?} at {p} inside the entry's box",
+                        model.name
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_entry_cover_fits_its_entry_as_its_house_fits_the_house() {
+        use crate::sim::senda_entries::design_entry;
+        let mut plans: Vec<(HousePlan, f64, f64, f64)> = senda_houses()
+            .into_iter()
+            .map(|house| (house.plan, house.w, house.d, house.h))
+            .collect();
+        for model in HOUSE_MODELS {
+            for garage in [GarageSide::Left, GarageSide::Right] {
+                for (w, d, plate) in [(5.8, 7.4, 3.15), (6.2, 7.7, 3.25), (6.2, 8.0, 3.2)] {
+                    let plan = HousePlan {
+                        style: model.styles[0],
+                        street: 1,
+                        angle: 0,
+                        garage,
+                    };
+                    plans.push((plan, w, d, plate + GARAGE_HOUSE_PITCH * w / 2.0));
+                }
+            }
+        }
+        for (plan, w, d, h) in plans {
+            let design = HouseDesign::planned(0.0, 0.0, w, d, h, plan);
+            let (model, house) = house_model(&design).expect("a model");
+            let place = design_entry(&design).expect("an entry");
+            let entry = entry_fit(plan, (place.w, place.d, place.h)).expect("an entry fit");
+            let near = |a: f64, b: f64| (a - b).abs() < 2e-3 * b.abs().max(1.0);
+            assert!(
+                entry.model.name == model.name
+                    && entry.fit.mirror == house.mirror
+                    && entry.fit.mirror_z == house.mirror_z
+                    && near(entry.fit.scale_x, house.scale_x)
+                    && near(entry.fit.scale_z, house.scale_z)
+                    && near(entry.fit.to.0, house.to.0),
+                "{}: {:?} against the house's {house:?}",
+                model.name,
+                entry.fit
+            );
+            // The cover's middle is where the house's fit puts the entry's, and its frame
+            // turns into the world as the house's build frame does.
+            let at = design.to_world(house.point(DVec3::new(
+                model.authored().entry.expect("a box").x,
+                0.0,
+                model.authored().entry.expect("a box").z,
+            )));
+            let cover = turned(
+                turned(entry.centre, entry.turn),
+                crate::sim::arena::cover_turn(CoverKind::Concrete, Some(plan)),
+            );
+            assert!(
+                at.distance(DVec3::new(place.at.x, 0.0, place.at.y)) < 1e-3
+                    && at.distance(cover) < 2e-3,
+                "{}: entry at {at}, cover at {}, turned {cover}",
+                model.name,
+                place.at
+            );
         }
     }
 }

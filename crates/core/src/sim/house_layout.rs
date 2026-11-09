@@ -1482,7 +1482,23 @@ pub struct AuthoredPlan {
     /// ridge runs along the street, the eave wall (2).
     #[serde(default)]
     pub door_wall: usize,
+    /// The box of the single-storey office and entry before its front, which the level
+    /// stands as a cover of its own (`sim::senda_entries`).
+    #[serde(default)]
+    pub entry: Option<EntryBox>,
     walls: [WallPlan; 4],
+}
+
+/// A model's office-and-entry box in the build frame it was drawn in (m): its centre on
+/// the ground, its extent along x and z and its height. It runs from the house's front
+/// wall out to the office's front, over the enclosed room and the porch bay beside it.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub struct EntryBox {
+    pub x: f64,
+    pub z: f64,
+    pub w: f64,
+    pub d: f64,
+    pub h: f64,
 }
 
 static AUTHORED: std::sync::OnceLock<Vec<AuthoredPlan>> = std::sync::OnceLock::new();

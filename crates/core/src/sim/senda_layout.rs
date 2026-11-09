@@ -2040,6 +2040,7 @@ fn senda_layout() -> Vec<CoverDef> {
     }
     covers.extend(super::senda_yards::yard_walls(&houses));
     covers.extend(super::senda_yards::patio_covers(&houses));
+    covers.extend(super::senda_entries::entry_covers(&houses));
     covers.extend(street_trees(&houses));
     covers.extend(trash_bins(&houses));
     covers.extend(street_lamp_covers(&boundary));

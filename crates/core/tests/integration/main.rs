@@ -49,6 +49,7 @@ mod render_state;
 mod resting_stones;
 mod round_recap;
 mod scene_codec;
+mod senda_entries;
 mod senda_level;
 mod shoot_mines;
 mod shooter_first;
