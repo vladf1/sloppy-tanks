@@ -4,12 +4,14 @@
 #   (bun run house:craftsman writes public/models/houses/craftsman.glb and
 #   crates/core/data/houses/craftsman.plan.json)
 #
-# Drawn in the street frame on a 5 x 7 m lot, its garage on the right; the game builds it
-# with its door in the eave wall and fits it to every lot of its styles. A two-storey stucco
-# block under a low flat-tile hip, a dark stained box bay over the garage under a tile
-# hood, a shuttered window over the entry, and before the entry a one-storey porch under a
-# flat-tile hip of its own on dark posts over stacked-stone piers; the garage's one-piece
-# sectional door in raised panels. The paints are the style's.
+# Drawn in the street frame on a 6.2 x 8 m lot (the tract's 11.7 x 15 m box at the level's
+# scale), its garage on the right; the game builds it with its door in the eave wall and
+# fits it to every lot of its styles. A two-storey stucco block under a low flat-tile hip,
+# a dark stained box bay over the garage under a tile hood, a shuttered window over the
+# entry, and before it a one-storey office under a flat-tile hip, the entry passage up its
+# side under a shed on tapered posts over stacked-stone piers; the garage's one-piece
+# roll-up door with a row of lites.
+# The paints are the style's.
 
 import os
 import sys
@@ -17,66 +19,56 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from house_kit import *  # noqa: E402,F403
 
-# The coded Craftsman front (door bay, garage leaves and the bay's pair over the garage)
-# with a window over the entry; two windows down each flank and a pair at the back.
+# The coded Craftsman front (a window and the door in the entry's half, the garage's leaves
+# and the bay's pair over the garage) with a window over the entry; two windows a floor
+# down each flank and three across the back.
 PLAN = {
     "w": 2 * HALF_W,
     "d": 2 * HALF_D,
     "walls": {
-        "front": {"ground": [[-1.23, "Door"], [0.93, "Garage"]], "upper": [-1.23, 0.68, 1.18], "garage_bay": 0.62},
-        "back": {"ground": [[-1.2, "Window"], [1.2, "Window"]], "upper": [-1.2, 1.2], "garage_bay": 0.0},
-        "right": {"ground": [[-1.5, "Window"], [1.3, "Window"]], "upper": [-1.5, 1.3], "garage_bay": 0.0},
-        "left": {"ground": [[-1.4, "Window"], [1.6, "Window"]], "upper": [-1.4, 1.6], "garage_bay": 0.0},
+        "front": {"ground": [[-1.91, "Window"], [-0.66, "Door"], [1.4, "Garage"]], "upper": [1.0, 1.8, -0.66], "garage_bay": GARAGE_BAY},
+        "back": {"ground": [[-1.6, "Window"], [0.3, "Window"], [2.0, "Window"]], "upper": [-1.6, 0.3, 2.0], "garage_bay": 0.0},
+        "right": {"ground": [[-2.2, "Window"], [1.9, "Window"]], "upper": [-2.2, 1.9], "garage_bay": 0.0},
+        "left": {"ground": [[-1.9, "Window"], [2.1, "Window"]], "upper": [-1.9, 2.1], "garage_bay": 0.0},
     },
 }
 front = front_frame()
 _front = PLAN["walls"]["front"]
-door_u = _front["ground"][0][0]
-garage_u, garage_bay = _front["ground"][1][0], _front["garage_bay"]
+door_u = _front["ground"][1][0]
+garage_u = _front["ground"][2][0]
 
 # ---------------------------------------------------------------- the front wall
-garage = (garage_u - 2 * garage_bay + 0.14, 0.12, garage_u + 2 * garage_bay - 0.12, 1.5)
-DOOR = (door_u - 0.3, 0.12, door_u + 0.3, 1.45)
+GARAGE = garage_opening(garage_u)
 UPPER_ENTRY = (door_u - 0.3, door_u + 0.3)
-BAY = (_front["upper"][1] - 0.42, _front["upper"][2] + 0.42)
-BAY_OPEN = (BAY[0] + 0.08, 1.86, BAY[1] - 0.08, 2.8)
+BAY = (garage_u - 0.85, garage_u + 0.85)
+BAY_HOLE = (BAY[0] + 0.05, UPPER_GLASS[0] - 0.08, BAY[1] - 0.05, BAY_HI - 0.05)
+# The passage's front door stands for the coded ground window (its hole spans -1.91); the
+# coded door stands behind the office.
 holes = [
-    (fx(garage[0]), garage[1], fx(garage[2]), garage[3]),
-    (fx(DOOR[0]), DOOR[1], fx(DOOR[2]), DOOR[3]),
-    (fx(UPPER_ENTRY[0]), UPPER_GLASS[0], fx(UPPER_ENTRY[1]), UPPER_GLASS[1]),
-    (fx(BAY_OPEN[0]), BAY_OPEN[1], fx(BAY_OPEN[2]), BAY_OPEN[3]),
-    # a window beside the door, under the porch
-    (fx(-2.2), 0.72, fx(-1.9), 1.5),
-]
-wall("FrontWall", front, 0, 2 * HALF_W, 0, WALL_TOP, holes)
-sectional_garage_door(front, garage_u, garage_bay, panels=3)
-front.quad("FrontWall__Accent", fx(DOOR[0]), DOOR[1], fx(DOOR[2]), DOOR[3], 0.1)
-front.block("FrontWall__Trim", fx(DOOR[0]) - 0.05, DOOR[3], fx(DOOR[2]) + 0.05, DOOR[3] + 0.05, 0.0, -0.03)
-window("FrontWall", front, fx(UPPER_ENTRY[0]), UPPER_GLASS[0], fx(UPPER_ENTRY[1]), UPPER_GLASS[1])
-board_shutters(front, fx(UPPER_ENTRY[0]), fx(UPPER_ENTRY[1]), UPPER_GLASS[0] - 0.02, UPPER_GLASS[1] + 0.02, width=0.24)
-window("FrontWall", front, fx(-2.2), 0.72, fx(-1.9), 1.5, mullion=False)
+    GARAGE,
+    door_hole(door_u),
+    (UPPER_ENTRY[0], UPPER_GLASS[0], UPPER_ENTRY[1], UPPER_GLASS[1]),
+    BAY_HOLE,
+] + entry_holes()
+wall("FrontWall", front, 0, 2 * HALF_W, 0, WALL_TOP, [(fx(a), y0, fx(b), y1) for a, y0, b, y1 in holes])
+sectional_garage_door(front, garage_u, decor="lites", boards=False, header=True)
+front_door(front, door_u, glass=True)
+window("FrontWall", front, fx(UPPER_ENTRY[0]), UPPER_GLASS[0], fx(UPPER_ENTRY[1]), UPPER_GLASS[1], mullion=False)
+board_shutters(front, fx(UPPER_ENTRY[0]), fx(UPPER_ENTRY[1]), UPPER_GLASS[0] - 0.01, UPPER_GLASS[1] + 0.01)
 box_bay(front, BAY[0], BAY[1], flat=True)
 
-# ---------------------------------------------------------------- the porch
-PORCH = (-2.75, garage[0] - 0.12, HALF_D, HALF_D + 1.45)
-PORCH_TOP = 1.62
-box("FrontWall__Concrete", (PORCH[0] + 0.1, 0.0, PORCH[2]), (PORCH[1], 0.1, PORCH[3]))
-for x in (PORCH[0] + 0.3, PORCH[1] - 0.25):
-    porch_post(x, PORCH[3] - 0.2, PORCH_TOP)
-box("FrontWall__Wood", (PORCH[0] + 0.15, PORCH_TOP - 0.14, PORCH[3] - 0.3), (PORCH[1] - 0.1, PORCH_TOP, PORCH[3] - 0.1))
-porch_roof = hip_slopes(PORCH[0] - 0.1, PORCH[1] + 0.15, HALF_D - 0.6, PORCH[3] + 0.25, PORCH_TOP - 0.04, 0.42, along_x=True)
-for name in ("front", "back", "left", "right"):
-    polygon = clip_z(porch_roof[name], HALF_D)
-    if len(polygon) >= 3:
-        tiled("FrontWall", Slope(polygon), flat=True)
-ridge_cap("FrontWall", *porch_roof["ridge"])
+# ---------------------------------------------------------------- the office and entry
+# The office projecting before the left half under a flat-tile hip, the entry passage up
+# its outer side under a shed on tapered posts over stone piers.
+office_entry(office_roof="hip", flat=True, cover="shed", supports="tapered", window_style="shutters")
 
 # ---------------------------------------------------------------- the roof, flanks and back
 along_hip_roof(flat=True)
-for side in ("back", "right", "left"):
-    plain_wall(side, PLAN)
+plain_wall("back", PLAN, half_width={-1.6: 0.4, 0.3: 0.4, 2.0: 0.3}, upper_half=0.3)
+plain_wall("right", PLAN, half_width=0.27)
+plain_wall("left", PLAN, half_width=0.27)
 
 # The array: a block on the street slope.
-solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2)
+solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2, up=0.3)
 
 export(PLAN, frame="along")

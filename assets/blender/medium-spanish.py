@@ -5,13 +5,13 @@
 #
 # The medium plan (the Prairie's, after Rumbo north lot 2) in the tract's Spanish dress; no house of
 # the street is this one, so it borrows Rumbo north lots 5 and 1's vocabulary. Drawn in the street
-# frame on a 5 x 7 m lot, its garage on the right; the game builds it with its door in the
-# eave wall (its hip's ridge along the street). A broad two-storey warm stucco block under a
-# clay barrel-tile hip; the porch beside the garage is a stucco arcade, one broad arch on
-# stucco piers and an arch at either end, under a clay shed roof, the door arched behind
-# it; twin arched windows over the porch, a small single and a shuttered pair over the
-# garage across the upper floor, clay pipe vents, and the garage's one-piece board door
-# under a clay pent. The paints are the style's.
+# frame on the 6.2 x 8 m lot, its garage on the right; the game builds it with its door in
+# the eave wall (its hip's ridge along the street). A broad two-storey warm stucco block
+# under a clay barrel-tile hip; beside the garage the office under a clay hip, its street
+# window arched, and the entry passage beside it under a clay shed on stucco arches (the
+# kit's office_entry); twin arched windows over the office, a small single and a shuttered
+# pair over the garage across the upper floor, clay pipe vents, and the garage's one-piece
+# sectional board door with strap hinges under a clay pent. The paints are the style's.
 
 import os
 import sys
@@ -19,134 +19,78 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from house_kit import *  # noqa: E402,F403
 
-# The medium plan's openings, as the Prairie has them (the street's layout reads its door
-# and garage): the door and garage, five upper windows (the twin arched windows over the
-# porch, the single and the pair over the garage); two windows down each flank and a pair
-# across the back, lit upstairs.
+# The medium plan's openings (the street's layout reads its door and garage): the coded
+# window (the entry passage's door stands over it) and the door behind the office, the garage's two leaves, and the spread front's five upper
+# windows (the twin arched windows over the office, the single and the pair over the
+# garage); two windows a floor down each flank and three across the back.
 PLAN = {
     "w": 2 * HALF_W,
     "d": 2 * HALF_D,
     "walls": {
-        "front": {"ground": [[-1.23, "Door"], [0.93, "Garage"]], "upper": [-1.48, -0.98, 0.31, 1.3, 1.8], "garage_bay": 0.62},
-        "back": {"ground": [[-1.2, "Window"], [1.2, "Window"]], "upper": [-1.2, 1.2], "garage_bay": 0.0},
-        "right": {"ground": [[-1.5, "Window"], [1.3, "Window"]], "upper": [-1.5, 1.3], "garage_bay": 0.0},
-        "left": {"ground": [[-1.4, "Window"], [1.6, "Window"]], "upper": [-1.4, 1.6], "garage_bay": 0.0},
+        "front": {"ground": [[-1.91, "Window"], [-0.66, "Door"], [1.4, "Garage"]], "upper": [-0.96, -0.36, 0.7, 1.7, 2.5], "garage_bay": GARAGE_BAY},
+        "back": {"ground": [[-1.9, "Window"], [0.0, "Window"], [1.9, "Window"]], "upper": [-1.9, 0.0, 1.9], "garage_bay": 0.0},
+        "right": {"ground": [[-2.4, "Window"], [1.5, "Window"]], "upper": [-2.4, 1.5], "garage_bay": 0.0},
+        "left": {"ground": [[-1.8, "Window"], [2.2, "Window"]], "upper": [-1.8, 2.2], "garage_bay": 0.0},
     },
 }
 front = front_frame()
 _front = PLAN["walls"]["front"]
-door_u = _front["ground"][0][0]
-garage_u, garage_bay = _front["ground"][1][0], _front["garage_bay"]
+door_u = _front["ground"][1][0]
+garage_u = _front["ground"][2][0]
 
 
-def vent(part, frame, u, y, spacing=0.07):
-    """Three clay pipe ends set in a wall, in a triangle (`clay_vent` on any wall)."""
+def vent(part, frame, u, y, spacing=0.06):
+    """Three clay pipe ends (real 10 cm) set in a wall, in a triangle (`clay_vent` on any
+    wall)."""
     for du, dy in ((-spacing / 2, 0), (spacing / 2, 0), (0, spacing * 0.85)):
-        frame.block(f"{part}__Terracotta", u + du - 0.022, y + dy - 0.022, u + du + 0.022, y + dy + 0.022, 0.02, -0.03)
-        frame.quad(f"{part}__Dark", u + du - 0.012, y + dy - 0.012, u + du + 0.012, y + dy + 0.012, -0.032)
+        frame.block(f"{part}__Terracotta", u + du - 0.02, y + dy - 0.02, u + du + 0.02, y + dy + 0.02, 0.02, -0.025)
+        frame.quad(f"{part}__Dark", u + du - 0.011, y + dy - 0.011, u + du + 0.011, y + dy + 0.011, -0.027)
 
 
 # ---------------------------------------------------------------- the front wall
-garage = (garage_u - 2 * garage_bay + 0.14, 0.12, garage_u + 2 * garage_bay - 0.12, 1.5)
-DOOR = (door_u - 0.3, 0.12, door_u + 0.3, 1.6)
-DOOR_SPRING = 1.42
-TWIN = [(-1.69, -1.27), (-1.19, -0.77)]  # the arched pair over the porch
-TWIN_TOP, TWIN_RISE = UPPER_WINDOW[1], 0.18
-SINGLE, PAIR = (0.14, 0.48), (0.98, 2.12)
-holes = [(fx(garage[0]), garage[1], fx(garage[2]), garage[3]), (fx(DOOR[0]), DOOR[1], fx(DOOR[2]), DOOR[3])]
-holes += [(fx(a), UPPER_GLASS[0], fx(b), TWIN_TOP) for a, b in TWIN]
-holes += [(fx(a), UPPER_GLASS[0], fx(b), UPPER_GLASS[1]) for a, b in (SINGLE, PAIR)]
-wall("FrontWall", front, 0, 2 * HALF_W, 0, WALL_TOP, holes)
-
-# The door, arched in its hole, at the back of the porch.
-front.quad("FrontWall__Accent", fx(DOOR[0]), DOOR[1], fx(DOOR[2]), DOOR[3], 0.1)
-arch_head("FrontWall", front, fx(DOOR[0]), fx(DOOR[2]), DOOR_SPRING, DOOR[3] - DOOR_SPRING, depth=WALL)
+# ---------------------------------------------------------------- the front wall
+GARAGE = garage_opening(garage_u)
+# the twin arched windows over the office, their arches rising over the upper glass
+TWIN = [(-1.27, -0.69), (-0.61, -0.09)]
+TWIN_TOP, TWIN_RISE = UPPER_GLASS[1] + 0.08, 0.16
+SINGLE, PAIR = (0.7 - 0.24, 0.7 + 0.24), (1.7 - 0.27, 2.5 + 0.27)
+holes = [GARAGE, door_hole(door_u)] + entry_holes()
+holes += [(a, UPPER_GLASS[0], b, TWIN_TOP) for a, b in TWIN]
+holes += [(a, UPPER_GLASS[0], b, UPPER_GLASS[1]) for a, b in (SINGLE, PAIR)]
+wall("FrontWall", front, 0, 2 * HALF_W, 0, WALL_TOP, [(fx(a), y0, fx(b), y1) for a, y0, b, y1 in holes])
+# the door into the house behind the office (the passage's door, at its end, is the entry's)
+front_door(front, door_u)
 
 for a, b in TWIN:
     window("FrontWall", front, fx(a), UPPER_GLASS[0], fx(b), TWIN_TOP, mullion=False)
     arch_head("FrontWall", front, fx(a), fx(b), TWIN_TOP - TWIN_RISE, TWIN_RISE, depth=WALL)
 window("FrontWall", front, fx(SINGLE[0]), UPPER_GLASS[0], fx(SINGLE[1]), UPPER_GLASS[1], mullion=False)
 window("FrontWall", front, fx(PAIR[0]), UPPER_GLASS[0], fx(PAIR[1]), UPPER_GLASS[1])
-board_shutters(front, fx(PAIR[0]), fx(PAIR[1]), UPPER_GLASS[0] - 0.02, UPPER_GLASS[1] + 0.02, width=0.24)
-vent("FrontWall", front, fx(-0.33), 2.5)
+board_shutters(front, fx(PAIR[0]), fx(PAIR[1]), UPPER_GLASS[0] - 0.01, UPPER_GLASS[1] + 0.01, width=0.22)
+vent("FrontWall", front, fx(0.22), 2.96)
 
-# The garage's one-piece door: stained vertical boards, set back, under a clay pent.
-g0, g1 = fx(garage[0]), fx(garage[2])
-front.quad("FrontWall__GarageDoor", g0, garage[1], g1, garage[3], 0.12)
-u = g0 + 0.1
-while u < g1 - 0.05:
-    front.block("FrontWall__GarageDoor", u - 0.012, garage[1] + 0.04, u + 0.012, garage[3] - 0.04, 0.12, 0.105)
-    u += 0.14
-front.block("FrontWall__Trim", g0 - 0.05, garage[3], g1 + 0.05, garage[3] + 0.05, 0.0, -0.03)
-PENT = (garage[0] - 0.14, garage[2] + 0.3)
-tiled("FrontWall", Slope([(PENT[0], 1.62, HALF_D + 0.5), (PENT[1], 1.62, HALF_D + 0.5), (PENT[1], 1.84, HALF_D), (PENT[0], 1.84, HALF_D)]))
-# A wrought-iron lantern beside the garage.
-front.block("FrontWall__Iron", fx(2.2), 1.02, fx(2.34), 1.3, 0.0, -0.12)
-front.block("FrontWall__Glass", fx(2.22), 1.06, fx(2.32), 1.24, -0.02, -0.125)
+# The garage's one-piece sectional door in boards, strap hinges on its sections, under a
+# clay pent.
+sectional_garage_door(front, garage_u, decor="straps", boards=True, header=False)
+PENT = (GARAGE[0] - 0.1, HALF_W + 0.05)
+PENT_EAVE, PENT_OUT = GARAGE_TOP + 0.16, 0.38
+tiled("FrontWall", Slope([(PENT[0], PENT_EAVE, HALF_D + PENT_OUT), (PENT[1], PENT_EAVE, HALF_D + PENT_OUT), (PENT[1], PENT_EAVE + 0.42 * PENT_OUT, HALF_D), (PENT[0], PENT_EAVE + 0.42 * PENT_OUT, HALF_D)]))
+lantern(front, (GARAGE[2] + HALF_W) / 2 + 0.04, y=0.75)
 
-# ---------------------------------------------------------------- the arcade porch
-# A stucco arcade beside the garage, flush with the house's left corner: one broad arch on
-# stucco piers before the door and a smaller arch at either end, under a clay shed roof.
-# Its walls are built as their own part and then poured into the front wall's stucco: the
-# arcade stands outdoors, so the faces `wall` lines as indoors are stucco too.
-ARCADE = "Arcade"
-
-
-def pour(part, key):
-    """Move every surface of the scratch `part` into the object `key`."""
-    for name in [k for k in geometry if k.startswith(f"{part}__")]:
-        vertices, faces = geometry.pop(name)
-        target = geometry[key]
-        base = len(target[0])
-        target[0].extend(vertices)
-        target[1].extend([index + base for index in f] for f in faces)
-
-
-PORCH = (-HALF_W, garage[0] - 0.15, HALF_D, HALF_D + 1.35)
-PORCH_TOP = 1.75
-length, depth = PORCH[1] - PORCH[0], PORCH[3] - PORCH[2]
-arcade = Frame((PORCH[0], 0, PORCH[3]), (1, 0, 0), (0, 0, 1))
-arcade_left = Frame((PORCH[0], 0, PORCH[2]), (0, 0, 1), (-1, 0, 0))
-arcade_right = Frame((PORCH[1], 0, PORCH[3]), (0, 0, -1), (1, 0, 0))
-PIER = 0.36
-BROAD = (PIER, length - PIER, 1.2, 0.42)  # u0, u1, spring, rise
-wall(ARCADE, arcade, 0, length, 0, PORCH_TOP, [(BROAD[0], 0.0, BROAD[1], BROAD[2] + BROAD[3])])
-arch_head(ARCADE, arcade, BROAD[0], BROAD[1], BROAD[2], BROAD[3], depth=WALL, segments=8)
-END = (0.3, depth - 0.34, 1.16, 0.26)
-for side in (arcade_left, arcade_right):
-    u0, u1 = (END[0], END[1]) if side is arcade_left else (depth - END[1], depth - END[0])
-    wall(ARCADE, side, 0, depth, 0, PORCH_TOP, [(u0, 0.0, u1, END[2] + END[3])])
-    arch_head(ARCADE, side, u0, u1, END[2], END[3], depth=WALL)
-# Its floor and a step down to the walk under the broad arch.
-box("FrontWall__Concrete", (PORCH[0] + WALL, 0.0, PORCH[2]), (PORCH[1] - WALL, 0.1, PORCH[3]))
-box("FrontWall__Concrete", (PORCH[0] + BROAD[0], 0.0, PORCH[3]), (PORCH[0] + BROAD[1], 0.05, PORCH[3] + 0.3))
-
-# Its clay shed roof, from the arcade's eave up to the house under the upper windows, and
-# the stucco closing each end between the arcade's top and the roof.
-EAVE_OUT, OVERHANG, RISE = 0.28, 0.12, 0.32
-eave_y = PORCH_TOP + 0.1
-roof_z = PORCH[3] + EAVE_OUT
-tiled("FrontWall", Slope([(PORCH[0] - OVERHANG, eave_y, roof_z), (PORCH[1] + OVERHANG, eave_y, roof_z), (PORCH[1] + OVERHANG, eave_y + RISE, HALF_D), (PORCH[0] - OVERHANG, eave_y + RISE, HALF_D)]))
-
-
-def under_roof(z):
-    return eave_y + RISE * (roof_z - z) / (roof_z - HALF_D) - DECK
-
-
-for x, out in ((PORCH[0], -1), (PORCH[1], 1)):
-    for inset in (0.0, WALL):
-        xi = x - out * inset
-        face("FrontWall__Siding", [(xi, PORCH_TOP, PORCH[3]), (xi, PORCH_TOP, HALF_D), (xi, under_roof(HALF_D), HALF_D), (xi, under_roof(PORCH[3]), PORCH[3])], (out if inset == 0 else -out, 0, 0))
-box("FrontWall__Siding", (PORCH[0], PORCH_TOP, PORCH[3] - WALL), (PORCH[1], under_roof(PORCH[3] - WALL), PORCH[3]))
-pour(ARCADE, "FrontWall__Siding")
+# ---------------------------------------------------------------- the office and entry
+# The office beside the garage under a clay hip, its street window arched; the entry
+# passage up its outer side to the front door under a clay shed on stucco arches.
+office_entry(office_roof="hip", window_style="arched", cover="shed", supports="arches")
 
 # ---------------------------------------------------------------- the roof, flanks and back
 along_hip_roof(flat=False)
+plain_wall("back", PLAN, half_width={-1.9: 0.4, 0.0: 0.3, 1.9: 0.4}, upper_half=0.3)
+for side in ("right", "left"):
+    plain_wall(side, PLAN, half_width=0.27)
 for side in ("back", "right", "left"):
-    plain_wall(side, PLAN)
-    vent(WALL_PARTS[side], WALL_FRAMES[side], 0.0 if side == "back" else -0.1, 2.62)
+    vent(WALL_PARTS[side], WALL_FRAMES[side], 1.0 if side == "back" else -0.4, 2.62)
 
 # The array: a block on the street slope.
-solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2)
+solar_array("FrontRoof", Slope(along_hip()["front"]), 4, 2)
 
 export(PLAN, frame="along")

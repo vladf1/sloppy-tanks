@@ -16,7 +16,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-
 use super::batching::batch;
 use super::building_kit::{Surface, uv_per_metre};
 use super::house_model::{
@@ -24,8 +23,8 @@ use super::house_model::{
 };
 use super::tank_kit::KitMeshes;
 use crate::geometry::Mesh;
-use crate::scene::Node;
 use crate::geometry::{narrow, widen};
+use crate::scene::Node;
 use crate::sim::house_layout::{HOUSE_MODELS, HouseDesign, HousePart, ModelFit, house_model};
 
 /// The runtime file a model downloads as.
@@ -35,7 +34,9 @@ pub fn model_path(name: &str) -> String {
 
 /// Every model's runtime file, by the model's name.
 pub fn model_paths() -> impl Iterator<Item = (&'static str, String)> {
-    HOUSE_MODELS.iter().map(|model| (model.name, model_path(model.name)))
+    HOUSE_MODELS
+        .iter()
+        .map(|model| (model.name, model_path(model.name)))
 }
 
 /// An imported model: its meshes by part and finish, in the build frame of the lot it was
@@ -110,14 +111,26 @@ pub fn installed(name: &str) -> bool {
 /// The imported model for `design`, fitted to its lot, if its style has one installed.
 fn model_for(design: &HouseDesign) -> Option<Arc<ImportedHouse>> {
     let (model, fit) = house_model(design)?;
-    let source = MODELS.lock().expect("house models").as_ref()?.get(model.name)?.clone();
+    let source = MODELS
+        .lock()
+        .expect("house models")
+        .as_ref()?
+        .get(model.name)?
+        .clone();
     if fit.identity() {
         return Some(source);
     }
     let key = (
         model.name,
-        [fit.scale_x, fit.scale_z, fit.from.0, fit.from.1, fit.to.0, fit.to.1]
-            .map(|v| v.to_bits() ^ u64::from(fit.mirror)),
+        [
+            fit.scale_x,
+            fit.scale_z,
+            fit.from.0,
+            fit.from.1,
+            fit.to.0,
+            fit.to.1,
+        ]
+        .map(|v| v.to_bits() ^ u64::from(fit.mirror)),
     );
     let mut fitted = FITTED.lock().expect("fitted models");
     Some(
@@ -137,7 +150,11 @@ impl ImportedHouse {
             .meshes
             .iter()
             .map(|(part, surface, mesh)| {
-                let part = if fit.mirror { mirrored(*part, fit.mirror_z) } else { *part };
+                let part = if fit.mirror {
+                    mirrored(*part, fit.mirror_z)
+                } else {
+                    *part
+                };
                 let mut mesh = (**mesh).clone();
                 for (p, n) in mesh.positions.iter_mut().zip(&mut mesh.normals) {
                     let at = widen(*p);
@@ -160,7 +177,9 @@ impl ImportedHouse {
 
 /// The part a mirror across x (or across z, `along_z`) draws `part` as.
 fn mirrored(part: HousePart, along_z: bool) -> HousePart {
-    use HousePart::{BackRoof, BackWall, FrontRoof, FrontWall, LeftRoof, LeftWall, RightRoof, RightWall};
+    use HousePart::{
+        BackRoof, BackWall, FrontRoof, FrontWall, LeftRoof, LeftWall, RightRoof, RightWall,
+    };
     match (part, along_z) {
         (RightWall, false) => LeftWall,
         (LeftWall, false) => RightWall,
@@ -221,7 +240,9 @@ pub(super) fn standing_imported(design: &HouseDesign, x: f64, z: f64) -> Option<
         paint_cottage_whole(&mut group, model.part_meshes(part, ridge), design, &palette);
     }
     // The lot's yard as the coded house draws it (its pieces' ground).
-    group.children.push(cottage_pieces(design, x, z, true).ground);
+    group
+        .children
+        .push(cottage_pieces(design, x, z, true).ground);
     batch(&mut group);
     group.set_rotation_euler(0.0, design.yaw(), 0.0);
     Some(group)
@@ -257,8 +278,8 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
     }
     let json_length = u32_at(12)? as usize;
     let json_chunk = bytes.get(20..20 + json_length).ok_or("truncated")?;
-    let json: serde_json::Value = serde_json::from_slice(json_chunk)
-        .map_err(|error| error.to_string())?;
+    let json: serde_json::Value =
+        serde_json::from_slice(json_chunk).map_err(|error| error.to_string())?;
     let bin_start = 20 + json_length + 8;
     let bin = bytes.get(bin_start..).ok_or("no binary chunk")?;
     let accessor = |index: &serde_json::Value| -> Result<(&[u8], usize, usize), String> {
@@ -269,13 +290,22 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
         let count = accessor["count"].as_u64().ok_or("count")? as usize;
         let component = accessor["componentType"].as_u64().ok_or("type")? as usize;
         let length = view["byteLength"].as_u64().ok_or("length")? as usize;
-        let data = bin.get(offset..offset + length).ok_or("a view past the binary chunk")?;
+        let data = bin
+            .get(offset..offset + length)
+            .ok_or("a view past the binary chunk")?;
         Ok((data, count, component))
     };
     let floats = |index: &serde_json::Value, n: usize| -> Result<Vec<f32>, String> {
         let (data, count, _) = accessor(index)?;
-        let bytes = data.get(..count * n * 4).ok_or("an accessor past its view")?;
-        Ok(bytes.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)).collect())
+        let bytes = data
+            .get(..count * n * 4)
+            .ok_or("an accessor past its view")?;
+        Ok(bytes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| f32::from_le_bytes(*b))
+            .collect())
     };
     let mut meshes = Vec::new();
     for node in json["nodes"].as_array().ok_or("no nodes")? {
@@ -395,14 +425,19 @@ mod tests {
 
     use super::*;
     use crate::sim::house_layout::{
-        GarageSide, REFERENCE_HOUSE, HouseModel, HousePlan, OpeningKind, SENDA_STYLES, wall_frames,
+        GARAGE_HOUSE_PITCH, GarageSide, HouseModel, HousePlan, OpeningKind, REFERENCE_HOUSE,
+        SENDA_STYLES, wall_frames,
     };
     use crate::sim::house_structure::{PartKind, house_structure};
     use crate::sim::senda_layout::senda_houses;
 
     /// The shipped models, by name.
     fn shipped(name: &str) -> ImportedHouse {
-        let path = format!("{}/../../public/{}", env!("CARGO_MANIFEST_DIR"), model_path(name));
+        let path = format!(
+            "{}/../../public/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            model_path(name)
+        );
         parse_glb(&std::fs::read(&path).expect("the model is shipped")).expect("the model parses")
     }
     /// What a house may cost phones: model triangles and finishes (each a draw).
@@ -425,9 +460,15 @@ mod tests {
             .collect();
         for &style in model.styles {
             for garage in [GarageSide::Left, GarageSide::Right] {
-                for (w, h) in [(4.6, 3.93), (5.0, 4.1)] {
-                    let plan = HousePlan { style, street: 0, angle: 0, garage };
-                    designs.push(HouseDesign::planned(0.0, 0.0, w, 7.0, h, plan));
+                for (w, d, plate) in [(5.8, 7.4, 3.15), (6.2, 7.7, 3.25), (6.2, 8.0, 3.2)] {
+                    let plan = HousePlan {
+                        style,
+                        street: 0,
+                        angle: 0,
+                        garage,
+                    };
+                    let h = plate + GARAGE_HOUSE_PITCH * w / 2.0;
+                    designs.push(HouseDesign::planned(0.0, 0.0, w, d, h, plan));
                 }
             }
         }
@@ -439,13 +480,26 @@ mod tests {
         for model in HOUSE_MODELS {
             let house = shipped(model.name);
             let triangles: usize = house.summary().iter().map(|(.., n)| n).sum();
-            assert!(triangles <= TRIANGLE_BUDGET, "{}: {triangles} triangles", model.name);
-            let finishes: std::collections::HashSet<_> = house.meshes.iter().map(|(_, s, _)| *s).collect();
-            assert!(finishes.len() <= FINISH_BUDGET, "{}: {finishes:?}", model.name);
+            assert!(
+                triangles <= TRIANGLE_BUDGET,
+                "{}: {triangles} triangles",
+                model.name
+            );
+            let finishes: std::collections::HashSet<_> =
+                house.meshes.iter().map(|(_, s, _)| *s).collect();
+            assert!(
+                finishes.len() <= FINISH_BUDGET,
+                "{}: {finishes:?}",
+                model.name
+            );
             let authored = model.authored();
             let (hx, hz) = (authored.w / 2.0, authored.d / 2.0);
             for (part, surface, mesh) in &house.meshes {
-                assert_eq!(mesh.positions.len(), mesh.normals.len(), "{part:?} {surface:?}");
+                assert_eq!(
+                    mesh.positions.len(),
+                    mesh.normals.len(),
+                    "{part:?} {surface:?}"
+                );
                 for p in mesh.positions.iter().map(|p| widen(*p)) {
                     // Along the front's axis out from it, back from the back, and across.
                     let (out, half_out, across, half_across) = if authored.door_wall == 2 {
@@ -470,14 +524,28 @@ mod tests {
     fn the_home_keeps_its_models_plan() {
         let home = senda_houses()
             .into_iter()
-            .find(|house| SENDA_STYLES[usize::from(house.plan.style)] == SENDA_STYLES[usize::from(REFERENCE_HOUSE)])
+            .find(|house| {
+                SENDA_STYLES[usize::from(house.plan.style)]
+                    == SENDA_STYLES[usize::from(REFERENCE_HOUSE)]
+            })
             .expect("the reference house")
             .design();
-        // Drawn as modelled but for its small plan's depth: unmirrored, its front and
-        // heights as drawn (a layout change to the reference house's lot fails here rather than
-        // stretching the reference house across its front).
+        // Drawn as modelled but for its small plan's depth: unmirrored, its front as drawn
+        // and its heights within a lot's plate of it (a layout change to the reference
+        // house's lot fails here rather than stretching the reference house across its front).
         let (model, fit) = house_model(&home).expect("the reference house has a model");
-        assert!(!fit.mirror && (fit.scale_z - 1.0).abs() < 1e-9 && fit.from == fit.to, "{fit:?}");
+        let across = if home.door_wall == 0 {
+            fit.scale_x
+        } else {
+            fit.scale_z
+        };
+        assert!(
+            !fit.mirror
+                && (across - 1.0).abs() < 1e-9
+                && (fit.from.0 - fit.to.0).abs() < 0.1
+                && (fit.from.1 - fit.to.1).abs() < 0.1,
+            "{fit:?}"
+        );
         // Its front as drawn, the openings of its other walls where the fit puts them.
         let near = |a: f64, b: f64| (a - b).abs() < 1e-6;
         for index in 0..4 {
@@ -492,9 +560,17 @@ mod tests {
             };
             assert!(
                 plan.ground.len() == authored.ground.len()
-                    && plan.ground.iter().zip(&authored.ground).all(|(a, b)| near(a.0, b.0 * scale) && a.1 == b.1)
+                    && plan
+                        .ground
+                        .iter()
+                        .zip(&authored.ground)
+                        .all(|(a, b)| near(a.0, b.0 * scale) && a.1 == b.1)
                     && plan.upper.len() == authored.upper.len()
-                    && plan.upper.iter().zip(&authored.upper).all(|(a, b)| near(*a, *b * scale)),
+                    && plan
+                        .upper
+                        .iter()
+                        .zip(&authored.upper)
+                        .all(|(a, b)| near(*a, *b * scale)),
                 "wall {index}: {plan:?} against the model's {authored:?}"
             );
         }
@@ -514,20 +590,34 @@ mod tests {
                             .iter()
                             .filter(|part| {
                                 let role = part.house();
-                                role.kind == PartKind::Window && role.wall == Some(index) && role.upper_storey == upper
+                                role.kind == PartKind::Window
+                                    && role.wall == Some(index)
+                                    && role.upper_storey == upper
                             })
                             .map(|part| ((part.min + part.max) / 2.0 - center).dot(along))
                             .collect::<Vec<_>>()
                     };
                     let (lower, upper) = (windows(false), windows(true));
                     for &(u, kind) in &plan.ground {
-                        assert!(u.abs() < half, "{} wall {index}: opening at {u} past the wall", model.name);
+                        assert!(
+                            u.abs() < half,
+                            "{} wall {index}: opening at {u} past the wall",
+                            model.name
+                        );
                         if kind == OpeningKind::Window {
-                            assert!(lower.iter().any(|w| (w - u).abs() < 0.3), "{} {design:?} wall {index}: no window at {u} in {lower:?}", model.name);
+                            assert!(
+                                lower.iter().any(|w| (w - u).abs() < 0.3),
+                                "{} {design:?} wall {index}: no window at {u} in {lower:?}",
+                                model.name
+                            );
                         }
                     }
                     for &u in &plan.upper {
-                        assert!(upper.iter().any(|w| (w - u).abs() < 0.6), "{} wall {index}: no upper window at {u} in {upper:?}", model.name);
+                        assert!(
+                            upper.iter().any(|w| (w - u).abs() < 0.6),
+                            "{} wall {index}: no upper window at {u} in {upper:?}",
+                            model.name
+                        );
                     }
                 }
             }
@@ -549,20 +639,34 @@ mod tests {
                     let (center, out, along, _) = wall_frames(design.w, design.d)[index];
                     let part = HousePart::wall(index);
                     let mut faces: Vec<[DVec2; 3]> = Vec::new();
-                    for (_, _, mesh) in house.meshes.iter().filter(|(p, s, _)| *p == part && *s == Surface::Siding) {
+                    for (_, _, mesh) in house
+                        .meshes
+                        .iter()
+                        .filter(|(p, s, _)| *p == part && *s == Surface::Siding)
+                    {
                         for t in mesh.indices.as_ref().expect("indexed").as_chunks::<3>().0 {
                             let points = t.map(|i| widen(mesh.positions[i as usize]));
-                            if points.iter().all(|p| (*p - center).dot(out).abs() < ON_PLANE) {
-                                faces.push(points.map(|p: DVec3| DVec2::new((p - center).dot(along), p.y)));
+                            if points
+                                .iter()
+                                .all(|p| (*p - center).dot(out).abs() < ON_PLANE)
+                            {
+                                faces.push(
+                                    points.map(|p: DVec3| DVec2::new((p - center).dot(along), p.y)),
+                                );
                             }
                         }
                     }
-                    assert!(!faces.is_empty(), "{} wall {index} has no stucco face", model.name);
+                    assert!(
+                        !faces.is_empty(),
+                        "{} wall {index} has no stucco face",
+                        model.name
+                    );
                     let covered = |q: DVec2| {
                         faces.iter().any(|[a, b, c]| {
                             let side = |p: DVec2, r: DVec2, s: DVec2| (r - p).perp_dot(s - p);
                             let (d0, d1, d2) = (side(*a, *b, q), side(*b, *c, q), side(*c, *a, q));
-                            (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0) || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0)
+                            (d0 >= 0.0 && d1 >= 0.0 && d2 >= 0.0)
+                                || (d0 <= 0.0 && d1 <= 0.0 && d2 <= 0.0)
                         })
                     };
                     for &(u, kind) in &plan.ground {
@@ -570,11 +674,23 @@ mod tests {
                             OpeningKind::Window => sill + height / 2.0,
                             OpeningKind::Door | OpeningKind::Garage => roof.plinth + 0.8,
                         };
-                        assert!(!covered(DVec2::new(u, y)), "{} {:?} {} wall {index}: stucco over the {kind:?} at {u}", model.name, design.garage, design.w);
+                        assert!(
+                            !covered(DVec2::new(u, y)),
+                            "{} {:?} {} wall {index}: stucco over the {kind:?} at {u}",
+                            model.name,
+                            design.garage,
+                            design.w
+                        );
                     }
                     for &u in &plan.upper {
                         let y = upper_sill + upper_height / 2.0;
-                        assert!(!covered(DVec2::new(u, y)), "{} {:?} {} wall {index}: stucco over the upper window at {u}", model.name, design.garage, design.w);
+                        assert!(
+                            !covered(DVec2::new(u, y)),
+                            "{} {:?} {} wall {index}: stucco over the upper window at {u}",
+                            model.name,
+                            design.garage,
+                            design.w
+                        );
                     }
                 }
             }
