@@ -527,13 +527,11 @@ mod tests {
     }
 
     #[test]
-    fn single_player_builds_name_the_tab_battle_setup() {
+    fn setup_offers_both_play_tabs() {
         let text = menu_text(false);
-        let multiplayer = crate::app::offers_multiplayer();
         assert!(text.contains("MAP"));
-        assert_eq!(text.contains("BATTLE SETUP"), !multiplayer);
-        assert_eq!(text.contains("SINGLE PLAYER"), multiplayer);
-        assert_eq!(text.contains("MULTIPLAYER"), multiplayer);
+        assert!(text.contains("SINGLE PLAYER"));
+        assert!(text.contains("MULTIPLAYER"));
     }
 
     #[test]

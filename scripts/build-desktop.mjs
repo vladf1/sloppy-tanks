@@ -193,7 +193,6 @@ function build(target, env = {}) {
       "-p",
       "sloppy-desktop",
       ...(appStore ? ["--features", "app-store"] : []),
-      ...(singlePlayer ? ["--features", "single-player"] : []),
     ],
     // The App Store apps list the app-store environment's servers, which run the released
     // apps' content version (crates/server/README.md); SLOPPY_SERVER_ENVIRONMENT overrides it.
@@ -1069,7 +1068,6 @@ const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
 const appStore = process.argv.includes("--app-store");
-const singlePlayer = process.argv.includes("--single-player");
 if (appStore && !(ios || mac)) {
   console.error("--app-store builds the iOS app (--ios) or the Mac app (--mac) for the App Store.");
   process.exit(1);
