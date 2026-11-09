@@ -88,9 +88,9 @@ To try a build on a phone or tablet, `bun run tunnel` builds the game and prints
 
 ## Play
 
-The game also comes as a desktop app for Apple silicon Macs and Windows: download it
-from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest). The
-same app builds for iPhone and iPad (see [iPhone and iPad](#iphone-and-ipad)).
+The game also comes as an app: for Macs, iPhones and iPads from the
+[App Store](https://apps.apple.com/app/sloppy-tanks/id6829385069), and for Windows from
+the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest).
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
@@ -264,13 +264,13 @@ follow the web edition's desktop layout; fullscreen and Quit are native controls
 
 ```sh
 bun run desktop          # the app for this machine
-bun run desktop:mac      # Sloppy Tanks.app for Apple silicon, macOS 12 or newer
+bun run desktop:mac      # Sloppy Tanks.app for Apple silicon, macOS 12 or newer, to try here
 bun run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
 ```
 
-Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it and an
-installer package (`.pkg`, which puts it in `/Applications`) for sharing, and the
-Windows executable. Build through the script rather than `cargo build`: it stamps the
+Both land in the ignored `artifacts/desktop/`. Players get the Mac app from the App Store
+alone ([App Store and TestFlight](#app-store-and-testflight)), so a local Mac build carries
+only an ad-hoc signature and runs on the Mac that built it. Build through the script rather than `cargo build`: it stamps the
 content version multiplayer joins send, which must match the servers' (the same one the
 page carries), as well as the release and commit Battle Setup shows. It adds the Apple silicon
 and Windows targets with rustup when they are missing and uses the `desktop` Cargo profile, which
@@ -280,21 +280,18 @@ keep the full release optimization. CI keeps separate caches for these compiler 
 each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
 builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Apps workflow](.github/workflows/desktop.yml) builds both, and the iOS app for
-the simulators, on pull requests that
+[Apps workflow](.github/workflows/desktop.yml) builds the Windows executable and the iOS
+app for the simulators on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
 the `desktop-check` profile, without optimizing the GPU and window dependencies, while
 retaining workspace line tables for panic backtraces. Linux CI leaves
 the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
-system libraries there. Main's builds also replace the repository's
-[latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under file
-names that stay the same, so these links always fetch the newest:
-[Mac installer](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.pkg),
-[Mac app (zip)](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.zip)
-and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe).
-The release job publishes only a Mac app and package that carry a stapled notarization
-ticket.
+system libraries there. Main's Windows build also replaces the repository's
+[latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under a file
+name that stays the same, so
+[this link](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe)
+always fetches the newest.
 
 ### iPhone and iPad
 
@@ -324,11 +321,7 @@ installs only on the devices that profile lists; `SLOPPY_IOS_PROFILE` and
 install on. Simulator builds need no signing. Like the Mac app it carries the content
 version, so it joins the same multiplayer servers.
 
-Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
-a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
-a warning. Pull request builds carry only an ad-hoc signature: the first time,
-right-click the package or the app and choose **Open**, or, once macOS has refused it,
-choose **Open Anyway** in System Settings → Privacy & Security. The Windows executable
+The Windows executable
 is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**. Start it with
 `--debug` (for example `"Sloppy Tanks.app/Contents/MacOS/sloppy-tanks" --debug`) for
 the extra levels a `?debug` page offers. Settings and personal bests live in
@@ -361,9 +354,10 @@ Developer Installer identity. The version is package.json's and the build number
 `SLOPPY_APP_STORE_BUILD`, which CI sets to the workflow's run number: App Store Connect
 takes one to three integers that rise with every upload, not the release's four parts.
 Once a version is released on the App Store it takes no more builds, so bump
-package.json's version for the next. `--upload` uses the API key the Mac builds are
-notarized with (`SLOPPY_NOTARY_KEY`, `SLOPPY_NOTARY_KEY_ID`, `SLOPPY_NOTARY_ISSUER`; its
-Developer role can upload and read builds but not create certificates or profiles). CI
+package.json's version for the next. `--upload` uses an App Store Connect API key
+(`SLOPPY_APP_STORE_KEY`, the .p8 file, `SLOPPY_APP_STORE_KEY_ID`,
+`SLOPPY_APP_STORE_ISSUER`; its Developer role can upload and read builds but not create
+certificates or profiles), the repository's `NOTARY_API_KEY` secrets in CI. CI
 signs with the repository's `APP_STORE_CERTIFICATES` (a base64 .p12 with both
 identities), `APP_STORE_CERTIFICATES_PASSWORD`, `IOS_APP_STORE_PROFILE` and
 `MAC_APP_STORE_PROFILE` (the base64 profiles) and uploads nothing without them; the

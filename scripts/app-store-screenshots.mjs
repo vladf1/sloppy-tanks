@@ -482,13 +482,9 @@ const ios = devices.filter((device) => !device.mac);
 const mac = devices.find((device) => device.mac);
 if (!process.argv.includes("--no-build")) {
   const build = (mode) =>
-    execFileSync(
-      process.execPath,
-      [join(root, "scripts/build-desktop.mjs"), mode],
-      {
-        stdio: "inherit",
-      },
-    );
+    execFileSync(process.execPath, [join(root, "scripts/build-desktop.mjs"), mode], {
+      stdio: "inherit",
+    });
   if (ios.length) build("--ios-simulator");
   if (mac) build("--mac");
 }
