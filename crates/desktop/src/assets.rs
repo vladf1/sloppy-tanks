@@ -1,7 +1,8 @@
 //! The game's runtime files of `public/`, by their path there
 //! (`textures/ground/village-ground.webp`): embedded in a native binary (`build.rs`); in
-//! a page, the fonts, sounds and previews `index.html` fetches beside the Wasm and leaves
-//! in `globalThis.sloppyFiles` (the renderer fetches its textures itself).
+//! a page, the fonts, sounds and previews `index.html` fetches beside the Wasm and the
+//! files the shell [`request`]s, which it leaves in `globalThis.sloppyFiles` (the
+//! renderer fetches its textures itself).
 
 use std::borrow::Cow;
 
@@ -41,6 +42,24 @@ impl Asset {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn load(path: &str) -> Asset {
     file(path).map_or(Asset::Missing, |bytes| Asset::Ready(Cow::Borrowed(bytes)))
+}
+
+/// Start downloading the runtime file at `path` unless the page has it or is fetching it;
+/// [`load`] then reports it loading until it arrives. A native binary embeds every file.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn request(_path: &str) {}
+
+/// Start downloading the runtime file at `path` unless the page has it or is fetching it;
+/// [`load`] then reports it loading until it arrives.
+#[cfg(target_arch = "wasm32")]
+pub fn request(path: &str) {
+    use wasm_bindgen::JsCast;
+    let fetch = js_sys::Reflect::get(&js_sys::global(), &"sloppyRequestFile".into())
+        .ok()
+        .and_then(|fetch| fetch.dyn_into::<js_sys::Function>().ok());
+    if let Some(fetch) = fetch {
+        let _ = fetch.call1(&wasm_bindgen::JsValue::UNDEFINED, &path.into());
+    }
 }
 
 /// The runtime file at `path` as the page left it: its bytes once arrived (copied in,

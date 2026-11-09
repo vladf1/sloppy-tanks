@@ -819,17 +819,21 @@
       for (const path of Object.keys(assets)) {
         if (path.startsWith("fonts/")) {
           fonts.push((files[path] = fetchFile(path, "high")));
-        } else if (path.startsWith("models/")) {
-          // The Blender-made home (an experiment): wanted before the arena is built.
-          files[path] = fetchFile(path, "high").catch((error) =>
-            console.warn(`${path} did not download: ${message(error)}`),
-          );
         } else if (/^(audio|previews)\//.test(path)) {
           files[path] = fetchFile(path, "low").catch((error) =>
             console.warn(`${path} did not download: ${message(error)}`),
           );
         }
       }
+
+      // Files only some arenas draw (the Neighborhood's house models) download once the
+      // shell asks for them (`assets::request`), wanted before that arena is built.
+      globalThis.sloppyRequestFile = (path) => {
+        if (path in files || !(path in assets)) return;
+        files[path] = fetchFile(path, "high").catch((error) =>
+          console.warn(`${path} did not download: ${message(error)}`),
+        );
+      };
 
       // The shader stages the chosen build draws, generated with it (bun run wasm,
       // crates/render/src/shader/tables.rs): they download beside the binary and stay

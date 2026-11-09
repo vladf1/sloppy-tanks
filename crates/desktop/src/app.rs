@@ -1081,11 +1081,10 @@ impl Session {
             return Ok(());
         }
         let wanted = self.wanted_options();
-        // The Neighborhood's arena waits for its houses' models (hashed files the page
-        // fetches beside the binary, at high priority): built before they arrive, the
-        // round would show the coded houses. Other maps draw none, so they go on while
-        // the models still download.
-        if !install_imported_home() && wanted.map_mode == MapId::Neighborhood {
+        // The Neighborhood's arena waits for its houses' models (hashed files a page
+        // downloads once the map is chosen): built before they arrive, the round would
+        // show the coded houses. Other maps draw none and never download them.
+        if wanted.map_mode == MapId::Neighborhood && !install_imported_home() {
             return Ok(());
         }
         if wanted != self.prepared_options {
@@ -1531,9 +1530,10 @@ fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
 }
 
-/// Hand the Blender-made house models to the core as their runtime files arrive;
-/// `?codedhome` (or `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once every
-/// one is settled: installed, refused, failed to download or never fetched.
+/// Download the Blender-made house models and hand them to the core as they arrive; only
+/// the Neighborhood draws them, so only its arenas ask. `?codedhome` (or
+/// `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once every one is settled:
+/// installed, refused, failed to download or not in the build.
 pub(crate) fn install_imported_home() -> bool {
     use sloppy_core::models::imported_house::{install, model_paths};
     use std::sync::Mutex;
@@ -1559,6 +1559,7 @@ pub(crate) fn install_imported_home() -> bool {
         if done.contains(&name) {
             continue;
         }
+        crate::assets::request(&path);
         match crate::assets::load(&path) {
             crate::assets::Asset::Ready(bytes) => {
                 if let Err(error) = install(name, &bytes) {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
 use sloppy_core::sim::Team;
-use sloppy_core::sim::map_options::map_option_for;
+use sloppy_core::sim::map_options::{MapId, map_option_for};
 use sloppy_web::events::EventBatch;
 use sloppy_web::hud::Hud;
 use sloppy_web::room_notices::RoomNotice;
@@ -715,9 +715,16 @@ impl RoomSession {
 
     /// One engine frame: input in, the drawn scene, its events and HUD out.
     fn frame(&mut self, now: f64) -> Result<(), String> {
-        // A room's arena may build before the reference house's model arrives (its rounds are not
-        // held for it): rounds built after draw it.
-        crate::app::install_imported_home();
+        // A Neighborhood room's arena may build before its house models arrive (its rounds
+        // are not held for them): rounds built after draw them. Other maps never fetch them.
+        if self
+            .menu
+            .lobby
+            .as_ref()
+            .is_some_and(|lobby| lobby.settings.map_mode == MapId::Neighborhood)
+        {
+            crate::app::install_imported_home();
+        }
         let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
         let result = self
