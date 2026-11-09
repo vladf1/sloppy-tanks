@@ -402,6 +402,20 @@ async fn extra_level_rooms_are_listed_only_when_asked_for() {
             .map(|room| room["room"].as_str().unwrap().to_string())
             .collect()
     };
+    // The catalog hears of the new map after the lobby message is on its way, so the
+    // listing may still show the room's first map for a moment.
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !rooms(&base, "?debug")
+        .await
+        .iter()
+        .any(|room| room["mapMode"] == "superstress")
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for the Scrap Yard listing"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert!(codes(rooms(&base, "").await).is_empty());
     assert_eq!(codes(rooms(&base, "?debug").await), ["YARDROOM"]);
     player.send(r#"{"type":"leave","roundId":0}"#).await;
