@@ -17,6 +17,7 @@ use super::simulation::Simulation;
 use super::tree_proportions::tree_proportions;
 use super::arena::cover_turn;
 use super::house_layout::SENDA_STYLES;
+use super::senda_entries::is_entry;
 use super::senda_yards::{LOGGIA_COLUMN, LOGGIA_EAVE, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover};
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
@@ -147,11 +148,12 @@ pub fn break_scenery(
     let patio = (cover.kind == CoverKind::Concrete)
         .then(|| PatioCover::of_color(cover.color))
         .flatten();
+    let entry = cover.kind == CoverKind::Concrete && is_entry(cover.color);
     let legacy_count = match cover.kind {
         CoverKind::Tree => 9,
         CoverKind::Drum => 3,
         // As many as the shards a plain cover falls back to.
-        CoverKind::Concrete if patio.is_some() => 3,
+        CoverKind::Concrete if patio.is_some() || entry => 3,
         _ => return false,
     };
     // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
@@ -242,6 +244,7 @@ pub fn break_scenery(
                 DebrisMaterial::Metal,
             );
         }
+        CoverKind::Concrete if entry => break_entry(&mut breakup, simulation),
         CoverKind::Concrete => {
             let Some(look) = patio else { return false };
             break_patio_cover(&mut breakup, simulation, look);
@@ -339,6 +342,47 @@ fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: P
         let piece = breakup.piece(simulation, shape, at, size, Some(color), material);
         let body = simulation.fragments[piece].body;
         let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(-pitch, 0.0, 0.0));
+        simulation.world.bodies[body].set_rotation(to_rotation(rotation), true);
+    }
+}
+
+/// How high (m) an entry's walls stand under its roof, as a share of its height, and how
+/// thick its stucco slabs and its tile fall (m).
+const ENTRY_WALL_SHARE: f64 = 0.78;
+const ENTRY_SLAB: f64 = 0.15;
+const ENTRY_TILE: f64 = 0.09;
+
+/// An office and entry brought down: its stucco front in two slabs, its side wall between
+/// the room and the porch bay, and its tile roof in two halves fall from where they stood,
+/// turned as the cover was, in its house's paint and tile. Nothing stays standing: the
+/// house's own front stands behind it.
+fn break_entry(breakup: &mut Breakup, simulation: &mut Simulation) {
+    let cover = breakup.cover;
+    let (w, d, h) = (cover.w, cover.d, cover.h);
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // From the box's own frame (+z out from the house) into the world's, about its middle.
+    let place = |x: f64, y: f64, z: f64| [x * cos + z * sin, y, -x * sin + z * cos];
+    let style = SENDA_STYLES[usize::from(cover.house_plan.map_or(0, |plan| plan.style))
+        % SENDA_STYLES.len()];
+    let wall = h * ENTRY_WALL_SHARE;
+    let stucco = DebrisMaterial::Concrete;
+    let mut pieces = Vec::new();
+    for side in [-1.0, 1.0] {
+        let at = place(side * w / 4.0, wall / 2.0, (d - ENTRY_SLAB) / 2.0);
+        pieces.push((at, [w / 2.0, wall, ENTRY_SLAB], style.siding, 0.0));
+    }
+    let at = place(0.0, wall / 2.0, 0.0);
+    pieces.push((at, [ENTRY_SLAB, wall, d], style.siding, 0.0));
+    let pitch = ((h - wall) / d).atan();
+    for side in [-1.0, 1.0] {
+        let at = place(side * w / 4.0, (h + wall) / 2.0, 0.0);
+        pieces.push((at, [w / 2.0, ENTRY_TILE, d], style.roof, pitch));
+    }
+    for (at, size, color, pitch) in pieces {
+        let piece = breakup.piece(simulation, FragmentShape::Panel, at, size, Some(color), stucco);
+        let body = simulation.fragments[piece].body;
+        let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(pitch, 0.0, 0.0));
         simulation.world.bodies[body].set_rotation(to_rotation(rotation), true);
     }
 }

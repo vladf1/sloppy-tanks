@@ -17,8 +17,8 @@
 # structure frames its window, door and garage parts from it (HouseDesign::wall_plan).
 # That file is gameplay data: it shapes the house's colliders.
 #
-# Its office and entry stand before the front as the front wall's, so they break with
-# it; the loggia behind it is a cover of its own in the street's layout, not this model's.
+# Its office and entry are the model's `Entry`, a cover of their own before the front in
+# the street's layout; the loggia behind it is one too, drawn by the game, not this model.
 
 import os
 import sys
@@ -104,14 +104,27 @@ side_entrance(SIDE_DOOR, z_walk=(SIDE_DOOR - 0.6, back_z + 0.6))
 # two-storey gable over the garage, its wall dropping clean to the garage door, and one
 # over the back above the family room, both on the garage's side, a small lattice vent
 # near each one's peak.
-hip_with_gables(GABLE_X, front=True, back=True)
+apex = hip_with_gables(GABLE_X, front=True, back=True)
 peak = gable_end_wall("FrontWall", HALF_D, gable_left, HALF_W, GABLE_X, 1)
 lattice_vent("FrontWall", front, fx(GABLE_X), peak - 0.32)
 peak = gable_end_wall("BackWall", -HALF_D, gable_left, HALF_W, GABLE_X, -1)
 lattice_vent("BackWall", WALL_FRAMES["back"], -GABLE_X, peak - 0.32)
 
-# The array: one block on the left slope, toward the front, as the aerial has it.
-solar_array("LeftRoof", Slope(main_hip()["left"]), 3, 2, up=0.22, across=0.6)
+# The array, as the owner's photos have it: a block of four on the street slope of the
+# set-back upper roof, left of the garage gable's valley, over the two small square windows.
+# That slope is the hip end left of the valley (hip_with_gables' front piece).
+hip_z = RIDGE_HALF + GABLE_X / EAVE_X * (EAVE_Z - RIDGE_HALF)
+street_slope = Slope([(-EAVE_X, EAVE_Y, EAVE_Z), (2 * GABLE_X - EAVE_X, EAVE_Y, EAVE_Z), (GABLE_X, apex, hip_z), (0.0, RIDGE_Y, RIDGE_HALF)])
+# The slope narrows between the hip and the valley, so its four panels are the smaller
+# square ones the owner's roof carries (as the model before the rebuild had them), two by
+# two, their middle over the windows' (u 2.2 from the corner) and their foot low on it.
+PANEL = (0.6, 0.58)
+for col in range(2):
+    for row in range(2):
+        pu = 1.62 + col * (PANEL[0] + SOLAR_GAP)
+        pv = 0.55 + row * (PANEL[1] + SOLAR_GAP)
+        corners = [(pu, pv), (pu + PANEL[0], pv), (pu + PANEL[0], pv + PANEL[1]), (pu, pv + PANEL[1])]
+        face("FrontRoof__Solar", [street_slope.at(u, v, SOLAR_LIFT) for u, v in corners], street_slope.N)
 
 # ---------------------------------------------------------------- the sides and back
 plain_wall("back", PLAN, half_width={-1.4: 0.42, 0.55: 0.42, 2.05: 0.3}, upper_half=0.3)

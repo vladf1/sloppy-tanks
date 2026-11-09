@@ -16,7 +16,8 @@ use super::crate_model::{CrateShape, cargo_crate, crate_piece_model};
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
 use super::house_parts_model::{house_debris, structural_house};
-use super::model_primitives::{cylinder_part, put};
+use super::imported_house::standing_entry;
+use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
 use super::senda_scenery::{is_yard_wall, patio_cover, street_lamp, yard_wall};
 use super::quarry_surfaces::{
@@ -30,7 +31,8 @@ use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
-use crate::sim::house_layout::HousePlan;
+use crate::sim::house_layout::{HousePlan, SENDA_STYLES};
+use crate::sim::senda_entries::is_entry;
 use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
@@ -204,6 +206,11 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
             patio_cover(group, look, (c.w, c.d), style);
             group.rotation = glam::DQuat::from_rotation_y(cover_turn(c.kind, c.house_plan));
         }
+        // The offices and entries before Senda's homes, turned square to their houses.
+        CoverKind::Concrete if is_entry(c.color) => {
+            senda_entry(group, c);
+            group.rotation = glam::DQuat::from_rotation_y(cover_turn(c.kind, c.house_plan));
+        }
         // Senda's lot walls and gates.
         CoverKind::Concrete if is_yard_wall(c.color) => {
             let turn = cover_turn(c.kind, c.house_plan);
@@ -218,6 +225,31 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         }
     }
     node
+}
+
+/// How thick (m) the roof slab is over an entry drawn before its house's model is in.
+const ENTRY_STAND_IN_ROOF: f64 = 0.15;
+
+/// An office and entry before a Senda home, in its cover's frame: drawn from its house's
+/// model, or, until that model is installed, a stucco block under a slab of its tile.
+fn senda_entry(group: &mut Node, c: &CoverShape) {
+    let Some(plan) = c.house_plan else {
+        return;
+    };
+    if let Some(entry) = standing_entry(plan, c.x, c.z, (c.w, c.d, c.h)) {
+        group.children.push(entry);
+        return;
+    }
+    let style = SENDA_STYLES[usize::from(plan.style) % SENDA_STYLES.len()];
+    let walls = c.h - ENTRY_STAND_IN_ROOF;
+    put(group, box_part(c.w, walls, c.d, style.siding, 0.0), 0.0, walls / 2.0, 0.0);
+    put(
+        group,
+        box_part(c.w, ENTRY_STAND_IN_ROOF, c.d, style.roof, 0.0),
+        0.0,
+        c.h - ENTRY_STAND_IN_ROOF / 2.0,
+        0.0,
+    );
 }
 
 /// The most (m) a tract wall's run goes between pilasters.

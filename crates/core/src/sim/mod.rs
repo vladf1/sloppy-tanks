@@ -19,6 +19,7 @@ pub mod model_data;
 pub mod quarry_barrier_shapes;
 pub mod quarry_layout;
 pub mod quarry_rock_shape;
+pub mod senda_entries;
 pub mod senda_layout;
 pub mod senda_yards;
 pub mod timber_layout;

@@ -3,7 +3,8 @@
 # lot (metres: front +z, the garage side +x, y up) and calls `export`. Objects are named
 # <HousePart>__<Surface> after the coded house's pieces (crates/core/src/sim/house_layout.rs
 # HousePart, building_kit.rs Surface), so the structural house cuts them as it cuts the
-# coded meshes.
+# coded meshes. The office and entry before the front are `Entry__<Surface>`, a model of
+# their own the game draws as a separate cover ([`office_entry`]).
 import math
 import sys
 from collections import defaultdict
@@ -500,6 +501,12 @@ def export(plan, frame=None):
         walls = [plan["walls"][side] for side in ("front", "back", "right", "left")]
         with open(plan_path, "w") as out:
             measures = {"w": plan["w"], "d": plan["d"], "wall": WALL_TOP, "ridge": RIDGE_Y, "garage": plan.get("garage", "right"), "door_wall": plan.get("door_wall", 0)}
+            if ENTRY_BOX:
+                # in the build frame: a turned house's street front is its +x wall
+                e = ENTRY_BOX
+                if frame == "along":
+                    e = {"x": e["z"], "z": -e["x"], "w": e["d"], "d": e["w"], "h": e["h"]}
+                measures["entry"] = {key: round(value, 4) for key, value in e.items()}
             json.dump({**measures, "walls": walls}, out, indent=1)
             out.write("\n")
         print("plan", plan_path)
@@ -819,8 +826,9 @@ def gable_end_wall(part, z, x0, x1, gable_x, outward=1):
 # outer side, the entry: a few steps up and a passage beside the office's side wall (its
 # slit windows) to the front door, set back in the main wall facing the street, under a
 # small cover of its own, lower than the office's roof, on a post or two at its outer
-# corner (real 5.3 x 3 m in all). Drawn in the street frame as the front wall's, so it
-# breaks with that wall.
+# corner (real 5.3 x 3 m in all). Drawn in the street frame and exported as the `Entry`
+# model, which the game stands before the house as a cover of its own: tanks cannot drive
+# through it and it breaks on its own.
 OFFICE_SPAN = (-1.65, -0.3)  # the office's x: its inner side by the garage gable's edge
 PASSAGE_X = (-HALF_W, OFFICE_SPAN[0])  # the entry passage's
 ENTRY_DOOR = -2.2  # the front door's centre at the passage's end: its hole spans the
@@ -855,9 +863,53 @@ def entry_holes(wall_z=HALF_D):
     return [(ENTRY_DOOR - DOOR_HOLE, SLAB, ENTRY_DOOR + DOOR_HOLE, PASSAGE_FLOOR + 1.1 + 0.05)]
 
 
-def office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="posts", flat=False,
-                 finish="Siding", window_style="header", popout=True, slits=2, inner_slit=True,
-                 steps_piers=False, planter=False, top=OFFICE_TOP, vent=False, bay=False):
+# The office and entry's box (the street frame, metres): the enclosed room and the porch
+# bay beside it, from the house's front wall out to the office's front, as high as its
+# roof; [`export`] writes it into the plan, where the game places the entry's cover.
+ENTRY_BOX = {}
+
+
+def office_entry(wall_z=HALF_D, bay=False, **style):
+    """The office and entry ([`_office_entry`]) as a model of their own, `Entry__<Surface>`:
+    the game draws them as a destructible cover before the house, so the house's model
+    keeps none of them. The front door at the passage's end stays the front wall's, so the
+    wall behind reads finished once the entry is gone. Records [`ENTRY_BOX`]."""
+    before = {key: len(faces) for key, (_, faces) in geometry.items() if key.startswith("FrontWall__")}
+    measures = _office_entry(wall_z=wall_z, bay=bay, **style)
+    top = 0.0
+    for key in [key for key in geometry if key.startswith("FrontWall__")]:
+        start = before.get(key, 0)
+        vertices, faces = geometry[key]
+        for f in faces[start:]:
+            top = max(top, *(vertices[i][1] for i in f))
+        _move_faces(key, "Entry__" + key.split("__")[1], start)
+    if not bay:
+        passage_door(wall_z)
+    x0, x1 = PASSAGE_X[0], OFFICE_SPAN[1]
+    z0, z1 = max(wall_z, HALF_D), measures["front"]
+    ENTRY_BOX.update(x=(x0 + x1) / 2, z=(z0 + z1) / 2, w=x1 - x0, d=z1 - z0, h=round(top, 3))
+    return measures
+
+
+def passage_door(wall_z):
+    """The front door at the entry passage's end, in the front wall at `wall_z`: its leaf
+    over the passage's floor, its casing filling the hole."""
+    door = Frame((-HALF_W, 0, wall_z), (1, 0, 0), (0, 0, 1))
+    a, b = fx(ENTRY_DOOR - DOOR_HALF), fx(ENTRY_DOOR + DOOR_HALF)
+    h0, h1 = fx(ENTRY_DOOR - DOOR_HOLE), fx(ENTRY_DOOR + DOOR_HOLE)
+    leaf_top = PASSAGE_FLOOR + 1.1
+    door.quad("FrontWall__Accent", a, SLAB, b, leaf_top, 0.12)
+    door.block("FrontWall__Accent", a + 0.06, PASSAGE_FLOOR + 0.56, b - 0.06, leaf_top - 0.08, 0.12, 0.105)
+    door.block("FrontWall__Accent", a + 0.06, PASSAGE_FLOOR + 0.08, b - 0.06, PASSAGE_FLOOR + 0.48, 0.12, 0.105)
+    door.block("FrontWall__Trim", h0, SLAB, a, leaf_top + 0.05, 0.12, 0.08)
+    door.block("FrontWall__Trim", b, SLAB, h1, leaf_top + 0.05, 0.12, 0.08)
+    door.block("FrontWall__Trim", a, leaf_top, b, leaf_top + 0.05, 0.12, 0.08)
+    door.block("FrontWall__Iron", b - 0.07, PASSAGE_FLOOR + 0.5, b - 0.045, PASSAGE_FLOOR + 0.56, 0.105, 0.08)
+
+
+def _office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="posts", flat=False,
+                  finish="Siding", window_style="header", popout=True, slits=2, inner_slit=True,
+                  steps_piers=False, planter=False, top=OFFICE_TOP, vent=False, bay=False):
     """The office and the entry beside it, out from the wall at `wall_z`: the office's roof
     a "shed" (one plane leaning on the wall, exposed rafter tails and a dark fascia at its
     eave), a small front "gable" or a "hip"; its street window under a dark "header", with
@@ -971,30 +1023,11 @@ def office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="post
         ridge_cap("FrontWall", (xb, OFFICE_EAVE, ze), ((xa + xb) / 2, hip_top, ridge_z))
         ridge_cap("FrontWall", ((xa + xb) / 2, hip_top, ridge_z), ((xa + xb) / 2, hip_top, wall_z))
 
-    # the entry: its floor, the steps up to it, the front door at its end
+    # the entry: its floor and the steps up to it (the front door at its end is the wall's)
     box("FrontWall__Concrete", (px0, 0.0, wall_z), (px1, floor, zf))
     risers = round(floor / 0.1)
     for k in range(risers):
         box("FrontWall__Concrete", (px0 + PIER + 0.02, 0.0, zf), (px1 - PIER / 2 - 0.04, floor - floor / risers * k, zf + 0.2 * (k + 1)))
-    door = Frame((-HALF_W, 0, wall_z), (1, 0, 0), (0, 0, 1))
-    a, b = fx(ENTRY_DOOR - DOOR_HALF), fx(ENTRY_DOOR + DOOR_HALF)
-    door_drawn = not bay
-    h0, h1 = fx(ENTRY_DOOR - DOOR_HOLE), fx(ENTRY_DOOR + DOOR_HOLE)
-    leaf_top = PASSAGE_FLOOR + 1.1
-    if door_drawn:
-        door.quad("FrontWall__Accent", a, SLAB, b, leaf_top, 0.12)
-    if door_drawn:
-        door.block("FrontWall__Accent", a + 0.06, PASSAGE_FLOOR + 0.56, b - 0.06, leaf_top - 0.08, 0.12, 0.105)
-    if door_drawn:
-        door.block("FrontWall__Accent", a + 0.06, PASSAGE_FLOOR + 0.08, b - 0.06, PASSAGE_FLOOR + 0.48, 0.12, 0.105)
-    if door_drawn:
-        door.block("FrontWall__Trim", h0, SLAB, a, leaf_top + 0.05, 0.12, 0.08)
-    if door_drawn:
-        door.block("FrontWall__Trim", b, SLAB, h1, leaf_top + 0.05, 0.12, 0.08)
-    if door_drawn:
-        door.block("FrontWall__Trim", a, leaf_top, b, leaf_top + 0.05, 0.12, 0.08)
-    if door_drawn:
-        door.block("FrontWall__Iron", b - 0.07, PASSAGE_FLOOR + 0.5, b - 0.045, PASSAGE_FLOOR + 0.56, 0.105, 0.08)
     # stacked-stone piers, all one size under pale caps: either side of the steps (`steps_piers`)
     # and, with the planter (`planter`), one at its far end by the driveway, the planter's
     # low wall curving out between the second and the third
