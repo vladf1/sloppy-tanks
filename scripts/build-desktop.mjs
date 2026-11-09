@@ -2,7 +2,7 @@
 // `artifacts/desktop/`, or the same app for iPhone and iPad into `artifacts/ios/`, and
 // either for the App Store into `artifacts/mac-app-store/` or `artifacts/ios-app-store/`.
 //
-//   bun scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
+//   bun scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, to try on this Mac
 //   bun scripts/build-desktop.mjs --mac --app-store   # the Mac App Store .pkg for App Store Connect and TestFlight
 //   bun scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   bun scripts/build-desktop.mjs             # whichever this machine is
@@ -27,16 +27,9 @@
 // stays off (no `target-cpu=native`): fused multiply-adds round differently from the
 // server and the browser's Wasm.
 //
-// Signing follows what the machine holds. With a "Developer ID Application" identity in
-// the keychain the app is signed for distribution (hardened runtime, secure timestamp),
-// and with a "Developer ID Installer" one the package too; with notarization
-// credentials both then go to Apple's notary service and get its ticket stapled, so
-// Gatekeeper opens them without a warning, offline too. The credentials are a
-// `notarytool` keychain profile (`SLOPPY_NOTARY_PROFILE`, default "sloppy-tanks") or, in
-// CI, an App Store Connect API key (`SLOPPY_NOTARY_KEY` file, `SLOPPY_NOTARY_KEY_ID`,
-// `SLOPPY_NOTARY_ISSUER`). `SLOPPY_MAC_APP_IDENTITY` and `SLOPPY_MAC_INSTALLER_IDENTITY`
-// pick an identity when there are several. Without an identity the app gets only the
-// ad-hoc signature arm64 needs to run at all, and the package none.
+// Players get the Mac app from the App Store alone, so a Mac build without `--app-store`
+// is for development: it gets only the ad-hoc signature arm64 needs to run at all, on the
+// Mac that built it.
 //
 // An iOS build for devices is signed with an "Apple Development" identity and the
 // provisioning profile Xcode keeps for it whose app ID covers the bundle identifier
@@ -51,8 +44,10 @@
 // as `SLOPPY_IOS_PROFILE` the iOS one. Its build (CFBundleVersion) is
 // `SLOPPY_APP_STORE_BUILD`, CI's run number, as App Store Connect takes one to three
 // integers that rise with every upload, not the release's four parts. `--upload` then
-// sends it to App Store Connect with the API key notarization uses and waits until Apple
-// has processed it, when it is in TestFlight.
+// sends it to App Store Connect with an App Store Connect API key (`SLOPPY_APP_STORE_KEY`
+// file, `SLOPPY_APP_STORE_KEY_ID`, `SLOPPY_APP_STORE_ISSUER`) and waits until Apple has
+// processed it, when it is in TestFlight. `SLOPPY_MAC_APP_IDENTITY` and
+// `SLOPPY_MAC_INSTALLER_IDENTITY` pick the Mac's identities when there are several.
 import { spawnSync } from "node:child_process";
 import { createHash, sign } from "node:crypto";
 import {
@@ -78,7 +73,7 @@ const BINARY = "sloppy-tanks";
 const APP_NAME = "Sloppy Tanks";
 const BUNDLE_ID = "me.fridman.sloppy-tanks";
 // App Store Connect takes an Apple silicon-only Mac app from macOS 12 on (ITMS-90869), the
-// first release TestFlight for Mac runs on too, and the notarized build matches it. From
+// first release TestFlight for Mac runs on too, and development builds match it. From
 // 12 on the linker also writes chained fixups, which the binary's loader reads in place.
 const MINIMUM_MACOS = "12.0";
 const MAC_TARGET = "aarch64-apple-darwin";
@@ -193,7 +188,6 @@ function build(target, env = {}) {
       "-p",
       "sloppy-desktop",
       ...(appStore ? ["--features", "app-store"] : []),
-      ...(singlePlayer ? ["--features", "single-player"] : []),
     ],
     // The App Store apps list the app-store environment's servers, which run the released
     // apps' content version (crates/server/README.md); SLOPPY_SERVER_ENVIRONMENT overrides it.
@@ -252,69 +246,16 @@ function bundleInfo() {
   };
 }
 
-/** The keychain's first identity named `kind` ("Developer ID Application"), or the one
- * `override` names. */
-function identity(kind, override, policy) {
+/** The keychain's first identity named `kind`, or the one `override` names. */
+function identity(kind, override) {
   if (override) return override;
-  const listed = capture("security", ["find-identity", "-v", ...policy]);
+  const listed = capture("security", ["find-identity", "-v"]);
   return listed.match(new RegExp(`"(${kind}: [^"]+)"`))?.[1] ?? null;
-}
-
-/** How this machine signs and notarizes the macOS app (see the top of the file). */
-function macSigning() {
-  const app = identity("Developer ID Application", process.env.SLOPPY_MAC_APP_IDENTITY, [
-    "-p",
-    "codesigning",
-  ]);
-  const installer = identity(
-    "Developer ID Installer",
-    process.env.SLOPPY_MAC_INSTALLER_IDENTITY,
-    [],
-  );
-  const {
-    SLOPPY_NOTARY_KEY: key,
-    SLOPPY_NOTARY_KEY_ID: keyId,
-    SLOPPY_NOTARY_ISSUER: issuer,
-  } = process.env;
-  let notary = null;
-  if (key && keyId && issuer) {
-    notary = ["--key", key, "--key-id", keyId, "--issuer", issuer];
-  } else {
-    const profile = process.env.SLOPPY_NOTARY_PROFILE ?? "sloppy-tanks";
-    if (attempt("xcrun", ["notarytool", "history", "--keychain-profile", profile]).ok) {
-      notary = ["--keychain-profile", profile];
-    }
-  }
-  return { app, installer, notary: app ? notary : null };
-}
-
-/** Send `file` to Apple's notary service, wait for its verdict and staple its ticket to
- * `staple` (the file itself, or the app a zip carried). Stops the build if Apple refuses
- * it, with the service's log. */
-function notarize(file, staple, notary) {
-  console.log(`Notarizing ${file}…`);
-  const submitted = attempt("xcrun", [
-    ...["notarytool", "submit", file, ...notary],
-    ...["--wait", "--output-format", "json"],
-  ]);
-  const result = (() => {
-    try {
-      return JSON.parse(submitted.output.slice(submitted.output.indexOf("{")));
-    } catch {
-      return {};
-    }
-  })();
-  if (result.status !== "Accepted") {
-    console.error(`Notarization of ${file} was not accepted:\n${submitted.output}`);
-    if (result.id) run("xcrun", ["notarytool", "log", result.id, ...notary]);
-    process.exit(1);
-  }
-  run("xcrun", ["stapler", "staple", staple]);
 }
 
 async function buildMac(appStore) {
   if (process.platform !== "darwin") {
-    console.error("The macOS app needs a Mac (codesign, productbuild, notarytool).");
+    console.error("The macOS app needs a Mac (codesign, productbuild).");
     process.exit(1);
   }
   let appIcon;
@@ -359,46 +300,13 @@ async function buildMac(appStore) {
     await finishForMacAppStore(app, store, destination, scratch);
     return;
   }
-  const signing = macSigning();
-  if (signing.app) {
-    // Distribution signing: the hardened runtime notarization requires, and a secure
-    // timestamp so the signature outlives the certificate.
-    run("codesign", [
-      ...["--force", "--options", "runtime", "--timestamp"],
-      ...["--sign", signing.app, app],
-    ]);
-    run("codesign", ["--verify", "--strict", "--verbose=2", app]);
-  } else {
-    // Apple silicon refuses unsigned code; an ad-hoc signature (no identity) is enough
-    // for an app the player opens past Gatekeeper.
-    console.warn("No Developer ID Application identity: the app gets an ad-hoc signature.");
-    run("codesign", ["--force", "--deep", "--sign", "-", app]);
-  }
-
+  // Apple silicon refuses unsigned code; an ad-hoc signature (no identity) is enough to
+  // run the app on the Mac that built it.
+  run("codesign", ["--force", "--deep", "--sign", "-", app]);
   mkdirSync(output, { recursive: true });
-  const artifact = join(output, `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-macOS`);
-  const zip = `${artifact}.zip`;
-  rmSync(zip, { force: true });
-  run("ditto", ["-c", "-k", "--keepParent", app, zip]);
-  if (signing.notary) {
-    // The zip carries the app to the notary; the zip shipped is made again from the
-    // stapled app.
-    notarize(zip, app, signing.notary);
-    rmSync(zip, { force: true });
-    run("ditto", ["-c", "-k", "--keepParent", app, zip]);
-  } else if (signing.app) {
-    console.warn("No notarization credentials: the signed app is not notarized.");
-  }
-  const installer = `${artifact}.pkg`;
-  makeInstaller(app, version, installer, scratch, signing.installer);
-  if (signing.notary && signing.installer) {
-    notarize(installer, installer, signing.notary);
-  }
   rmSync(join(output, `${APP_NAME}.app`), { recursive: true, force: true });
   run("ditto", [app, join(output, `${APP_NAME}.app`)]);
   console.log(`Built ${join(output, `${APP_NAME}.app`)} (Apple silicon, ${megabytes(executable)})`);
-  console.log(`Built ${zip} (${megabytes(zip)})`);
-  console.log(`Built ${installer} (${megabytes(installer)})`);
 }
 
 /** The identity and profile that sign the Mac app for the App Store, and the identity
@@ -408,7 +316,6 @@ function macAppStoreSigning(scratch) {
   const installer = identity(
     "3rd Party Mac Developer Installer",
     process.env.SLOPPY_MAC_INSTALLER_IDENTITY,
-    [],
   );
   if (!signing || !installer) {
     console.error(
@@ -460,57 +367,6 @@ async function finishForMacAppStore(app, store, destination, scratch) {
   if (destination) {
     await uploadToAppStore(installerPackage, "macos", destination, appStoreBuild(), scratch);
   }
-}
-
-/** An installer package that puts `app` in /Applications, titled for Installer; signed
- * with `identity` when there is one. */
-function makeInstaller(app, version, destination, scratch, identity) {
-  const payload = join(scratch, "pkg-root");
-  mkdirSync(payload, { recursive: true });
-  run("ditto", [app, join(payload, `${APP_NAME}.app`)]);
-  // A relocatable bundle (pkgbuild's default) makes Installer look for the bundle
-  // identifier elsewhere on the disk and replace a copy it finds there (in Downloads, say)
-  // instead of installing into /Applications; the app always goes where the package says.
-  const components = join(scratch, "components.plist");
-  run("pkgbuild", ["--analyze", "--root", payload, components]);
-  run("plutil", ["-replace", "0.BundleIsRelocatable", "-bool", "NO", components]);
-  const component = join(scratch, "SloppyTanks-component.pkg");
-  run("pkgbuild", [
-    ...["--root", payload, "--component-plist", components],
-    ...["--install-location", "/Applications", "--identifier", BUNDLE_ID],
-    ...["--version", version, component],
-  ]);
-  // A distribution around the component package gives Installer the game's name as its
-  // window title, installs for the whole machine and refuses Macs and releases the app
-  // cannot run on (`--synthesize` allows Intel Macs whatever the app is built for).
-  const distribution = join(scratch, "distribution.xml");
-  run("productbuild", ["--synthesize", "--package", component, distribution]);
-  const synthesized = readFileSync(distribution, "utf8").replace(
-    /hostArchitectures="[^"]*"/,
-    'hostArchitectures="arm64"',
-  );
-  const extra =
-    `    <title>${APP_NAME}</title>\n` +
-    '    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>\n' +
-    `    <allowed-os-versions><os-version min="${MINIMUM_MACOS}"/></allowed-os-versions>\n`;
-  const opening = /<installer-gui-script[^>]*>\n/;
-  if (!opening.test(synthesized)) {
-    console.error(`productbuild --synthesize wrote no <installer-gui-script> in ${distribution}`);
-    process.exit(1);
-  }
-  writeFileSync(
-    distribution,
-    synthesized.replace(opening, (tag) => tag + extra),
-  );
-  rmSync(destination, { force: true });
-  if (!identity) {
-    console.warn("No Developer ID Installer identity: the package is unsigned.");
-  }
-  run("productbuild", [
-    ...["--distribution", distribution, "--package-path", scratch],
-    ...(identity ? ["--sign", identity, "--timestamp"] : []),
-    destination,
-  ]);
 }
 
 function buildWindows() {
@@ -854,12 +710,12 @@ async function buildIos(simulator, appStore) {
   }
 }
 
-/** The App Store Connect API key notarization uses (see the top of the file), or null. */
+/** The App Store Connect API key (see the top of the file), or null. */
 function appStoreConnectKey() {
   const {
-    SLOPPY_NOTARY_KEY: file,
-    SLOPPY_NOTARY_KEY_ID: id,
-    SLOPPY_NOTARY_ISSUER: issuer,
+    SLOPPY_APP_STORE_KEY: file,
+    SLOPPY_APP_STORE_KEY_ID: id,
+    SLOPPY_APP_STORE_ISSUER: issuer,
   } = process.env;
   return file && id && issuer ? { file, id, issuer } : null;
 }
@@ -903,8 +759,8 @@ async function appStoreDestination() {
   const key = appStoreConnectKey();
   if (!key) {
     console.error(
-      "--upload needs an App Store Connect API key: SLOPPY_NOTARY_KEY, SLOPPY_NOTARY_KEY_ID " +
-        "and SLOPPY_NOTARY_ISSUER.",
+      "--upload needs an App Store Connect API key: SLOPPY_APP_STORE_KEY, " +
+        "SLOPPY_APP_STORE_KEY_ID and SLOPPY_APP_STORE_ISSUER.",
     );
     process.exit(1);
   }
@@ -1069,7 +925,6 @@ const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
 const appStore = process.argv.includes("--app-store");
-const singlePlayer = process.argv.includes("--single-player");
 if (appStore && !(ios || mac)) {
   console.error("--app-store builds the iOS app (--ios) or the Mac app (--mac) for the App Store.");
   process.exit(1);

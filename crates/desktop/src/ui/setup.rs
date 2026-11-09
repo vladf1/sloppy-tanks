@@ -1617,7 +1617,7 @@ fn sheet(
             // The play tabs over their panel, the open one covering its edge.
             let multiplayer = state.rooms.multiplayer;
             tray(&painter, panels, !multiplayer, multiplayer);
-            for (index, tab) in play_tabs().enumerate() {
+            for (index, tab) in PLAY_TABS.into_iter().enumerate() {
                 let open = multiplayer == tab.0;
                 let left = panels.left() + index as f32 * (panels.width() - tab_width);
                 let rect = if open {
@@ -1943,21 +1943,6 @@ const PLAY_TABS: [(bool, &str, &str); 2] = [
     (false, "SINGLE PLAYER", "You versus the bots"),
     (true, "MULTIPLAYER", "Online rooms with friends"),
 ];
-
-/// A build without multiplayer keeps its one tab's heading as Battle Setup.
-fn play_tabs() -> impl Iterator<Item = (bool, &'static str, &'static str)> {
-    let multiplayer = crate::app::offers_multiplayer();
-    PLAY_TABS
-        .into_iter()
-        .filter(move |tab| !tab.0 || multiplayer)
-        .map(move |tab| {
-            if multiplayer {
-                tab
-            } else {
-                (false, "BATTLE SETUP", tab.2)
-            }
-        })
-}
 
 /// The page's `clamp(least, share × viewport width, most)` type.
 fn viewport_size(viewport_width: f32, least: f32, share: f32, most: f32) -> f32 {
@@ -2844,10 +2829,10 @@ fn draw_stack(
         &painter,
         tray_rect,
         tabs[0].left() <= tray_rect.left() + 0.5,
-        tabs[1].right() >= tray_rect.right() - 0.5 && crate::app::offers_multiplayer(),
+        tabs[1].right() >= tray_rect.right() - 0.5,
     );
     let dress = window.tab_dress(stack.tab_line);
-    for (tab, rect) in play_tabs().zip(tabs) {
+    for (tab, rect) in PLAY_TABS.into_iter().zip(tabs) {
         if play_tab(ui, &painter, rect, tab, multiplayer == tab.0, dress) {
             state.rooms.multiplayer = tab.0;
         }
@@ -3498,7 +3483,7 @@ fn phone_setup(
                     }
                     // The play tabs span the sheet's top edge over the tray.
                     let tab_width = (width - TABS_GAP) / 2.0;
-                    for (index, tab) in play_tabs().enumerate() {
+                    for (index, tab) in PLAY_TABS.into_iter().enumerate() {
                         let open = multiplayer == tab.0;
                         let tab_left = left + index as f32 * (width - tab_width);
                         // The other tab stands lower, still a thumb's height.
@@ -3519,7 +3504,7 @@ fn phone_setup(
                         pos2(left, y),
                         pos2(left + width, sheet.bottom() - pad_bottom),
                     );
-                    tray(&painter, tray_rect, true, crate::app::offers_multiplayer());
+                    tray(&painter, tray_rect, true, true);
                     let inner = tray_rect.shrink2(vec2(
                         PHONE_TRAY_PADDING,
                         PHONE_TRAY_PADDING + if upright { PHONE_TRAY_BORDER } else { 0.0 },

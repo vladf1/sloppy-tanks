@@ -1,7 +1,7 @@
-# The desktop app (crates/desktop): lint and test it on macOS beside the builds of
-# the Apple silicon app (zipped and as an installer package), the Windows executable and
-# the iPhone and iPad app for Xcode's simulators through `scripts/build-desktop.mjs`,
-# uploaded as this run's artifacts. Linux CI (check.yml) leaves the crate out, since its
+# The desktop app (crates/desktop): lint and test it on macOS beside the builds of the
+# Windows executable and the iPhone and iPad app for Xcode's simulators through
+# `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Macs, iPhones and iPads
+# get the game from the App Store alone, so the Mac app is built only for it. Linux CI (check.yml) leaves the crate out, since its
 # window, audio and GPU dependencies need system libraries there.
 # Run by hand on main (`gh workflow run desktop.yml --ref main`), it also builds the iOS
 # and macOS apps for the App Store and uploads them to App Store Connect, where TestFlight
@@ -10,24 +10,17 @@
 # checks that main's build pushed this commit's server image (sha-<commit>) and, after
 # both uploads, points :app-store-candidate at it; `bun run server:release-app` moves
 # :app-store there once Apple has approved and released them (crates/server/README.md).
-# Started with the single-player input (`gh workflow run desktop.yml --ref main -f
-# single-player=true`), it builds them without multiplayer instead, which need no server,
-# so it neither checks for the image nor moves the candidate.
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
 # IOS_APP_STORE_PROFILE and MAC_APP_STORE_PROFILE, the base64 profiles), uploaded with the
-# notarization key below and numbered with this workflow's run number. Without those
-# secrets the job uploads nothing.
+# App Store Connect API key in the repository's secrets (NOTARY_API_KEY, the .p8's text,
+# NOTARY_API_KEY_ID and NOTARY_API_ISSUER) and numbered with this workflow's run number.
+# Without those secrets the job uploads nothing.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
 # workflow's run number, which this workflow does not have.
-# On main the macOS app and package are signed with the Developer ID certificates and
-# notarized with the App Store Connect API key in the repository's secrets
-# (MACOS_CERTIFICATES, a base64 .p12 with both identities, and its
-# MACOS_CERTIFICATES_PASSWORD; NOTARY_API_KEY, the .p8's text, NOTARY_API_KEY_ID and
-# NOTARY_API_ISSUER), and the builds replace the repository's latest release, whose
-# file names stay the same so its download links do too. Pull requests sign ad hoc and
-# publish nothing.
+# On main the Windows executable replaces the repository's latest release, whose file
+# name stays the same so its download link does too. Pull requests publish nothing.
 name: Apps
 
 on:
@@ -51,11 +44,6 @@ on:
     branches: [main]
     paths: *paths
   workflow_dispatch:
-    inputs:
-      single-player:
-        description: Build the App Store apps without multiplayer
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -79,78 +67,6 @@ jobs:
       # The renderer's and the engine API's desktop-only modules build only with their
       # `native` feature, which the Linux test run leaves off.
       - run: cargo test --locked --profile desktop-check -p sloppy-render -p sloppy-web --features sloppy-render/native,sloppy-web/native --lib
-
-  macos:
-    name: macOS app
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-        with:
-          # Step-level profile overrides are not visible when setup hashes the cache.
-          cargo-cache: desktop-macos-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
-          js-dependencies: "false"
-      - name: Signing keychain
-        if: github.event_name != 'pull_request'
-        env:
-          CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
-          CERTIFICATES_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
-          NOTARY_KEY: ${{ secrets.NOTARY_API_KEY }}
-        run: |
-          if [ -z "$CERTIFICATES" ]; then
-            echo "No signing secrets: the app is signed ad hoc."
-            exit 0
-          fi
-          keychain="$RUNNER_TEMP/signing.keychain-db"
-          password="$(uuidgen)"
-          security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 21600 "$keychain"
-          security unlock-keychain -p "$password" "$keychain"
-          printf '%s' "$CERTIFICATES" | base64 --decode > "$RUNNER_TEMP/certificates.p12"
-          security import "$RUNNER_TEMP/certificates.p12" -k "$keychain" \
-            -P "$CERTIFICATES_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
-          rm "$RUNNER_TEMP/certificates.p12"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
-          if [ -n "$NOTARY_KEY" ]; then
-            printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
-            echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
-          fi
-      - run: bun scripts/build-desktop.mjs --mac
-        env:
-          # PR artifacts favor compile time; main/local builds retain release's fat LTO.
-          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
-          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
-          SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
-          SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
-      # The build falls back to an ad-hoc signature without the secrets; a release must
-      # not. A stapled ticket means Developer ID signing and notarization both happened.
-      - name: Check the notarization
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          xcrun stapler validate "artifacts/desktop/Sloppy Tanks.app"
-          xcrun stapler validate artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
-      - uses: actions/upload-artifact@v7
-        with:
-          path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
-          archive: false
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        with:
-          path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
-          archive: false
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: cargo-timings-macos
-          path: target/cargo-timings/
-          if-no-files-found: ignore
-      - name: Remove the signing keychain
-        if: always() && github.event_name != 'pull_request'
-        run: |
-          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
-          rm -f "$RUNNER_TEMP/notary.p8"
 
   ios:
     name: iOS app (simulator)
@@ -227,7 +143,7 @@ jobs:
           printf '%s' "$API_KEY" > "$RUNNER_TEMP/app-store-connect.p8"
           {
             echo "$PROFILE_VARIABLE=$RUNNER_TEMP/app-store-profile"
-            echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/app-store-connect.p8"
+            echo "SLOPPY_APP_STORE_KEY=$RUNNER_TEMP/app-store-connect.p8"
           } >> "$GITHUB_ENV"
           echo "ready=true" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
@@ -241,7 +157,7 @@ jobs:
       # pushes; a run started before that build finished fails here and can be run again.
       - name: Check this commit's server image
         id: server-image
-        if: steps.signing.outputs.ready == 'true' && !inputs.single-player
+        if: steps.signing.outputs.ready == 'true'
         run: |
           tag="sha-${GITHUB_SHA::12}"
           token=$(curl -fsS "https://ghcr.io/token?scope=repository:$NAME:pull" |
@@ -257,12 +173,12 @@ jobs:
           MANIFEST_TYPES: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
       # The desktop profile keeps release's fat LTO. The script waits until Apple has
       # processed the build and fails if Apple finds it invalid.
-      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload ${{ inputs.single-player && '--single-player' || '' }}
+      - run: bun scripts/build-desktop.mjs --${{ matrix.platform }} --app-store --upload
         if: steps.signing.outputs.ready == 'true'
         env:
           SLOPPY_APP_STORE_BUILD: ${{ github.run_number }}
-          SLOPPY_NOTARY_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
-          SLOPPY_NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+          SLOPPY_APP_STORE_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          SLOPPY_APP_STORE_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
       - name: Remove the signing keychain
         if: always() && steps.signing.outputs.ready == 'true'
         run: |
@@ -317,7 +233,7 @@ jobs:
 
   release:
     name: Latest release
-    needs: [macos-check, macos, windows]
+    needs: [macos-check, windows]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -330,34 +246,33 @@ jobs:
         with:
           sparse-checkout: package.json
           sparse-checkout-cone-mode: false
-      # skip-decompress keeps the Mac zip as the zip players download.
+      # skip-decompress keeps the executable as uploaded.
       - uses: actions/download-artifact@v8
         with:
           path: downloads
-          pattern: "{Sloppy-Tanks-*-macOS.zip,Sloppy-Tanks-*-macOS.pkg,sloppy-tanks.exe}"
+          pattern: sloppy-tanks.exe
           merge-multiple: true
           skip-decompress: true
-      - name: Publish the builds
+      - name: Publish the build
         run: |
           version="$(jq -r .version package.json)"
           commit="${GITHUB_SHA::7}"
           tag="desktop-v$version-$commit"
           mkdir release
-          cp downloads/Sloppy-Tanks-*-macOS.pkg release/Sloppy-Tanks-macOS.pkg
-          cp downloads/Sloppy-Tanks-*-macOS.zip release/Sloppy-Tanks-macOS.zip
           cp downloads/sloppy-tanks.exe release/Sloppy-Tanks-Windows.exe
           cat > notes.md <<NOTES
-          Sloppy Tanks $version for the desktop, built from $commit on main.
+          Sloppy Tanks $version for Windows, built from $commit on main.
 
-          - **macOS** (Apple silicon, macOS 12 or newer): \`Sloppy-Tanks-macOS.pkg\` installs the app in Applications, and \`Sloppy-Tanks-macOS.zip\` holds the app itself. Both are signed and notarized.
-          - **Windows** (64-bit Windows 10 or newer): \`Sloppy-Tanks-Windows.exe\` runs as it is. It is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**.
+          \`Sloppy-Tanks-Windows.exe\` (64-bit Windows 10 or newer) runs as it is. It is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**.
+
+          On a Mac, iPhone or iPad, get Sloppy Tanks from the [App Store](https://apps.apple.com/app/sloppy-tanks/id6829385069).
 
           Multiplayer needs the game version the servers run: when an update reaches them, download the new release.
           NOTES
           # A re-run of this commit replaces its own release.
           gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
           gh release create "$tag" release/* --target "$GITHUB_SHA" --latest \
-            --title "Sloppy Tanks $version desktop ($commit)" --notes-file notes.md
+            --title "Sloppy Tanks $version for Windows ($commit)" --notes-file notes.md
           # One release at a time: the one just published replaces the ones before it.
           gh release list --limit 100 --json tagName --jq '.[].tagName' |
             grep '^desktop-v' | grep -vx "$tag" |

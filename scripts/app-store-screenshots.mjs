@@ -13,7 +13,6 @@
 // (`SHOT_ATTEMPTS`) and the rest go on; screenshots already taken stay, and the run ends
 // with the command that retakes only what is missing.
 //
-// The apps are built single player (`--single-player`), so Battle Setup shows one tab.
 // Each device shows Battle Setup, three autoplayed single-player battles (one per standard
 // map, the player's tank driving itself) and, unless `--no-report`, a Dusty Dig battle's
 // report. The game reads its command line as a
@@ -483,13 +482,9 @@ const ios = devices.filter((device) => !device.mac);
 const mac = devices.find((device) => device.mac);
 if (!process.argv.includes("--no-build")) {
   const build = (mode) =>
-    execFileSync(
-      process.execPath,
-      [join(root, "scripts/build-desktop.mjs"), mode, "--single-player"],
-      {
-        stdio: "inherit",
-      },
-    );
+    execFileSync(process.execPath, [join(root, "scripts/build-desktop.mjs"), mode], {
+      stdio: "inherit",
+    });
   if (ios.length) build("--ios-simulator");
   if (mac) build("--mac");
 }

@@ -159,8 +159,9 @@ build already is. Keep
 desktop crate's features, resolve different dependency features and compile Rapier
 and its stack a second time. Linux CI leaves `sloppy-desktop` out, since its window,
 audio and GPU crates need system libraries there; `.github/workflows/desktop.yml`
-lints, tests and builds it on macOS and Windows, and publishes main's notarized builds
-as the latest GitHub release. Its App Store builds go to TestFlight only from a run
+lints and tests it on macOS, builds the Windows executable and the iOS simulator app,
+and publishes main's Windows build as the latest GitHub release; Macs get the app from
+the App Store alone, so a local Mac build is signed ad hoc for trying here. Its App Store builds go to TestFlight only from a run
 started by hand on main (`gh workflow run desktop.yml --ref main`), never from a push,
 so pushes do not wait for Apple's processing. Build the app through
 `bun run desktop` (`desktop:mac`, `desktop:windows`), which stamps the content

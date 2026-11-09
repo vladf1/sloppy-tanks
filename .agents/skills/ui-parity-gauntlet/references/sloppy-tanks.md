@@ -124,8 +124,8 @@ Known comparison traps:
   live scene compositing, timing, input, performance or long-run cleanup.
 
 These comparisons do not need a packaged app. `bun run desktop[:mac]` stamps
-multiplayer versions but may also sign and submit notarization when configured.
-Inspect that path before using it; do not add upload authorization to a UI task.
+multiplayer versions and signs the Mac app ad hoc; do not add `--app-store` or
+upload authorization to a UI task.
 `cargo build --locked -p sloppy-desktop --profile desktop` is a local compile only;
 an unstamped executable is suitable for local UI inspection but not proof that it
 can join the production servers. Keep packaging/release verification separate.
