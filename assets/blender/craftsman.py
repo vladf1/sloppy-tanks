@@ -76,4 +76,7 @@ along_hip_roof(flat=True)
 for side in ("back", "right", "left"):
     plain_wall(side, PLAN)
 
+# The array: a block on the street slope.
+solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2)
+
 export(PLAN, frame="along")

@@ -121,4 +121,7 @@ clay_vent("FrontWall", (WING[0] + WING[1]) / 2, wing_peak - 0.24, WING[3])
 for side in ("back", "right", "left"):
     plain_wall(side, PLAN)
 
+# The array: a block on the back slope.
+solar_array("BackRoof", Slope(main["back"]), 3, 2, up=0.06)
+
 export(PLAN)

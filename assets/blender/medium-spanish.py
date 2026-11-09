@@ -146,4 +146,7 @@ for side in ("back", "right", "left"):
     plain_wall(side, PLAN)
     vent(WALL_PARTS[side], WALL_FRAMES[side], 0.0 if side == "back" else -0.1, 2.62)
 
+# The array: a block on the street slope.
+solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2)
+
 export(PLAN, frame="along")

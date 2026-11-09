@@ -172,6 +172,36 @@ class Slope:
         return min(hits), max(hits)
 
 
+# A solar panel on the roof (m across and up the slope), the gap between panels and how
+# far the array stands off the tile.
+SOLAR_PANEL = (0.6, 0.58)
+SOLAR_GAP = 0.04
+SOLAR_LIFT = 0.08
+
+
+def solar_array(part, slope, cols, rows, up=0.3, across=0.5):
+    """A block of `cols` by `rows` panels on `slope`, its middle at `across` of the slope's
+    width and its foot `up` of the way from the eave to the ridge; panels that would hang
+    past the slope's edges are left out."""
+    us = [u for u, _ in slope.uv]
+    vs = [v for _, v in slope.uv]
+    width = cols * SOLAR_PANEL[0] + (cols - 1) * SOLAR_GAP
+    u0 = min(us) + (max(us) - min(us)) * across - width / 2
+    v0 = min(vs) + (max(vs) - min(vs)) * up
+
+    def inside(u, v):
+        span = slope.span(1, v)
+        return span is not None and span[0] + 0.05 <= u <= span[1] - 0.05
+
+    for c in range(cols):
+        for r in range(rows):
+            pu = u0 + c * (SOLAR_PANEL[0] + SOLAR_GAP)
+            pv = v0 + r * (SOLAR_PANEL[1] + SOLAR_GAP)
+            corners = [(pu, pv), (pu + SOLAR_PANEL[0], pv), (pu + SOLAR_PANEL[0], pv + SOLAR_PANEL[1]), (pu, pv + SOLAR_PANEL[1])]
+            if all(inside(u, v) for u, v in corners):
+                face(part + "__Solar", [slope.at(u, v, SOLAR_LIFT) for u, v in corners], slope.N)
+
+
 # Flat concrete tile (the Craftsman and Prairie roofs): low ribs closer together, deeper
 # course lips.
 FLAT_RIB = (0.18, 0.016)

@@ -204,4 +204,7 @@ box("FrontWall__Dark", (CHIMNEY[0] + 0.3, CHIMNEY_TOP - 0.2, CHIMNEY[3]), (CHIMN
 for side in ("back", "right", "left"):
     plain_wall(side, PLAN)
 
+# The array: a small block on the back slope.
+solar_array("BackRoof", Slope(main["back"]), 2, 2, up=0.06)
+
 export(PLAN)
