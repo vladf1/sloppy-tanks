@@ -1201,9 +1201,15 @@ const WAY_NORTH_WALL: f64 = SENDA_PARKWAY_HALF + PARKWAY + SIDEWALK + 4.0;
 /// south side, past the wide path and a planted strip, where the Way's north-eastern
 /// stretch lies outside the level.
 const WAY_SOUTH_WALL: f64 = SENDA_PARKWAY_HALF + WAY_PARKWAY + WAY_PATH + 1.0;
-/// Where the wall crosses Senda Parkway, square to it: where the Way's north verge comes
-/// within this far (m) of the arena's north edge.
-const WAY_CROSSING_EDGE: f64 = 1.5;
+/// Where the wall crosses Senda Parkway, square to it: as far up the Way as the crossing's
+/// north end, just past the north sidewalk ([`WAY_CROSSING_NORTH`] from the Way's middle),
+/// stays this far (m) inside the arena's north edge. The wall steps out from there to its
+/// run along the north verge.
+const WAY_CROSSING_EDGE: f64 = 0.2;
+const WAY_CROSSING_NORTH: f64 = SENDA_PARKWAY_HALF + PARKWAY + SIDEWALK + 1.1;
+/// How far (m) back down the Way from the crossing the wall's run along the north verge
+/// starts.
+const WAY_CROSSING_STEP_OUT: f64 = 8.0;
 /// How far (m) from a corner spawn pad's middle the wall curves round it, and the most
 /// each of its runs turns (degrees), so the wall bends round the pad rather than boxing
 /// it in.
@@ -1434,7 +1440,7 @@ fn north_wall(corner_pad: DVec2) -> Vec<DVec2> {
     // The crossing: up the Way from the west, the first place its north verge comes
     // within the crossing's room of the north edge.
     let mut cross = 0.0;
-    while verge(cross, WAY_NORTH_WALL).y > -ARENA + WAY_CROSSING_EDGE {
+    while verge(cross, WAY_CROSSING_NORTH).y > -ARENA + WAY_CROSSING_EDGE {
         cross += 0.1;
     }
     let mut along = vec![0.0];
@@ -1460,11 +1466,15 @@ fn north_wall(corner_pad: DVec2) -> Vec<DVec2> {
     // Across the Way, square to it, and on down its north verge.
     let south_corner = points.len();
     points.push(verge(cross, -WAY_SOUTH_WALL));
-    points.push(verge(cross, WAY_NORTH_WALL));
+    points.push(verge(cross, WAY_CROSSING_NORTH));
     let north = way.offset(WAY_NORTH_WALL);
     let leave = PAD_WALL_ROUND + PAD_WALL_LEAD;
     let (mut entry, mut lead) = (None, 0);
-    for k in (0..north.len()).rev().filter(|&k| along[k] < cross) {
+    // It steps out to the verge gently: its first corner there lies a little way back.
+    for k in (0..north.len())
+        .rev()
+        .filter(|&k| along[k] < cross - WAY_CROSSING_STEP_OUT)
+    {
         let (last, next) = (points[points.len() - 1], north[k]);
         if next.distance(corner_pad) < leave {
             // From where the run comes within its lead of the circle round the pad, the
