@@ -596,6 +596,134 @@ fn wall_run(a: DVec2, b: DVec2, look: WallLook) -> CoverDef {
     }
 }
 
+/// How deep (m) a lot's patio runs out from the house's back wall: this share of its back
+/// yard, between these depths, short of the planting strip along its back wall.
+pub const PATIO_SHARE: f64 = 0.62;
+pub const PATIO_DEPTH: f64 = 2.5;
+pub const LEAST_PATIO: f64 = 0.9;
+pub const YARD_PLANTER: f64 = 0.9;
+/// The one-storey rear loggias over part of the patio on most lots, and the pergolas on a
+/// few: their posts' side, the roof's height at its outer beam and where it meets the
+/// house (m), and how wide across the lot and how far out from the house at most (m).
+pub const PATIO_POST: f64 = 0.12;
+pub const PATIO_ROOF: (f64, f64) = (2.35, 2.65);
+pub const PATIO_COVER: (f64, f64) = (3.6, 2.6);
+/// The rear loggias' square stucco columns and the depth of the beam they carry (m), and
+/// how far (m) their tile roof overhangs past the beam and the ends.
+pub const LOGGIA_COLUMN: (f64, f64) = (0.3, 0.3);
+pub const LOGGIA_EAVE: f64 = 0.3;
+/// The pergolas' stained wood.
+pub const PERGOLA_WOOD: u32 = 0x8a6c50;
+/// A loggia's colour as a cover: its look's mark (its own paint is its house's style's)
+/// and the colour its rubble falls in, a cream stucco no other cover wears.
+pub const LOGGIA_COLOR: u32 = 0xd9c9a7;
+/// How much (hp) a loggia and a pergola take to bring down.
+const LOGGIA_HEALTH: f64 = 140.0;
+const PERGOLA_HEALTH: f64 = 70.0;
+
+/// Where the house's back wall stands in its lot (`v` from the lot's centre): a full
+/// house deep's back, or nearer the street for a smaller plan, whose patio runs out from
+/// its own wall.
+pub fn house_back(lot: &Lot) -> f64 {
+    -lot.half_depth + (HOUSE_DEPTH - lot.house.d)
+}
+
+/// How deep (m) a lot's patio runs out from the house's back wall.
+pub fn patio_depth(lot: &Lot) -> f64 {
+    (lot.yard * PATIO_SHARE)
+        .clamp(LEAST_PATIO, PATIO_DEPTH)
+        .min(lot.yard - YARD_PLANTER)
+}
+
+/// The side of a lot (+1 its `+across` side) its turf patch and patio cover take; its
+/// spa or potted tree takes the other.
+pub fn turf_side(k: usize) -> f64 {
+    if k.is_multiple_of(2) { 1.0 } else { -1.0 }
+}
+
+/// What covers a lot's patio, by its place among the lots.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PatioCover {
+    /// A one-storey rear loggia: a shed roof in the house's tile on stucco columns.
+    Loggia,
+    /// A slatted pergola on timber posts.
+    Pergola,
+}
+
+impl PatioCover {
+    pub fn of_lot(k: usize) -> Option<Self> {
+        match k % 10 {
+            0 | 2 | 3 | 5 | 7 | 8 => Some(Self::Loggia),
+            9 => Some(Self::Pergola),
+            _ => None,
+        }
+    }
+
+    /// Which a cover is, by its colour (both are concrete covers drawn their own way).
+    pub fn of_color(color: u32) -> Option<Self> {
+        match color {
+            LOGGIA_COLOR => Some(Self::Loggia),
+            PERGOLA_WOOD => Some(Self::Pergola),
+            _ => None,
+        }
+    }
+}
+
+/// The loggias and pergolas over the lots' patios, as destructible covers: each a box
+/// against the house's back wall, from its posts out past its roof's overhang, turned
+/// square to its lot (the plan carries the turn and, for a loggia, the house's style,
+/// whose paint and tile it wears). Its box's own +z points at the house.
+pub fn patio_covers(houses: &[SendaHouse]) -> Vec<CoverDef> {
+    let (low, eave) = PATIO_ROOF;
+    senda_lots(houses)
+        .iter()
+        .enumerate()
+        .filter_map(|(k, lot)| {
+            let look = PatioCover::of_lot(k)?;
+            let cover = PATIO_COVER.0.min(2.0 * lot.half_width - 0.4);
+            let middle = turf_side(k) * (lot.half_width - cover / 2.0 - 0.2);
+            let reach = patio_depth(lot).min(PATIO_COVER.1);
+            let (w, d, h, color, health) = match look {
+                PatioCover::Loggia => (
+                    cover + 2.0 * LOGGIA_EAVE,
+                    reach + LOGGIA_EAVE,
+                    eave + 0.2,
+                    LOGGIA_COLOR,
+                    LOGGIA_HEALTH,
+                ),
+                PatioCover::Pergola => (
+                    cover + 0.1,
+                    reach + 0.1,
+                    low + 0.2,
+                    PERGOLA_WOOD,
+                    PERGOLA_HEALTH,
+                ),
+            };
+            let at = lot.at(middle, house_back(lot) - d / 2.0);
+            let turn = lot.front.x.atan2(lot.front.y).to_degrees();
+            let quarter = (turn / 90.0).round();
+            Some(CoverDef {
+                house_plan: Some(HousePlan {
+                    style: lot.house.plan.style,
+                    street: quarter as i8,
+                    angle: (turn - quarter * 90.0).round() as i8,
+                    garage: GarageSide::Left,
+                }),
+                ..CoverDef::new(
+                    CoverKind::Concrete,
+                    (at.x * 100.0).round() / 100.0,
+                    (at.y * 100.0).round() / 100.0,
+                    w,
+                    d,
+                    h,
+                    health,
+                    color,
+                )
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

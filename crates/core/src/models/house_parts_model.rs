@@ -176,12 +176,16 @@ impl HouseBuild {
         let pieces = &source.pieces;
         let design = layout.design().expect("a cottage");
         rooms_into(&mut group, &layout, pieces, &standing, true);
-        // The ground floor's boards laid on the ground inside the footing, which a
-        // gutted cottage shows and a tank driving in rolls over, and the footing under
-        // the parts still standing.
+        // The ground floor laid on the ground inside the footing, which a gutted cottage
+        // shows and a tank driving in rolls over: a village cottage's boards, a tract
+        // house's concrete slab; and the footing under the parts still standing.
         let mut floor = Kit::new();
         floor.block(
-            Surface::Wood,
+            if design.garage.is_some() {
+                Surface::Concrete
+            } else {
+                Surface::Wood
+            },
             DVec3::new(design.w - 2.0 * WALL_DEPTH, FLOOR_BOARDS, design.d - 2.0 * WALL_DEPTH),
             DMat4::from_translation(DVec3::new(0.0, FLOOR_BOARDS / 2.0, 0.0)),
         );

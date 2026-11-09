@@ -15,6 +15,9 @@ use super::physics::{
 };
 use super::simulation::Simulation;
 use super::tree_proportions::tree_proportions;
+use super::arena::cover_turn;
+use super::house_layout::SENDA_STYLES;
+use super::senda_yards::{LOGGIA_COLUMN, LOGGIA_EAVE, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover};
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
 /// A movable cover's world pose when it was destroyed.
@@ -141,9 +144,14 @@ pub fn break_scenery(
         cover.w = motion.w;
         cover.d = motion.d;
     }
+    let patio = (cover.kind == CoverKind::Concrete)
+        .then(|| PatioCover::of_color(cover.color))
+        .flatten();
     let legacy_count = match cover.kind {
         CoverKind::Tree => 9,
         CoverKind::Drum => 3,
+        // As many as the shards a plain cover falls back to.
+        CoverKind::Concrete if patio.is_some() => 3,
         _ => return false,
     };
     // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
@@ -234,6 +242,10 @@ pub fn break_scenery(
                 DebrisMaterial::Metal,
             );
         }
+        CoverKind::Concrete => {
+            let Some(look) = patio else { return false };
+            break_patio_cover(&mut breakup, simulation, look);
+        }
         _ => return false,
     }
     if let Some(pose) = pose {
@@ -268,4 +280,65 @@ pub fn break_scenery(
         }
     }
     true
+}
+
+/// A loggia or pergola brought down: its posts or columns, the beam across them and its
+/// roof (a loggia's tile in two halves, a pergola's slats in a few bundles) fall from
+/// where they stood, turned as the cover was, in the house's paint or the stained wood.
+fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: PatioCover) {
+    let cover = breakup.cover;
+    let (w, d) = (cover.w, cover.d);
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // From the box's own frame (+z toward the house) into the world's, about its middle.
+    let place = |x: f64, y: f64, z: f64| [x * cos + z * sin, y, -x * sin + z * cos];
+    let (low, eave) = PATIO_ROOF;
+    let style = SENDA_STYLES[usize::from(cover.house_plan.map_or(0, |plan| plan.style))
+        % SENDA_STYLES.len()];
+    let mut pieces = Vec::new();
+    match look {
+        PatioCover::Loggia => {
+            let (column, beam) = LOGGIA_COLUMN;
+            let cover_w = w - 2.0 * LOGGIA_EAVE;
+            let reach = d - LOGGIA_EAVE;
+            let front = d / 2.0 - reach + column / 2.0;
+            let wall = DebrisMaterial::Concrete;
+            for end in [-1.0, 1.0] {
+                let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
+                pieces.push((FragmentShape::Beam, at, [column, low, column], style.siding, wall, 0.0));
+            }
+            let at = place(0.0, low - beam / 2.0, front);
+            pieces.push((FragmentShape::Beam, at, [cover_w, beam, column], style.siding, wall, 0.0));
+            let pitch = (eave - low).atan2(reach);
+            let slope = reach.hypot(eave - low) + LOGGIA_EAVE;
+            for end in [-1.0, 1.0] {
+                let at = place(end * w / 4.0, (low + eave) / 2.0 + 0.08, 0.0);
+                pieces.push((FragmentShape::Panel, at, [w / 2.0, 0.09, slope], style.roof, wall, pitch));
+            }
+        }
+        PatioCover::Pergola => {
+            let wood = DebrisMaterial::Wood;
+            let cover_w = w - 0.1;
+            let reach = d - 0.1;
+            let front = d / 2.0 - reach + PATIO_POST / 2.0;
+            for end in [-1.0, 1.0] {
+                let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
+                pieces.push((FragmentShape::Beam, at, [PATIO_POST, low, PATIO_POST], PERGOLA_WOOD, wood, 0.0));
+            }
+            for z in [front, d / 2.0 - 0.06] {
+                let at = place(0.0, low + 0.06, z);
+                pieces.push((FragmentShape::Beam, at, [cover_w, 0.12, 0.1], PERGOLA_WOOD, wood, 0.0));
+            }
+            for x in [-0.3, 0.0, 0.3] {
+                let at = place(x * cover_w, low + 0.15, d / 2.0 - reach / 2.0);
+                pieces.push((FragmentShape::Wood, at, [0.3, 0.06, reach], PERGOLA_WOOD, wood, 0.0));
+            }
+        }
+    }
+    for (shape, at, size, color, material, pitch) in pieces {
+        let piece = breakup.piece(simulation, shape, at, size, Some(color), material);
+        let body = simulation.fragments[piece].body;
+        let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(-pitch, 0.0, 0.0));
+        simulation.world.bodies[body].set_rotation(to_rotation(rotation), true);
+    }
 }

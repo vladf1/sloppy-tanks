@@ -1100,3 +1100,40 @@ fn a_turned_house_blocks_navigation_by_its_turned_box() {
         assert!(!covered(p), "the square box's corner {p:?} blocks");
     }
 }
+
+#[test]
+fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
+    use sloppy_core::sim::FragmentShape;
+    use sloppy_core::sim::senda_yards::{LOGGIA_COLOR, PERGOLA_WOOD};
+    let mut sim = senda(5.0);
+    let patios = |color: u32| sim.covers.iter().filter(|c| c.color == color).count();
+    assert!(
+        patios(LOGGIA_COLOR) >= 10,
+        "{} loggias",
+        patios(LOGGIA_COLOR)
+    );
+    assert!(
+        patios(PERGOLA_WOOD) >= 2,
+        "{} pergolas",
+        patios(PERGOLA_WOOD)
+    );
+    let loggia = sim
+        .covers
+        .iter()
+        .position(|c| c.color == LOGGIA_COLOR)
+        .expect("a loggia");
+    assert!(sim.covers[loggia].destructible && sim.covers[loggia].alive);
+    let fragments = sim.fragments.len();
+    sim.damage_cover(loggia, 1_000.0, 999, Team::Red, None, None);
+    assert!(!sim.covers[loggia].alive);
+    let pieces: Vec<_> = sim.fragments[fragments..].iter().collect();
+    // Two columns and the beam, and its roof in two halves, not three anonymous shards.
+    assert_eq!(pieces.len(), 5, "{pieces:?}");
+    assert_eq!(
+        pieces
+            .iter()
+            .filter(|f| f.shape == Some(FragmentShape::Panel))
+            .count(),
+        2
+    );
+}

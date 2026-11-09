@@ -166,7 +166,18 @@ impl Navigation {
                 // drive through its gaps where they fit.
                 ground_footprints(cover, &mut self.obstacles);
             } else if cover.alive && cover_turn(cover.kind, cover.house_plan) != 0.0 {
-                turned_footprints(cover, &mut self.obstacles);
+                if cover.w.min(cover.d) > TURNED_STEP * 2.0 {
+                    // A broad turned box (a patio's loggia) fills its own outline.
+                    let turn = cover_turn(cover.kind, cover.house_plan);
+                    turned_box_footprints(
+                        (cover.x, cover.z),
+                        (cover.w, cover.d),
+                        turn,
+                        &mut self.obstacles,
+                    );
+                } else {
+                    turned_footprints(cover, &mut self.obstacles);
+                }
             } else if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {

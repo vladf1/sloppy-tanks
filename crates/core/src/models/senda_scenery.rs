@@ -31,7 +31,7 @@ use crate::geometry::{
 };
 use crate::scene::Node;
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
-use crate::sim::house_layout::{HouseDesign, wall_frames};
+use crate::sim::house_layout::{HouseDesign, SENDA_STYLES, wall_frames};
 use crate::sim::kinds::{CoverKind, Team};
 use crate::sim::model_data::ARENA;
 use crate::sim::senda_layout::{
@@ -43,8 +43,10 @@ use crate::sim::senda_layout::{
     way_tree_sites,
 };
 use crate::sim::senda_yards::{
-    Lot, YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR,
-    YARD_WALL_THICKNESS, greenbelt_lane, park_corners, senda_lots,
+    LOGGIA_COLUMN, LOGGIA_EAVE, Lot, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover,
+    YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_PLANTER, YARD_VIEW_COLOR, YARD_WALL_COLOR,
+    YARD_WALL_THICKNESS, greenbelt_lane, house_back, park_corners, patio_depth, senda_lots,
+    turf_side,
 };
 use crate::sim::tree_proportions::tree_proportions;
 
@@ -194,12 +196,8 @@ const TRAIL_SHRUBS: (f64, f64) = (1.0, 2.4);
 const YARD_GRAVEL: u32 = 0x9d907a;
 const PATIO_CONCRETE: u32 = 0xd2cbbd;
 const PATIO_PAVERS: u32 = 0xb59f86;
-const PATIO_SHARE: f64 = 0.62;
-const PATIO_DEPTH: f64 = 2.5;
-const LEAST_PATIO: f64 = 0.9;
 const TURF: [f32; 3] = [0.42, 1.12, 1.25];
 const TURF_SHARE: f64 = 0.55;
-const YARD_PLANTER: f64 = 0.9;
 const SIDE_PLANTER: f64 = 0.6;
 /// The back yards' planting: low shrubs along the beds, about one every this many metres
 /// (their size range, m, and leaves, dark glossy greens with a flowering one), and a small
@@ -221,18 +219,7 @@ const SIDE_SHRUB_LEAVES: [u32; 3] = [0x3a5233, 0x44593a, 0x4f5f3c];
 /// The bark mulch along the outside of every back wall, at the foot of the bank and the
 /// slopes (its width, m).
 const WALL_FOOT: f64 = 1.0;
-/// The one-storey rear loggias over part of the patio on most lots, and the pergolas on a
-/// few: their posts' side, the roof's height at its outer beam and where it meets the
-/// house (m), how wide across the lot and how far out from the house at most (m), the
-/// pergolas' slats (their width and spacing, m) and stained wood.
-const PATIO_POST: f64 = 0.12;
-const PATIO_ROOF: (f64, f64) = (2.35, 2.65);
-const PATIO_COVER: (f64, f64) = (3.6, 2.6);
-/// The rear loggias' square stucco columns and the depth of the beam they carry (m), how
-/// far (m) their tile roof overhangs past the beam and the ends, and its courses' spacing
-/// down the slope and the butts' depth (m).
-const LOGGIA_COLUMN: (f64, f64) = (0.3, 0.3);
-const LOGGIA_EAVE: f64 = 0.3;
+/// The rear loggias' tile courses: their spacing down the slope and the butts' depth (m).
 const LOGGIA_TILE_COURSE: (f64, f64) = (0.32, 0.03);
 /// How much darker than the tile its courses' shadowed butts are.
 const LOGGIA_BUTT_SHADE: f64 = 0.72;
@@ -242,7 +229,6 @@ const FIRE_PIT: (f64, f64) = (0.45, 0.3);
 const FIRE_PIT_STONE: u32 = 0xb5ab98;
 const FIRE_PIT_ASH: u32 = 0x3b3835;
 const PERGOLA_SLAT: (f64, f64) = (0.07, 0.32);
-const PERGOLA_WOOD: u32 = 0x8a6c50;
 /// A round spa on every [`SPA_EVERY`]th lot: its radius and height (m), its coping and
 /// its water.
 const SPA_EVERY: usize = 6;
@@ -2793,26 +2779,6 @@ fn lot_slab(
     put(group, piece, at.x, top - SLAB / 2.0, at.y);
 }
 
-/// Where the house's back wall stands in its lot (`v` from the lot's centre): a full
-/// house deep's back, or nearer the street for a smaller plan, whose patio runs out from
-/// its own wall.
-fn house_back(lot: &Lot) -> f64 {
-    -lot.half_depth + (HOUSE_DEPTH - lot.house.d)
-}
-
-/// How deep (m) a lot's patio runs out from the house's back wall.
-fn patio_depth(lot: &Lot) -> f64 {
-    (lot.yard * PATIO_SHARE)
-        .clamp(LEAST_PATIO, PATIO_DEPTH)
-        .min(lot.yard - YARD_PLANTER)
-}
-
-/// The side of a lot (+1 its `+across` side) its turf patch and patio cover take; its
-/// spa or potted tree takes the other.
-fn turf_side(k: usize) -> f64 {
-    if k.is_multiple_of(2) { 1.0 } else { -1.0 }
-}
-
 /// The ground of every walled yard: decomposed granite inside the walls behind the gate
 /// returns, the patio against the house's back wall, on every other lot a turf patch
 /// behind it, the planting strip along the back wall, and outside the back wall the bark
@@ -3264,9 +3230,8 @@ fn crest_basin_sites(lines: &Lines) -> Vec<(DVec2, DVec2)> {
     sites
 }
 
-/// The lots' back-yard furniture, scenery a tank pushes through: on most lots a
-/// one-storey rear loggia in the house's tile on stucco columns over part of the patio (a
-/// slatted pergola on a few), a round spa in a back corner of some, a fire pit out on the
+/// The lots' back-yard furniture, scenery a tank pushes through (the loggias and
+/// pergolas over the patios are covers, [`patio_cover`]): a round spa in a back corner of some, a fire pit out on the
 /// yard of others, a trampoline on the turf of a few, a patio umbrella and a potted tree;
 /// the planted beds of tall grass outside the rows' end lots; and the bend park's benches, mailboxes
 /// and lamp.
@@ -3285,104 +3250,6 @@ fn yard_props() -> Node {
         let depth = patio_depth(lot);
         let (u0, u1) = (lot.line_u(0), lot.line_u(1));
         let side = turf_side(k);
-        let (low, eave) = PATIO_ROOF;
-        let cover = (PATIO_COVER.0).min(2.0 * lot.half_width - 0.4);
-        let middle = side * (lot.half_width - cover / 2.0 - 0.2);
-        let reach = depth.min(PATIO_COVER.1);
-        let posts: Vec<(f64, f64)> = [-1.0, 1.0]
-            .map(|end| {
-                (
-                    middle + end * (cover - PATIO_POST) / 2.0,
-                    back - reach + PATIO_POST / 2.0,
-                )
-            })
-            .into();
-        match k % 10 {
-            // A one-storey rear loggia: a shed roof in the house's own tile, falling
-            // from its back wall at the eave line to a stucco beam on square stucco
-            // columns, the tile's courses across it.
-            0 | 2 | 3 | 5 | 7 | 8 => {
-                let style = lot.house.design().style;
-                let (column, beam) = LOGGIA_COLUMN;
-                for &(u, v) in &posts {
-                    part(
-                        &mut group,
-                        box_part(column, low, column, style.siding, 0.0),
-                        (u, v + (column - PATIO_POST) / 2.0),
-                        low / 2.0,
-                    );
-                }
-                part(
-                    &mut group,
-                    box_part(cover + 0.1, beam, column, style.siding, 0.0),
-                    (middle, back - reach + column / 2.0),
-                    low - beam / 2.0 + 0.02,
-                );
-                let pitch = (eave - low).atan2(reach);
-                let slope = reach.hypot(eave - low) + LOGGIA_EAVE;
-                let mut roof = Node::default();
-                put(
-                    &mut roof,
-                    box_part(cover + 2.0 * LOGGIA_EAVE, 0.09, slope, style.roof, 0.0),
-                    0.0,
-                    0.0,
-                    0.0,
-                );
-                // The tile's courses: a shadowed butt every so far down the slope.
-                let (course, butt) = LOGGIA_TILE_COURSE;
-                let mut along_slope = -slope / 2.0 + course;
-                while along_slope < slope / 2.0 - 0.05 {
-                    put(
-                        &mut roof,
-                        box_part(
-                            cover + 2.0 * LOGGIA_EAVE,
-                            butt,
-                            butt,
-                            darker(style.roof, LOGGIA_BUTT_SHADE),
-                            0.0,
-                        ),
-                        0.0,
-                        0.045 + butt / 2.0,
-                        along_slope,
-                    );
-                    along_slope += course;
-                }
-                roof.rotation = DQuat::from_rotation_y(yaw) * DQuat::from_rotation_x(-pitch);
-                let at = lot.at(middle, back - (reach + LOGGIA_EAVE) / 2.0);
-                put(&mut group, roof, at.x, (low + eave) / 2.0 + 0.08, at.y);
-            }
-            // A pergola: a beam over its posts and one along the house, slats across.
-            9 => {
-                for &at in &posts {
-                    part(
-                        &mut group,
-                        box_part(PATIO_POST, low, PATIO_POST, PERGOLA_WOOD, 0.0),
-                        at,
-                        low / 2.0,
-                    );
-                }
-                for v in [back - reach + PATIO_POST / 2.0, back - 0.06] {
-                    part(
-                        &mut group,
-                        box_part(cover + 0.1, 0.12, 0.1, PERGOLA_WOOD, 0.0),
-                        (middle, v),
-                        low + 0.06,
-                    );
-                }
-                let (slat, spacing) = PERGOLA_SLAT;
-                let count = (cover / spacing).floor() as usize;
-                for n in 0..=count {
-                    let u = middle + (n as f64 / count.max(1) as f64 - 0.5) * (cover - slat);
-                    part(
-                        &mut group,
-                        box_part(slat, 0.06, reach + 0.2, PERGOLA_WOOD, 0.0),
-                        (u, back - reach / 2.0),
-                        low + 0.15,
-                    );
-                }
-            }
-            _ => {}
-        }
         // A patio umbrella on the patio's open side.
         if k % 5 == 1 {
             let (radius, pole) = UMBRELLA;
@@ -4850,6 +4717,95 @@ const VIEW_RAIL: (f64, f64) = (0.04, 0.08);
 
 /// Whether a concrete cover of `color` is one of Senda's lot walls, view fences or
 /// gates.
+/// A loggia or pergola over a lot's patio, as its cover draws it: in its box's own frame,
+/// `w` across by `d` with +z toward the house's back wall and the ground at 0. A loggia is
+/// a shed roof in its house's tile, falling from the wall at the eave line to a stucco
+/// beam on square stucco columns, the tile's courses across it; a pergola a beam over its
+/// posts and one along the house, slats across.
+pub fn patio_cover(group: &mut Node, look: PatioCover, (w, d): (f64, f64), style: u8) {
+    let (low, eave) = PATIO_ROOF;
+    let mut part = |node: Node, x: f64, y: f64, z: f64| put(group, node, x, y, z);
+    match look {
+        PatioCover::Loggia => {
+            let style = SENDA_STYLES[usize::from(style) % SENDA_STYLES.len()];
+            let (column, beam) = LOGGIA_COLUMN;
+            let cover = w - 2.0 * LOGGIA_EAVE;
+            let reach = d - LOGGIA_EAVE;
+            let front = d / 2.0 - reach + column / 2.0;
+            for end in [-1.0, 1.0] {
+                part(
+                    box_part(column, low, column, style.siding, 0.0),
+                    end * (cover - PATIO_POST) / 2.0,
+                    low / 2.0,
+                    front,
+                );
+            }
+            part(
+                box_part(cover + 0.1, beam, column, style.siding, 0.0),
+                0.0,
+                low - beam / 2.0 + 0.02,
+                front,
+            );
+            let pitch = (eave - low).atan2(reach);
+            let slope = reach.hypot(eave - low) + LOGGIA_EAVE;
+            let mut roof = Node::default();
+            put(
+                &mut roof,
+                box_part(w, 0.09, slope, style.roof, 0.0),
+                0.0,
+                0.0,
+                0.0,
+            );
+            // The tile's courses: a shadowed butt every so far down the slope.
+            let (course, butt) = LOGGIA_TILE_COURSE;
+            let mut along_slope = -slope / 2.0 + course;
+            while along_slope < slope / 2.0 - 0.05 {
+                put(
+                    &mut roof,
+                    box_part(w, butt, butt, darker(style.roof, LOGGIA_BUTT_SHADE), 0.0),
+                    0.0,
+                    0.045 + butt / 2.0,
+                    along_slope,
+                );
+                along_slope += course;
+            }
+            roof.rotation = DQuat::from_rotation_x(-pitch);
+            put(group, roof, 0.0, (low + eave) / 2.0 + 0.08, 0.0);
+        }
+        PatioCover::Pergola => {
+            let cover = w - 0.1;
+            let reach = d - 0.1;
+            for end in [-1.0, 1.0] {
+                part(
+                    box_part(PATIO_POST, low, PATIO_POST, PERGOLA_WOOD, 0.0),
+                    end * (cover - PATIO_POST) / 2.0,
+                    low / 2.0,
+                    d / 2.0 - reach + PATIO_POST / 2.0,
+                );
+            }
+            for z in [d / 2.0 - reach + PATIO_POST / 2.0, d / 2.0 - 0.06] {
+                part(
+                    box_part(cover + 0.1, 0.12, 0.1, PERGOLA_WOOD, 0.0),
+                    0.0,
+                    low + 0.06,
+                    z,
+                );
+            }
+            let (slat, spacing) = PERGOLA_SLAT;
+            let count = (cover / spacing).floor() as usize;
+            for n in 0..=count {
+                let x = (n as f64 / count.max(1) as f64 - 0.5) * (cover - slat);
+                part(
+                    box_part(slat, 0.06, reach + 0.2, PERGOLA_WOOD, 0.0),
+                    x,
+                    low + 0.15,
+                    d / 2.0 - reach / 2.0,
+                );
+            }
+        }
+    }
+}
+
 pub fn is_yard_wall(color: u32) -> bool {
     color == YARD_WALL_COLOR
         || color == YARD_VIEW_COLOR
