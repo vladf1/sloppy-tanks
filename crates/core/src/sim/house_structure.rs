@@ -23,13 +23,13 @@ use glam::{DVec2, DVec3};
 use super::debris_physics::DebrisMaterial;
 use super::house_fracture::PartPlane;
 use super::house_layout::{
-    CHIMNEY, CORNER_POST, DOOR_BAY, GARAGE_HEIGHT, HouseDesign, HousePart,
-    OpeningKind, PLINTH, RAFTER_DEPTH, Roof, RoofForm, SILL, WALL_DEPTH, WINDOW_BAY, WallFinish,
-    wall_frames,
+    CHIMNEY, CORNER_POST, GARAGE_HEIGHT, HouseDesign, HousePart, OpeningKind, PLINTH, RAFTER_DEPTH,
+    Roof, RoofForm, SILL, WALL_DEPTH, WallFinish, wall_frames,
 };
 use super::structure::{
-    Brace, Breakup, Breaking, Build, DebrisRules, End, GROUND_BLOCK, HeldLayouts, end_rank, Levelling, Lie, MAX_PARTS, Material,
-    Part, PartSet, PartShape, Role, SEAT_NEEDED, Structure, Support, Tipping,
+    Brace, Breaking, Breakup, Build, DebrisRules, End, GROUND_BLOCK, HeldLayouts, Levelling, Lie,
+    MAX_PARTS, Material, Part, PartSet, PartShape, Role, SEAT_NEEDED, Structure, Support, Tipping,
+    end_rank,
 };
 
 /// What a part is, which decides its strength, how it carries what it holds and how
@@ -231,14 +231,16 @@ const BAY: f64 = 0.95;
 const NARROWEST_BAY: f64 = 0.3;
 /// A garage house's bays and roof sheets (Senda's): framed coarser than a cottage's,
 /// so a two-storey house on a bigger lot stays within the engine's [`MAX_PARTS`].
-const GARAGE_HOUSE_BAY: f64 = 1.35;
+const GARAGE_HOUSE_BAY: f64 = 1.7;
 const GARAGE_HOUSE_SHEET: f64 = 2.2;
 /// How far (m) a ground-floor window's cells reach into the bays beside it for its
 /// shutters, leaving at least [`NARROWEST_SIDE`] of a bay to the bay.
 const SHUTTER_REACH: f64 = 0.4;
 const NARROWEST_SIDE: f64 = 0.12;
-/// The course of wall under a window's lower panel (m over the plinth).
+/// The course of wall under a window's lower panel (m over the plinth): a cottage's,
+/// and a garage house's under its lower sill.
 const WINDOW_FOOT: f64 = 0.35;
+const LOW_WINDOW_FOOT: f64 = 0.18;
 /// A window's trim reaches this far (m) past its opening: the head casing and drip cap
 /// over it and the sill and apron under it go with the window, not the wall round it.
 const WINDOW_HEAD_TRIM: f64 = 0.2;
@@ -320,10 +322,11 @@ struct FramePart {
 
 impl FramePart {
     fn new(kind: PartKind, points: Vec<DVec3>, cuboid: bool, cells: Vec<PartCell>) -> Self {
-        let (min, max) = points.iter().fold(
-            (DVec3::INFINITY, DVec3::NEG_INFINITY),
-            |(min, max), p| (min.min(*p), max.max(*p)),
-        );
+        let (min, max) = points
+            .iter()
+            .fold((DVec3::INFINITY, DVec3::NEG_INFINITY), |(min, max), p| {
+                (min.min(*p), max.max(*p))
+            });
         Self {
             kind,
             points,
@@ -363,7 +366,11 @@ impl FramePart {
     fn into_part(self, design: &HouseDesign, braces: Vec<Brace>) -> Part {
         let shapes = if self.cuboid && self.hulls.is_empty() {
             let footed = self.grounded && (self.wall.is_some() || self.kind == PartKind::Post);
-            let bottom = if footed { self.min.with_y(0.0) } else { self.min };
+            let bottom = if footed {
+                self.min.with_y(0.0)
+            } else {
+                self.min
+            };
             vec![PartShape::aligned(bottom, self.max)]
         } else if self.hulls.is_empty() {
             vec![PartShape::Hull(self.points.clone())]
@@ -652,7 +659,10 @@ impl Frame {
     fn stack_top(&self) -> f64 {
         let flue = self.design.flue();
         let rafters = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
-            .map(|(sx, sz)| self.roof.top(flue.x + sx * CHIMNEY / 2.0, flue.z + sz * CHIMNEY / 2.0))
+            .map(|(sx, sz)| {
+                self.roof
+                    .top(flue.x + sx * CHIMNEY / 2.0, flue.z + sz * CHIMNEY / 2.0)
+            })
             .into_iter()
             .fold(f64::INFINITY, f64::min)
             - self.roof.thick
@@ -742,10 +752,13 @@ impl Frame {
         let mut openings: Vec<(f64, f64, Column)> = Vec::new();
         let plan = self.design.wall_plan(index);
         let garage_bay = plan.garage_bay;
+        let (window_bay, door_bay) = (self.roof.window_bay(), self.roof.door_bay());
         for (u, kind) in plan.ground {
             match kind {
-                OpeningKind::Window => openings.push((u - WINDOW_BAY, u + WINDOW_BAY, Column::Window)),
-                OpeningKind::Door => openings.push((u - DOOR_BAY, u + DOOR_BAY, Column::Door)),
+                OpeningKind::Window => {
+                    openings.push((u - window_bay, u + window_bay, Column::Window))
+                }
+                OpeningKind::Door => openings.push((u - door_bay, u + door_bay, Column::Door)),
                 // A garage door in two leaves, each a column with a window over it.
                 OpeningKind::Garage => openings.extend([
                     (u - 2.0 * garage_bay, u, Column::Garage),
@@ -786,6 +799,11 @@ impl Frame {
         let (sill, height) = self.roof.ground_window();
         let head = sill + height;
         let plinth = self.roof.plinth;
+        let foot = if self.roof.low_storeys {
+            LOW_WINDOW_FOOT
+        } else {
+            WINDOW_FOOT
+        };
         let mut bands = match column {
             Column::Door => vec![(
                 plinth,
@@ -798,11 +816,14 @@ impl Frame {
             // hull height passes over: a shot under the sill leaves a ragged hole over
             // it, not a doorway.
             Column::Window => vec![
-                (plinth, plinth + WINDOW_FOOT, PartKind::Panel),
-                (plinth + WINDOW_FOOT, sill, PartKind::Panel),
+                (plinth, plinth + foot, PartKind::Panel),
+                (plinth + foot, sill, PartKind::Panel),
                 (sill, head, PartKind::Window),
             ],
-            Column::Bay => vec![(plinth, sill, PartKind::Panel), (sill, head, PartKind::Panel)],
+            Column::Bay => vec![
+                (plinth, sill, PartKind::Panel),
+                (sill, head, PartKind::Panel),
+            ],
         };
         let floor = bands.last().map_or(head, |band| band.1);
         if self.design.storeys() == 2 {
@@ -837,20 +858,29 @@ impl Frame {
                 return (0.0, 0.0);
             }
             let into = |n: Option<&(f64, f64, Column)>| {
-                n.filter(|bay| bay.2 == Column::Bay)
-                    .map_or(0.0, |bay| SHUTTER_REACH.min(bay.1 - bay.0 - NARROWEST_SIDE).max(0.0))
+                n.filter(|bay| bay.2 == Column::Bay).map_or(0.0, |bay| {
+                    SHUTTER_REACH.min(bay.1 - bay.0 - NARROWEST_SIDE).max(0.0)
+                })
             };
-            (into(c.checked_sub(1).and_then(|k| columns.get(k))), into(columns.get(c + 1)))
+            (
+                into(c.checked_sub(1).and_then(|k| columns.get(k))),
+                into(columns.get(c + 1)),
+            )
         };
         for (c, &(from, to, column)) in columns.iter().enumerate() {
             let upper_window = column != Column::Bay
-                && upper_windows.iter().any(|&u| u > from - 1e-6 && u < to + 1e-6);
+                && upper_windows
+                    .iter()
+                    .any(|&u| u > from - 1e-6 && u < to + 1e-6);
             let bands = self.bands(column, upper_window);
             let last_band = bands.len() - 1;
             // Where each band's cell starts and ends up the wall: a window's takes its
             // trim from the bands over and under it.
             let trim = |b: usize, edge: f64, upward: bool| {
-                let window = |k: Option<usize>| k.and_then(|k| bands.get(k)).is_some_and(|band| band.2 == PartKind::Window);
+                let window = |k: Option<usize>| {
+                    k.and_then(|k| bands.get(k))
+                        .is_some_and(|band| band.2 == PartKind::Window)
+                };
                 match upward {
                     // A band's top: under a window it stops short of the sill trim; a
                     // window's reaches over its head trim.
@@ -874,7 +904,11 @@ impl Frame {
                     min: DVec2::new(from, if b == 0 { -FAR } else { trim(b, bottom, false) }),
                     max: DVec2::new(
                         to,
-                        if b < last_band || gable { trim(b, top, true) } else { FAR },
+                        if b < last_band || gable {
+                            trim(b, top, true)
+                        } else {
+                            FAR
+                        },
                     ),
                 };
                 let mut cells = Vec::new();
@@ -894,7 +928,11 @@ impl Frame {
                 } else if column == Column::Bay && window_band {
                     // What the windows beside it took of this band for their shutters.
                     let left = c.checked_sub(1).map_or(0.0, |k| reach(k).1);
-                    let right = if c + 1 < columns.len() { reach(c + 1).0 } else { 0.0 };
+                    let right = if c + 1 < columns.len() {
+                        reach(c + 1).0
+                    } else {
+                        0.0
+                    };
                     cell.min.x += left;
                     cell.max.x -= right;
                 }
@@ -964,7 +1002,10 @@ impl Frame {
         let flue = self.design.flue();
         let reach = DVec2::splat(CHIMNEY / 2.0 + HOLE_MARGIN);
         let (hole_low, hole_high) = if self.design.chimney() {
-            (DVec2::new(flue.x, flue.z) - reach, DVec2::new(flue.x, flue.z) + reach)
+            (
+                DVec2::new(flue.x, flue.z) - reach,
+                DVec2::new(flue.x, flue.z) + reach,
+            )
         } else {
             (DVec2::INFINITY, DVec2::NEG_INFINITY)
         };
@@ -1088,9 +1129,8 @@ impl Frame {
                         if matches!(b.kind, PartKind::Plate | PartKind::Post)
                             && a.wall.is_some() =>
                     {
-                        let along = wall_frames(self.design.w, self.design.d)
-                            [a.wall.expect("checked")]
-                        .2;
+                        let along =
+                            wall_frames(self.design.w, self.design.d)[a.wall.expect("checked")].2;
                         if (b.center() - a.center()).dot(along) < 0.0 {
                             End::A
                         } else {
@@ -1158,7 +1198,8 @@ impl Frame {
                 // The posts the course's end plates are framed into.
                 let post_of = |plate: usize| {
                     self.supports[plate].iter().find_map(|support| {
-                        (self.parts[support.by as usize].kind == PartKind::Post).then_some(support.by)
+                        (self.parts[support.by as usize].kind == PartKind::Post)
+                            .then_some(support.by)
                     })
                 };
                 let first_post = plates.first().and_then(|&(_, plate)| post_of(plate));
@@ -1169,18 +1210,50 @@ impl Frame {
                     for k in 2..=PLATE_SPAN {
                         let share = PLATE_TIE.powi(k as i32);
                         if i >= k {
-                            links.push((plate, Support { by: plates[i - k].1 as u16, share, seat: 0.0, end: End::A }));
+                            links.push((
+                                plate,
+                                Support {
+                                    by: plates[i - k].1 as u16,
+                                    share,
+                                    seat: 0.0,
+                                    end: End::A,
+                                },
+                            ));
                         } else if i + 1 == k
                             && let Some(post) = first_post
                         {
-                            links.push((plate, Support { by: post, share, seat: 0.0, end: End::A }));
+                            links.push((
+                                plate,
+                                Support {
+                                    by: post,
+                                    share,
+                                    seat: 0.0,
+                                    end: End::A,
+                                },
+                            ));
                         }
                         if i + k < count {
-                            links.push((plate, Support { by: plates[i + k].1 as u16, share, seat: 0.0, end: End::B }));
+                            links.push((
+                                plate,
+                                Support {
+                                    by: plates[i + k].1 as u16,
+                                    share,
+                                    seat: 0.0,
+                                    end: End::B,
+                                },
+                            ));
                         } else if i + k == count
                             && let Some(post) = last_post
                         {
-                            links.push((plate, Support { by: post, share, seat: 0.0, end: End::B }));
+                            links.push((
+                                plate,
+                                Support {
+                                    by: post,
+                                    share,
+                                    seat: 0.0,
+                                    end: End::B,
+                                },
+                            ));
                         }
                     }
                 }
@@ -1222,7 +1295,11 @@ impl Frame {
             for upper in [true, false] {
                 for k in 0..columns {
                     let (s0, s1) = (cut(k), cut(k + 1));
-                    let (t0, t1) = if upper { (0.0, row) } else { (row, roof.eave_x) };
+                    let (t0, t1) = if upper {
+                        (0.0, row)
+                    } else {
+                        (row, roof.eave_x)
+                    };
                     let plan = clip_rect(&outline, DVec2::new(s0, t0), DVec2::new(s1, t1));
                     if plan.len() < 3 {
                         continue;
@@ -1238,7 +1315,9 @@ impl Frame {
                             if upper { t1 } else { FAR },
                         ),
                     };
-                    self.push_sheet((part, upper), &plan, cell, &|q| DVec3::new(side * q.y, 0.0, q.x));
+                    self.push_sheet((part, upper), &plan, cell, &|q| {
+                        DVec3::new(side * q.y, 0.0, q.x)
+                    });
                 }
             }
         }
@@ -1274,7 +1353,9 @@ impl Frame {
                         min: DVec2::new(if half < 0.0 { -FAR } else { 0.0 }, -FAR),
                         max: DVec2::new(if half < 0.0 { 0.0 } else { FAR }, FAR),
                     };
-                    self.push_sheet((part, false), &plan, cell, &|q| DVec3::new(q.x, 0.0, end * q.y));
+                    self.push_sheet((part, false), &plan, cell, &|q| {
+                        DVec3::new(q.x, 0.0, end * q.y)
+                    });
                 }
             }
         }
@@ -1301,7 +1382,13 @@ impl Frame {
     /// frame by `place`) drawn as `cell`, framed round the hole the chimney comes through
     /// where it does: its collider is then the strips of deck round the hole, so a roof
     /// coming down slides down past the stack rather than landing on it like a table.
-    fn push_sheet(&mut self, slope: (HousePart, bool), plan: &[DVec2], cell: PartCell, place: &dyn Fn(DVec2) -> DVec3) {
+    fn push_sheet(
+        &mut self,
+        slope: (HousePart, bool),
+        plan: &[DVec2],
+        cell: PartCell,
+        place: &dyn Fn(DVec2) -> DVec3,
+    ) {
         let points = slab(&self.roof, plan.iter().map(|&q| place(q)));
         let mut sheet = FramePart::new(PartKind::Sheet, points, false, vec![cell]);
         sheet.slope = Some(slope);
@@ -1505,7 +1592,13 @@ impl Frame {
                 continue;
             }
             for top in &tops {
-                added.push((upper, Support { end: End::A, ..*top }));
+                added.push((
+                    upper,
+                    Support {
+                        end: End::A,
+                        ..*top
+                    },
+                ));
                 for &lower in &lowers {
                     // The lower sheet holds at its top by the same ridge, unseated:
                     // the rafters' seat there is the upper sheet's.
@@ -1520,7 +1613,13 @@ impl Frame {
                 }
             }
             for foot in &feet {
-                added.push((upper, Support { end: End::B, ..*foot }));
+                added.push((
+                    upper,
+                    Support {
+                        end: End::B,
+                        ..*foot
+                    },
+                ));
             }
             for &lower in &lowers {
                 feet_of.push((lower, feet.iter().map(|foot| foot.by).collect()));
@@ -1594,8 +1693,9 @@ impl Frame {
                     let middle = part.center().with_y(0.0);
                     let corner = (0..4)
                         .min_by(|&a, &b| {
-                            let gap =
-                                |post: usize| (self.parts[post].center().with_y(0.0) - middle).length();
+                            let gap = |post: usize| {
+                                (self.parts[post].center().with_y(0.0) - middle).length()
+                            };
                             gap(a).total_cmp(&gap(b))
                         })
                         .expect("four corner posts");
@@ -1617,7 +1717,8 @@ impl Frame {
                 via: Vec::new(),
                 any: (0..count)
                     .filter(|&other| {
-                        self.parts[other].kind == PartKind::Sheet && self.touch(index, other, ROOF_BRACE)
+                        self.parts[other].kind == PartKind::Sheet
+                            && self.touch(index, other, ROOF_BRACE)
                     })
                     .map(|other| other as u16)
                     .collect(),
@@ -1646,7 +1747,9 @@ impl Frame {
     /// chimney, whose masonry is not nailed to the frame), standing by the share rule and
     /// tipping, levelled once its roof is down.
     fn into_structure(self) -> Structure {
-        let braces: Vec<Vec<Brace>> = (0..self.parts.len()).map(|index| self.braces(index)).collect();
+        let braces: Vec<Vec<Brace>> = (0..self.parts.len())
+            .map(|index| self.braces(index))
+            .collect();
         let outlines: Vec<Vec<DVec3>> = self.parts.iter().map(|part| part.points.clone()).collect();
         let design = self.design;
         let sheets = PartSet::from_indices(
@@ -1723,7 +1826,11 @@ fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign, outlines: &
                 .chain(std::iter::once(to))
                 .collect()
         };
-        let long = if design.garage.is_some() { GARAGE_HOUSE_LONG_SHEET } else { LONG_SHEET };
+        let long = if design.garage.is_some() {
+            GARAGE_HOUSE_LONG_SHEET
+        } else {
+            LONG_SHEET
+        };
         let along = if high.x - low.x > long {
             cuts(low.x, high.x, &[if index % 2 == 0 { 0.45 } else { 0.55 }])
         } else {
@@ -1733,7 +1840,10 @@ fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign, outlines: &
         let mut made = Vec::new();
         for s_span in along.windows(2) {
             for t_span in down.windows(2) {
-                let (min, max) = (DVec2::new(s_span[0], t_span[0]), DVec2::new(s_span[1], t_span[1]));
+                let (min, max) = (
+                    DVec2::new(s_span[0], t_span[0]),
+                    DVec2::new(s_span[1], t_span[1]),
+                );
                 let piece_plan = clip_rect(&plan, min, max);
                 if piece_plan.len() < 3 {
                     continue;
@@ -1745,7 +1855,12 @@ fn add_sheet_pieces(structure: &mut Structure, design: &HouseDesign, outlines: &
                 }
                 let shapes: Vec<PartShape> = plans
                     .iter()
-                    .map(|plan| PartShape::Hull(slab(&roof, plan.iter().map(|q| plane.s * q.x + plane.t * q.y))))
+                    .map(|plan| {
+                        PartShape::Hull(slab(
+                            &roof,
+                            plan.iter().map(|q| plane.s * q.x + plane.t * q.y),
+                        ))
+                    })
                     .collect();
                 let mut piece_cell = cell;
                 for (axis, edge_low, edge_high) in [(0, low.x, high.x), (1, low.y, high.y)] {
@@ -1839,9 +1954,7 @@ fn support_share(of: PartKind, by: PartKind, relation: Relation) -> f32 {
             (Floor, Floor) => BOARD_TIE,
             // A bay framed into a corner post is held by it, as by its plate.
             (Panel | Window | Door, Post) => POST_PANEL_TIE,
-            (Panel | Window | Door | Partition, Panel | Window | Door | Plate | Post) => {
-                PANEL_TIE
-            }
+            (Panel | Window | Door | Partition, Panel | Window | Door | Plate | Post) => PANEL_TIE,
             _ => LOOSE_TIE,
         },
     }
@@ -1910,16 +2023,20 @@ fn chimney_hole(design: &HouseDesign, part: HousePart) -> (DVec2, DVec2) {
             DVec2::new(p.dot(plane.s), p.dot(plane.t))
         })
         .into_iter()
-        .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| (low.min(q), high.max(q)))
+        .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| {
+            (low.min(q), high.max(q))
+        })
 }
 
 /// The convex plans `plan` (in a roof part's plane) is cut into round the hole
 /// `hole_low`–`hole_high`: the strips beside, under and over the hole where it reaches
 /// into the plan, none where it does not.
 fn framed(plan: &[DVec2], hole_low: DVec2, hole_high: DVec2) -> Vec<Vec<DVec2>> {
-    let (low, high) = plan.iter().fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| {
-        (low.min(*q), high.max(*q))
-    });
+    let (low, high) = plan
+        .iter()
+        .fold((DVec2::INFINITY, DVec2::NEG_INFINITY), |(low, high), q| {
+            (low.min(*q), high.max(*q))
+        });
     let (hole_low, hole_high) = (hole_low.max(low), hole_high.min(high));
     if (hole_high - hole_low).min_element() <= 1e-6 {
         return Vec::new();
@@ -1927,8 +2044,14 @@ fn framed(plan: &[DVec2], hole_low: DVec2, hole_high: DVec2) -> Vec<Vec<DVec2>> 
     [
         (low, DVec2::new(hole_low.x, high.y)),
         (DVec2::new(hole_high.x, low.y), high),
-        (DVec2::new(hole_low.x, low.y), DVec2::new(hole_high.x, hole_low.y)),
-        (DVec2::new(hole_low.x, hole_high.y), DVec2::new(hole_high.x, high.y)),
+        (
+            DVec2::new(hole_low.x, low.y),
+            DVec2::new(hole_high.x, hole_low.y),
+        ),
+        (
+            DVec2::new(hole_low.x, hole_high.y),
+            DVec2::new(hole_high.x, high.y),
+        ),
     ]
     .into_iter()
     .filter(|(min, max)| (*max - *min).min_element() > 1e-6)
@@ -1950,11 +2073,10 @@ fn slab(roof: &Roof, plan: impl Iterator<Item = DVec3>) -> Vec<DVec3> {
     .collect()
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sim::house_layout::{GarageSide, HousePlan, SENDA_STYLES};
+    use crate::sim::house_layout::{GARAGE_HOUSE_PITCH, GarageSide, HousePlan, SENDA_STYLES};
     use crate::sim::structure::FALL_BELOW;
 
     fn village() -> Vec<HouseDesign> {
@@ -1976,8 +2098,11 @@ mod tests {
         village().into_iter().chain(senda()).collect()
     }
 
-    /// The level's houses' boxes along their street and deep: the smallest and the largest.
-    const LOTS: [(f64, f64); 3] = [(4.6, 7.0), (5.0, 7.0), (7.0, 7.5)];
+    /// The level's houses' boxes along their street and deep: the narrow rows' small plan,
+    /// and the small, medium and large plans.
+    const LOTS: [(f64, f64); 4] = [(5.8, 7.4), (6.2, 7.4), (6.2, 7.7), (6.2, 8.0)];
+    /// The wall plate (m) the level's houses stand at, under their roof's rise.
+    const WALL_PLATE: f64 = 3.2;
 
     /// Every Senda house type at the level's smallest and largest lots, both garage
     /// sides, fronting a street either way.
@@ -1987,8 +2112,14 @@ mod tests {
             for garage in [GarageSide::Left, GarageSide::Right] {
                 for street in [0, 2] {
                     for (w, d) in LOTS {
-                        let plan = HousePlan { style, street, angle: 0, garage };
-                        designs.push(HouseDesign::planned(-12.0, 20.0, w, d, 7.0, plan));
+                        let plan = HousePlan {
+                            style,
+                            street,
+                            angle: 0,
+                            garage,
+                        };
+                        let h = WALL_PLATE + GARAGE_HOUSE_PITCH * w / 2.0;
+                        designs.push(HouseDesign::planned(-12.0, 20.0, w, d, h, plan));
                     }
                 }
             }
@@ -2003,18 +2134,30 @@ mod tests {
         for design in senda() {
             let structure = house_structure(&design);
             let count = structure.parts.len() + structure.pieces.len();
-            assert!(count + PART_MARGIN <= MAX_PARTS, "{:?} {:?}: {count}", design.style.form, design.style.door);
+            assert!(
+                count + PART_MARGIN <= MAX_PARTS,
+                "{:?} {:?}: {count}",
+                design.style.form,
+                design.style.door
+            );
         }
     }
 
     /// Corner post `post`'s foot: after the chimney's top on a house with one.
     fn foot(design: &HouseDesign, post: usize) -> usize {
-        if design.chimney() { POST_FEET + post } else { CHIMNEY_PART + post }
+        if design.chimney() {
+            POST_FEET + post
+        } else {
+            CHIMNEY_PART + post
+        }
     }
 
     /// A house's garage door leaves: the door wall's door parts over its garage.
     fn garage_leaves(design: &HouseDesign, structure: &Structure) -> Vec<usize> {
-        let garage = design.wall_plan(design.door_wall).garage().expect("a garage");
+        let garage = design
+            .wall_plan(design.door_wall)
+            .garage()
+            .expect("a garage");
         let (center, _, along, _) = wall_frames(design.w, design.d)[design.door_wall];
         (0..structure.parts.len())
             .filter(|&index| {
@@ -2032,10 +2175,19 @@ mod tests {
         for design in senda() {
             let structure = house_structure(&design);
             let leaves = garage_leaves(&design, &structure);
-            assert_eq!(leaves.len(), 2, "{:?} {:?}", design.style.form, design.garage);
+            assert_eq!(
+                leaves.len(),
+                2,
+                "{:?} {:?}",
+                design.style.form,
+                design.garage
+            );
             for &leaf in &leaves {
                 let part = &structure.parts[leaf];
-                assert!(part.grounded && part.material.strength < 40.0, "a shell breaks a leaf");
+                assert!(
+                    part.grounded && part.material.strength < 40.0,
+                    "a shell breaks a leaf"
+                );
                 // An upper window over each leaf, as the model draws them.
                 let over = (0..structure.parts.len()).any(|other| {
                     let window = &structure.parts[other];
@@ -2044,22 +2196,40 @@ mod tests {
                         && window.house().wall == part.house().wall
                         && (window.middle() - part.middle()).with_y(0.0).length() < 1e-6
                 });
-                assert!(over, "{:?} {:?}: no window over leaf {leaf}", design.style.form, design.garage);
+                assert!(
+                    over,
+                    "{:?} {:?}: no window over leaf {leaf}",
+                    design.style.form, design.garage
+                );
             }
             // Both leaves shot out: the plates over them carry the upper storey on.
             let gone = PartSet::from_indices(leaves.iter().copied());
-            assert!(structure.unsupported(&gone).is_empty(), "{:?} {:?}", design.style.form, design.garage);
+            assert!(
+                structure.unsupported(&gone).is_empty(),
+                "{:?} {:?}",
+                design.style.form,
+                design.garage
+            );
             // The leaf by the door left alone in its wall falls (on a narrow front the other
             // stands against the corner post).
             let (center, _, along, _) = wall_frames(design.w, design.d)[design.door_wall];
             let door = design.wall_plan(design.door_wall).door().expect("a door");
-            let off = |leaf: usize| ((structure.parts[leaf].middle() - center).dot(along) - door).abs();
-            let leaf = *leaves.iter().min_by(|a, b| off(**a).total_cmp(&off(**b))).expect("leaves");
+            let off =
+                |leaf: usize| ((structure.parts[leaf].middle() - center).dot(along) - door).abs();
+            let leaf = *leaves
+                .iter()
+                .min_by(|a, b| off(**a).total_cmp(&off(**b)))
+                .expect("leaves");
             let wall = structure.parts[leaf].house().wall;
             let gone = PartSet::from_indices(
-                (0..structure.parts.len()).filter(|&index| index != leaf && structure.parts[index].house().wall == wall),
+                (0..structure.parts.len())
+                    .filter(|&index| index != leaf && structure.parts[index].house().wall == wall),
             );
-            assert!(structure.unsupported(&gone).contains(leaf), "{:?}", design.style.form);
+            assert!(
+                structure.unsupported(&gone).contains(leaf),
+                "{:?}",
+                design.style.form
+            );
         }
     }
 
@@ -2105,7 +2275,11 @@ mod tests {
                             || under(&structure, other) != [index]
                     })
                     .collect();
-                assert!(falling.is_empty(), "{:?} {index}: {falling:?}", design.style.form);
+                assert!(
+                    falling.is_empty(),
+                    "{:?} {index}: {falling:?}",
+                    design.style.form
+                );
             }
         }
     }
@@ -2177,7 +2351,10 @@ mod tests {
                 let gone = PartSet::from_indices(under(&structure, index));
                 assert!(!gone.is_empty(), "window {index} stands on something");
                 let falling = structure.unsupported(&gone);
-                assert!(falling.contains(index), "window {index} hangs over its hole");
+                assert!(
+                    falling.contains(index),
+                    "window {index} hangs over its hole"
+                );
             }
         }
     }
@@ -2202,10 +2379,14 @@ mod tests {
                     if part.house().kind != PartKind::Plate || down.contains(index) {
                         continue;
                     }
-                    let seated = under(&structure, index).iter().any(|&below| !down.contains(below));
+                    let seated = under(&structure, index)
+                        .iter()
+                        .any(|&below| !down.contains(below));
                     let sides = structure.supports[index]
                         .iter()
-                        .filter(|support| support.end != End::Any && !down.contains(support.by as usize))
+                        .filter(|support| {
+                            support.end != End::Any && !down.contains(support.by as usize)
+                        })
                         .map(|support| support.end)
                         .collect::<Vec<_>>();
                     assert!(
@@ -2236,7 +2417,9 @@ mod tests {
                 .expect("an upper storey");
             let span = (structure.parts[column].min.x, structure.parts[column].max.x);
             let kept = |part: &Part| {
-                part.house().wall == Some(0) && (part.min.x - span.0).abs() < 1e-6 && (part.max.x - span.1).abs() < 1e-6
+                part.house().wall == Some(0)
+                    && (part.min.x - span.0).abs() < 1e-6
+                    && (part.max.x - span.1).abs() < 1e-6
             };
             let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                 let part = &structure.parts[index];
@@ -2245,7 +2428,10 @@ mod tests {
             let falling = structure.unsupported(&gone);
             for (index, part) in structure.parts.iter().enumerate() {
                 if kept(part) && part.house().upper_storey {
-                    assert!(falling.contains(index), "upper part {index} of the lone bay stands");
+                    assert!(
+                        falling.contains(index),
+                        "upper part {index} of the lone bay stands"
+                    );
                 }
             }
             checked += 1;
@@ -2270,19 +2456,28 @@ mod tests {
                 }) else {
                     continue;
                 };
-                let (from, to) = (structure.parts[window].min.x - 1.0, structure.parts[window].max.x + 1.0);
+                let (from, to) = (
+                    structure.parts[window].min.x - 1.0,
+                    structure.parts[window].max.x + 1.0,
+                );
                 let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                     let part = &structure.parts[index];
                     part.house().wall == Some(wall)
                         && (part.house().kind == PartKind::Gable
-                            || (part.max.x > from && part.min.x < to && part.house().kind != PartKind::Plate))
+                            || (part.max.x > from
+                                && part.min.x < to
+                                && part.house().kind != PartKind::Plate))
                 }));
                 let falling = structure.unsupported(&gone);
                 let sheets: Vec<usize> = falling
                     .iter()
                     .filter(|&index| structure.parts[index].house().kind == PartKind::Sheet)
                     .collect();
-                assert!(sheets.is_empty(), "{:?} wall {wall}: sheets {sheets:?} fell", design.style.form);
+                assert!(
+                    sheets.is_empty(),
+                    "{:?} wall {wall}: sheets {sheets:?} fell",
+                    design.style.form
+                );
                 checked += 1;
             }
         }
@@ -2297,7 +2492,9 @@ mod tests {
             let middle = (0..structure.parts.len())
                 .filter(|&index| {
                     let part = &structure.parts[index];
-                    part.house().wall == Some(2) && part.house().kind == PartKind::Panel && part.grounded
+                    part.house().wall == Some(2)
+                        && part.house().kind == PartKind::Panel
+                        && part.grounded
                 })
                 .min_by(|&a, &b| {
                     let z = |index: usize| structure.parts[index].middle().z.abs();
@@ -2306,16 +2503,25 @@ mod tests {
                 .expect("a middle bay");
             let span = (structure.parts[middle].min.z, structure.parts[middle].max.z);
             let kept = |part: &Part| {
-                part.house().wall == Some(2) && (part.min.z - span.0).abs() < 1e-6 && (part.max.z - span.1).abs() < 1e-6
+                part.house().wall == Some(2)
+                    && (part.min.z - span.0).abs() < 1e-6
+                    && (part.max.z - span.1).abs() < 1e-6
             };
             let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                 let part = &structure.parts[index];
-                [0, 2, foot(&design, 0), foot(&design, 2)].contains(&index) || (part.house().wall == Some(2) && !kept(part))
+                [0, 2, foot(&design, 0), foot(&design, 2)].contains(&index)
+                    || (part.house().wall == Some(2) && !kept(part))
             }));
             let down = gone.union(&structure.unsupported(&gone));
             for (index, part) in structure.parts.iter().enumerate() {
                 if kept(part) {
-                    assert_eq!(down.contains(index), !part.grounded, "{:?} {index} {:?}", design.style.form, part.house().kind);
+                    assert_eq!(
+                        down.contains(index),
+                        !part.grounded,
+                        "{:?} {index} {:?}",
+                        design.style.form,
+                        part.house().kind
+                    );
                 }
             }
             // A post with only stubs of wall left on it goes too.
@@ -2323,7 +2529,11 @@ mod tests {
                 let part = &structure.parts[index];
                 matches!(part.house().wall, Some(0) | Some(2)) && !part.grounded
             }));
-            assert!(structure.unsupported(&bare).contains(0), "{:?}: the bare corner post stands", design.style.form);
+            assert!(
+                structure.unsupported(&bare).contains(0),
+                "{:?}: the bare corner post stands",
+                design.style.form
+            );
         }
     }
 
@@ -2332,15 +2542,29 @@ mod tests {
         for design in every_design() {
             let structure = house_structure(&design);
             // The front door, not a garage door's leaf.
-            let leaves = if design.garage.is_some() { garage_leaves(&design, &structure) } else { Vec::new() };
+            let leaves = if design.garage.is_some() {
+                garage_leaves(&design, &structure)
+            } else {
+                Vec::new()
+            };
             let door = (0..structure.parts.len())
-                .find(|&index| structure.parts[index].house().kind == PartKind::Door && !leaves.contains(&index))
+                .find(|&index| {
+                    structure.parts[index].house().kind == PartKind::Door
+                        && !leaves.contains(&index)
+                })
                 .expect("a door");
             let wall = structure.parts[door].house().wall;
             let gone = PartSet::from_indices(
-                (0..structure.parts.len()).filter(|&index| index != door && structure.parts[index].house().wall == wall),
+                (0..structure.parts.len())
+                    .filter(|&index| index != door && structure.parts[index].house().wall == wall),
             );
-            assert!(structure.unsupported(&gone).contains(door), "{:?} {} {:?}", design.style.form, design.w, design.garage);
+            assert!(
+                structure.unsupported(&gone).contains(door),
+                "{:?} {} {:?}",
+                design.style.form,
+                design.w,
+                design.garage
+            );
         }
     }
 
@@ -2360,7 +2584,10 @@ mod tests {
             let near = |part: &Part| (part.middle().with_y(0.0) - corner).length() < 1.0;
             for (index, part) in structure.parts.iter().enumerate() {
                 if part.house().wall.is_some() && part.house().upper_storey && near(part) {
-                    assert!(falling.contains(index), "upper part {index} by the gone corner stands");
+                    assert!(
+                        falling.contains(index),
+                        "upper part {index} by the gone corner stands"
+                    );
                 }
                 if part.house().wall.is_some() && part.grounded && near(part) {
                     assert!(!falling.contains(index), "ground floor part {index} fell");
@@ -2379,25 +2606,44 @@ mod tests {
                 continue;
             }
             let roof = PartSet::from_indices(
-                (0..structure.parts.len()).filter(|&index| structure.parts[index].house().kind.roof()),
+                (0..structure.parts.len())
+                    .filter(|&index| structure.parts[index].house().kind.roof()),
             );
             let parts = &structure.parts;
             let gables = |wall: usize| {
                 (0..parts.len())
-                    .filter(|&index| parts[index].house().kind == PartKind::Gable && parts[index].house().wall == Some(wall))
+                    .filter(|&index| {
+                        parts[index].house().kind == PartKind::Gable
+                            && parts[index].house().wall == Some(wall)
+                    })
                     .collect::<Vec<_>>()
             };
             // Roof gone, walls whole: the gables stand.
             let falling = structure.unsupported(&roof);
-            assert!(gables(0).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+            assert!(
+                gables(0).iter().all(|&g| !falling.contains(g)),
+                "{:?}",
+                design.style.form
+            );
             // And a bay of wall 0 shot out under them as well: wall 0's gable goes.
             let bay = (0..structure.parts.len())
-                .find(|&index| structure.parts[index].house().wall == Some(0) && structure.parts[index].house().kind == PartKind::Panel)
+                .find(|&index| {
+                    structure.parts[index].house().wall == Some(0)
+                        && structure.parts[index].house().kind == PartKind::Panel
+                })
                 .unwrap();
             let gone = roof.union(&PartSet::from_indices([bay]));
             let falling = structure.unsupported(&gone);
-            assert!(gables(0).iter().all(|&g| falling.contains(g)), "{:?}", design.style.form);
-            assert!(gables(1).iter().all(|&g| !falling.contains(g)), "{:?}", design.style.form);
+            assert!(
+                gables(0).iter().all(|&g| falling.contains(g)),
+                "{:?}",
+                design.style.form
+            );
+            assert!(
+                gables(1).iter().all(|&g| !falling.contains(g)),
+                "{:?}",
+                design.style.form
+            );
         }
     }
 
@@ -2414,18 +2660,26 @@ mod tests {
                 .into_iter()
                 .filter_map(|wall| {
                     (0..structure.parts.len()).find(|&index| {
-                        structure.parts[index].house().wall == Some(wall) && structure.parts[index].house().kind == PartKind::Panel
+                        structure.parts[index].house().wall == Some(wall)
+                            && structure.parts[index].house().kind == PartKind::Panel
                     })
                 })
                 .collect();
             let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                 let part = &structure.parts[index];
-                part.house().kind == PartKind::Sheet || matches!(part.house().wall, Some(2) | Some(3)) || bays.contains(&index)
+                part.house().kind == PartKind::Sheet
+                    || matches!(part.house().wall, Some(2) | Some(3))
+                    || bays.contains(&index)
             }));
             let falling = structure.unsupported(&gone);
             for (index, part) in structure.parts.iter().enumerate() {
                 if matches!(part.house().kind, PartKind::Ridge | PartKind::Gable) {
-                    assert!(falling.contains(index), "{:?}: {:?} {index} stands", design.style.form, part.house().kind);
+                    assert!(
+                        falling.contains(index),
+                        "{:?}: {:?} {index} stands",
+                        design.style.form,
+                        part.house().kind
+                    );
                 }
             }
         }
@@ -2449,8 +2703,10 @@ mod tests {
                     let column = (structure.parts[middle].min.z, structure.parts[middle].max.z);
                     let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
                         let part = &structure.parts[index];
-                        let in_column = (part.min.z - column.0).abs() < 1e-6 && (part.max.z - column.1).abs() < 1e-6;
-                        (part.house().wall == Some(side) && !in_column) || part.house().wall == Some(gable)
+                        let in_column = (part.min.z - column.0).abs() < 1e-6
+                            && (part.max.z - column.1).abs() < 1e-6;
+                        (part.house().wall == Some(side) && !in_column)
+                            || part.house().wall == Some(gable)
                     }));
                     let down = gone.union(&structure.unsupported(&gone));
                     // The chimney carries nothing of the roof round it.
@@ -2483,18 +2739,38 @@ mod tests {
         for design in village() {
             let structure = house_structure(&design);
             let roof = PartSet::from_indices((0..structure.parts.len()).filter(|&index| {
-                matches!(structure.parts[index].house().kind, PartKind::Sheet | PartKind::Ridge)
+                matches!(
+                    structure.parts[index].house().kind,
+                    PartKind::Sheet | PartKind::Ridge
+                )
             }));
             assert!(structure.unsupported(&roof).contains(CHIMNEY_PART));
-            let all_else = PartSet::from_indices((0..structure.parts.len()).filter(|&index| index != CHIMNEY_STACK));
-            assert!(!structure.unsupported(&all_else).contains(CHIMNEY_STACK), "{:?}", design.style.form);
+            let all_else = PartSet::from_indices(
+                (0..structure.parts.len()).filter(|&index| index != CHIMNEY_STACK),
+            );
+            assert!(
+                !structure.unsupported(&all_else).contains(CHIMNEY_STACK),
+                "{:?}",
+                design.style.form
+            );
             // Clear of the roof's rafters over it: nothing holds it or rests on it.
             let (stack, roof) = (&structure.parts[CHIMNEY_STACK], design.roof());
-            for (x, z) in [(stack.min.x, stack.min.z), (stack.max.x, stack.max.z), (stack.min.x, stack.max.z), (stack.max.x, stack.min.z)] {
+            for (x, z) in [
+                (stack.min.x, stack.min.z),
+                (stack.max.x, stack.max.z),
+                (stack.min.x, stack.max.z),
+                (stack.max.x, stack.min.z),
+            ] {
                 assert!(roof.top(x, z) - roof.thick - SHEET_DEPTH > stack.max.y);
             }
             assert!(structure.supports[CHIMNEY_STACK].is_empty());
-            assert!(structure.supports.iter().flatten().all(|support| support.by as usize != CHIMNEY_STACK));
+            assert!(
+                structure
+                    .supports
+                    .iter()
+                    .flatten()
+                    .all(|support| support.by as usize != CHIMNEY_STACK)
+            );
         }
     }
 
@@ -2510,15 +2786,28 @@ mod tests {
                 }
                 framed += usize::from(part.shapes.len() > 1);
                 for shape in &part.shapes {
-                    let (low, high) = shape.points().iter().fold(
-                        (DVec3::INFINITY, DVec3::NEG_INFINITY),
-                        |(low, high), p| (low.min(*p), high.max(*p)),
+                    let (low, high) = shape
+                        .points()
+                        .iter()
+                        .fold((DVec3::INFINITY, DVec3::NEG_INFINITY), |(low, high), p| {
+                            (low.min(*p), high.max(*p))
+                        });
+                    let apart = (stack.min - high)
+                        .max(low - stack.max)
+                        .with_y(f64::NEG_INFINITY);
+                    assert!(
+                        apart.max_element() > 0.0,
+                        "{:?}: a {:?} reaches over the stack",
+                        design.style.form,
+                        part.house().kind
                     );
-                    let apart = (stack.min - high).max(low - stack.max).with_y(f64::NEG_INFINITY);
-                    assert!(apart.max_element() > 0.0, "{:?}: a {:?} reaches over the stack", design.style.form, part.house().kind);
                 }
             }
-            assert!(framed > 0, "{:?}: no sheet is framed round the chimney", design.style.form);
+            assert!(
+                framed > 0,
+                "{:?}: no sheet is framed round the chimney",
+                design.style.form
+            );
         }
     }
 
@@ -2532,13 +2821,24 @@ mod tests {
                 [0, 1, foot(&design, 0), foot(&design, 1)].contains(&index)
                     || (part.house().wall == Some(0) && part.house().kind != PartKind::Gable)
             };
-            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| !kept(index)));
+            let gone =
+                PartSet::from_indices((0..structure.parts.len()).filter(|&index| !kept(index)));
             let down = structure.unsupported(&gone);
-            assert!(down.contains(0) && down.contains(1), "{:?}: the posts stand", design.style.form);
+            assert!(
+                down.contains(0) && down.contains(1),
+                "{:?}: the posts stand",
+                design.style.form
+            );
             for index in (0..structure.parts.len()).filter(|&index| kept(index)) {
                 let part = &structure.parts[index];
                 let stub = part.grounded && part.max.y <= STUB_TOP;
-                assert_eq!(down.contains(index), !stub, "{:?} {index} {:?}", design.style.form, part.house().kind);
+                assert_eq!(
+                    down.contains(index),
+                    !stub,
+                    "{:?} {index} {:?}",
+                    design.style.form,
+                    part.house().kind
+                );
             }
         }
     }
@@ -2549,7 +2849,8 @@ mod tests {
         let structure = house_structure(&design);
         let side = 2;
         let gone = PartSet::from_indices(
-            (0..structure.parts.len()).filter(|&index| structure.parts[index].house().wall == Some(side)),
+            (0..structure.parts.len())
+                .filter(|&index| structure.parts[index].house().wall == Some(side)),
         );
         let falling = structure.unsupported(&gone);
         assert!(
@@ -2574,9 +2875,12 @@ mod tests {
                         && part.house().kind != PartKind::Gable
                         && (part.middle().with_y(0.0) - corner).length() < 1.4)
             };
-            let gone = PartSet::from_indices((0..structure.parts.len()).filter(|&index| !kept(index)));
+            let gone =
+                PartSet::from_indices((0..structure.parts.len()).filter(|&index| !kept(index)));
             let falls = structure.falls(&gone, &PartSet::EMPTY, DVec3::ZERO);
-            let down = falls.iter().fold(PartSet::EMPTY, |down, fall| down.union(&fall.parts));
+            let down = falls
+                .iter()
+                .fold(PartSet::EMPTY, |down, fall| down.union(&fall.parts));
             assert!(down.contains(0), "{:?}: the post stands", design.style.form);
             assert!(falls.iter().any(|fall| fall.tip.is_some()), "it tips over");
         }
@@ -2586,8 +2890,20 @@ mod tests {
     fn a_whole_cottage_stands_by_every_rule() {
         for design in every_design() {
             let structure = house_structure(&design);
-            let down = structure.unsupported(&PartSet::EMPTY); assert!(down.is_empty(), "{:?} {:?}", design.style.form, down.iter().map(|i| (i, structure.parts[i].house().kind, structure.parts[i].min, structure.parts[i].max)).collect::<Vec<_>>());
+            let down = structure.unsupported(&PartSet::EMPTY);
+            assert!(
+                down.is_empty(),
+                "{:?} {:?}",
+                design.style.form,
+                down.iter()
+                    .map(|i| (
+                        i,
+                        structure.parts[i].house().kind,
+                        structure.parts[i].min,
+                        structure.parts[i].max
+                    ))
+                    .collect::<Vec<_>>()
+            );
         }
     }
-
 }

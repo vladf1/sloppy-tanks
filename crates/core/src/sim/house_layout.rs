@@ -32,15 +32,16 @@ const TWO_STOREY_EAVE: f64 = 0.7;
 pub const EAVE_OVERHANG: f64 = 0.4;
 pub const RAKE_OVERHANG: f64 = 0.3;
 /// A garage house's (Senda's) roof: its pitch, rise per metre across (the tract's low
-/// 4:12), and its eave and rake overhangs (m): the tract's broad eaves over exposed
-/// rafter tails, still short enough that from overhead each house's roof stands apart
-/// from its neighbours' across the side yard.
-pub const GARAGE_HOUSE_PITCH: f64 = 0.34;
-const GARAGE_HOUSE_OVERHANG: (f64, f64) = (0.38, 0.3);
+/// 5:12, a 2.5 m rise over half an 11.7 m front), and its eave and rake overhangs (m):
+/// the tract's 0.55 m eaves over exposed rafter tails at the level's scale, short
+/// enough that from overhead each house's roof stands apart from its neighbours' across
+/// the side yard.
+pub const GARAGE_HOUSE_PITCH: f64 = 0.42;
+const GARAGE_HOUSE_OVERHANG: (f64, f64) = (0.3, 0.3);
 /// A garage house's hip ends' run (m) where its ridge runs along its street: steeper
 /// than its long slopes, so the street sees a long eave under a ridge along the front
 /// (a trapezoid) rather than the narrow triangle of a hip end.
-const ALONG_STREET_HIP_END: f64 = 1.45;
+const ALONG_STREET_HIP_END: f64 = 1.8;
 /// Roof deck thickness, measured square to the slope.
 pub const ROOF_THICKNESS: f64 = 0.1;
 /// How far a wall reaches in behind its outside face.
@@ -486,10 +487,11 @@ const DESIGNS: [HouseStyle; 9] = {
         style(Hip, Along, FlatTile, Stucco, NONE, 0, true, Board, true, 0.7)
             .garage_look(Panels)
             .veneer(Stone),
-        // Small Monterey (Rumbo north lots 4 and 8, south lot 4 mirrored): a front gable over the garage holding a
-        // dark box bay, a stucco room under a clay hip that runs on as a porch on dark posts,
-        // one board shutter, under clay tile, one small array.
-        style(Hip, Along, Tile, Stucco, NONE, 0, false, BoardLeaf, true, 0.7)
+        // Small Monterey (Rumbo north lots 4 and 8, south lot 4 mirrored): a clay hip whose
+        // ridge runs front to back, a two-storey front gable over the garage holding a dark
+        // box bay and one over the back, one board shutter, one small array; its entry porch
+        // and back loggia stand before and behind it as covers of their own.
+        style(Hip, Front, Tile, Stucco, NONE, 0, false, BoardLeaf, true, 0.7)
             .gable_front()
             .room_porch()
             .solar(Solar::Small),
@@ -1280,10 +1282,14 @@ impl HouseDesign {
 pub const CORNER_POST: f64 = 0.3;
 /// Half widths (m) of the wall columns a window, the front door and each half of a
 /// garage door take with their casings: the structure frames each column as parts of
-/// its own, and the model's opening lies inside it.
+/// its own, and the model's opening lies inside it. A cottage's, and a garage house's
+/// (Senda's) at the tank's scale: windows up to 0.9 wide with their frames, a 0.5 m
+/// door with its casing and a 2.6 m two-car door in two columns.
 pub const WINDOW_BAY: f64 = 0.57;
 pub const DOOR_BAY: f64 = 0.62;
-pub const GARAGE_BAY: f64 = 0.62;
+pub const LOW_WINDOW_BAY: f64 = 0.5;
+pub const LOW_DOOR_BAY: f64 = 0.36;
+pub const GARAGE_BAY: f64 = 0.7;
 /// Room (m) a narrow garage front keeps between its front door's column and its garage
 /// door's, so neither runs into the other.
 const GARAGE_DOOR_GAP: f64 = 0.02;
@@ -1291,13 +1297,13 @@ const GARAGE_DOOR_GAP: f64 = 0.02;
 /// cottage's, and a garage house's under its two low storeys.
 pub const SILL: f64 = 0.9;
 pub const DOOR_HEIGHT: f64 = 2.0;
-pub const LOW_DOOR_HEIGHT: f64 = 1.85;
+pub const LOW_DOOR_HEIGHT: f64 = 1.1;
 /// A two-car garage door's height (m), standing on the slab like the front door and
 /// lower than it, and how much narrower it is than its two columns (its casing): as wide
 /// as the front leaves it, up to [`GARAGE_BAY`] a column: about two fifths of a full front,
 /// as the tract's two-car doors are, leaving the entry wing beside it nearly half.
-pub const GARAGE_HEIGHT: f64 = 1.36;
-pub const GARAGE_CASING: f64 = 0.24;
+pub const GARAGE_HEIGHT: f64 = 1.15;
+pub const GARAGE_CASING: f64 = 0.2;
 /// A two-storey house's floors: how far over the ground-floor windows' heads its
 /// belt course and upper floor run, how far over that the upper windows' sills sit
 /// and the tallest they get (m).
@@ -1305,27 +1311,30 @@ const BELT_OVER: f64 = 0.3;
 const UPPER_SILL: f64 = 0.35;
 const UPPER_WINDOW: f64 = 1.2;
 /// Two low storeys ([`Roof::low_storeys`]): a ground-floor window's sill over the slab
-/// (its head level with the front door's, so the plates over the ground floor's windows
-/// and door run at one level, the garage door's lower), how far the upper floor runs over
+/// (its column's head level with the garage door's, the taller, so the plates over the
+/// ground floor's windows and doors run at one level), how far the upper floor runs over
 /// that, how far over the floor the upper windows' sills sit, the tallest they get and
-/// the wall they keep under the eave (m): the tract's upper windows sit well down from
-/// the eaves, under a band of plain stucco.
-const LOW_SILL: f64 = 0.55;
-const LOW_FLOOR_OVER: f64 = 0.1;
-const LOW_UPPER_SILL: f64 = 0.16;
+/// the wall they keep under the eave (m): two 1.6 m storeys (the tract's 3 m), sills
+/// about 0.5 and 2.1 over the ground, windows up to 0.77 high, and the tract's upper
+/// windows well down from the eaves, under a band of plain stucco.
+const LOW_SILL: f64 = 0.38;
+const LOW_FLOOR_OVER: f64 = 0.35;
+const LOW_UPPER_SILL: f64 = 0.48;
 const LOW_UPPER_WINDOW: f64 = 0.72;
-const LOW_EAVE_WALL: f64 = 0.25;
+const LOW_EAVE_WALL: f64 = 0.3;
 /// The wall (m) a garage front keeps between the corner post and the garage door's
-/// column (where it has room), between that and the front door's, between the front
-/// door's and its corner post at least, and the least it keeps beside a window in the
-/// room by the door.
-const GARAGE_PIER: f64 = 0.35;
+/// column (where it has room: none, the garage door filling its half of the front as
+/// the tract's do), between that and the front door's, between the front door's and its
+/// corner post at least, and the least it keeps beside a window in the room by the door.
+const GARAGE_PIER: f64 = 0.0;
 const DOOR_PIER: f64 = 0.3;
 const DOOR_CORNER_PIER: f64 = 0.35;
 const WINDOW_PIER: f64 = 0.15;
 /// How far either side of the garage door's middle the pair of windows ganged over it
-/// stand (m): together they read as one wide window.
-pub const GARAGE_PAIR: f64 = 0.25;
+/// stand (m): together they read as one wide window. A spread front's pair over the
+/// front door stands closer, both over the door's column.
+pub const GARAGE_PAIR: f64 = 0.4;
+pub const DOOR_PAIR: f64 = 0.3;
 
 /// What an opening in a wall's ground floor is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -1628,9 +1637,28 @@ impl Roof {
     pub fn ground_window(&self) -> (f64, f64) {
         if self.low_storeys {
             let sill = self.plinth + LOW_SILL;
-            return (sill, self.plinth + self.door_height() - sill);
+            let head = self.door_height().max(GARAGE_HEIGHT);
+            return (sill, self.plinth + head - sill);
         }
         (PLINTH + SILL, (self.wall - PLINTH - 1.25).min(1.3))
+    }
+
+    /// Half the width of a window's column and the front door's (m): a garage house's
+    /// smaller openings take narrower ones.
+    pub fn window_bay(&self) -> f64 {
+        if self.low_storeys {
+            LOW_WINDOW_BAY
+        } else {
+            WINDOW_BAY
+        }
+    }
+
+    pub fn door_bay(&self) -> f64 {
+        if self.low_storeys {
+            LOW_DOOR_BAY
+        } else {
+            DOOR_BAY
+        }
     }
 
     /// The front door's height (m).
@@ -1690,8 +1718,8 @@ impl HouseDesign {
         for &u in &authored.upper {
             let Some(&(under, kind)) = authored.ground.iter().find(|&&(at, kind)| {
                 let reach = match kind {
-                    OpeningKind::Window => WINDOW_BAY,
-                    OpeningKind::Door => DOOR_BAY,
+                    OpeningKind::Window => LOW_WINDOW_BAY,
+                    OpeningKind::Door => LOW_DOOR_BAY,
                     OpeningKind::Garage => 2.0 * authored.garage_bay,
                 };
                 (u - at).abs() < reach
@@ -1705,7 +1733,7 @@ impl HouseDesign {
             if front
                 .upper
                 .iter()
-                .all(|upper| (upper - at).abs() > WINDOW_BAY)
+                .all(|upper| (upper - at).abs() > LOW_WINDOW_BAY)
             {
                 front.upper.push(at);
             }
@@ -1818,26 +1846,26 @@ fn garage_front(
     let end = half - CORNER_POST;
     // The garage door takes what the front door's column and the pier by its corner leave,
     // up to its widest.
-    let garage_bay =
-        ((2.0 * end - 2.0 * DOOR_BAY - DOOR_CORNER_PIER - GARAGE_DOOR_GAP) / 4.0).min(GARAGE_BAY);
+    let garage_bay = ((2.0 * end - 2.0 * LOW_DOOR_BAY - DOOR_CORNER_PIER - GARAGE_DOOR_GAP) / 4.0)
+        .min(GARAGE_BAY);
     // A narrow front puts its garage against the corner post, keeping a pier by the door;
     // a narrower one (Neblina's west row) sets the door against the garage door, still
     // keeping the pier by the corner that frames the door apart from the post.
-    let openings = 4.0 * garage_bay + 2.0 * DOOR_BAY;
+    let openings = 4.0 * garage_bay + 2.0 * LOW_DOOR_BAY;
     let garage_pier = (2.0 * end - openings - DOOR_PIER - DOOR_CORNER_PIER).clamp(0.0, GARAGE_PIER);
     let door_pier = (2.0 * end - openings - DOOR_CORNER_PIER).clamp(0.0, DOOR_PIER);
     let corner_pier = (2.0 * end - openings - door_pier).clamp(0.0, DOOR_CORNER_PIER);
     let garage_u = s * (end - garage_pier - 2.0 * garage_bay);
     // The door stays inside the wall however short it is.
-    let door_reach =
-        (s * garage_u - 2.0 * garage_bay - door_pier - DOOR_BAY).max(DOOR_BAY + corner_pier - end);
+    let door_reach = (s * garage_u - 2.0 * garage_bay - door_pier - LOW_DOOR_BAY)
+        .max(LOW_DOOR_BAY + corner_pier - end);
     let door_u = s * door_reach;
     let mut ground = vec![(door_u, OpeningKind::Door), (garage_u, OpeningKind::Garage)];
     let mut upper = if spread && !tower {
         let outer = garage_u + s * garage_bay;
         vec![
-            door_u - GARAGE_PAIR,
-            door_u + GARAGE_PAIR,
+            door_u - DOOR_PAIR,
+            door_u + DOOR_PAIR,
             garage_u - s * garage_bay,
             outer - GARAGE_PAIR,
             outer + GARAGE_PAIR,
@@ -1846,8 +1874,8 @@ fn garage_front(
         vec![door_u, garage_u - GARAGE_PAIR, garage_u + GARAGE_PAIR]
     };
     // The room between the door's column and the far corner.
-    let (near, far) = (-(door_reach - DOOR_BAY), end);
-    if far - near >= 2.0 * (WINDOW_BAY + WINDOW_PIER) {
+    let (near, far) = (-(door_reach - LOW_DOOR_BAY), end);
+    if far - near >= 2.0 * (LOW_WINDOW_BAY + WINDOW_PIER) {
         let window_u = -s * (near + far) / 2.0;
         ground.insert(0, (window_u, OpeningKind::Window));
     }
@@ -1951,8 +1979,9 @@ mod tests {
         for style in 0..SENDA_STYLES.len() as u8 {
             for garage in [GarageSide::Left, GarageSide::Right] {
                 for (street, (w, d, windows)) in [0, 1, 2, 3].into_iter().flat_map(|street| {
-                    // A narrow front leaves no room for a window by the door.
-                    [(4.6, 7.0, 0), (5.4, 6.4, 0), (7.0, 7.5, 1)].map(|lot| (street, lot))
+                    // A narrow front leaves no room for a window by the door; the narrow
+                    // rows' and the level's own fronts do.
+                    [(5.0, 7.0, 0), (5.8, 7.4, 1), (6.2, 8.0, 1)].map(|lot| (street, lot))
                 }) {
                     let plan = HousePlan {
                         angle: 0,
@@ -1974,8 +2003,8 @@ mod tests {
                     let front = design.wall_plan(design.door_wall);
                     let half = wall_frames(design.w, design.d)[design.door_wall].3;
                     let column = |kind: OpeningKind| match kind {
-                        OpeningKind::Window => WINDOW_BAY,
-                        OpeningKind::Door => DOOR_BAY,
+                        OpeningKind::Window => LOW_WINDOW_BAY,
+                        OpeningKind::Door => LOW_DOOR_BAY,
                         OpeningKind::Garage => 2.0 * front.garage_bay,
                     };
                     let mut spans: Vec<(f64, f64)> = front
@@ -2010,7 +2039,7 @@ mod tests {
                         );
                     } else if design.spread_upper() {
                         assert_eq!(front.upper.len(), 5);
-                        assert!(front.upper.contains(&(front.door().unwrap() + GARAGE_PAIR)));
+                        assert!(front.upper.contains(&(front.door().unwrap() + DOOR_PAIR)));
                     } else {
                         let tower = usize::from(design.entry_tower());
                         assert_eq!(front.upper.len(), 3 - tower);
@@ -2082,17 +2111,17 @@ mod tests {
         let along = HouseDesign::planned(
             0.0,
             0.0,
-            5.0,
-            7.0,
-            4.0,
+            6.2,
+            8.0,
+            4.5,
             plan(senda_style(Plan::Small, Exterior::Craftsman, 0)),
         );
         let facing = HouseDesign::planned(
             0.0,
             0.0,
-            5.0,
-            7.0,
-            4.0,
+            6.2,
+            8.0,
+            4.5,
             plan(senda_style(Plan::Large, Exterior::Spanish, 0)),
         );
         assert_eq!(along.door_wall, 2);
