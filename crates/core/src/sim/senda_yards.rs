@@ -15,16 +15,16 @@
 //!
 //! Shared by the simulation and the scenery that paves and plants the same yards.
 
-use glam::DVec2;
+use glam::{DVec2, DVec3};
 
 use super::arena::{CoverDef, spawn_positions};
 use super::house_layout::{GarageSide, HousePlan, wall_frames};
 use super::kinds::{CoverKind, Team};
 use super::model_data::ARENA;
 use super::senda_layout::{
-    BACK_YARD, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row, SENDA_PICKUPS, SETBACK, SIDE_YARD,
-    SIDEWALK, STREET_HALF, SendaHouse, Street, back_fence, bend_park, greenbelt_line, house_front,
-    inside_boundary, is_senda_paved, left, past_sidewalk, senda_boundary,
+    BACK_YARD, HOUSE_DEPTH, LOT_PITCH, Line, PASEO_WIDTH, Row, SENDA_PICKUPS, SETBACK, SIDE_YARD,
+    SendaHouse, Street, back_fence, bend_park, house_front, inside_boundary, is_senda_paved, left,
+    paseos, past_sidewalk, senda_boundary, senda_houses,
 };
 
 /// The block walls' paint (split-face block, a darker brown-tan than the houses' stucco),
@@ -61,8 +61,7 @@ const LEAST_YARD: f64 = 1.0;
 /// A back wall keeps this much room (m) from the level's wall behind it, a way through
 /// for a tank.
 const PASSAGE: f64 = 4.5;
-/// How far (m) behind a house its yard looks for what cuts it short, and in what steps.
-const YARD_SEARCH: f64 = 25.0;
+/// The steps (m) in which a yard is cut short.
 const YARD_STEP: f64 = 0.25;
 /// The little park on the outside of Neblina's bend is walled behind, from the free back
 /// corner of the lot either side of it: those corners lie within this far (m) of its
@@ -80,6 +79,8 @@ const NEIGHBOUR_STEP: f64 = 0.75 * HOUSE_DEPTH;
 /// the wall this far (m) inside its back edge.
 const END_YARD: f64 = SIDE_YARD * 0.6;
 const SIDE_STREET_REACH: f64 = 6.0;
+/// How near (m) a paseo's middle runs to a lot's side wall for that side to border it.
+const PASEO_REACH: f64 = 6.0;
 const SIDE_WALK_ROOM: f64 = 0.2;
 /// Room (m) a wall keeps from a spawn pad's middle (its radius and the room a tank needs
 /// to leave it), from a pickup, and from the level's wall.
@@ -91,11 +92,17 @@ const HOUSE_ROOM: f64 = 0.05;
 /// A gate return shorter than this (m) is left out.
 const LEAST_RETURN: f64 = 0.3;
 /// The greenbelt's lane stays this clear (m) of walls either side of its middle, so it
-/// stays a way through between the back walls from its mouth on Neblina to the
-/// hillside.
-const LANE_ROOM: f64 = 2.6;
-/// How far apart (m) the greenbelt lane's points lie.
+/// stays a way through between the back walls from its mouth on Neblina to the hillside:
+/// 4.5 m clear between the walls.
+pub const LANE_ROOM: f64 = (4.5 + YARD_WALL_THICKNESS) / 2.0 + 0.05;
+/// How far apart (m) the greenbelt lane's points lie, how far (m) either side of one the
+/// rows' houses bound it, how far (m) off a row's houses it runs where only that row bounds
+/// it (a least back yard and the lane's room), and how many points either side of one it
+/// is smoothed over.
 const LANE_STEP: f64 = 1.0;
+const LANE_WINDOW: f64 = 3.5;
+const LANE_OFF_ROW: f64 = LEAST_YARD + LANE_ROOM + 1.0;
+const LANE_SMOOTH: usize = 0;
 
 /// One side lot line: its corner at the gate line, its corner at the back wall, and the
 /// neighbour who shares it.
@@ -103,6 +110,9 @@ const LANE_STEP: f64 = 1.0;
 pub struct LotLine {
     pub gate: DVec2,
     pub rear: DVec2,
+    /// Beside a paseo, where the line meets the sidewalk: the walk is walled from the
+    /// back wall to the street.
+    pub walk: Option<DVec2>,
     pub neighbour: Option<usize>,
 }
 
@@ -175,41 +185,43 @@ struct YardLimits {
     pads: Vec<DVec2>,
     pickups: Vec<DVec2>,
     boundary: Vec<DVec2>,
-    streets: [Line; 2],
+    lane: Line,
 }
 
 impl YardLimits {
-    fn new() -> Self {
+    fn new(houses: &[SendaHouse]) -> Self {
         YardLimits {
             pads: spawn_pads(),
             pickups: pickup_spots(),
             boundary: senda_boundary(),
-            streets: [Street::Rumbo.line(), Street::NeblinaGaviota.line()],
+            lane: Line(greenbelt_lane_of(houses)),
         }
     }
 
+    /// Whether a wall's corner at `p` keeps the greenbelt lane's room.
+    fn off_lane(&self, p: DVec2) -> bool {
+        self.lane.0.len() < 2 || self.lane.distance(p) >= LANE_ROOM
+    }
+
     /// How deep `lot`'s back yard may run: as deep as it wants, short of the greenbelt's
-    /// lane where a row backs onto another across it, of a pickup or a pad behind it and
-    /// of the level's wall, but never under [`LEAST_YARD`].
+    /// lane (its back wall keeps [`LANE_ROOM`] from the lane's middle), of a pickup or a pad
+    /// behind it and of the level's wall, but never under [`LEAST_YARD`].
     fn cut(&self, lot: &Lot) -> f64 {
         let rear = lot.at(0.0, -lot.half_depth);
         let mut yard = lot.yard;
-        // The street the lot fronts and the other: halfway between them lies the lane.
-        let (own, other) =
-            if self.streets[0].distance(lot.centre) < self.streets[1].distance(lot.centre) {
-                (&self.streets[0], &self.streets[1])
-            } else {
-                (&self.streets[1], &self.streets[0])
-            };
         let reach = lot.half_width + SIDE_YARD;
-        let mut t = 0.0;
-        while t < YARD_SEARCH {
-            let behind = rear - lot.front * t;
-            if other.distance(behind) < own.distance(behind) {
-                yard = yard.min(t - LANE_ROOM - YARD_MARGIN);
-                break;
-            }
-            t += YARD_STEP;
+        // Its back wall, corner to corner, keeps the lane's room.
+        // (A corner lot's back wall runs on across its side yard to the side street.)
+        let wall = reach + SIDE_STREET_REACH;
+        let off_lane = |yard: f64| {
+            self.lane.0.len() < 2
+                || (-12..=12).all(|k| {
+                    let u = wall * f64::from(k) / 12.0;
+                    self.lane.distance(rear + lot.across * u - lot.front * yard) >= LANE_ROOM
+                })
+        };
+        while yard > LEAST_YARD && !off_lane(yard) {
+            yard -= YARD_STEP / 5.0;
         }
         // Its back wall's middle and corners each keep a tank's way through from the
         // level's wall, whichever way that runs.
@@ -294,7 +306,8 @@ pub fn back_wall() -> f64 {
 /// Every house's lot, in the order of `houses`.
 pub fn senda_lots(houses: &[SendaHouse]) -> Vec<Lot> {
     let deepest = deepest_step();
-    let limits = YardLimits::new();
+    let limits = YardLimits::new(houses);
+    let paseos = paseos(houses);
     let frames: Vec<(DVec2, DVec2, f64, f64)> = houses
         .iter()
         .map(|house| {
@@ -327,6 +340,7 @@ pub fn senda_lots(houses: &[SendaHouse]) -> Vec<Lot> {
                 sides: [LotLine {
                     gate: centre,
                     rear: centre,
+                    walk: None,
                     neighbour: None,
                 }; 2],
             };
@@ -364,24 +378,64 @@ pub fn senda_lots(houses: &[SendaHouse]) -> Vec<Lot> {
                 }
                 None
             };
-            let (gate, rear) = match neighbour {
-                Some((j, u)) => {
-                    let u = (sign * lot.half_width + u - sign * lots[j].half_width) / 2.0;
-                    (u, u)
+            // Beside a paseo the lot line runs along the walk's edge, out to the sidewalk.
+            let paseo = paseos.iter().find(|paseo| {
+                paseo.distance(lot.at(sign * lot.half_width, 0.0)) < PASEO_REACH
+                    && (paseo.sidewalk - lot.centre).dot(lot.across) * sign > 0.0
+            });
+            let to_walk = |v: f64| {
+                let paseo = paseo?;
+                let mut u = lot.half_width;
+                while paseo.distance(lot.at(sign * u, v)) > PASEO_WIDTH / 2.0 {
+                    u += YARD_STEP / 5.0;
                 }
-                None => {
-                    let end = sign * (lot.half_width + END_YARD);
-                    match (to_sidewalk(lot.gate_v()), to_sidewalk(lot.rear_v())) {
-                        (Some(gate), Some(rear)) => (gate, rear),
-                        (Some(gate), None) => (gate, end),
-                        (None, Some(rear)) => (end, rear),
-                        (None, None) => (end, end),
+                Some(lot.at(sign * u, v))
+            };
+            let side_point = |u: f64, v: f64| lot.at(sign * u, v);
+            let (gate, rear, walk) = match (neighbour, paseo) {
+                (Some((j, _)), _) => {
+                    // From halfway between the two houses' side walls at their gates, back
+                    // down the middle of the side yard between them to their back walls,
+                    // so the pie-shaped lots round a turning circle each take half the
+                    // wedge between them.
+                    let other = &lots[j];
+                    let theirs = other.local(lot.centre).0.signum();
+                    let gate = (side_point(lot.half_width, lot.gate_v())
+                        + other.at(theirs * other.half_width, other.gate_v()))
+                        / 2.0;
+                    let back = -(lot.front + other.front).normalize();
+                    // As deep as either lot's back wall stands, in its own frame.
+                    let depth = [lot, *other]
+                        .iter()
+                        .map(|lot| (lot.local(gate).1 - lot.rear_v()) / back.dot(-lot.front))
+                        .fold(0.0, f64::max);
+                    // Short of the greenbelt's lane.
+                    let mut depth = depth;
+                    while depth > 0.0 && !limits.off_lane(gate + back * depth) {
+                        depth -= YARD_STEP / 5.0;
                     }
+                    (gate, gate + back * depth, None)
+                }
+                (None, Some(_)) => (
+                    to_walk(lot.gate_v()).expect("the walk's edge"),
+                    to_walk(lot.rear_v()).expect("the walk's edge"),
+                    to_walk(lot.half_depth + lot.house.setback),
+                ),
+                (None, None) => {
+                    let end = lot.half_width + END_YARD;
+                    let gate = to_sidewalk(lot.gate_v()).map_or(end, f64::abs);
+                    let rear = to_sidewalk(lot.rear_v()).map_or(end, f64::abs);
+                    (
+                        side_point(gate, lot.gate_v()),
+                        side_point(rear, lot.rear_v()),
+                        None,
+                    )
                 }
             };
             lots[i].sides[k] = LotLine {
-                gate: lot.at(gate, lot.gate_v()),
-                rear: lot.at(rear, lot.rear_v()),
+                gate,
+                rear,
+                walk,
                 neighbour: neighbour.map(|(j, _)| j),
             };
         }
@@ -475,11 +529,19 @@ pub fn yard_wall_lines(lots: &[Lot]) -> Vec<YardWall> {
                 walls.push(YardWall {
                     a: side.rear,
                     b: side.gate,
-                    look: if side.neighbour.is_some() {
+                    look: if side.neighbour.is_some() || side.walk.is_some() {
                         WallLook::Block
                     } else {
                         WallLook::View
                     },
+                });
+            }
+            // A paseo is walled on to the street.
+            if let Some(walk) = side.walk {
+                walls.push(YardWall {
+                    a: side.gate,
+                    b: walk,
+                    look: WallLook::Block,
                 });
             }
             let wall = lot.at(sign * lot.half_width, lot.gate_v());
@@ -510,7 +572,6 @@ pub fn yard_walls(houses: &[SendaHouse]) -> Vec<CoverDef> {
     let lots = senda_lots(houses);
     let pads = spawn_pads();
     let pickups = pickup_spots();
-    let lane = Line(greenbelt_lane());
     // The level's wall runs at right angles, so a point this far inside it every way
     // along the axes keeps its room from every run.
     let boundary = senda_boundary();
@@ -524,7 +585,6 @@ pub fn yard_walls(houses: &[SendaHouse]) -> Vec<CoverDef> {
         let points = (0..=samples).map(|k| a.lerp(b, k as f64 / samples as f64));
         let on_ground = points.clone().all(|p| {
             !is_senda_paved(p.x, p.y)
-                && (lane.0.len() < 2 || lane.distance(p) > LANE_ROOM)
                 && off_edge(p)
                 && !lots.iter().any(|lot| lot.in_house(p, HOUSE_ROOM))
         });
@@ -551,34 +611,106 @@ pub fn yard_walls(houses: &[SendaHouse]) -> Vec<CoverDef> {
     covers
 }
 
-/// The greenbelt's lane: its middle between the back gardens of Rumbo's south row and
-/// Gaviota's north row, carried on straight at its west end out through its mouth to
-/// Neblina's sidewalk and at its east end on past the cul-de-sacs' lots onto the
-/// hillside; empty where the greenbelt has no room for one.
+/// The greenbelt's lane: a tank's way between the back walls of Rumbo's south row and
+/// Gaviota's north row, from Neblina's sidewalk at the greenbelt's mouth to the arena's
+/// east edge on the hillside past the turning circles, west to east.
 pub fn greenbelt_lane() -> Vec<DVec2> {
-    let middle = greenbelt_line(0.0);
-    if middle.len() < 2 {
-        return middle;
+    greenbelt_lane_of(&senda_houses())
+}
+
+/// The greenbelt's lane between `houses`' rows: down the middle between the two rows'
+/// houses, a point every [`LANE_STEP`] (m) west to east; where only one row's houses
+/// bound it (at the mouth and past the circles), [`LANE_OFF_ROW`] off that row's.
+pub fn greenbelt_lane_of(houses: &[SendaHouse]) -> Vec<DVec2> {
+    let outline = |row: Row| -> Vec<DVec2> {
+        houses
+            .iter()
+            .filter(|house| house.row == row)
+            .flat_map(|house| {
+                let design = house.design();
+                let at = DVec2::new(house.x, house.z);
+                let (hw, hd) = (design.w / 2.0, design.d / 2.0);
+                (0..=8).flat_map(move |i| {
+                    (0..=8).filter_map(move |j| {
+                        // The walls only, every eighth of a side.
+                        let (u, v) = (f64::from(i) / 4.0 - 1.0, f64::from(j) / 4.0 - 1.0);
+                        (u.abs() == 1.0 || v.abs() == 1.0).then(|| {
+                            let p = design.to_world(DVec3::new(u * hw, 0.0, v * hd));
+                            at + DVec2::new(p.x, p.z)
+                        })
+                    })
+                })
+            })
+            .collect()
+    };
+    let (north, south) = (outline(Row::RumboSouth), outline(Row::GaviotaNorth));
+    if north.is_empty() || south.is_empty() {
+        return Vec::new();
     }
-    let neblina = Street::NeblinaGaviota.line();
-    let walk = STREET_HALF + PARKWAY + SIDEWALK;
-    let n = middle.len();
-    let west = (middle[0] - middle[1.min(n - 1)]).normalize();
-    let east = (middle[n - 1] - middle[n.saturating_sub(4)]).normalize();
-    let mut lead: Vec<DVec2> = Vec::new();
-    let mut p = middle[0] + west * LANE_STEP;
-    while neblina.distance(p) > walk && p.x.abs().max(p.y.abs()) < ARENA && lead.len() < 40 {
-        lead.push(p);
-        p += west * LANE_STEP;
+    let middle = |x: f64| -> Option<f64> {
+        let near = |points: &[DVec2]| {
+            points
+                .iter()
+                .filter(|p| (p.x - x).abs() <= LANE_WINDOW)
+                .map(|p| p.y)
+                .collect::<Vec<f64>>()
+        };
+        let top = near(&north).into_iter().reduce(f64::max);
+        let bottom = near(&south).into_iter().reduce(f64::min);
+        match (top, bottom) {
+            // Where the two rows stagger, the point between them furthest from both.
+            (Some(top), Some(bottom)) => {
+                let room = |z: f64| {
+                    let p = DVec2::new(x, z);
+                    north
+                        .iter()
+                        .chain(&south)
+                        .map(|q| q.distance(p))
+                        .fold(f64::INFINITY, f64::min)
+                };
+                let steps = ((bottom - top) / 0.05).ceil().max(1.0) as usize;
+                (0..=steps)
+                    .map(|k| top + (bottom - top) * k as f64 / steps as f64)
+                    .max_by(|a, b| room(*a).total_cmp(&room(*b)))
+            }
+            (Some(top), None) => Some(top + LANE_OFF_ROW),
+            (None, Some(bottom)) => Some(bottom - LANE_OFF_ROW),
+            (None, None) => None,
+        }
+    };
+    // From the middle of the greenbelt west to Neblina's sidewalk and east to the edge.
+    let start = south.iter().map(|p| p.x).sum::<f64>() / south.len() as f64;
+    let mut west: Vec<DVec2> = Vec::new();
+    let mut z = middle(start).unwrap_or(0.0);
+    let mut x = start;
+    while x > -ARENA {
+        z = middle(x).unwrap_or(z);
+        let p = DVec2::new(x, z);
+        west.push(p);
+        if past_sidewalk(Street::NeblinaGaviota, p) < 0.0 {
+            break;
+        }
+        x -= LANE_STEP;
     }
-    lead.reverse();
-    let mut lane: Vec<DVec2> = lead.into_iter().chain(middle).collect();
-    let mut p = lane[lane.len() - 1] + east * LANE_STEP;
-    while p.x.abs().max(p.y.abs()) < ARENA {
-        lane.push(p);
-        p += east * LANE_STEP;
+    west.reverse();
+    let mut lane = west;
+    let mut z = lane[lane.len() - 1].y;
+    let mut x = start + LANE_STEP;
+    while x <= ARENA {
+        z = middle(x).unwrap_or(z);
+        lane.push(DVec2::new(x, z));
+        x += LANE_STEP;
     }
-    lane
+    // Smoothed, so it bends round the rows rather than stepping at each house.
+    let n = lane.len();
+    (0..n)
+        .map(|k| {
+            let span = k.saturating_sub(LANE_SMOOTH)..(k + LANE_SMOOTH + 1).min(n);
+            let count = span.len() as f64;
+            let z = lane[span].iter().map(|p| p.y).sum::<f64>() / count;
+            DVec2::new(lane[k].x, z)
+        })
+        .collect()
 }
 
 /// The least distance from `p` to the segment from `a` to `b`.

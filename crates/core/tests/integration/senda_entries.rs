@@ -12,7 +12,8 @@ use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::senda_entries::{entry_place, is_entry};
 use sloppy_core::sim::senda_layout::{
-    PARKWAY, SENDA_MAP, SENDA_PICKUPS, SIDEWALK, SendaHouse, Street, lamp_sites, senda_houses,
+    CUL_DE_SAC_RADIUS, PARKWAY, SENDA_MAP, SENDA_PICKUPS, SIDEWALK, SendaHouse, Street, lamp_sites,
+    senda_houses,
 };
 use sloppy_core::sim::senda_yards::{front_openings, senda_lots};
 use sloppy_core::sim::{Cover, CoverKind, Simulation, Team};
@@ -198,12 +199,13 @@ fn every_home_has_one_entry_against_its_front_and_clear_of_its_drive_the_street_
                 house.x,
                 house.z
             );
-            // The streets' paving, kerb to sidewalk. (A turning circle's bulb is drawn
-            // larger than the lots before it allow for now: Rumbo north's last lot fronts
-            // into it, entry and driveway alike, until the circles are laid out again.)
+            // The streets' and the turning circles' paving, kerb to sidewalk.
             assert!(
                 Street::ALL.into_iter().all(|street| {
                     street.line().distance(corner) >= street.half() + PARKWAY + SIDEWALK
+                        && street.cul_de_sac().is_none_or(|middle| {
+                            middle.distance(corner) >= CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK
+                        })
                 }),
                 "{:?} at {},{}: the entry stands on the street's paving at ({u}, {v})",
                 house.row,

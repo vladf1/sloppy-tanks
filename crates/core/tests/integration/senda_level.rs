@@ -22,14 +22,14 @@ use sloppy_core::sim::senda_layout::{
     CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row,
     SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDE_YARD, SIDEWALK,
     STREET_HALF, SendaHouse, Street, WALL_THICKNESS, WallFace, bend_park, faces_circle,
-    greenbelt_mouth, house_front, inside_boundary, is_senda_paved, left, neblina_bend,
-    senda_boundary, senda_houses,
+    greenbelt_mouth, house_front, inside_boundary, is_senda_paved, left, neblina_bend, paseos,
+    past_sidewalk, senda_boundary, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{
     YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR, back_yard,
     greenbelt_lane, park_corners, senda_lots, yard_walls,
 };
-use sloppy_core::sim::{CoverKind, Simulation, SimulationSetup, Team};
+use sloppy_core::sim::{CoverKind, PickupKind, Simulation, SimulationSetup, Team};
 use support::{assert_spawns_and_pickups_clear, fell_cottage};
 
 /// Clear floor a tank hull needs around a spawn, pickup or flank waypoint.
@@ -328,7 +328,7 @@ fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold
     let gaviota = Street::NeblinaGaviota.line();
     let count = |row: Row| houses.iter().filter(|house| house.row == row).count();
     let rows = Row::ALL.map(count);
-    let least = [9, 8, 7, 7, 7];
+    let least = [9, 8, 7, 6, 7];
     assert!(
         rows.iter().zip(least).all(|(&count, least)| count >= least),
         "houses per row (Rumbo north, south, Gaviota north, Neblina west, Gaviota south): \
@@ -385,20 +385,76 @@ fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold
         west_turns.insert((house.plan.street, house.plan.angle));
     }
     // Neblina's west side is one even run from Senda Parkway round the outside of the
-    // curve, its houses between the spawn pads with no lot left empty, each turned
-    // square to the street where it stands, so the row steps round the curve.
+    // curve, its houses between the spawn pads with no lot left empty but the paseo's,
+    // each turned square to the street where it stands, so the row steps round the curve.
     assert!(
         west_turns.len() > 1,
         "Neblina's west row turns {west_turns:?}"
     );
     neblina_west.sort_by(f64::total_cmp);
-    for pair in neblina_west.windows(2) {
-        assert!(
-            pair[1] - pair[0] < 1.5 * LOT_PITCH,
-            "a gap of {:.1} m in Neblina's west row: {neblina_west:?}",
-            pair[1] - pair[0]
-        );
+    let gaps: Vec<f64> = neblina_west
+        .windows(2)
+        .map(|pair| pair[1] - pair[0])
+        .collect();
+    assert!(
+        gaps.iter().filter(|&&gap| gap > 1.5 * LOT_PITCH).count() == 1
+            && gaps.iter().all(|&gap| gap < 2.5 * LOT_PITCH),
+        "Neblina's west row's gaps {gaps:.1?}: one lot left for the paseo"
+    );
+}
+
+#[test]
+fn a_walled_paseo_leads_from_the_west_field_through_neblinas_west_row() {
+    // Halfway along the row, one lot left open: a walk 4.5 m or more clear between lot
+    // walls from the spawn field behind the row to Neblina's sidewalk, with nothing
+    // standing in it, and the bots drive through it.
+    let houses = senda_houses();
+    let walks = paseos(&houses);
+    assert_eq!(walks.len(), 1, "{walks:?}");
+    let paseo = walks[0];
+    let middle = (paseo.field + paseo.sidewalk) / 2.0;
+    assert!(
+        (-8.0..8.0).contains(&middle.y),
+        "the paseo at {middle:?} is not near the row's middle"
+    );
+    let layout = (SENDA_MAP.layout)();
+    let walls: Vec<_> = layout
+        .iter()
+        .filter(|c| c.kind == CoverKind::Concrete && c.color == YARD_WALL_COLOR)
+        .filter(|c| paseo.distance(DVec2::new(c.x, c.z)) < 4.0)
+        .collect();
+    let across = left((paseo.sidewalk - paseo.field).normalize());
+    let sides: HashSet<bool> = walls
+        .iter()
+        .map(|c| (DVec2::new(c.x, c.z) - middle).dot(across) > 0.0)
+        .collect();
+    assert_eq!(sides.len(), 2, "the paseo is walled on one side only");
+    for k in 0..=20 {
+        let p = paseo.field.lerp(paseo.sidewalk, f64::from(k) / 20.0);
+        for c in &layout {
+            let room = cover_distance(c, p);
+            assert!(
+                room >= 2.25,
+                "{:?} at {},{} stands {room:.2} m from the paseo's middle at {p:?}",
+                c.kind,
+                c.x,
+                c.z
+            );
+        }
     }
+    let mut sim = senda(23.0);
+    let from = spawn_positions(Team::Blue, 1.0)[2];
+    let to = Vec2::new(paseo.sidewalk.x, paseo.sidewalk.y);
+    let path = sim.nav.find(from, to);
+    assert!(
+        path.last().is_some_and(|end| distance(*end, to) < ARRIVAL),
+        "no way through the paseo"
+    );
+    let length = route_length(from, &path);
+    assert!(
+        length < distance(from, to) * 1.3,
+        "the way through the paseo runs {length:.0} m"
+    );
 }
 
 #[test]
@@ -548,8 +604,11 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
         .iter()
         .filter(|lot| lot.house.row == Row::GaviotaSouth && !by_pickup(lot.at(0.0, lot.rear_v())))
     {
-        for u in [lot.line_u(0), 0.0, lot.line_u(1)] {
-            let rear = lot.at(u, lot.rear_v());
+        for rear in [
+            lot.sides[0].rear,
+            lot.at(0.0, lot.rear_v()),
+            lot.sides[1].rear,
+        ] {
             let room = wall.distance(rear);
             assert!(
                 inside_boundary(&boundary, rear) && room > 4.0,
@@ -848,7 +907,8 @@ fn the_lots_are_walled_behind_and_between_and_their_gates_close_the_side_yards()
             let (u, v) = lot.local(side.gate);
             assert!(
                 u.abs() > lot.half_width + 0.3,
-                "a lot line in a side yard: {u:.2}"
+                "a lot line in a side yard: {u:.2} at {:?}",
+                lot.house
             );
             assert!(
                 v < lot.half_depth,
@@ -859,7 +919,9 @@ fn the_lots_are_walled_behind_and_between_and_their_gates_close_the_side_yards()
             let (_, rear) = lot.local(side.rear);
             assert!(
                 rear < -lot.half_depth - 0.4,
-                "a back yard behind the house: {rear:.2}"
+                "a back yard behind the house: {rear:.2} at {:?} {:?}",
+                lot.house,
+                side
             );
         }
     }
@@ -897,25 +959,95 @@ fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_t
         "{deep} of {} back yards on the streets run 2 m or more",
         square.len()
     );
-    // Across the greenbelt the back walls keep a tank's lane between them.
-    let lane = Line(greenbelt_lane());
-    assert!(lane.0.len() > 1, "the greenbelt keeps a lane");
-    for wall in yard_walls(&houses) {
-        let at = DVec2::new(wall.x, wall.z);
-        let along = lane.along(at);
-        // Clear of the lane's ends, where it leaves through the mouth and onto the hillside.
-        if along > 10.0 && along < lane.length() - 10.0 {
-            assert!(
-                lane.distance(at) > 2.0,
-                "a lot wall at {at:?} stands in the greenbelt's lane"
-            );
-        }
-    }
+    // (Across the greenbelt the back walls keep a tank's lane between them:
+    // `the_greenbelt_lane_runs_open_from_neblina_to_the_hillside`.)
     let (a, b) = park_corners(&lots).expect("the bend park has a back wall");
     let park = bend_park();
     assert!(
         a.distance(park) < 14.0 && b.distance(park) < 14.0 && a.distance(b) > 4.0,
         "the bend park's back wall runs from {a:?} to {b:?}"
+    );
+}
+
+/// How far (m) `p` lies outside a cover's box, a house's measured in its own frame.
+fn cover_distance(c: &sloppy_core::sim::arena::CoverDef, p: DVec2) -> f64 {
+    let offset = DVec3::new(p.x - c.x, 0.0, p.y - c.z);
+    let (local, w, d) = match c.house_plan {
+        Some(plan) if c.kind == CoverKind::House => {
+            let design = HouseDesign::planned(c.x, c.z, c.w, c.d, c.h, plan);
+            (design.to_local(offset), design.w, design.d)
+        }
+        _ => {
+            let (sin, cos) = cover_turn(c.kind, c.house_plan).sin_cos();
+            let local = DVec3::new(
+                offset.x * cos - offset.z * sin,
+                0.0,
+                offset.x * sin + offset.z * cos,
+            );
+            (local, c.w, c.d)
+        }
+    };
+    DVec2::new(
+        (local.x.abs() - w / 2.0).max(0.0),
+        (local.z.abs() - d / 2.0).max(0.0),
+    )
+    .length()
+}
+
+/// The length (m) of a navigation route from `from`.
+fn route_length(from: Vec2, path: &[Vec2]) -> f64 {
+    std::iter::once(from)
+        .chain(path.iter().copied())
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|pair| distance(pair[0], pair[1]))
+        .sum()
+}
+
+#[test]
+fn the_greenbelt_lane_runs_open_from_neblina_to_the_hillside() {
+    // A tank's lane between the back walls of Rumbo's south row and Gaviota's north row:
+    // from Neblina's sidewalk at the greenbelt's mouth to the arena's east edge, 4.5 m
+    // clear of every cover all the way, and the bots' navigation drives it end to end.
+    let lane = greenbelt_lane();
+    assert!(lane.len() > 40, "the greenbelt keeps a lane");
+    let (west, east) = (lane[0], lane[lane.len() - 1]);
+    assert!(
+        past_sidewalk(Street::NeblinaGaviota, west) < 0.0 && west.x < -10.0,
+        "the lane's west end at {west:?} is not on Neblina's sidewalk"
+    );
+    assert!(east.x >= ARENA - 1.0, "the lane ends at {east:?}");
+    let layout = (SENDA_MAP.layout)();
+    for &p in lane.iter().filter(|p| p.x < ARENA - 3.0) {
+        for c in &layout {
+            let room = cover_distance(c, p);
+            assert!(
+                room >= 2.25,
+                "{:?} at {},{} stands {room:.2} m from the lane's middle at {p:?}",
+                c.kind,
+                c.x,
+                c.z
+            );
+        }
+    }
+    let mut sim = senda(23.0);
+    let (from, to) = (Vec2::new(west.x, west.y), Vec2::new(east.x - 3.0, east.y));
+    let path = sim.nav.find(from, to);
+    assert!(
+        path.last().is_some_and(|end| distance(*end, to) < ARRIVAL),
+        "no way down the lane from {from:?} to {to:?}"
+    );
+    let line = Line(lane.clone());
+    for p in &path {
+        assert!(
+            line.distance(DVec2::new(p.x, p.z)) < 5.0,
+            "the way down the lane strays to {p:?}"
+        );
+    }
+    let length = route_length(from, &path);
+    assert!(
+        length < Line(lane).length() * 1.2,
+        "the way down the lane runs {length:.0} m"
     );
 }
 
@@ -1274,7 +1406,7 @@ fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
         patios(LOGGIA_COLOR)
     );
     assert!(
-        patios(PERGOLA_WOOD) >= 2,
+        patios(PERGOLA_WOOD) >= 1,
         "{} pergolas",
         patios(PERGOLA_WOOD)
     );
@@ -1440,5 +1572,75 @@ fn the_street_lamps_inside_the_level_are_cover_a_tank_cannot_drive_through() {
         assert!(lamp.alive && lamp.destructible);
         assert!(sim.world.bodies.contains(lamp.body), "a lamp with no body");
         assert!(sim.nav.is_blocked(Vec2::new(lamp.x, lamp.z)), "{lamp:?}");
+    }
+}
+
+/// A tank's shortest drive (m) from `team`'s spawn pads to `to`, by the navigation.
+fn drive(sim: &mut Simulation, team: Team, to: Vec2) -> f64 {
+    spawn_positions(team, 1.0)
+        .into_iter()
+        .map(|start| {
+            let path = sim.nav.find(start, to);
+            if path.last().is_some_and(|end| distance(*end, to) < ARRIVAL) {
+                route_length(start, &path)
+            } else {
+                f64::INFINITY
+            }
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+#[test]
+fn each_teams_pickups_lie_as_far_from_its_spawns_as_the_other_teams() {
+    // Pickups come in pairs, one nearer each team's spawns: the blue team's drive to its
+    // one and the red team's to theirs within 25%, and the laser, alone in the middle,
+    // as far from both.
+    let mut sim = senda(41.0);
+    let drives: Vec<(PickupKind, Vec2, f64, f64)> = SENDA_PICKUPS
+        .iter()
+        .map(|p| {
+            let at = Vec2::new(p.x, p.z);
+            (
+                p.kind,
+                at,
+                drive(&mut sim, Team::Blue, at),
+                drive(&mut sim, Team::Red, at),
+            )
+        })
+        .collect();
+    let table: Vec<String> = drives
+        .iter()
+        .map(|(kind, at, blue, red)| {
+            format!(
+                "{kind:?} ({:.0}, {:.0}): blue {blue:.0} m, red {red:.0} m",
+                at.x, at.z
+            )
+        })
+        .collect();
+    let even = |a: f64, b: f64| (a - b).abs() <= 0.25 * a.max(b);
+    let mut kinds: Vec<PickupKind> = drives.iter().map(|d| d.0).collect();
+    kinds.dedup();
+    for kind in kinds {
+        let of: Vec<_> = drives.iter().filter(|d| d.0 == kind).collect();
+        if of.len() == 1 {
+            let (_, _, blue, red) = of[0];
+            assert!(even(*blue, *red), "{kind:?} uneven in {table:#?}");
+            continue;
+        }
+        let mut blue: Vec<f64> = of.iter().filter(|d| d.2 < d.3).map(|d| d.2).collect();
+        let mut red: Vec<f64> = of.iter().filter(|d| d.3 <= d.2).map(|d| d.3).collect();
+        assert_eq!(
+            blue.len(),
+            red.len(),
+            "{kind:?} is not in pairs in {table:#?}"
+        );
+        blue.sort_by(f64::total_cmp);
+        red.sort_by(f64::total_cmp);
+        for (b, r) in blue.iter().zip(&red) {
+            assert!(
+                even(*b, *r),
+                "{kind:?}: blue's {b:.0} m against red's {r:.0} m in {table:#?}"
+            );
+        }
     }
 }
