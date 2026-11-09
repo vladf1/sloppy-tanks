@@ -11,6 +11,8 @@
 //!
 //! The page's own marks (`index.html`) come before these. Natively there is no page and
 //! these do nothing.
+//!
+//! One thing comes the other way: the page names its build ([`build`]).
 
 #[cfg(target_arch = "wasm32")]
 use std::cell::Cell;
@@ -19,6 +21,21 @@ use std::cell::Cell;
 thread_local! {
     /// The first frame has been presented and the page told.
     static PRESENTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// The page's release and commit, from its `<meta name="sloppy-build">`
+/// (`scripts/page-health.ts`). The page's binary carries neither, so a release that
+/// changes none of its code leaves its bytes, and the name browsers keep it under, as
+/// they were.
+#[cfg(target_arch = "wasm32")]
+pub fn build() -> Option<(String, String)> {
+    let content = web_sys::window()?
+        .document()?
+        .query_selector("meta[name=\"sloppy-build\"]")
+        .ok()??
+        .get_attribute("content")?;
+    let (release, commit) = content.split_once(',')?;
+    Some((release.to_owned(), commit.to_owned()))
 }
 
 /// A frame has been presented: the first one hands the page to the shell.

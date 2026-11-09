@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 import { protocolVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
@@ -54,14 +55,34 @@ async function healthBody(builtAt: string): Promise<string> {
   return `${JSON.stringify(health, null, 2)}\n`;
 }
 
+const gamePage = fileURLToPath(new URL("../index.html", import.meta.url));
+
 /** Emits `health/index.html` in builds and answers `health` and `health/` on the dev
- * server, where the page would otherwise fall back to the game's `index.html`. */
+ * server, where the page would otherwise fall back to the game's `index.html`.
+ *
+ * It also names the build in the game page, as `<meta name="sloppy-build">` (the release,
+ * a comma, the commit, `-dirty` after it for uncommitted changes), for Battle Setup's
+ * build line (`page::build` in `crates/desktop/src/page.rs`). The shell's binary carries
+ * neither: a release that changes none of its code then keeps its bytes and so its
+ * hashed name, and returning players keep their download. Read at every transform, so
+ * the dev server follows new commits. */
 export function pageHealth(): Plugin {
   let base = "/";
   return {
     name: "page-health",
     configResolved(config) {
       base = config.base;
+    },
+    transformIndexHtml(_html, context) {
+      if (context.filename !== gamePage) return [];
+      const { release, commit, dirty } = pageBuild();
+      return [
+        {
+          tag: "meta",
+          attrs: { name: "sloppy-build", content: `${release},${commit}${dirty ? "-dirty" : ""}` },
+          injectTo: "head",
+        },
+      ];
     },
     configureServer(server) {
       const started = new Date().toISOString();

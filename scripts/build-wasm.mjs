@@ -32,18 +32,20 @@
 // matching the `wasm-bindgen` crate pin.
 //
 // Like the server build, the Wasm is stamped with the content version clients and the
-// server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell
-// also carries the release and commit Battle Setup shows, as the desktop app does, and
-// its content version goes to `src/generated/shell/content-version` for the page's
+// server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell's
+// content version also goes to `src/generated/shell/content-version` for the page's
 // `/health` (`scripts/page-health.ts`). The page's geometry cache keys its files by
 // `SLOPPY_GEOMETRY_VERSION` (`geometryVersion`), which changes only with the models.
-import { spawn, spawnSync } from "node:child_process";
+// Nothing here names the release or the commit, unlike the desktop app's build: the page
+// names them for Battle Setup's build line (`page-health.ts`), so a release that changes
+// none of the shell's code builds the same bytes, which Vite names by their hash, and
+// returning players keep the binary they have.
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion, geometryVersion, shaderTablesKey } from "./content-version.mjs";
-import { releaseVersion } from "./release-version.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const version = await contentVersion();
@@ -78,12 +80,6 @@ const LABS = {
   outName: "engine",
 };
 
-/** A command's trimmed output, or "" when it fails. */
-function capture(command, args) {
-  const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
-  return result.status === 0 ? result.stdout.trim() : "";
-}
-
 const fast = process.argv.includes("--fast");
 const profile = fast ? "wasm-fast" : "release";
 // `lto = false` still runs a crate-local ThinLTO pass over the profile's 256 code units;
@@ -97,13 +93,9 @@ const profileSettings = fast
   ? { CARGO_PROFILE_WASM_FAST_LTO: "off", CARGO_PROFILE_WASM_FAST_INCREMENTAL: "true" }
   : {};
 
-const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
-const dirty = capture("git", ["status", "--porcelain"]) !== "";
 const stamps = {
   SLOPPY_CONTENT_VERSION: version,
   SLOPPY_GEOMETRY_VERSION: await geometryVersion(profile),
-  SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
-  SLOPPY_COMMIT: dirty ? `${commit}-dirty` : commit,
 };
 
 /** Run `command` from the repository root; rejects unless it succeeds. */

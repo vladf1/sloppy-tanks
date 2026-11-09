@@ -541,7 +541,13 @@ offline.
   page's manifest, and the fonts, sounds and previews that `index.html` downloads
   beside the Wasm for the shell (`crates/desktop/src/assets.rs`), which the native
   apps embed instead. Do not embed files in the page's Wasm, which downloads again
-  with every release, nor fetch a runtime file by its plain path from the game page.
+  with every release that changes its code, nor fetch a runtime file by its plain path
+  from the game page.
+- The page's Wasm is named by its hash too, so a release that leaves its code alone
+  (a workflow, a script, the server) must build the same bytes, or every returning
+  player downloads 2 MB again. Compile nothing into it that changes with each release:
+  the release, commit or build time go in the page (`<meta name="sloppy-build">`,
+  `scripts/page-health.ts`), where the shell reads them (`page::build`).
 - Production is the Cloudflare Worker `sloppy-tanks` at `sloppytanks.com`, hosted
   like the dev site (`deploy/site/`); main's deploy workflow builds it with
   `DEPLOY_BASE=/`, and a redirect Worker sends `www.sloppytanks.com` and the old
