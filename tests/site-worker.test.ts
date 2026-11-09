@@ -99,6 +99,28 @@ test("the shader tables are precompressed too, served as JSON", async () => {
   assert.equal(response.headers.get("Content-Type"), "application/json");
 });
 
+test("the house models are precompressed too, served as binary glTF", async () => {
+  let path = "";
+  const response = await worker.fetch(
+    new Request("https://example.test/assets/models/houses/craftsman.glb", {
+      headers: { "Accept-Encoding": "br, gzip" },
+    }),
+    {
+      ASSETS: {
+        fetch: async (asset: Request) => {
+          path = new URL(asset.url).pathname;
+          return new Response("encoded", {
+            headers: { "Content-Type": "application/octet-stream" },
+          });
+        },
+      },
+    },
+  );
+  assert.equal(path, "/assets/models/houses/craftsman.glb.br");
+  assert.equal(response.headers.get("Content-Encoding"), "br");
+  assert.equal(response.headers.get("Content-Type"), "model/gltf-binary");
+});
+
 test("range requests and missing compressed variants fall back without mislabeling HTML", async () => {
   for (const range of [false, true]) {
     const paths: string[] = [];
