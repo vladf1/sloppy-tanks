@@ -67,6 +67,12 @@ pub const MAP_OPTIONS: [MapOption; 6] = [
         name: "Dusty Dig",
         extra: false,
     },
+    // A standard map with streets of its own (`extra_level` gives its arena).
+    MapOption {
+        id: MapId::Neighborhood,
+        name: "Neighborhood",
+        extra: false,
+    },
     MapOption {
         id: MapId::StressTest,
         name: "Stress Grid",
@@ -76,12 +82,6 @@ pub const MAP_OPTIONS: [MapOption; 6] = [
         id: MapId::Superstress,
         name: "Scrap Yard",
         extra: true,
-    },
-    // A standard map with streets of its own (`extra_level` gives its arena).
-    MapOption {
-        id: MapId::Neighborhood,
-        name: "Neighborhood",
-        extra: false,
     },
 ];
 
