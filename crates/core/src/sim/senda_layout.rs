@@ -57,14 +57,10 @@ const ACROSS_PER_PIXEL: f64 = 0.1;
 /// Neblina's mouth. The real Way carries on south-south-west there, but drawn that way
 /// it would run over the spawn lane's pads. So inside the wall it levels out between the
 /// two north-western pads, leaving Neblina's corner house its corner lot on the Way's south side.
-/// Past the wall it swings on south-west into the backdrop. (The trace runs from the
-/// south-west.)
+/// It ends just under the level's west wall: nothing of it runs on outside the level there.
+/// (The trace runs from the west.)
 const SENDA_PARKWAY_TRACE: &[(f64, f64)] = &[
-    (-660.0, 1036.0),
-    (-483.0, 885.0),
-    (-350.0, 778.0),
-    (-242.0, 709.0),
-    (-147.0, 663.0),
+    (-97.5, 647.0),
     (-48.0, 631.0),
     (85.0, 597.0),
     (221.0, 561.0),

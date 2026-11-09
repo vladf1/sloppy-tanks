@@ -654,6 +654,7 @@ impl Game {
                     "id": tank.id, "kind": tank.kind, "team": tank.team, "human": tank.human,
                     "alive": tank.alive, "x": p.x, "z": p.z, "hp": tank.hp,
                     "shown": self.view.tank_shown(tank.id),
+                    "drawn": self.view.tank_drawn_pose(tank.id),
                 })
             })
             .collect();

@@ -1336,6 +1336,17 @@ impl Presentation {
         }
     }
 
+    /// A tank's drawn translation and whether its whole pose is finite (diagnostics: a
+    /// health bar over no tank).
+    pub fn tank_drawn_pose(&self, id: u32) -> Option<([f32; 3], bool)> {
+        self.tanks.get(&id).map(|view| {
+            let t = view.world.w_axis;
+            let finite = view.world.is_finite()
+                && view.pose.iter().flatten().all(|pose| pose.is_finite());
+            ([t.x, t.y, t.z], finite)
+        })
+    }
+
     /// Whether a tank's model is shown (diagnostics).
     pub fn tank_shown(&self, id: u32) -> Option<bool> {
         self.tanks.get(&id).map(|view| view.world.w_axis.w != 0.0)
