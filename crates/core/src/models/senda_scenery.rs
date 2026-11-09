@@ -620,10 +620,13 @@ fn planted_ground(lines: &Lines) -> Node {
     };
     let planted = |p: DVec2| {
         let zone = zones(p, lines);
+        // Outside the level's wall only the bank under Senda Parkway is planted: the
+        // natural grass runs up to the wall everywhere else.
         let open = (1.0 - zone.lawn).max(zone.front)
             * (1.0 - (zone.greenbelt - zone.mouth).max(0.0))
             * (1.0 - zone.hillside)
-            * (1.0 - zone.hills);
+            * (1.0 - zone.hills)
+            * (1.0 - zone.beyond_wall);
         open > 0.5 && !is_senda_paved(p.x, p.y)
     };
     let mut index = vec![u32::MAX; (cells + 1) * (cells + 1)];
@@ -758,6 +761,8 @@ struct Lines {
     /// hillside runs on.
     greenbelt_end: f64,
     lots: Vec<Lot>,
+    /// The level's wall: past it the ground is the hillside's natural grass.
+    boundary: Vec<DVec2>,
 }
 
 impl Lines {
@@ -791,6 +796,7 @@ impl Lines {
                 .map(|middle| middle.x)
                 .fold(f64::INFINITY, f64::min),
             lots,
+            boundary: senda_boundary(),
         }
     }
 
@@ -846,6 +852,9 @@ struct Zones {
     south: f64,
     /// The natural hillside east of the cul-de-sacs.
     hillside: f64,
+    /// Outside the level's wall, but for the bank under Senda Parkway north of it:
+    /// natural grass.
+    beyond_wall: f64,
     /// The green hills past the arena east and south.
     hills: f64,
 }
@@ -891,6 +900,15 @@ fn zones(p: DVec2, lines: &Lines) -> Zones {
         west: outer - south,
         south,
         hillside: ((p.x - HILLSIDE_FROM) / HILLSIDE_BLEND).clamp(0.0, 1.0),
+        // The bank runs on outside the north wall under the Way; west of the level the
+        // Way has ended at the wall.
+        beyond_wall: if inside_boundary(&lines.boundary, p) {
+            0.0
+        } else if p.y < -ARENA {
+            1.0 - bank_land
+        } else {
+            1.0
+        },
         hills: ((p.x.abs().max(p.y.abs()) - HILLS_FROM) / HILLSIDE_BLEND).clamp(0.0, 1.0),
     }
 }
@@ -957,7 +975,8 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
             SAGE[i] * 0.75,
             HILLSIDE_SCRUB + scrub * (0.9 - HILLSIDE_SCRUB),
         );
-        let slope = mix(planted, natural, zone.hillside) * (1.0 - BANK_SHADE * zone.bank as f32);
+        let wild = zone.hillside.max(zone.beyond_wall);
+        let slope = mix(planted, natural, wild) * (1.0 - BANK_SHADE * zone.bank as f32);
         let greenbelt = mix(GREENBELT_TONES[2][i], GREENBELT_TONES[0][i], mottle * 0.6);
         let greenbelt = mix(greenbelt, GROUNDCOVER[i], zone.mouth);
         let tint = mix(slope, greenbelt, zone.greenbelt);
