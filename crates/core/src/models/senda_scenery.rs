@@ -35,12 +35,12 @@ use crate::sim::house_layout::{HouseDesign, SENDA_STYLES, wall_frames};
 use crate::sim::kinds::{CoverKind, Team};
 use crate::sim::model_data::ARENA;
 use crate::sim::senda_layout::{
-    self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, HOUSE_WIDTH, Line, MEDIAN_HALF,
-    MEDIAN_TREE_SPACING, PARKWAY, Row, SENDA_PICKUPS, SIDE_YARD, SIDEWALK, SOUTH_LANE,
-    SPLITTER_ISLAND, SendaHouse, Street, WAY_PARKWAY, WAY_PATH, WAY_WALL_ROOM, clear_of_wall,
+    self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, HOUSE_WIDTH, LAMP_HEIGHT, Line,
+    MEDIAN_HALF, PARKWAY, Row, SENDA_PICKUPS, SIDE_YARD, SIDEWALK, SOUTH_LANE, SPLITTER_ISLAND,
+    STREET_LAMP_COLORS, SendaHouse, Street, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH,
     greenbelt_mouth, house_front, in_arena, in_median_opening, inside_boundary, is_senda_paved,
-    left, neblina_bend, oak_site, outer_way_tree_sites, senda_boundary, senda_houses,
-    way_tree_sites,
+    lamp_is_cover, lamp_sites, left, neblina_bend, oak_site, outer_way_tree_sites, senda_boundary,
+    senda_houses, way_tree_sites,
 };
 use crate::sim::senda_yards::{
     LOGGIA_COLUMN, LOGGIA_EAVE, Lot, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover,
@@ -321,20 +321,13 @@ const BIKE_LANE: f64 = 0.9;
 const CENTRE_LINE_PAINT: u32 = 0xd2ad3c;
 const CENTRE_LINE: f64 = 0.1;
 const CENTRE_LINE_GAP: f64 = 0.15;
-/// Acorn street lamps: a dark pole with a pale acorn globe under a cap, standing in the
-/// parkway by the side yard of every [`LAMP_EVERY`]th house (m, paints).
-const LAMP_EVERY: usize = 5;
-/// How near (m) two street lamps may stand.
-const LAMP_ROOM: f64 = 8.0;
-const LAMP_HEIGHT: f64 = 2.8;
+/// Acorn street lamps ([`lamp_sites`]): a dark pole with a pale acorn globe under a cap
+/// (m, paints).
 const LAMP_POLE: f64 = 0.055;
 const LAMP_GLOBE: f64 = 0.16;
-const LAMP_METAL: u32 = 0x2a3a2e;
+const LAMP_METAL: u32 = STREET_LAMP_COLORS[0];
 const LAMP_GLASS: u32 = 0xf2eee2;
-/// Senda Parkway's tall lamps along its south parkway: one every this many metres, their
-/// height and globe (m).
-const WAY_LAMP_SPACING: f64 = 2.0 * MEDIAN_TREE_SPACING;
-const WAY_LAMP_HEIGHT: f64 = 4.6;
+/// Senda Parkway's tall lamps' globe (m).
 const WAY_LAMP_GLOBE: f64 = 0.22;
 /// Trees outside the walls: one every this many metres on the slopes either side of
 /// Senda Parkway, and the hillside's few oaks among its sage.
@@ -3280,7 +3273,7 @@ fn bend_park_props(group: &mut Node, lines: &Lines, globe: &Arc<Mesh>) {
     mailbox_bank(group, mailbox, park.out);
     let side = park.lawn(0.0) + PARK_WALK + 0.45;
     let (x, z) = park.at(-side, park.half_depth - 0.6).into();
-    lamp(group, globe, (x, z), WAY_LAMP_HEIGHT, WAY_LAMP_GLOBE);
+    lamp(group, globe, (x, z), true);
 }
 
 /// Whether `p` lies in the bend park's planting beds: inside it, off its lawn and walk.
@@ -4459,7 +4452,11 @@ fn way_planting(
     trees: &[DVec2],
 ) {
     let half = Street::SendaParkway.half();
-    let lamps = way_lamp_sites();
+    let lamps: Vec<DVec2> = lamp_sites()
+        .into_iter()
+        .filter(|&(_, tall)| tall)
+        .map(|(at, _)| at)
+        .collect();
     let neblina = Street::NeblinaGaviota.line();
     let parkway_skip = |p: DVec2| {
         trees.iter().any(|tree| tree.distance(p) < 1.0)
@@ -4715,8 +4712,13 @@ fn entry_bed_beds(group: &mut Node, houses: &[SendaHouse]) {
     }
 }
 
-/// An acorn lamp `height` tall with a globe of radius `globe`, at `(x, z)`.
-fn lamp(group: &mut Node, globe_mesh: &Arc<Mesh>, (x, z): (f64, f64), height: f64, globe: f64) {
+/// An acorn street lamp at `(x, z)`: a row's, or one of Senda Parkway's tall ones.
+fn lamp(group: &mut Node, globe_mesh: &Arc<Mesh>, (x, z): (f64, f64), tall: bool) {
+    let (height, globe) = if tall {
+        (WAY_LAMP_HEIGHT, WAY_LAMP_GLOBE)
+    } else {
+        (LAMP_HEIGHT, LAMP_GLOBE)
+    };
     put(
         group,
         cylinder_part(LAMP_POLE * height / LAMP_HEIGHT, height, LAMP_METAL, 6),
@@ -4736,64 +4738,30 @@ fn lamp(group: &mut Node, globe_mesh: &Arc<Mesh>, (x, z): (f64, f64), height: f6
     );
 }
 
-/// The acorn street lamps along the parkways, by the side yard beside every few houses,
-/// clear of the asphalt, and Senda Parkway's tall ones along both its parkways between its
-/// trees. Scenery, not cover: a tank brushes past a pole.
+/// A street lamp standing as cover, drawn at its footprint's middle.
+pub fn street_lamp(group: &mut Node, tall: bool) {
+    lamp(
+        group,
+        &Arc::new(sphere_geometry(1.0, 8, 6)),
+        (0.0, 0.0),
+        tall,
+    );
+}
+
+/// The street lamps outside the level's wall (Senda Parkway's tall ones on its stretch
+/// past the wall), as scenery; those inside are cover.
 fn street_lamps() -> Node {
     let mut group = Node::group("senda-lamps");
     let globe = Arc::new(sphere_geometry(1.0, 8, 6));
-    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
-    let mut standing: Vec<DVec2> = Vec::new();
-    for at in way_lamp_sites() {
-        lamp(
-            &mut group,
-            &globe,
-            (at.x, at.y),
-            WAY_LAMP_HEIGHT,
-            WAY_LAMP_GLOBE,
-        );
-        standing.push(at);
-    }
-    for house in senda_houses().iter().step_by(LAMP_EVERY) {
-        let design = house.design();
-        let (centre, out, along, half) = wall_frames(design.w, design.d)[design.door_wall];
-        let reach = house.setback + SIDEWALK + PARKWAY / 2.0;
-        let spot = design.to_world(centre + along * (half + SIDE_YARD / 2.0) + out * reach);
-        let at = DVec2::new(house.x + spot.x, house.z + spot.z);
-        let on_asphalt = lines
-            .iter()
-            .any(|(street, line)| line.distance(at) < street.half() + 0.2);
-        // Round a corner two rows' lamps (or a row's and the Way's) would stand together.
-        let crowded = standing.iter().any(|lamp| lamp.distance(at) < LAMP_ROOM);
-        if on_asphalt || crowded {
-            continue;
+    let boundary = senda_boundary();
+    // Those inside the level are cover ([`street_lamp`]); the rest stand here.
+    for (at, tall) in lamp_sites() {
+        if !lamp_is_cover(&boundary, at) {
+            lamp(&mut group, &globe, (at.x, at.y), tall);
         }
-        lamp(&mut group, &globe, (at.x, at.y), LAMP_HEIGHT, LAMP_GLOBE);
-        standing.push(at);
     }
     batch(&mut group);
     group
-}
-
-/// Where Senda Parkway's tall lamps stand, in the middle of both its parkways, short of the
-/// level's wall where the Way meets it.
-fn way_lamp_sites() -> Vec<DVec2> {
-    let way = Street::SendaParkway.line();
-    let half = Street::SendaParkway.half();
-    let boundary = senda_boundary();
-    let mut sites = Vec::new();
-    let mut s = MEDIAN_TREE_SPACING / 4.0;
-    while s < way.length() {
-        let (point, along) = way.at(s);
-        for (side, strip) in [(1.0, PARKWAY), (-1.0, WAY_PARKWAY)] {
-            let site = point + left(along) * side * (half + strip / 2.0);
-            if clear_of_wall(&boundary, site, WAY_WALL_ROOM) {
-                sites.push(site);
-            }
-        }
-        s += WAY_LAMP_SPACING;
-    }
-    sites
 }
 
 /// A lot wall's precast cap: its height (m), how far it overhangs each face, and its

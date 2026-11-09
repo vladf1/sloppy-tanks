@@ -945,6 +945,120 @@ fn trash_bins(houses: &[SendaHouse]) -> Vec<CoverDef> {
     bins
 }
 
+/// The street lamps: a row lamp by the side yard of every [`LAMP_EVERY`]th house, and
+/// Senda Parkway's tall ones one every [`WAY_LAMP_SPACING`] (m) along both its parkways;
+/// how near (m) two may stand and how far (m) a pole keeps off a kerb; their heights (m).
+const LAMP_EVERY: usize = 5;
+const WAY_LAMP_SPACING: f64 = 2.0 * MEDIAN_TREE_SPACING;
+const LAMP_ROOM: f64 = 8.0;
+const LAMP_KERB_ROOM: f64 = 0.35;
+pub const LAMP_HEIGHT: f64 = 2.8;
+pub const WAY_LAMP_HEIGHT: f64 = 4.6;
+/// A lamp inside the level is cover a tank cannot drive through: a pole this many metres
+/// across that a shell or two brings down. Its colour marks its look (a row's lamp, a
+/// tall one) and is its painted metal, which its scrap falls in.
+pub const STREET_LAMP_COLORS: [u32; 2] = [0x2a3a2e, 0x2a3a2f];
+const LAMP_POLE_BOX: f64 = 0.3;
+const LAMP_HEALTH: f64 = 40.0;
+
+/// A cover drawn as a street lamp: whether it is a tall one.
+pub fn street_lamp_look(color: u32) -> Option<bool> {
+    STREET_LAMP_COLORS
+        .iter()
+        .position(|&lamp| lamp == color)
+        .map(|k| k == 1)
+}
+
+/// Where the street lamps stand, and whether each is one of Senda Parkway's tall ones:
+/// those first, then the rows' lamps; each in a parkway strip ([`lamp_clear`]) and no row
+/// lamp within [`LAMP_ROOM`] of one already standing (round a corner two rows' lamps, or
+/// a row's and the Way's, would stand together).
+pub fn lamp_sites() -> Vec<(DVec2, bool)> {
+    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+    let mut sites: Vec<(DVec2, bool)> = Vec::new();
+    for at in way_lamp_sites() {
+        if lamp_clear(at, &lines) {
+            sites.push((at, true));
+        }
+    }
+    for house in senda_houses().iter().step_by(LAMP_EVERY) {
+        let design = house.design();
+        let (centre, out, along, half) = wall_frames(design.w, design.d)[design.door_wall];
+        let reach = house.setback + SIDEWALK + PARKWAY / 2.0;
+        let spot = design.to_world(centre + along * (half + SIDE_YARD / 2.0) + out * reach);
+        let at = DVec2::new(house.x + spot.x, house.z + spot.z);
+        let crowded = sites.iter().any(|(lamp, _)| lamp.distance(at) < LAMP_ROOM);
+        if lamp_clear(at, &lines) && !crowded {
+            sites.push((at, false));
+        }
+    }
+    sites
+}
+
+/// Whether a street lamp may stand at `at`: off every street's asphalt and kerb by
+/// [`LAMP_KERB_ROOM`], off the turning circles, and off the residential streets'
+/// sidewalks, so only in a parkway strip.
+fn lamp_clear(at: DVec2, lines: &[(Street, Line)]) -> bool {
+    let off_circles = Street::ALL
+        .into_iter()
+        .filter_map(Street::cul_de_sac)
+        .all(|middle| middle.distance(at) > CUL_DE_SAC_RADIUS + LAMP_KERB_ROOM);
+    off_circles
+        && lines.iter().all(|(street, line)| {
+            let off = line.distance(at) - street.half();
+            let sidewalk = *street != Street::SendaParkway
+                && (PARKWAY - 0.1..PARKWAY + SIDEWALK + 0.1).contains(&off);
+            off > LAMP_KERB_ROOM && !sidewalk
+        })
+}
+
+/// Where Senda Parkway's tall lamps stand, in the middle of both its parkways, short of the
+/// level's wall where the Way meets it.
+fn way_lamp_sites() -> Vec<DVec2> {
+    let way = Street::SendaParkway.line();
+    let half = Street::SendaParkway.half();
+    let boundary = senda_boundary();
+    let mut sites = Vec::new();
+    let mut s = MEDIAN_TREE_SPACING / 4.0;
+    while s < way.length() {
+        let (point, along) = way.at(s);
+        for (side, strip) in [(1.0, PARKWAY), (-1.0, WAY_PARKWAY)] {
+            let site = point + left(along) * side * (half + strip / 2.0);
+            if clear_of_wall(&boundary, site, WAY_WALL_ROOM) {
+                sites.push(site);
+            }
+        }
+        s += WAY_LAMP_SPACING;
+    }
+    sites
+}
+
+/// Whether the lamp at `at` stands inside the level, where it is cover.
+pub fn lamp_is_cover(boundary: &[DVec2], at: DVec2) -> bool {
+    in_arena(at) && inside_boundary(boundary, at)
+}
+
+/// The lamps inside the level, as cover.
+fn street_lamp_covers(boundary: &[DVec2]) -> Vec<CoverDef> {
+    lamp_sites()
+        .into_iter()
+        .filter(|&(at, _)| lamp_is_cover(boundary, at))
+        .map(|(at, tall)| {
+            let height = if tall { WAY_LAMP_HEIGHT } else { LAMP_HEIGHT };
+            CoverDef::new(
+                CoverKind::Concrete,
+                (at.x * 100.0).round() / 100.0,
+                (at.y * 100.0).round() / 100.0,
+                LAMP_POLE_BOX,
+                LAMP_POLE_BOX,
+                height,
+                LAMP_HEALTH,
+                STREET_LAMP_COLORS[usize::from(tall)],
+            )
+        })
+        .collect()
+}
+
 /// Senda Parkway's trees, one every this many metres down its median and along the
 /// parkways either side, half a spacing on; their footprint and height, and how far (m)
 /// a trunk may stand off the median's middle or its parkway's.
@@ -1706,6 +1820,7 @@ fn senda_layout() -> Vec<CoverDef> {
     covers.extend(super::senda_yards::patio_covers(&houses));
     covers.extend(street_trees(&houses));
     covers.extend(trash_bins(&houses));
+    covers.extend(street_lamp_covers(&boundary));
     covers.extend(way_trees(&boundary));
     covers.extend(big_trees(&boundary));
     // One on each cul-de-sac's island.
@@ -1774,3 +1889,45 @@ pub static SENDA_MAP: ArenaMap = ArenaMap {
     layout: senda_layout,
     pickups: &SENDA_PICKUPS,
 };
+
+#[cfg(test)]
+mod lamp_tests {
+    use super::*;
+
+    #[test]
+    fn every_street_lamp_stands_in_a_parkway_strip_and_the_rows_apart() {
+        let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+        let sites = lamp_sites();
+        assert!(
+            sites.iter().filter(|(_, tall)| *tall).count() >= 6,
+            "{sites:?}"
+        );
+        assert!(
+            sites.iter().filter(|(_, tall)| !tall).count() >= 4,
+            "{sites:?}"
+        );
+        for (k, &(at, tall)) in sites.iter().enumerate() {
+            for (street, line) in &lines {
+                let off = line.distance(at) - street.half();
+                assert!(
+                    off > LAMP_KERB_ROOM,
+                    "a lamp at {at:?} on {street:?}'s asphalt"
+                );
+                if *street != Street::SendaParkway {
+                    assert!(
+                        !(PARKWAY..PARKWAY + SIDEWALK).contains(&off),
+                        "a lamp at {at:?} on {street:?}'s sidewalk"
+                    );
+                }
+            }
+            if !tall {
+                for &(other, _) in &sites[..k] {
+                    assert!(
+                        other.distance(at) >= LAMP_ROOM,
+                        "lamps at {at:?} and {other:?}"
+                    );
+                }
+            }
+        }
+    }
+}

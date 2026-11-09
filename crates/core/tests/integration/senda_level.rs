@@ -1139,3 +1139,20 @@ fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
         2
     );
 }
+
+#[test]
+fn the_street_lamps_inside_the_level_are_cover_a_tank_cannot_drive_through() {
+    use sloppy_core::sim::senda_layout::street_lamp_look;
+    let sim = senda(5.0);
+    let lamps: Vec<_> = sim
+        .covers
+        .iter()
+        .filter(|cover| street_lamp_look(cover.color).is_some())
+        .collect();
+    assert!(lamps.len() >= 5, "{} lamps", lamps.len());
+    for lamp in lamps {
+        assert!(lamp.alive && lamp.destructible);
+        assert!(sim.world.bodies.contains(lamp.body), "a lamp with no body");
+        assert!(sim.nav.is_blocked(Vec2::new(lamp.x, lamp.z)), "{lamp:?}");
+    }
+}

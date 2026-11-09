@@ -18,7 +18,7 @@ use super::harbor_surfaces::harbor_parapet;
 use super::house_parts_model::{house_debris, structural_house};
 use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
-use super::senda_scenery::{is_yard_wall, patio_cover, yard_wall};
+use super::senda_scenery::{is_yard_wall, patio_cover, street_lamp, yard_wall};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
@@ -34,7 +34,7 @@ use crate::sim::house_layout::HousePlan;
 use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
-    is_trash_bin,
+    is_trash_bin, street_lamp_look,
     SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
 };
 use crate::sim::senda_yards::{PatioCover, YARD_VIEW_COLOR, YARD_WALL_COLOR};
@@ -193,6 +193,10 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         }
         CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
             put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
+        }
+        // Senda's street lamps inside the level.
+        CoverKind::Concrete if let Some(tall) = street_lamp_look(c.color) => {
+            street_lamp(group, tall);
         }
         // The loggias and pergolas over Senda's patios, turned square to their lots.
         CoverKind::Concrete if let Some(look) = PatioCover::of_color(c.color) => {
