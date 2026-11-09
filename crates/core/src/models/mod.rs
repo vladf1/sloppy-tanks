@@ -102,6 +102,7 @@ mod quarry_site_details;
 mod quarry_soil;
 mod quarry_terrain;
 mod scenery;
+mod senda_neighbours;
 mod senda_scenery;
 mod village_atmosphere;
 mod village_ground;
