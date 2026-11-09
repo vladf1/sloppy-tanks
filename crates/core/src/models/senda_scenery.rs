@@ -324,6 +324,8 @@ const CENTRE_LINE_GAP: f64 = 0.15;
 /// Acorn street lamps: a dark pole with a pale acorn globe under a cap, standing in the
 /// parkway by the side yard of every [`LAMP_EVERY`]th house (m, paints).
 const LAMP_EVERY: usize = 5;
+/// How near (m) two street lamps may stand.
+const LAMP_ROOM: f64 = 8.0;
 const LAMP_HEIGHT: f64 = 2.8;
 const LAMP_POLE: f64 = 0.055;
 const LAMP_GLOBE: f64 = 0.16;
@@ -4741,20 +4743,7 @@ fn street_lamps() -> Node {
     let mut group = Node::group("senda-lamps");
     let globe = Arc::new(sphere_geometry(1.0, 8, 6));
     let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
-    for house in senda_houses().iter().step_by(LAMP_EVERY) {
-        let design = house.design();
-        let (centre, out, along, half) = wall_frames(design.w, design.d)[design.door_wall];
-        let reach = house.setback + SIDEWALK + PARKWAY / 2.0;
-        let spot = design.to_world(centre + along * (half + SIDE_YARD / 2.0) + out * reach);
-        let (x, z) = (house.x + spot.x, house.z + spot.z);
-        let on_asphalt = lines
-            .iter()
-            .any(|(street, line)| line.distance(DVec2::new(x, z)) < street.half() + 0.2);
-        if on_asphalt {
-            continue;
-        }
-        lamp(&mut group, &globe, (x, z), LAMP_HEIGHT, LAMP_GLOBE);
-    }
+    let mut standing: Vec<DVec2> = Vec::new();
     for at in way_lamp_sites() {
         lamp(
             &mut group,
@@ -4763,6 +4752,24 @@ fn street_lamps() -> Node {
             WAY_LAMP_HEIGHT,
             WAY_LAMP_GLOBE,
         );
+        standing.push(at);
+    }
+    for house in senda_houses().iter().step_by(LAMP_EVERY) {
+        let design = house.design();
+        let (centre, out, along, half) = wall_frames(design.w, design.d)[design.door_wall];
+        let reach = house.setback + SIDEWALK + PARKWAY / 2.0;
+        let spot = design.to_world(centre + along * (half + SIDE_YARD / 2.0) + out * reach);
+        let at = DVec2::new(house.x + spot.x, house.z + spot.z);
+        let on_asphalt = lines
+            .iter()
+            .any(|(street, line)| line.distance(at) < street.half() + 0.2);
+        // Round a corner two rows' lamps (or a row's and the Way's) would stand together.
+        let crowded = standing.iter().any(|lamp| lamp.distance(at) < LAMP_ROOM);
+        if on_asphalt || crowded {
+            continue;
+        }
+        lamp(&mut group, &globe, (at.x, at.y), LAMP_HEIGHT, LAMP_GLOBE);
+        standing.push(at);
     }
     batch(&mut group);
     group
