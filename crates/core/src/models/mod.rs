@@ -59,6 +59,7 @@ beyond_geometry! {
     mod crate_model;
     pub mod effects_props;
     mod flags;
+    mod wheelie_bin;
 }
 mod harbor_models;
 beyond_geometry! {

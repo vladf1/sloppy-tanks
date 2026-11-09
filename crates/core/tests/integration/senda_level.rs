@@ -1009,3 +1009,42 @@ fn the_reference_house_is_the_fourth_on_rumbos_north_side_past_the_corner_lot() 
         "the corner house stands {neblina_walk:.1} m off Neblina's sidewalk"
     );
 }
+
+#[test]
+fn wheelie_bins_stand_in_pairs_against_the_kerb_and_explode_as_drums() {
+    use sloppy_core::sim::senda_layout::{TRASH_BIN, TRASH_BIN_COLORS, is_trash_bin};
+    let sim = senda(5.0);
+    let bins: Vec<_> = sim
+        .covers
+        .iter()
+        .filter(|cover| is_trash_bin(cover.color))
+        .collect();
+    assert!(bins.len() >= 8, "{} bins", bins.len());
+    let lines = Street::ALL.map(|street| (street, street.line()));
+    for pair in bins.chunks(2) {
+        // A trash bin and a recycling bin side by side, turned alike.
+        let [trash, recycling] = pair else {
+            panic!("an odd bin out")
+        };
+        assert_eq!([trash.color, recycling.color], TRASH_BIN_COLORS);
+        assert_eq!(trash.house_plan, recycling.house_plan);
+        let apart = DVec2::new(trash.x - recycling.x, trash.z - recycling.z).length();
+        assert!((0.6..1.2).contains(&apart), "{apart}");
+        for bin in pair {
+            // Explosive drums, in the street against its kerb.
+            assert_eq!(bin.kind, CoverKind::Drum);
+            assert!(bin.destructible && bin.hp > 0.0);
+            assert_eq!((bin.w, bin.d, bin.h), TRASH_BIN);
+            let at = DVec2::new(bin.x, bin.z);
+            let inside_kerb = lines
+                .iter()
+                .map(|(street, line)| street.half() - line.distance(at))
+                .filter(|off| *off > 0.0)
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                inside_kerb < 1.3,
+                "a bin {inside_kerb:.2} m off the kerb at {at:?}"
+            );
+        }
+    }
+}

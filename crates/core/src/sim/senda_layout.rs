@@ -857,6 +857,94 @@ fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
     trees
 }
 
+/// Senda's wheelie bins out for collection: explosive drums drawn as a dark green
+/// trash bin and a blue recycling bin ([`is_trash_bin`] picks the look by colour), their
+/// footprint across and front to back and their height (m), and their health.
+pub const TRASH_BIN_COLORS: [u32; 2] = [0x3e4b3c, 0x2d5c8a];
+pub const TRASH_BIN: (f64, f64, f64) = (0.66, 0.74, 1.08);
+const TRASH_BIN_HEALTH: f64 = 20.0;
+/// One house in this many puts its bins out, starting with the first.
+const TRASH_BIN_HOUSES: usize = 3;
+/// Where (m) the bins stand: past the kerb into the street, and from the driveway's
+/// edge on its side away from the front door, and apart from each other.
+const TRASH_BIN_KERB_ROOM: f64 = 0.5;
+const TRASH_BIN_DRIVEWAY_ROOM: f64 = 0.6;
+const TRASH_BIN_GAP: f64 = 0.85;
+
+/// Whether a drum is one of Senda's wheelie bins.
+pub fn is_trash_bin(color: u32) -> bool {
+    TRASH_BIN_COLORS.contains(&color)
+}
+
+/// The bins of every [`TRASH_BIN_HOUSES`]th house, a trash and a recycling bin side by
+/// side in the street against the kerb beside its driveway, turned to face the street,
+/// wherever both stand on a straight run of asphalt clear of the turning circles, the
+/// spawn pads and the pickups.
+fn trash_bins(houses: &[SendaHouse]) -> Vec<CoverDef> {
+    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+    let (w, d, h) = TRASH_BIN;
+    let mut bins = Vec::new();
+    for house in houses.iter().step_by(TRASH_BIN_HOUSES) {
+        let design = house.design();
+        let (centre, out, along, _) = wall_frames(design.w, design.d)[design.door_wall];
+        let plan = design.wall_plan(design.door_wall);
+        let (Some(garage), Some(door)) = (plan.garage(), plan.door()) else {
+            continue;
+        };
+        // Beside the driveway, on its side away from the front walk.
+        let away = -(door - garage).signum();
+        let edge = garage + away * (plan.garage_width() / 2.0 + TRASH_BIN_DRIVEWAY_ROOM);
+        let out_world = design.to_world(out);
+        let reach = house.setback + SIDEWALK + PARKWAY + TRASH_BIN_KERB_ROOM;
+        let spots = [0.0, TRASH_BIN_GAP].map(|step| {
+            let face = design.to_world(centre + along * (edge + away * step));
+            DVec2::new(
+                house.x + face.x + out_world.x * reach,
+                house.z + face.z + out_world.z * reach,
+            )
+        });
+        let clear = spots.iter().all(|&spot| {
+            let at_kerb = lines.iter().any(|(street, line)| {
+                let off = street.half() - line.distance(spot);
+                (d / 2.0..TRASH_BIN_KERB_ROOM + d).contains(&off)
+            });
+            let off_circles = Street::ALL
+                .into_iter()
+                .filter_map(Street::cul_de_sac)
+                .all(|middle| middle.distance(spot) > CUL_DE_SAC_RADIUS + w);
+            at_kerb && off_circles && in_arena(spot) && off_pads_and_pickups(spot, w)
+        });
+        if !clear {
+            continue;
+        }
+        // Their fronts (the lid's lip) face the street, handles and wheels the house.
+        let yaw = out_world.x.atan2(out_world.z).to_degrees();
+        let quarter = (yaw / 90.0).round();
+        let plan = HousePlan {
+            style: 0,
+            street: quarter as i8,
+            angle: (yaw - quarter * 90.0).round() as i8,
+            garage: GarageSide::Left,
+        };
+        for (spot, color) in spots.into_iter().zip(TRASH_BIN_COLORS) {
+            bins.push(CoverDef {
+                house_plan: Some(plan),
+                ..CoverDef::new(
+                    CoverKind::Drum,
+                    (spot.x * 100.0).round() / 100.0,
+                    (spot.y * 100.0).round() / 100.0,
+                    w,
+                    d,
+                    h,
+                    TRASH_BIN_HEALTH,
+                    color,
+                )
+            });
+        }
+    }
+    bins
+}
+
 /// Senda Parkway's trees, one every this many metres down its median and along the
 /// parkways either side, half a spacing on; their footprint and height, and how far (m)
 /// a trunk may stand off the median's middle or its parkway's.
@@ -1616,6 +1704,7 @@ fn senda_layout() -> Vec<CoverDef> {
     }
     covers.extend(super::senda_yards::yard_walls(&houses));
     covers.extend(street_trees(&houses));
+    covers.extend(trash_bins(&houses));
     covers.extend(way_trees(&boundary));
     covers.extend(big_trees(&boundary));
     // One on each cul-de-sac's island.

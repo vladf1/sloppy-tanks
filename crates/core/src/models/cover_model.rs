@@ -25,6 +25,7 @@ use super::quarry_surfaces::{
 };
 use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
+use super::wheelie_bin::wheelie_bin;
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
 use crate::sim::math::Random;
@@ -33,6 +34,7 @@ use crate::sim::house_layout::HousePlan;
 use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
+    is_trash_bin,
     SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
 };
 use crate::sim::senda_yards::{YARD_VIEW_COLOR, YARD_WALL_COLOR};
@@ -156,6 +158,12 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 })
                 .collect();
             add_timber_parts(group, &standing);
+        }
+        // The Neighborhood's wheelie bins, turned to face their street.
+        CoverKind::Drum if is_trash_bin(c.color) => {
+            let mut bin = wheelie_bin(c.color);
+            bin.rotation = glam::DQuat::from_rotation_y(cover_turn(c.kind, c.house_plan));
+            group.children.push(bin);
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);

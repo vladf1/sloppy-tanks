@@ -206,6 +206,8 @@ pub fn break_scenery(
         CoverKind::Drum => {
             // Internal pressure tears the thin wall into small curled sheets, not a
             // surviving cylinder. Offset each sheet so the blast spreads them radially.
+            // A wheelie bin's sheets and lid are its own plastic.
+            let bin = super::senda_layout::is_trash_bin(cover.color).then_some(cover.color);
             let phase = breakup.rng.range(0.0, PI * 2.0);
             for i in 0..3 {
                 let angle = phase + (i as f64 * PI * 2.0) / 3.0;
@@ -217,7 +219,7 @@ pub fn break_scenery(
                     FragmentShape::DrumShell,
                     [angle.cos() * cover.w * 0.3, y, angle.sin() * cover.d * 0.3],
                     [w, h, 0.12],
-                    Some(if i == 1 { 0x493e35 } else { 0x765443 }),
+                    Some(bin.unwrap_or(if i == 1 { 0x493e35 } else { 0x765443 })),
                     DebrisMaterial::Metal,
                 );
                 let body = simulation.fragments[scrap].body;
@@ -228,7 +230,7 @@ pub fn break_scenery(
                 FragmentShape::DrumLid,
                 [0.0, cover.h, 0.0],
                 [cover.w * 0.65, 0.16, cover.w * 0.65],
-                Some(0x574e3e),
+                Some(bin.unwrap_or(0x574e3e)),
                 DebrisMaterial::Metal,
             );
         }
