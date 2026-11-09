@@ -24,7 +24,7 @@ use super::model_data::ARENA;
 use super::senda_layout::{
     BACK_YARD, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row, SENDA_PICKUPS, SETBACK, SIDE_YARD,
     SIDEWALK, STREET_HALF, SendaHouse, Street, back_fence, bend_park, greenbelt_line, house_front,
-    inside_boundary, is_senda_paved, left, senda_boundary,
+    inside_boundary, is_senda_paved, left, past_sidewalk, senda_boundary,
 };
 
 /// The block walls' paint (split-face block, a darker brown-tan than the houses' stucco),
@@ -72,8 +72,15 @@ const PARK_REACH: f64 = 14.0;
 /// between their fronts) and stand this far apart (m) at most across their fronts.
 const SAME_ROW: f64 = 0.5;
 const NEIGHBOUR_REACH: f64 = 1.6 * LOT_PITCH;
-/// The side yard (m) beside a house at the end of its row, out to its lot line.
+/// How far (m) a neighbour may stand forward or back of a house, as the pie-shaped lots
+/// round a turning circle step back from the square ones beside them.
+const NEIGHBOUR_STEP: f64 = 0.75 * HOUSE_DEPTH;
+/// The side yard (m) beside a house at the end of its row, out to its lot line; beside a
+/// side street whose sidewalk lies within this far (m) of its wall, out to that sidewalk,
+/// the wall this far (m) inside its back edge.
 const END_YARD: f64 = SIDE_YARD * 0.6;
+const SIDE_STREET_REACH: f64 = 6.0;
+const SIDE_WALK_ROOM: f64 = 0.2;
 /// Room (m) a wall keeps from a spawn pad's middle (its radius and the room a tank needs
 /// to leave it), from a pickup, and from the level's wall.
 const PAD_ROOM: f64 = 2.3 + 2.5;
@@ -336,17 +343,45 @@ pub fn senda_lots(houses: &[SendaHouse]) -> Vec<Lot> {
                 .filter(|&j| j != i && lots[j].front.dot(lot.front) > SAME_ROW)
                 .filter_map(|j| {
                     let (u, v) = lot.local(lots[j].centre);
-                    (u * sign > 0.0 && u.abs() < NEIGHBOUR_REACH && v.abs() < lot.half_depth)
+                    (u * sign > 0.0 && u.abs() < NEIGHBOUR_REACH && v.abs() < NEIGHBOUR_STEP)
                         .then_some((j, u))
                 })
                 .min_by(|a, b| a.1.abs().total_cmp(&b.1.abs()));
-            let u = match neighbour {
-                Some((j, u)) => (sign * lot.half_width + u - sign * lots[j].half_width) / 2.0,
-                None => sign * (lot.half_width + END_YARD),
+            // A row's end lot beside a side street runs its side yard out to that
+            // street's sidewalk, its wall along the sidewalk's back edge.
+            let to_sidewalk = |v: f64| {
+                let mut u = lot.half_width;
+                while u < lot.half_width + SIDE_STREET_REACH {
+                    let p = lot.at(sign * (u + SIDE_WALK_ROOM), v);
+                    if Street::ALL
+                        .into_iter()
+                        .filter(|&street| street != lot.house.row.street())
+                        .any(|street| past_sidewalk(street, p) < 0.0)
+                    {
+                        return Some(sign * u);
+                    }
+                    u += YARD_STEP / 5.0;
+                }
+                None
+            };
+            let (gate, rear) = match neighbour {
+                Some((j, u)) => {
+                    let u = (sign * lot.half_width + u - sign * lots[j].half_width) / 2.0;
+                    (u, u)
+                }
+                None => {
+                    let end = sign * (lot.half_width + END_YARD);
+                    match (to_sidewalk(lot.gate_v()), to_sidewalk(lot.rear_v())) {
+                        (Some(gate), Some(rear)) => (gate, rear),
+                        (Some(gate), None) => (gate, end),
+                        (None, Some(rear)) => (end, rear),
+                        (None, None) => (end, end),
+                    }
+                }
             };
             lots[i].sides[k] = LotLine {
-                gate: lot.at(u, lot.gate_v()),
-                rear: lot.at(u, lot.rear_v()),
+                gate: lot.at(gate, lot.gate_v()),
+                rear: lot.at(rear, lot.rear_v()),
                 neighbour: neighbour.map(|(j, _)| j),
             };
         }

@@ -7,8 +7,8 @@
 //! cul-de-sac; no street goes on south. Rumbo leaves Neblina near the top and curves
 //! east to its own. Their houses stand detached in rows along the curving streets, side
 //! yards between them and their fronts stepping lot by lot, each turned to front its
-//! street with a driveway to its garage: both sides of Rumbo and Gaviota, running
-//! straight on beside their turning circles, Neblina's west side in one even run from
+//! street with a driveway to its garage: both sides of Rumbo and Gaviota, their last
+//! lots turning round their turning circles to face them, Neblina's west side in one even run from
 //! its corner lot on Senda Parkway round the outside of the curve to a little park where
 //! the name changes, Gaviota's south row on from there, and Neblina's east side only
 //! round the bend. The streets are drawn short, and the spawn lanes at
@@ -130,9 +130,13 @@ const RUMBO_TRACE: &[(f64, f64)] = &[
     (1560.0, 364.0),
     (1655.0, 346.0),
 ];
-/// The turning circles at Rumbo's and Gaviota's ends.
+/// The turning circles at Rumbo's and Gaviota's ends, where the aerial has their middles,
+/// and how far (m) back along its street's last heading each true-size circle stands from
+/// there, so its sidewalk ring keeps clear of the spawn pad on the hillside past it.
 const RUMBO_CUL_DE_SAC_TRACE: (f64, f64) = (1722.0, 322.0);
 const GAVIOTA_CUL_DE_SAC_TRACE: (f64, f64) = (1810.0, 782.0);
+const RUMBO_CUL_DE_SAC_SHIFT: f64 = 3.0;
+const GAVIOTA_CUL_DE_SAC_SHIFT: f64 = 1.7;
 
 /// Half widths (m): a residential street kerb to kerb, and Senda Parkway's four lanes
 /// with their planted median.
@@ -143,9 +147,10 @@ pub const MEDIAN_HALF: f64 = 0.8;
 /// front yards, each the tract's 1.3 m at the tank's scale.
 pub const PARKWAY: f64 = 0.7;
 pub const SIDEWALK: f64 = 0.7;
-/// A cul-de-sac's kerb radius and the planted island in its middle.
-pub const CUL_DE_SAC_RADIUS: f64 = 4.6;
-pub const CUL_DE_SAC_ISLAND: f64 = 1.4;
+/// A cul-de-sac's kerb radius and the planted island in its middle: the tract's 12.7 m
+/// and 3.7 m at the tank's scale.
+pub const CUL_DE_SAC_RADIUS: f64 = 6.8;
+pub const CUL_DE_SAC_ISLAND: f64 = 2.0;
 
 /// A house's box along its street and its lot's depth from the house's front (the
 /// large plan's, [`plan_depth`]), the least its front stands back from the sidewalk,
@@ -167,6 +172,13 @@ const WEST_ROW_STAGGER: [f64; 2] = [0.0, 0.4];
 /// taken.
 pub const SIDE_YARD: f64 = 1.6;
 const LOT_SEARCH: f64 = 0.1;
+/// How finely (steps to a [`LOT_SEARCH`]) a row looks back for the first place a lot
+/// fits, so a row loses no room to the search's step from lot to lot.
+const LOT_REFINE: usize = 10;
+/// The least distance (m) from the bend park's middle to a house of the rows either side
+/// of it ([`bend_park`]): a narrow lot of Neblina's west row's, or the row's own pitch
+/// where that is more.
+const PARK_LOT: f64 = 7.45;
 /// How far (m) up Neblina from its bend Gaviota's north row begins: the greenbelt
 /// opens onto Neblina above it.
 const GREENBELT_MOUTH: f64 = 12.0;
@@ -199,26 +211,25 @@ const PITCH_TOLERANCE: f64 = 0.01;
 const WALL_PLATES: [f64; 4] = [3.2, 3.15, 3.25, 3.2];
 /// The highest wall plate (m) of a house on a narrower lot.
 const NARROW_PLATE: f64 = 3.2;
-/// Room (m) a house keeps from another street's paving, from a spawn pad's rim, from a
-/// pickup's centre, and from the arena's edge.
+/// Room (m) a house keeps from a turning circle's sidewalk it does not face, from a spawn
+/// pad's rim, from a pickup's centre, and from the arena's edge.
 const STREET_ROOM: f64 = 0.4;
-/// The room (m) Rumbo's corner lot on its north side keeps from Neblina's
-/// sidewalk: it stands back past a broad planted side yard, its front on Rumbo.
+/// The room (m) a corner lot's house keeps from the side street's sidewalk, past its
+/// side yard; Rumbo's corner lot on its north side stands back past a broader planted
+/// one toward Neblina, its front on Rumbo.
+const SIDE_STREET_ROOM: f64 = 2.0;
 const CORNER_LOT_ROOM: f64 = 2.5;
 const SPAWN_ROOM: f64 = 2.5;
 /// A spawn pad's radius (its rim's outer edge).
 const SPAWN_PAD: f64 = 2.3;
 const PICKUP_ROOM: f64 = 2.5;
 const EDGE_ROOM: f64 = 3.0;
-/// The rows run straight on past a street's end beside its cul-de-sac, as the tract's do,
-/// two houses a side at the turning circle, up to this far (m) past the circle's middle:
-/// beyond it the circle's far rim opens onto the hillside. A house there turns toward
-/// the circle's middle, by at most this many degrees off square to its row.
-const CUL_DE_SAC_ROW_END: f64 = 4.6;
-const CUL_DE_SAC_TURN: f64 = 20.0;
-/// How far (m) past the circle's middle a row on a street's south side runs on: the
-/// tract's south rows hold a lot more there, under the circle's south-east rim.
-const CUL_DE_SAC_SOUTH_ROW_END: f64 = 11.0;
+/// The rows run on round the turning circle at a street's end, as the tract's do: where a
+/// lot of the row would stand nearer the circle's middle than a house facing the circle
+/// across its own front yard, its house stands round the circle instead, on a pie-shaped
+/// lot, its front turned to the circle's middle. A row looks this far (m) on past the
+/// circle's middle for such lots; the spawn pads and the level's wall end it sooner.
+const CUL_DE_SAC_ROW_END: f64 = 40.0;
 
 /// The colour of the level's wall where it is drawn as the tract's capped split-face
 /// block, which its model knows it by.
@@ -378,12 +389,43 @@ impl Street {
 
     /// Its cul-de-sac's middle, for the streets that end in one.
     pub fn cul_de_sac(self) -> Option<DVec2> {
-        match self {
-            Street::Rumbo => Some(from_aerial(RUMBO_CUL_DE_SAC_TRACE)),
-            Street::NeblinaGaviota => Some(from_aerial(GAVIOTA_CUL_DE_SAC_TRACE)),
-            _ => None,
-        }
+        let (traced, shift, trace) = match self {
+            Street::Rumbo => (RUMBO_CUL_DE_SAC_TRACE, RUMBO_CUL_DE_SAC_SHIFT, RUMBO_TRACE),
+            Street::NeblinaGaviota => (
+                GAVIOTA_CUL_DE_SAC_TRACE,
+                GAVIOTA_CUL_DE_SAC_SHIFT,
+                NEBLINA_GAVIOTA_TRACE,
+            ),
+            Street::SendaParkway => return None,
+        };
+        let n = trace.len();
+        let heading = (from_aerial(trace[n - 1]) - from_aerial(trace[n - 2])).normalize();
+        Some(from_aerial(traced) - heading * shift)
     }
+}
+
+/// Whether a house or lot centred at `at` and facing `facing` stands round the turning
+/// circle at `middle`, its front to the circle's middle across its front yard.
+pub fn faces_circle(at: DVec2, facing: DVec2, middle: DVec2) -> bool {
+    let reach = CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK + SETBACK + HOUSE_DEPTH + 1.0;
+    let toward = middle - at;
+    toward.length() < reach && facing.dot(toward.normalize()) > FACES_CIRCLE
+}
+
+/// The least cosine between a house's facing and the way to a turning circle's middle
+/// for it to face the circle (about two degrees, its turn rounded to the degree).
+const FACES_CIRCLE: f64 = 0.999;
+
+/// How far (m) `p` stands outside the back edge of `street`'s sidewalk (negative on its
+/// paving, parkway or sidewalk): on Senda Parkway's south side, its wide path's.
+pub fn past_sidewalk(street: Street, p: DVec2) -> f64 {
+    let line = street.line();
+    let walk = if street == Street::SendaParkway && line.signed_distance(p) < 0.0 {
+        WAY_PARKWAY + WAY_PATH
+    } else {
+        PARKWAY + SIDEWALK
+    };
+    line.distance(p) - street.half() - walk
 }
 
 /// The distance from a street's centre line to the fronts of the houses along it.
@@ -450,6 +492,14 @@ impl Row {
         Row::NeblinaWest,
         Row::GaviotaSouth,
     ];
+
+    /// The street its houses front.
+    pub fn street(self) -> Street {
+        match self {
+            Row::RumboNorth | Row::RumboSouth => Street::Rumbo,
+            _ => Street::NeblinaGaviota,
+        }
+    }
 }
 
 impl SendaHouse {
@@ -523,12 +573,14 @@ fn clear(footprint: &Footprint, own: Option<Street>, street_room: f64) -> bool {
     let corners = footprint.corners(0.0);
     let off_streets = Street::ALL.into_iter().all(|street| {
         let line = street.line();
-        let room = if Some(street) == own {
-            street.half() + PARKWAY + SIDEWALK + SETBACK * 0.5
+        if Some(street) == own {
+            let room = street.half() + PARKWAY + SIDEWALK + SETBACK * 0.5;
+            corners.iter().all(|&corner| line.distance(corner) > room)
         } else {
-            street.half() + PARKWAY + SIDEWALK + street_room
-        };
-        corners.iter().all(|&corner| line.distance(corner) > room)
+            corners
+                .iter()
+                .all(|&corner| past_sidewalk(street, corner) > street_room)
+        }
     });
     let off_bulbs = Street::ALL
         .into_iter()
@@ -567,6 +619,23 @@ struct Footprint {
 }
 
 impl Footprint {
+    /// Turned to the whole degree and placed to the centimetre, as [`house`] builds it,
+    /// so the side yards measured on it are the built ones.
+    fn rounded(self) -> Self {
+        let yaw = self
+            .facing
+            .x
+            .atan2(self.facing.y)
+            .to_degrees()
+            .round()
+            .to_radians();
+        Footprint {
+            at: (self.at * 100.0).round() / 100.0,
+            facing: DVec2::new(yaw.sin(), yaw.cos()),
+            w: self.w,
+        }
+    }
+
     /// Its corners, grown by `grow` all round.
     fn corners(&self, grow: f64) -> [DVec2; 4] {
         let along = left(self.facing) * (self.w / 2.0 + grow);
@@ -639,8 +708,8 @@ pub fn greenbelt_mouth() -> f64 {
 /// Every house: the rows along both sides of Rumbo, Neblina's east side from Rumbo
 /// down round its bend into Gaviota's north side, Neblina's west side from the park on
 /// the outside of the curve up to Senda Parkway, and Gaviota's south side from the park.
-/// Rumbo's and Gaviota's rows run on straight past their streets' ends beside the
-/// turning circles. Each row runs on from lot to lot; where a lot is taken (a street, a
+/// Rumbo's and Gaviota's rows run on round their turning circles, on pie-shaped lots
+/// facing the circles' middles, till the spawn pads and the level's wall end them. Each row runs on from lot to lot; where a lot is taken (a street, a
 /// spawn, a neighbour round a bend) it looks a little further on. A house left with no
 /// neighbour in its row stands alone on the field and is dropped.
 pub fn senda_houses() -> Vec<SendaHouse> {
@@ -657,16 +726,16 @@ pub fn senda_houses() -> Vec<SendaHouse> {
     // curve's outside first, and south on along Gaviota to its cul-de-sac.
     let rows = [
         (Street::Rumbo, 1.0, FIRST_LOT, 1.0, CORNER_LOT_ROOM),
-        (Street::Rumbo, -1.0, FIRST_LOT, 1.0, STREET_ROOM),
+        (Street::Rumbo, -1.0, FIRST_LOT, 1.0, SIDE_STREET_ROOM),
         (
             Street::NeblinaGaviota,
             1.0,
             greenbelt_mouth,
             1.0,
-            STREET_ROOM,
+            SIDE_STREET_ROOM,
         ),
-        (Street::NeblinaGaviota, -1.0, bend, -1.0, STREET_ROOM),
-        (Street::NeblinaGaviota, -1.0, bend, 1.0, STREET_ROOM),
+        (Street::NeblinaGaviota, -1.0, bend, -1.0, SIDE_STREET_ROOM),
+        (Street::NeblinaGaviota, -1.0, bend, 1.0, SIDE_STREET_ROOM),
     ];
     let park = bend_park();
     let gaviota = Street::NeblinaGaviota.line();
@@ -674,17 +743,12 @@ pub fn senda_houses() -> Vec<SendaHouse> {
     for (row, &(street, side, start, way, street_room)) in rows.iter().enumerate() {
         let line = street.line();
         let length = line.length();
-        // A row running toward its street's cul-de-sac carries on straight past the
-        // street's end beside the turning circle.
+        // A row running toward its street's cul-de-sac looks on past the street's end
+        // for lots round the turning circle.
         let (end, reach, bulb) = match street.cul_de_sac() {
             Some(middle) if way > 0.0 => {
                 let (end, along) = line.at(length);
-                let row_end = if side < 0.0 {
-                    CUL_DE_SAC_SOUTH_ROW_END
-                } else {
-                    CUL_DE_SAC_ROW_END
-                };
-                let past = (middle - end).dot(along) + row_end;
+                let past = (middle - end).dot(along) + CUL_DE_SAC_ROW_END;
                 (end, past.max(0.0), Some(middle))
             }
             _ => (line.at(length).0, 0.0, None),
@@ -712,7 +776,8 @@ pub fn senda_houses() -> Vec<SendaHouse> {
         // of its trace, so Neblina's diagonal west row shows its side yards as slanted
         // slots, as the real one does.
         let chord = |from: f64, to: f64| (point_at(to) - point_at(from)).normalize();
-        while s >= FIRST_LOT && s < length + reach {
+        // The house of lot `lot` that fits where the row has reached `s`, and its setback.
+        let fit = |s: f64, lot: usize, last: Option<DVec2>, houses: &[(SendaHouse, Footprint)]| {
             let point = point_at(s);
             let along = chord(s - pitch, s + pitch);
             let out = left(along) * side;
@@ -729,51 +794,59 @@ pub fn senda_houses() -> Vec<SendaHouse> {
                     [step; 2]
                 }
             };
-            for setback in staggers.map(|stagger| SETBACK + stagger) {
-                let distance = house_front() - SETBACK + setback + HOUSE_DEPTH / 2.0;
-                let mut at = point + out * distance;
-                // Past the circle's middle the street's kerb is the circle's: a house
-                // there stands no further back from it than from a street.
-                if let Some(middle) = bulb.filter(|_| s > length) {
-                    let most = CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK + setback + HOUSE_DEPTH / 2.0;
-                    let away = at - middle;
-                    if away.length() > most {
-                        at = middle + away.normalize() * most;
+            staggers
+                .map(|stagger| SETBACK + stagger)
+                .into_iter()
+                .find_map(|setback| {
+                    let distance = house_front() - SETBACK + setback + HOUSE_DEPTH / 2.0;
+                    let mut at = point + out * distance;
+                    // Round the turning circle a house faces its middle across the same
+                    // front yard, sidewalk and parkway as a house on a street, its lot one of
+                    // the circle's pie-shaped ones.
+                    let ring = CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK + setback + HOUSE_DEPTH / 2.0;
+                    let round_bulb =
+                        bulb.filter(|&middle| s > length || middle.distance(at) < ring);
+                    let facing = match round_bulb {
+                        Some(middle) => {
+                            at = middle + (at - middle).normalize() * ring;
+                            (middle - at).normalize()
+                        }
+                        None if row == GAVIOTA_NORTH_ROW => -left(gaviota_heading),
+                        None => -out,
+                    };
+                    let footprint = Footprint {
+                        at,
+                        facing,
+                        w: width,
                     }
-                }
-                // Beside the turning circle a house turns a little toward its middle.
-                let facing = match bulb {
-                    Some(middle) if s > length => {
-                        let square = -out;
-                        let toward = (middle - at).normalize();
-                        let most = CUL_DE_SAC_TURN.to_radians();
-                        let turn = square
-                            .perp_dot(toward)
-                            .atan2(square.dot(toward))
-                            .clamp(-most, most);
-                        DVec2::from_angle(turn).rotate(square)
+                    .rounded();
+                    // A lot's pitch is measured between the houses, so the lots fan out
+                    // round the outside of a curve as the real ones do; the park takes a lot
+                    // of its row's own.
+                    let spaced = last
+                        .is_none_or(|at| at.distance(footprint.at) > pitch - PITCH_TOLERANCE)
+                        && footprint.at.distance(park) > pitch.max(PARK_LOT);
+                    let room = houses.iter().all(|(_, other)| !other.crowds(&footprint));
+                    (spaced && room && clear(&footprint, Some(street), street_room))
+                        .then_some((footprint, setback))
+                })
+        };
+        while s >= FIRST_LOT && s < length + reach {
+            if fit(s, lot, last, &houses).is_some() {
+                // The search steps coarsely; the lot stands at the first place it fits.
+                let mut first = s;
+                for step in 1..LOT_REFINE {
+                    let back = s - way * LOT_SEARCH * step as f64 / LOT_REFINE as f64;
+                    if fit(back, lot, last, &houses).is_none() {
+                        break;
                     }
-                    _ if row == GAVIOTA_NORTH_ROW => -left(gaviota_heading),
-                    _ => -out,
-                };
-                let footprint = Footprint {
-                    at,
-                    facing,
-                    w: width,
-                };
-                // A lot's pitch is measured between the houses, so the lots fan out
-                // round the outside of a curve as the real ones do; the park takes a lot
-                // of its own.
-                let spaced = last
-                    .is_none_or(|at| at.distance(footprint.at) > pitch - PITCH_TOLERANCE)
-                    && footprint.at.distance(park) > LOT_PITCH - PITCH_TOLERANCE;
-                let room = houses.iter().all(|(_, other)| !other.crowds(&footprint));
-                if spaced && room && clear(&footprint, Some(street), street_room) {
-                    houses.push((house(&footprint, lot, row, setback), footprint));
-                    last = Some(footprint.at);
-                    lot += 1;
-                    break;
+                    first = back;
                 }
+                let (footprint, setback) = fit(first, lot, last, &houses).expect("a lot that fits");
+                houses.push((house(&footprint, lot, row, setback), footprint));
+                last = Some(footprint.at);
+                lot += 1;
+                s = first;
             }
             s += LOT_SEARCH * way;
         }
@@ -869,21 +942,39 @@ fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
             _ => Street::NeblinaGaviota,
         };
         let street_line = &lines[Street::ALL.iter().position(|&s| s == street).unwrap_or(0)].1;
-        // On a parkway: off every street's asphalt and sidewalks.
+        // A lot round a turning circle has its tree in the circle's parkway.
+        let bulb = street
+            .cul_de_sac()
+            .filter(|&middle| faces_circle(lot.centre, lot.front, middle));
+        // On a parkway: off every street's asphalt and sidewalks, and the circles'.
         let in_parkway = |spot: DVec2| {
-            lines.iter().all(|(street, line)| {
-                let off = line.distance(spot) - street.half();
+            let off_kerb = |off: f64| {
                 off > STREET_TREE_KERB_ROOM
                     && !(off > PARKWAY - STREET_TREE_KERB_ROOM
                         && off < PARKWAY + SIDEWALK + STREET_TREE_KERB_ROOM)
-            })
+            };
+            lines
+                .iter()
+                .all(|(street, line)| off_kerb(line.distance(spot) - street.half()))
+                && Street::ALL
+                    .into_iter()
+                    .filter_map(Street::cul_de_sac)
+                    .all(|middle| off_kerb(middle.distance(spot) - CUL_DE_SAC_RADIUS))
         };
         let Some(spot) = candidates.into_iter().find_map(|u| {
-            // Straight out from the lot's front to its own street's parkway.
+            // Straight out from the lot's front to its own street's parkway, or the
+            // circle's.
             let front = lot.at(u, lot.half_depth);
-            let (point, along) = street_line.at(street_line.along(front));
-            let out = left(along) * street_line.signed_distance(front).signum();
-            let wanted = point + out * (street.half() + PARKWAY / 2.0);
+            let wanted = match bulb {
+                Some(middle) => {
+                    middle + (front - middle).normalize() * (CUL_DE_SAC_RADIUS + PARKWAY / 2.0)
+                }
+                None => {
+                    let (point, along) = street_line.at(street_line.along(front));
+                    let out = left(along) * street_line.signed_distance(front).signum();
+                    point + out * (street.half() + PARKWAY / 2.0)
+                }
+            };
             let (x, z) = tree_site(wanted.x, wanted.y, OAK);
             let spot = DVec2::new(x, z);
             (spot.distance(wanted) < 0.3 && off_driveways(spot) && in_parkway(spot)).then_some(spot)
@@ -894,14 +985,10 @@ fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
         let crowded = SENDA_PICKUPS
             .iter()
             .any(|p| DVec2::new(p.x, p.z).distance(spot) < PICKUP_ROOM + 1.5)
-            || Street::ALL
-                .into_iter()
-                .filter_map(Street::cul_de_sac)
-                .any(|middle| middle.distance(spot) < CUL_DE_SAC_RADIUS + STREET_TREE)
             || trees
                 .iter()
                 .any(|tree| DVec2::new(tree.x, tree.z).distance(spot) < STREET_TREE_ROOM);
-        if !crowded && in_arena(spot) {
+        if !crowded && in_arena(spot) && !at_junction(spot) {
             trees.push(CoverDef::new(
                 CoverKind::Tree,
                 x,
@@ -972,7 +1059,11 @@ fn trash_bins(houses: &[SendaHouse]) -> Vec<CoverDef> {
                 .into_iter()
                 .filter_map(Street::cul_de_sac)
                 .all(|middle| middle.distance(spot) > CUL_DE_SAC_RADIUS + w);
-            at_kerb && off_circles && in_arena(spot) && off_pads_and_pickups(spot, w)
+            at_kerb
+                && off_circles
+                && !at_junction(spot)
+                && in_arena(spot)
+                && off_pads_and_pickups(spot, w)
         });
         if !clear {
             continue;
@@ -1197,6 +1288,19 @@ pub fn way_tree_sites() -> Vec<DVec2> {
 /// scenery draws it.
 pub fn in_arena(at: DVec2) -> bool {
     at.x.abs().max(at.y.abs()) < ARENA - 2.0
+}
+
+/// How far (m) past a street's kerb a corner keeps clear of parkway trees and bins: the
+/// junction's sight triangle, and room for a tank to turn the corner between them.
+const JUNCTION_ROOM: f64 = 4.0;
+
+/// Whether `at` lies at a junction: within [`JUNCTION_ROOM`] of two streets' kerbs.
+fn at_junction(at: DVec2) -> bool {
+    Street::ALL
+        .into_iter()
+        .filter(|street| street.line().distance(at) - street.half() < JUNCTION_ROOM)
+        .count()
+        > 1
 }
 
 /// Whether a tree of footprint `size` at `at` keeps clear of the spawn pads and the
@@ -1988,7 +2092,7 @@ pub static SENDA_PICKUPS: [PickupPlacement; 19] = [
     pickup(PickupKind::Piercing, -13.0, 24.0),
     pickup(PickupKind::Piercing, 28.0, -44.0),
     pickup(PickupKind::Repair, -46.0, 30.0),
-    pickup(PickupKind::Repair, 47.0, 6.0),
+    pickup(PickupKind::Repair, 55.0, 10.0),
     pickup(PickupKind::Repair, -24.0, 37.0),
     pickup(PickupKind::Repair, 18.0, -46.0),
     pickup(PickupKind::Shield, -40.0, 40.0),
