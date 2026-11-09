@@ -1085,13 +1085,14 @@ impl Session {
             self.start_bake_early();
             return Ok(());
         }
-        // The arena waits for the reference house's model (a hashed file the page fetches beside the
-        // binary, at high priority): built before it arrives, the round would show the
-        // coded house.
-        if !install_imported_home() {
+        let wanted = self.wanted_options();
+        // The Neighborhood's arena waits for its houses' models (hashed files the page
+        // fetches beside the binary, at high priority): built before they arrive, the
+        // round would show the coded houses. Other maps draw none, so they go on while
+        // the models still download.
+        if !install_imported_home() && wanted.map_mode == MapId::Neighborhood {
             return Ok(());
         }
-        let wanted = self.wanted_options();
         if wanted != self.prepared_options {
             // The rebuild's first step holds this thread for a moment: the player's new
             // choice, or GO's LOADING…, shows first, as the page waits for a paint.

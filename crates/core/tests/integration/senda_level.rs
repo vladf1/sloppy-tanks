@@ -1048,3 +1048,55 @@ fn wheelie_bins_stand_in_pairs_against_the_kerb_and_explode_as_drums() {
         }
     }
 }
+
+#[test]
+fn a_turned_house_blocks_navigation_by_its_turned_box() {
+    use sloppy_core::sim::arena::box_turn;
+    use sloppy_core::sim::navigation::Footprint;
+    use sloppy_core::sim::structure_physics::ground_footprints;
+    let sim = senda(5.0);
+    let house = sim
+        .covers
+        .iter()
+        .filter(|cover| cover.kind == CoverKind::House)
+        .max_by(|a, b| {
+            let turn =
+                |cover: &&sloppy_core::sim::Cover| box_turn(cover.kind, cover.house_plan).abs();
+            turn(a).total_cmp(&turn(b))
+        })
+        .expect("a house");
+    let turn = box_turn(house.kind, house.house_plan);
+    assert!(turn.abs() > 20f64.to_radians(), "{turn}");
+    let mut squares: Vec<Footprint> = Vec::new();
+    ground_footprints(house, &mut squares);
+    let covered = |p: DVec2| {
+        squares
+            .iter()
+            .any(|f| (p.x - f.x).abs() <= f.w / 2.0 && (p.y - f.z).abs() <= f.d / 2.0)
+    };
+    let (sin, cos) = turn.sin_cos();
+    // Into the world as a house's build frame turns, and back.
+    let world =
+        |u: f64, v: f64| DVec2::new(house.x + u * cos + v * sin, house.z - u * sin + v * cos);
+    let local = |p: DVec2| {
+        let (x, z) = (p.x - house.x, p.y - house.z);
+        (x * cos - z * sin, x * sin + z * cos)
+    };
+    let (hw, hd) = (house.w / 2.0 - 0.3, house.d / 2.0 - 0.3);
+    for (u, v) in [(hw, hd), (-hw, hd), (hw, -hd), (-hw, -hd)] {
+        assert!(covered(world(u, v)), "the turned corner ({u}, {v}) is open");
+    }
+    // The square box's corners that stand well outside the turned one stay open.
+    let outside = [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)]
+        .map(|(sx, sz)| DVec2::new(house.x + sx * hw, house.z + sz * hd))
+        .into_iter()
+        .filter(|&p| {
+            let (u, v) = local(p);
+            u.abs() > house.w / 2.0 + 0.5 || v.abs() > house.d / 2.0 + 0.5
+        })
+        .collect::<Vec<_>>();
+    assert!(!outside.is_empty());
+    for p in outside {
+        assert!(!covered(p), "the square box's corner {p:?} blocks");
+    }
+}

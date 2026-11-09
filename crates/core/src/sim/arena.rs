@@ -56,6 +56,22 @@ pub fn cover_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
     }
 }
 
+/// How far (radians about +y) a planned house's box (the Neighborhood's) turns inside its
+/// structure beyond its body, which stays square: its plan's own angle, since the box is
+/// given in world axes after the plan's quarter turns. Every other cover's is 0.
+pub fn structure_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
+    match plan {
+        Some(plan) if kind == CoverKind::House => f64::from(plan.angle).to_radians(),
+        _ => 0.0,
+    }
+}
+
+/// How far (radians about +y) a cover's box, `w` by `d`, stands turned from the world's
+/// axes: its body's turn and its structure's.
+pub fn box_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
+    cover_turn(kind, plan) + structure_turn(kind, plan)
+}
+
 impl CoverDef {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(

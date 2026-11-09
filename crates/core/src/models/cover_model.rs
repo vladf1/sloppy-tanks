@@ -159,12 +159,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 .collect();
             add_timber_parts(group, &standing);
         }
-        // The Neighborhood's wheelie bins, turned to face their street.
-        CoverKind::Drum if is_trash_bin(c.color) => {
-            let mut bin = wheelie_bin(c.color);
-            bin.rotation = glam::DQuat::from_rotation_y(cover_turn(c.kind, c.house_plan));
-            group.children.push(bin);
-        }
+        // The Neighborhood's wheelie bins: their bodies start turned to face their
+        // street (`cover_turn`), and a drum is drawn at its body's pose.
+        CoverKind::Drum if is_trash_bin(c.color) => group.children.push(wheelie_bin(c.color)),
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
             // Screwed bung caps on the recessed lid, where the atlas paints them.

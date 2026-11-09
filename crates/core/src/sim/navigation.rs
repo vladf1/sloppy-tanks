@@ -4,7 +4,7 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
-use super::arena::cover_turn;
+use super::arena::{box_turn, cover_turn};
 use super::data::ARENA;
 use super::structure_physics::ground_footprints;
 use super::math::Vec2;
@@ -33,7 +33,7 @@ pub struct Footprint {
 impl From<&Cover> for Footprint {
     /// The cover's box, or a turned cover's bounds along the world's axes.
     fn from(cover: &Cover) -> Self {
-        let (sin, cos) = cover_turn(cover.kind, cover.house_plan).sin_cos();
+        let (sin, cos) = box_turn(cover.kind, cover.house_plan).sin_cos();
         let (sin, cos) = (sin.abs(), cos.abs());
         Self {
             x: cover.x,
@@ -69,6 +69,35 @@ fn turned_footprints(cover: &Cover, obstacles: &mut Vec<Footprint>) {
             w: width,
             d: width,
         });
+    }
+}
+
+/// A turned box's footprint, `w` by `d` about `(x, z)` turned `turn` (radians about +y),
+/// as squares [`TURNED_STEP`] across filling it: grown by the hull clearance, their union
+/// is the turned box, where its bounds along the world's axes would also block the room
+/// beside its corners (the Neighborhood's houses stand square to curving streets).
+pub fn turned_box_footprints(
+    (x, z): (f64, f64),
+    (w, d): (f64, f64),
+    turn: f64,
+    obstacles: &mut Vec<Footprint>,
+) {
+    let (sin, cos) = turn.sin_cos();
+    let steps = |length: f64| (length / TURNED_STEP).ceil().max(1.0) as usize;
+    let (across, deep) = (steps(w), steps(d));
+    for i in 0..across {
+        for j in 0..deep {
+            // A square's middle in the box's own axes, then turned as a house's build
+            // frame turns.
+            let u = ((i as f64 + 0.5) / across as f64 - 0.5) * w;
+            let v = ((j as f64 + 0.5) / deep as f64 - 0.5) * d;
+            obstacles.push(Footprint {
+                x: x + u * cos + v * sin,
+                z: z - u * sin + v * cos,
+                w: w / across as f64,
+                d: d / deep as f64,
+            });
+        }
     }
 }
 
