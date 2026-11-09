@@ -255,6 +255,10 @@ pub struct Simulation {
     pub humans_only: bool,
     /// Optional level rules, run at the end of every playing tick.
     pub after_step: Option<AfterStep>,
+    /// A capture's still field (the page's `calm` hook): bots get idle commands, so
+    /// they neither think, move nor fire, and no tank takes damage. False in play, where
+    /// nothing reads it: a match that never sets it draws the same random numbers.
+    pub calm: bool,
     /// When `Some`, every projectile sweep is recorded here for the caller to drain.
     pub projectile_moves: Option<Vec<ProjectileMove>>,
     /// In a room, the hulls' recent past, so players' shells favor their shooters.
@@ -349,6 +353,7 @@ impl Simulation {
             players: None,
             humans_only: false,
             after_step: None,
+            calm: false,
             projectile_moves: None,
             difficulty: Difficulty::Normal,
             game_mode: GameMode::Team,
@@ -851,6 +856,7 @@ impl Simulation {
                 0f64.max(tank.recoil - STEP * SIMULATION_RULES.recoil_recovery_per_second);
             let c = match commands {
                 Some(commands) => match tank.driver {
+                    Driver::Bot if self.calm => VehicleCommand::idle_aiming(tank.aim),
                     Driver::Bot => bot_command(self, i, STEP),
                     Driver::Human => commands
                         .get(&tank.id)
@@ -859,6 +865,7 @@ impl Simulation {
                     Driver::Idle => VehicleCommand::idle_aiming(tank.aim),
                 },
                 None if tank.human && !autoplay => command.unwrap_or_default(),
+                None if self.calm => VehicleCommand::idle_aiming(tank.aim),
                 None => bot_command(self, i, STEP),
             };
             let tank = &mut self.tanks[i];

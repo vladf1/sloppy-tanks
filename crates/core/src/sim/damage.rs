@@ -61,7 +61,8 @@ pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
 }
 
 impl Simulation {
-    /// Damage a tank: team immunity, shields, XP attribution, kills and its wreck.
+    /// Damage a tank: team immunity, shields, XP attribution, kills and its wreck. A calm
+    /// field ([`Simulation::calm`]) damages nobody.
     pub fn damage_tank(
         &mut self,
         tank_index: usize,
@@ -73,6 +74,9 @@ impl Simulation {
     ) {
         let mut amount = amount;
         let tank = &self.tanks[tank_index];
+        if self.calm {
+            return;
+        }
         if !tank.alive || tank.protection > 0.0 || (tank.team == team && tank.id != owner) {
             return;
         }

@@ -4,8 +4,8 @@ use rapier3d::prelude::RigidBodyHandle;
 use sloppy_core::sim::ai::bot_command;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::STEP;
-use sloppy_core::sim::math::{Quat4, Vec2};
-use sloppy_core::sim::physics::{to_rotation, vector};
+use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::simulation_rules::SIMULATION_RULES;
 use sloppy_core::sim::{
@@ -86,16 +86,7 @@ pub fn squad() -> Simulation {
 
 /// Teleports a tank at rest, keeping interpolation and bot history on the new pose.
 pub fn place_tank(s: &mut Simulation, index: usize, x: f64, z: f64, heading: Option<f64>) {
-    let tank = &mut s.tanks[index];
-    let heading = heading.unwrap_or(tank.heading);
-    tank.heading = heading;
-    tank.previous = Vec2::new(x, z);
-    tank.brain.last = Vec2::new(x, z);
-    let body = &mut s.world.bodies[tank.body];
-    body.set_translation(vector(x, SIMULATION_RULES.tank_body_height, z), true);
-    body.set_rotation(to_rotation(Quat4::yaw(heading)), true);
-    body.set_linvel(vector(0.0, 0.0, 0.0), true);
-    body.set_angvel(vector(0.0, 0.0, 0.0), true);
+    s.place_tank(index, x, z, heading);
 }
 
 /// Moves a tank's body only: its heading, velocity and recorded poses stay as they were.

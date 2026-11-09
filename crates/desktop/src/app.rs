@@ -1369,6 +1369,14 @@ impl Session {
                 game.debug_set_off(off).map_err(engine_error)?;
                 Value::Null
             }
+            Command::Place { x, z, heading } => {
+                game.place_player(x, z, heading).map_err(engine_error)?;
+                Value::Null
+            }
+            Command::Calm(on) => {
+                game.set_calm(on);
+                Value::Null
+            }
             Command::Latency { .. } => return Err("single player has no connection".into()),
         })
     }

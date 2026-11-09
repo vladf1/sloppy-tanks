@@ -464,6 +464,12 @@ impl Game {
                 }
                 _ => aim(&mut self.view, &self.state, &input, position, dt, alive).0,
             };
+            // A calm field's turret keeps the aim `place_player` gave it.
+            let angle = if self.sim.calm {
+                self.sim.human().aim
+            } else {
+                angle
+            };
             input.fire |= touch_fires(&self.view, &self.state, position);
             for _ in 0..steps {
                 let active = self.sim.match_state.phase == MatchPhase::Playing
@@ -1152,6 +1158,30 @@ impl Game {
         self.view
             .renderer
             .set_backdrop_blur(self.canvas.backdrop_blur(on));
+    }
+
+    /// Set the player's tank down at rest at `(x, z)` facing `heading` (radians), its
+    /// turret along the hull: the capture hook's `place` (`automation.rs`). A wreck
+    /// stays where it fell.
+    pub fn place_player(&mut self, x: f64, z: f64, heading: f64) -> Result<(), PageError> {
+        if ![x, z, heading].iter().all(|value| value.is_finite()) {
+            return Err(js_error("place: x, z and the heading must be numbers"));
+        }
+        let human = self.human_index();
+        if !self.sim.tanks[human].alive {
+            return Err(js_error("place: the player's tank is destroyed"));
+        }
+        self.sim.place_tank(human, x, z, Some(heading));
+        self.sim.tanks[human].aim = heading;
+        self.fill_state();
+        Ok(())
+    }
+
+    /// The capture hook's `calm`: while on, bots hold still and do not fire, no tank
+    /// takes damage ([`Simulation::calm`]) and the player's turret keeps its aim rather
+    /// than following the pointer; the match clock runs. Off restores play.
+    pub fn set_calm(&mut self, on: bool) {
+        self.sim.calm = on;
     }
 }
 

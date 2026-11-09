@@ -10,8 +10,8 @@ use super::arena::spawn_positions;
 use super::bot_personalities::{BOT_NAMES, BotPersonality, bot_assignment, bot_profile_for};
 use super::data::{STEP, group, vehicle};
 use super::hitboxes::tank_contact_collider;
-use super::math::{Vec2, best_by};
-use super::physics::{interaction_groups, vector};
+use super::math::{Quat4, Vec2, best_by};
+use super::physics::{interaction_groups, to_rotation, vector};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
 use super::types::{
@@ -259,5 +259,22 @@ impl Simulation {
         let mut event = SimEvent::at(SimEventType::Respawn, p.x, p.z);
         event.id = Some(id);
         self.events.push(event);
+    }
+
+    /// Set a tank down at rest at `(x, z)` facing `heading` (radians; `None` keeps it):
+    /// its body moves through Rapier and the poses it is drawn between start there, so
+    /// it does not slide across the field from where it was.
+    pub fn place_tank(&mut self, tank_index: usize, x: f64, z: f64, heading: Option<f64>) {
+        let tank = &mut self.tanks[tank_index];
+        let heading = heading.unwrap_or(tank.heading);
+        tank.heading = heading;
+        tank.previous = Vec2::new(x, z);
+        tank.brain.last = Vec2::new(x, z);
+        if let Some(body) = self.world.bodies.get_mut(tank.body) {
+            body.set_translation(vector(x, SIMULATION_RULES.tank_body_height, z), true);
+            body.set_rotation(to_rotation(Quat4::yaw(heading)), true);
+            body.set_linvel(vector(0.0, 0.0, 0.0), true);
+            body.set_angvel(vector(0.0, 0.0, 0.0), true);
+        }
     }
 }

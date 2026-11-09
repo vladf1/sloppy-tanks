@@ -813,6 +813,9 @@ impl RoomSession {
 
     /// Run a check's debug command: a room's engine takes only the network tools.
     fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
+        if !command.in_rooms() {
+            return Err(format!("a room cannot run {command:?}"));
+        }
         match *command {
             Command::Latency {
                 latency,
