@@ -478,6 +478,39 @@ pub struct SendaHouse {
     pub row: Row,
 }
 
+/// The last list of houses a layout question was asked about, with its answer. One
+/// arena asks for the lots and the greenbelt's lane of the same houses a dozen times, and
+/// each answer costs milliseconds; a room's clock runs while its simulation is built.
+pub(super) struct LastAnswer<T>(std::sync::Mutex<Option<(Vec<SendaHouse>, T)>>);
+
+impl<T: Clone> LastAnswer<T> {
+    pub(super) const fn new() -> Self {
+        LastAnswer(std::sync::Mutex::new(None))
+    }
+
+    /// The answer for `houses`: the kept one if it was theirs, or `work`'s, kept.
+    pub(super) fn of(&self, houses: &[SendaHouse], work: impl FnOnce() -> T) -> T {
+        let kept = self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some((asked, answer)) = kept.as_ref()
+            && asked == houses
+        {
+            return answer.clone();
+        }
+        // Worked out with the store free: the lots ask for the lane.
+        drop(kept);
+        let answer = work();
+        *self
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+            Some((houses.to_vec(), answer.clone()));
+        answer
+    }
+}
+
 /// The neighbourhood's rows of houses, in the order [`senda_houses`] lays them out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Row {
@@ -717,6 +750,12 @@ impl Footprint {
     /// Whether the two stand closer than a side yard: they overlap (separating axes) or a
     /// corner of one stands nearer than that to a wall of the other.
     fn crowds(&self, other: &Footprint) -> bool {
+        // Most pairs stand streets apart: further than their corners reach plus the yard
+        // (and a centimetre for the rounding), no corner nears a wall and nothing overlaps.
+        let reach = |footprint: &Footprint| (footprint.w / 2.0).hypot(HOUSE_DEPTH / 2.0);
+        if self.at.distance(other.at) > reach(self) + reach(other) + SIDE_YARD + 0.01 {
+            return false;
+        }
         let (a, b) = (self.corners(0.0), other.corners(0.0));
         let to_walls = |p: DVec2, quad: &[DVec2; 4]| {
             (0..4)
@@ -780,7 +819,15 @@ pub fn greenbelt_mouth() -> f64 {
 /// a bend) it looks a little further on. A house left with no neighbour in its row stands
 /// alone on the field and is dropped. Neblina's west row leaves one lot open for the
 /// paseo ([`NEBLINA_PASEO_LOT`]), the rest of its lots where they would stand anyway.
+///
+/// Laid out once a process: the search costs about 20 ms, and one arena asks for the
+/// houses a dozen times (a room's clock runs while its simulation is built).
 pub fn senda_houses() -> Vec<SendaHouse> {
+    static HOUSES: std::sync::OnceLock<Vec<SendaHouse>> = std::sync::OnceLock::new();
+    HOUSES.get_or_init(lay_out_houses).clone()
+}
+
+fn lay_out_houses() -> Vec<SendaHouse> {
     let mut houses: Vec<(SendaHouse, Footprint)> = Vec::new();
     // The lots laid out only to keep the row's places: the paseo's.
     let mut open_lots: Vec<usize> = Vec::new();

@@ -22,9 +22,9 @@ use super::house_layout::{GarageSide, HousePlan, wall_frames};
 use super::kinds::{CoverKind, Team};
 use super::model_data::ARENA;
 use super::senda_layout::{
-    BACK_YARD, HOUSE_DEPTH, LOT_PITCH, Line, PASEO_WIDTH, Row, SENDA_PICKUPS, SETBACK, SIDE_YARD,
-    SendaHouse, Street, back_fence, bend_park, house_front, inside_boundary, is_senda_paved, left,
-    paseos, past_sidewalk, senda_boundary, senda_houses,
+    BACK_YARD, HOUSE_DEPTH, LOT_PITCH, LastAnswer, Line, PASEO_WIDTH, Row, SENDA_PICKUPS, SETBACK,
+    SIDE_YARD, SendaHouse, Street, back_fence, bend_park, house_front, inside_boundary,
+    is_senda_paved, left, paseos, past_sidewalk, senda_boundary, senda_houses,
 };
 
 /// The block walls' paint (split-face block, a darker brown-tan than the houses' stucco),
@@ -305,6 +305,11 @@ pub fn back_wall() -> f64 {
 
 /// Every house's lot, in the order of `houses`.
 pub fn senda_lots(houses: &[SendaHouse]) -> Vec<Lot> {
+    static LOTS: LastAnswer<Vec<Lot>> = LastAnswer::new();
+    LOTS.of(houses, || lots_of(houses))
+}
+
+fn lots_of(houses: &[SendaHouse]) -> Vec<Lot> {
     let deepest = deepest_step();
     let limits = YardLimits::new(houses);
     let paseos = paseos(houses);
@@ -622,6 +627,11 @@ pub fn greenbelt_lane() -> Vec<DVec2> {
 /// houses, a point every [`LANE_STEP`] (m) west to east; where only one row's houses
 /// bound it (at the mouth and past the circles), [`LANE_OFF_ROW`] off that row's.
 pub fn greenbelt_lane_of(houses: &[SendaHouse]) -> Vec<DVec2> {
+    static LANE: LastAnswer<Vec<DVec2>> = LastAnswer::new();
+    LANE.of(houses, || trace_lane(houses))
+}
+
+fn trace_lane(houses: &[SendaHouse]) -> Vec<DVec2> {
     let outline = |row: Row| -> Vec<DVec2> {
         houses
             .iter()
@@ -660,18 +670,28 @@ pub fn greenbelt_lane_of(houses: &[SendaHouse]) -> Vec<DVec2> {
         match (top, bottom) {
             // Where the two rows stagger, the point between them furthest from both.
             (Some(top), Some(bottom)) => {
+                // The wall point that set `top` is within the window of `x`, so no
+                // point further off along x than this is the nearest to any step.
+                let reach = LANE_WINDOW.hypot(bottom - top);
+                let walls: Vec<DVec2> = north
+                    .iter()
+                    .chain(&south)
+                    .filter(|q| (q.x - x).abs() <= reach)
+                    .copied()
+                    .collect();
                 let room = |z: f64| {
                     let p = DVec2::new(x, z);
-                    north
+                    walls
                         .iter()
-                        .chain(&south)
                         .map(|q| q.distance(p))
                         .fold(f64::INFINITY, f64::min)
                 };
                 let steps = ((bottom - top) / 0.05).ceil().max(1.0) as usize;
                 (0..=steps)
                     .map(|k| top + (bottom - top) * k as f64 / steps as f64)
-                    .max_by(|a, b| room(*a).total_cmp(&room(*b)))
+                    .map(|z| (z, room(z)))
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .map(|(z, _)| z)
             }
             (Some(top), None) => Some(top + LANE_OFF_ROW),
             (None, Some(bottom)) => Some(bottom - LANE_OFF_ROW),
