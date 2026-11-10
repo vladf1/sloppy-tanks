@@ -32,6 +32,8 @@ use crate::geometry::math::{
 use crate::geometry::{CylinderGeometry, Mesh, narrow, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
 use crate::sim::math::Random;
+
+mod oak_growth;
 use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
 
 /// Node names that presentation looks up on a full-detail tree.
@@ -891,26 +893,30 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
     let lean_x = rng.range(-0.1, 0.1) * c.w;
     let lean_z = rng.range(-0.07, 0.07) * c.d;
     let trunk_base = if full { stump_height * 0.88 } else { 0.0 };
-    let trunk = limb(
-        &mut crown.node,
-        bark.clone(),
-        DVec3::new(0.0, trunk_base, 0.0),
-        DVec3::new(lean_x, height * (if conifer { 0.98 } else { 0.78 }), lean_z),
-        radius,
-        false,
-    );
-    if let Some(drawable) = &mut trunk.drawable {
-        drawable.mesh = geometry(if conifer {
-            TreeGeometry::ConiferStem
-        } else {
-            TreeGeometry::BroadleafStem
-        });
-        if let Some((_, bark_tint)) = tints {
-            // The tinted trunk is the tree's own: background trees merge per cell.
-            let mut mesh = (*drawable.mesh).clone();
-            let color = bark_tint.map(|c| c as f32);
-            mesh.colors = vec![color; mesh.positions.len()];
-            drawable.mesh = Arc::new(mesh);
+    // A full-detail oak grows its own trunk with its limbs.
+    let grown_oak = full && family == 3;
+    if !grown_oak {
+        let trunk = limb(
+            &mut crown.node,
+            bark.clone(),
+            DVec3::new(0.0, trunk_base, 0.0),
+            DVec3::new(lean_x, height * (if conifer { 0.98 } else { 0.78 }), lean_z),
+            radius,
+            false,
+        );
+        if let Some(drawable) = &mut trunk.drawable {
+            drawable.mesh = geometry(if conifer {
+                TreeGeometry::ConiferStem
+            } else {
+                TreeGeometry::BroadleafStem
+            });
+            if let Some((_, bark_tint)) = tints {
+                // The tinted trunk is the tree's own: background trees merge per cell.
+                let mut mesh = (*drawable.mesh).clone();
+                let color = bark_tint.map(|c| c as f32);
+                mesh.colors = vec![color; mesh.positions.len()];
+                drawable.mesh = Arc::new(mesh);
+            }
         }
     }
     if full {
@@ -939,6 +945,17 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
     } else if conifer {
         add_conifer_crown(
             &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
+        )
+    } else if grown_oak {
+        oak_growth::add_grown_oak_crown(
+            &mut crown,
+            &mut rng,
+            &bark,
+            twist,
+            height,
+            radius,
+            trunk_base,
+            (lean_x, lean_z),
         )
     } else {
         add_broadleaf_crown(

@@ -73,6 +73,8 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("harbor wall", cover(CoverKind::Boundary, [1.0, 122.0, 1.2], 0x879698), full, 0, 50),
         ("concrete wall", cover(CoverKind::Boundary, [1.0, 122.0, 2.2], 0x8a8a8a), full, 0, 160),
         ("tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), full, 0, 1_500),
+        // An oak's position: full-detail oaks grow their own branching (`oak_growth`).
+        ("oak", CoverShape { x: -36.0, z: -45.0, ..cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65) }, full, 0, 1_500),
         ("background tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), TreeDetail::Background, 0, 340),
         ("cottage", cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c), full, 0, 10_000),
         ("gapped cottage", gapped(cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c)), full, 0, 14_000),
