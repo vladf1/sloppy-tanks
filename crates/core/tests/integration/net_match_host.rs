@@ -841,6 +841,25 @@ fn slow_readers_disconnect_and_overload_terminates_the_room_instead_of_skipping_
 }
 
 #[test]
+fn a_rounds_clock_counts_from_when_its_simulation_was_built() {
+    let mut h = harness();
+    h.join("alice", json!({}));
+    h.action("alice", "start", json!({}));
+    // The build took a second of the runtime's time, which no tick was due in.
+    h.now += 1000;
+    h.host.round_built(h.now);
+    h.tick_only(17);
+    assert!(!h.host.disposed);
+    assert_eq!(h.host.tick(), 1);
+
+    // Once the round runs, the same call changes nothing: a stall is still owed.
+    h.host.round_built(h.now + 1000);
+    h.tick_only(1000);
+    assert!(h.host.disposed);
+    assert_eq!(h.latest("alice", "room-reset")["reason"], "overload");
+}
+
+#[test]
 fn resync_skips_events_already_included_in_its_baseline_and_repeated_rounds_retain_12_slots() {
     let mut h = harness();
     h.join("alice", json!({}));

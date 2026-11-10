@@ -317,6 +317,17 @@ impl MatchHost {
             .map(|clock| clock.until_next_batch_ms(now_ms as f64))
     }
 
+    /// The runtime's time once the call that began a round has returned. Building the
+    /// round's simulation ran inside that call, after its `now_ms` was read, and no tick
+    /// of the round was due meanwhile: its clock counts from here, or the build would be
+    /// owed to physics as ticks, and one longer than the clock allows would end the room
+    /// as it opened.
+    pub fn round_built(&mut self, now_ms: u64) {
+        if self.phase == RoomPhase::Playing && self.tick() == 0 {
+            self.clock = Some(FixedStepClock::new(now_ms as f64));
+        }
+    }
+
     /// Connections that hold a seat.
     pub fn connections(&self) -> usize {
         self.clients.len()
