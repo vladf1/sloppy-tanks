@@ -4,8 +4,6 @@
 //! The core host is transport-free and queues its sends, closes and directory changes;
 //! this adapter moves them, in order, into the session's [`HostOutput`] after each call.
 
-use std::time::Instant;
-
 use sloppy_core::net::match_host::{ConnectionId, MatchHost, MatchHostOptions};
 use sloppy_core::net::room_list::RoomListing;
 
@@ -25,17 +23,12 @@ impl MatchRoom {
 
 impl RoomHost for MatchRoom {
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
-        let round = self.host.round_id;
-        let received = Instant::now();
         self.host.receive(connection, text, now_ms);
-        if self.host.round_id != round {
-            // The message began a round, whose simulation was built before this returned:
-            // tens of milliseconds on the large maps, which the round's clock must not
-            // count as ticks it owes.
-            let build_ms = received.elapsed().as_millis() as u64;
-            self.host.round_built(now_ms + build_ms);
-        }
         out.extend(self.host.drain_output());
+    }
+
+    fn round_built(&mut self, now_ms: u64) {
+        self.host.round_built(now_ms);
     }
 
     fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput) {

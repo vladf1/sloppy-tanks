@@ -848,11 +848,13 @@ fn a_rounds_clock_counts_from_when_its_simulation_was_built() {
     // The build took a second of the runtime's time, which no tick was due in.
     h.now += 1000;
     h.host.round_built(h.now);
+    // Only the first report counts: one after a later message does not move the clock.
+    h.host.round_built(h.now + 10);
     h.tick_only(17);
     assert!(!h.host.disposed);
     assert_eq!(h.host.tick(), 1);
 
-    // Once the round runs, the same call changes nothing: a stall is still owed.
+    // Once the round runs a report changes nothing either: a stall is still owed.
     h.host.round_built(h.now + 1000);
     h.tick_only(1000);
     assert!(h.host.disposed);
