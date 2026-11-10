@@ -855,6 +855,18 @@
         return worker;
       };
 
+      // Safari compiles one GPU device's pipelines one at a time and draws no frame
+      // meanwhile, so its page has workers with devices of their own compile them first
+      // (crates/render/src/gpu/webgpu/precompile/workers.rs). `?pipeline-workers=on` or
+      // `=off` decides in any browser.
+      const userAgent = navigator.userAgent;
+      const safari = /AppleWebKit/.test(userAgent) && !/Chrome|Chromium|Android/.test(userAgent);
+      const pipelineWorkers = new URLSearchParams(location.search).get("pipeline-workers");
+      if (pipelineWorkers === "on" || (safari && pipelineWorkers !== "off")) {
+        window.sloppyPipelineWorker = () =>
+          new Worker(new URL("/src/pipeline-worker.ts", import.meta.url), { type: "module" });
+      }
+
       if (typeof WebAssembly !== "object") {
         fail("This browser cannot run WebAssembly.", OLD_BROWSER);
       } else {
