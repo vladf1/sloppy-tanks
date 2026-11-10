@@ -277,8 +277,14 @@ pub struct Shell {
     pub finish_round: bool,
 }
 
-/// The release line Battle Setup shows.
+/// The release line Battle Setup shows. The apps are stamped with their release and
+/// commit when they compile (`scripts/build-desktop.mjs`); the page names its own
+/// (`page::build`), and a page that names none shows the unstamped line.
 fn build_line() -> String {
+    #[cfg(target_arch = "wasm32")]
+    if let Some((release, commit)) = crate::page::build() {
+        return format!("v{release} · {commit}");
+    }
     format!(
         "v{} · {}",
         option_env!("SLOPPY_RELEASE").unwrap_or(env!("CARGO_PKG_VERSION")),
