@@ -1,6 +1,6 @@
 //! The browser's background compile: `createRenderPipelineAsync` for the descriptor
 //! wgpu's WebGPU backend would build from a [`PipelineSpec`] (the parent module says
-//! why).
+//! why), in Safari after a worker compiled the same pipeline (`workers.rs`).
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -11,7 +11,7 @@ use js_sys::{Array, Object, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use super::{LayoutKind, PipelineSpec};
+use super::{LayoutKind, PipelineSpec, workers};
 use crate::shader::StageSources;
 
 /// A pipeline the browser compiled in the background, for wgpu to wrap (null for one
@@ -27,7 +27,7 @@ const CONCURRENCY: usize = 8;
 extern "C" {
     /// The browser `GPUDevice` behind wgpu's device.
     #[derive(Clone)]
-    type RawDevice;
+    pub(super) type RawDevice;
 
     #[wasm_bindgen(method, js_name = createShaderModule)]
     fn create_shader_module(this: &RawDevice, descriptor: &Object) -> JsValue;
@@ -136,6 +136,8 @@ fn raw_device(device: &wgpu::Device) -> RawDevice {
 struct Queue<K> {
     /// Keys ever queued (a key compiles once per page).
     started: HashSet<K>,
+    /// Pipelines a worker compiles first; each then joins `waiting`.
+    at_workers: usize,
     waiting: VecDeque<(K, Object)>,
     running: usize,
     /// Compiled pipelines, held so the browser's cache keeps them until wgpu asks.
@@ -157,6 +159,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
             layouts: RefCell::default(),
             queue: Rc::new(RefCell::new(Queue {
                 started: HashSet::new(),
+                at_workers: 0,
                 waiting: VecDeque::new(),
                 running: 0,
                 finished: HashMap::new(),
@@ -180,21 +183,62 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
-    /// Queue `key` for compiling; callers start only keys not [`queued`](Self::queued)
-    /// yet.
+    /// Queue `key` for compiling, by a worker first where the page has them; callers
+    /// start only keys not [`queued`](Self::queued) yet.
     pub fn start(&self, key: K, spec: &PipelineSpec, sources: &StageSources) {
         self.queue.borrow_mut().started.insert(key);
-        match self.descriptor(spec, &self.modules(spec.label, sources)) {
-            Ok(descriptor) => self.queue.borrow_mut().waiting.push_back((key, descriptor)),
+        let descriptor = match self.page_descriptor(spec, sources) {
+            Ok(descriptor) => descriptor,
             Err(error) => {
                 // wgpu compiles it synchronously, as before.
                 web_sys::console::warn_1(
                     &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
                 );
                 self.queue.borrow_mut().finished.insert(key, JsValue::NULL);
+                return;
             }
+        };
+        if let Some(compiled_elsewhere) = self.compile_in_worker(spec, sources) {
+            self.queue.borrow_mut().at_workers += 1;
+            let (shared, device) = (self.queue.clone(), self.device.clone());
+            wasm_bindgen_futures::spawn_local(async move {
+                let _ = JsFuture::from(compiled_elsewhere).await;
+                {
+                    let mut queue = shared.borrow_mut();
+                    queue.at_workers -= 1;
+                    queue.waiting.push_back((key, descriptor));
+                }
+                pump(&device, &shared);
+            });
+            return;
         }
-        self.pump();
+        self.queue.borrow_mut().waiting.push_back((key, descriptor));
+        pump(&self.device, &self.queue);
+    }
+
+    /// The browser descriptor for the page's device, with modules of its own.
+    fn page_descriptor(
+        &self,
+        spec: &PipelineSpec,
+        sources: &StageSources,
+    ) -> Result<Object, String> {
+        let modules = self.modules(spec.label, sources);
+        Self::descriptor(
+            spec,
+            modules.vertex,
+            modules.fragment,
+            self.layout(spec.layout)?,
+        )
+    }
+
+    /// Have a worker compile `spec` first, where the page has workers (`workers.rs`);
+    /// the promise resolves once the page's device may create it.
+    fn compile_in_worker(&self, spec: &PipelineSpec, sources: &StageSources) -> Option<Promise> {
+        if !workers::available() {
+            return None;
+        }
+        let plain = Self::plain_descriptor(spec, sources).ok()?;
+        workers::compile(&self.device, plain.into())
     }
 
     /// Whether `key` was ever queued.
@@ -213,59 +257,53 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         self.queue.borrow_mut().finished.remove(key)
     }
 
-    /// Pipelines waiting for or being compiled.
+    /// Pipelines waiting for or being compiled, by the page or a worker.
     pub fn compiling(&self) -> u32 {
         let queue = self.queue.borrow();
-        (queue.waiting.len() + queue.running) as u32
+        (queue.at_workers + queue.waiting.len() + queue.running) as u32
     }
 
-    fn pump(&self) {
-        let device = &self.device;
-        let mut queue = self.queue.borrow_mut();
-        while queue.running < CONCURRENCY && queue.running < queue.waiting.len() {
-            queue.running += 1;
-            let (shared, device) = (self.queue.clone(), device.clone());
-            wasm_bindgen_futures::spawn_local(async move {
-                loop {
-                    let job = shared.borrow_mut().waiting.pop_front();
-                    let Some((key, descriptor)) = job else { break };
-                    let promise = device.create_render_pipeline_async(&descriptor);
-                    let pipeline = JsFuture::from(promise).await.unwrap_or_else(|error| {
-                        // wgpu's own creation reports the error through the device.
-                        web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error);
-                        JsValue::NULL
-                    });
-                    shared.borrow_mut().finished.insert(key, pipeline);
-                }
-                shared.borrow_mut().running -= 1;
-            });
-        }
-    }
-
-    /// Start compiling every spec in the background now; the future resolves to the
-    /// compiled pipelines in job order (null for one that could not compile), for the
-    /// few fixed ones ([`Background`]).
+    /// Start compiling every spec in the background now (or a worker first, where
+    /// the page has them); the future resolves to the compiled pipelines in job order
+    /// (null for one that could not compile), for the few fixed ones ([`Background`]).
     pub fn compile_all(
         &self,
         jobs: &[(&PipelineSpec, &StageSources)],
     ) -> impl Future<Output = Vec<JsValue>> + 'static {
-        let mut promises = Vec::with_capacity(jobs.len());
+        /// A job's page compile, issued now or once its worker has answered.
+        enum Job {
+            Issued(Promise),
+            AfterWorker(Promise, Object),
+        }
+        let mut issued = Vec::with_capacity(jobs.len());
         for (spec, sources) in jobs {
-            match self.descriptor(spec, &self.modules(spec.label, sources)) {
-                Ok(descriptor) => {
-                    promises.push(self.device.create_render_pipeline_async(&descriptor))
-                }
+            let job = match self.page_descriptor(spec, sources) {
+                Ok(descriptor) => match self.compile_in_worker(spec, sources) {
+                    Some(compiled_elsewhere) => Job::AfterWorker(compiled_elsewhere, descriptor),
+                    None => Job::Issued(self.device.create_render_pipeline_async(&descriptor)),
+                },
                 Err(error) => {
                     web_sys::console::warn_1(
                         &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
                     );
-                    promises.push(Promise::resolve(&JsValue::NULL));
+                    Job::Issued(Promise::resolve(&JsValue::NULL))
                 }
-            }
+            };
+            issued.push(job);
         }
+        let device = self.device.clone();
         async move {
-            let mut compiled = Vec::with_capacity(promises.len());
-            for promise in promises {
+            let mut compiled = Vec::with_capacity(issued.len());
+            for job in issued {
+                // In job order: the workers answer about in that order, and the page's
+                // creates after them take a few milliseconds each.
+                let promise = match job {
+                    Job::Issued(promise) => promise,
+                    Job::AfterWorker(compiled_elsewhere, descriptor) => {
+                        let _ = JsFuture::from(compiled_elsewhere).await;
+                        device.create_render_pipeline_async(&descriptor)
+                    }
+                };
                 compiled.push(JsFuture::from(promise).await.unwrap_or_else(|error| {
                     web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error);
                     JsValue::NULL
@@ -279,18 +317,13 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         if let Some(layout) = self.layouts.borrow().get(&kind) {
             return Ok(layout.clone());
         }
-        let groups = kind
-            .groups()
+        let groups = layout_entries(kind)?
             .iter()
             .map(|entries| {
-                let entries = entries
-                    .iter()
-                    .map(bind_group_layout_entry)
-                    .collect::<Result<Array, _>>()?;
-                let descriptor = object(&[("entries", entries.into())]);
-                Ok(self.device.create_bind_group_layout(&descriptor))
+                let descriptor = object(&[("entries", entries)]);
+                self.device.create_bind_group_layout(&descriptor)
             })
-            .collect::<Result<Array, String>>()?;
+            .collect::<Array>();
         let layout = self
             .device
             .create_pipeline_layout(&object(&[("bindGroupLayouts", groups.into())]));
@@ -298,8 +331,26 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         Ok(layout)
     }
 
-    /// The browser descriptor wgpu builds for `spec` (wgpu 30 `create_render_pipeline`).
-    fn descriptor(&self, spec: &PipelineSpec, modules: &RawModules) -> Result<Object, String> {
+    /// `spec` as plain data for a worker (`src/pipeline-worker.ts`): the browser
+    /// descriptor with each stage's text in place of its module and the layout's entries
+    /// in place of the layout.
+    fn plain_descriptor(spec: &PipelineSpec, sources: &StageSources) -> Result<Object, String> {
+        Self::descriptor(
+            spec,
+            sources.vertex.as_str().into(),
+            sources.fragment.as_deref().map(JsValue::from),
+            layout_entries(spec.layout)?.into(),
+        )
+    }
+
+    /// The browser descriptor wgpu builds for `spec` (wgpu 30 `create_render_pipeline`),
+    /// from the stages' modules and the pipeline layout.
+    fn descriptor(
+        spec: &PipelineSpec,
+        vertex_module: JsValue,
+        fragment_module: Option<JsValue>,
+        layout: JsValue,
+    ) -> Result<Object, String> {
         let buffers = spec
             .buffers
             .iter()
@@ -336,13 +387,13 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
             })
             .collect::<Result<Array, String>>()?;
         let vertex = object(&[
-            ("module", modules.vertex.clone()),
+            ("module", vertex_module),
             ("entryPoint", spec.vertex_entry.into()),
             ("buffers", buffers.into()),
         ]);
         let descriptor = object(&[
             ("label", spec.label.into()),
-            ("layout", self.layout(spec.layout)?),
+            ("layout", layout),
             ("vertex", vertex.into()),
         ]);
         if let Some(depth) = &spec.depth_stencil {
@@ -357,10 +408,8 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                     None => Ok(JsValue::NULL),
                 })
                 .collect::<Result<Array, String>>()?;
-            let module = modules
-                .fragment
-                .clone()
-                .ok_or("a fragment entry point without a fragment source")?;
+            let module =
+                fragment_module.ok_or("a fragment entry point without a fragment source")?;
             let fragment = object(&[
                 ("module", module),
                 ("entryPoint", entry.into()),
@@ -382,7 +431,44 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 }
 
-fn object(fields: &[(&str, JsValue)]) -> Object {
+/// Run the page's compiles of `queue`, at most [`CONCURRENCY`] at a time.
+fn pump<K: Copy + Eq + Hash + 'static>(device: &RawDevice, queue: &Rc<RefCell<Queue<K>>>) {
+    let mut held = queue.borrow_mut();
+    while held.running < CONCURRENCY && held.running < held.waiting.len() {
+        held.running += 1;
+        let (shared, device) = (queue.clone(), device.clone());
+        wasm_bindgen_futures::spawn_local(async move {
+            loop {
+                let job = shared.borrow_mut().waiting.pop_front();
+                let Some((key, descriptor)) = job else { break };
+                let promise = device.create_render_pipeline_async(&descriptor);
+                let pipeline = JsFuture::from(promise).await.unwrap_or_else(|error| {
+                    // wgpu's own creation reports the error through the device.
+                    web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error);
+                    JsValue::NULL
+                });
+                shared.borrow_mut().finished.insert(key, pipeline);
+            }
+            shared.borrow_mut().running -= 1;
+        });
+    }
+}
+
+/// The groups of layout `kind`, each the browser's entries.
+fn layout_entries(kind: LayoutKind) -> Result<Array, String> {
+    kind.groups()
+        .iter()
+        .map(|entries| {
+            entries
+                .iter()
+                .map(bind_group_layout_entry)
+                .collect::<Result<Array, _>>()
+                .map(JsValue::from)
+        })
+        .collect()
+}
+
+pub(super) fn object(fields: &[(&str, JsValue)]) -> Object {
     let object = Object::new();
     for (name, value) in fields {
         set(&object, name, value.clone());
@@ -390,7 +476,7 @@ fn object(fields: &[(&str, JsValue)]) -> Object {
     object
 }
 
-fn set(object: &Object, name: &str, value: JsValue) {
+pub(super) fn set(object: &Object, name: &str, value: JsValue) {
     Reflect::set(object, &name.into(), &value).expect("plain objects accept properties");
 }
 
