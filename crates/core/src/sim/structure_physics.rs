@@ -1413,17 +1413,27 @@ impl Simulation {
     /// part nearest a burst): that part shatters where it lies, and the rest of the body
     /// breaks into its landing pieces thrown out from the point at `strength`. With no
     /// room for the pieces in the debris budget, all of it shatters. No random draw.
-    pub fn break_loose_body(&mut self, index: usize, struck: usize, point: Point3, strength: f64) {
+    ///
+    /// Returns whether the struck part gave way: wood that is only knocked aside or
+    /// snapped still lies in a shell's path, so a shell that would fly on stops in it
+    /// rather than meeting it again and again.
+    pub fn break_loose_body(
+        &mut self,
+        index: usize,
+        struck: usize,
+        point: Point3,
+        strength: f64,
+    ) -> bool {
         let fragment = &self.fragments[index];
         let Some(debris) = fragment.structure else {
-            return;
+            return false;
         };
         let Some(layout) = self.covers[debris.cover]
             .structure
             .as_ref()
             .map(|state| state.layout.clone())
         else {
-            return;
+            return false;
         };
         let parts = debris.parts;
         let struck = if parts.contains(struck) {
@@ -1452,7 +1462,7 @@ impl Simulation {
             } else {
                 self.throw_loose_body(index, point, strength);
             }
-            return;
+            return false;
         }
         let mut rest = parts;
         rest.remove(struck);
@@ -1493,9 +1503,10 @@ impl Simulation {
         if bodies.is_empty() || !room {
             let fragment = self.fragments.remove(index);
             self.remove_body(fragment.body);
-            return;
+            return true;
         }
         self.split_debris(index, &layout, bodies, Some((point, strength)));
+        true
     }
 }
 
@@ -1663,7 +1674,7 @@ pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius
             continue;
         }
         if gap < core {
-            simulation.break_loose_body(index, part, point, strength);
+            let _ = simulation.break_loose_body(index, part, point, strength);
             continue;
         }
         let falloff = 1.0 - gap / radius;

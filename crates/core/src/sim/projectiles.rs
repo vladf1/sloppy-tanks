@@ -697,7 +697,7 @@ fn resolve_contact(
         } if structure_debris(&simulation.fragments[fi]) => {
             // A structure's fallen part breaks where the shell meets it: an HE round
             // bursts on it, an armour-piercing round breaks the part it strikes and
-            // flies on, a rocket goes off.
+            // flies on (or stops in wood that only gives a little), a rocket goes off.
             let color = simulation.fragments[fi].color;
             let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
             let (point, part) = simulation.world.colliders.get(collider).map_or(
@@ -719,8 +719,7 @@ fn resolve_contact(
             match shot.weapon {
                 Weapon::Rocket => rocket_blast(simulation, &shot),
                 Weapon::Piercing => {
-                    simulation.break_loose_body(fi, part, point, PIERCING_THROW);
-                    remove = false;
+                    remove = !simulation.break_loose_body(fi, part, point, PIERCING_THROW);
                 }
                 _ => burst_at(simulation, &shot, point),
             }

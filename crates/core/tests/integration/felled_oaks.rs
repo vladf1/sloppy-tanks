@@ -212,7 +212,8 @@ fn a_shot_fallen_limb_snaps_in_two() {
     let middle = s.world.bodies[s.fragments[limb].body].center_of_mass();
     let point =
         sloppy_core::sim::math::Point3::new(middle.x.into(), middle.y.into(), middle.z.into());
-    s.break_loose_body(limb, part, point, 0.4);
+    let gave_way = s.break_loose_body(limb, part, point, 0.4);
+    assert!(!gave_way, "the limb gives a little, never way");
     assert_eq!(
         s.fragments.len(),
         pieces_before + 1,
@@ -232,4 +233,62 @@ fn a_shot_fallen_limb_snaps_in_two() {
         })
         .collect();
     assert_eq!(snapped.len(), 2, "both pieces lie on");
+}
+
+/// An armour-piercing shell that meets a fallen limb stops in it: the wood is knocked
+/// aside, not shattered out of its path, so a shell flying on would meet it again and
+/// again in one tick.
+#[test]
+fn a_piercing_shell_stops_in_a_fallen_limb() {
+    let (mut s, oak) = lone_oak();
+    let (x, z) = OAK;
+    for _ in 0..2 {
+        fire_at(
+            &mut s,
+            Vec2::new(x, z - 10.0),
+            Vec2::new(x, z),
+            1.2,
+            Weapon::Standard,
+        );
+        run(&mut s, 0.5);
+    }
+    run(&mut s, 6.0);
+    let limb = s
+        .fragments
+        .iter()
+        .find(|piece| {
+            piece
+                .structure
+                .as_ref()
+                .is_some_and(|fallen| fallen.cover == oak && !fallen.parts.contains(OAK_TRUNK))
+        })
+        .expect("a fallen limb on its own");
+    let middle = s.world.bodies[limb.body].center_of_mass();
+    let (mx, my, mz) = (
+        f64::from(middle.x),
+        f64::from(middle.y),
+        f64::from(middle.z),
+    );
+    s.events.clear();
+    let id = fire_at(
+        &mut s,
+        Vec2::new(mx - 8.0, mz),
+        Vec2::new(mx, mz),
+        my,
+        Weapon::Piercing,
+    );
+    let mut impacts = 0;
+    for _ in 0..60 {
+        crate::support::idle(&mut s);
+        impacts += s
+            .events
+            .iter()
+            .filter(|event| {
+                event.kind == SimEventType::Impact && event.cover_kind == Some(CoverKind::Tree)
+            })
+            .count();
+        s.events.clear();
+    }
+    assert_eq!(impacts, 1, "the shell meets the limb once");
+    assert!(s.shots.iter().all(|shot| shot.id != id), "and stops in it");
 }
