@@ -670,8 +670,11 @@ impl Frame {
     /// Natively (and in the browser under `late_present`), show a window frame: the
     /// scene [`Self::draw`] drew last through the
     /// output pass (or, before any scene, the window cleared to `clear`), with
-    /// `overlay` (the window's menus and HUD) drawn over it with the device, the queue
-    /// and the frame's view. The window's frame is taken only here, as late as can be:
+    /// `overlay` (the window's menus and HUD) drawn over it with the device, the queue,
+    /// the frame's encoder and its view, all in one command buffer: iOS Safari showed a
+    /// canvas between two submits that wrote it, the scene without the menus over it, a
+    /// flash of the arena behind Battle Setup as a finger scrolled or tapped. The
+    /// window's frame is taken only here, as late as can be:
     /// with the display's pacing that wait would otherwise count as the engine's render
     /// time, and a frame drawn twice (preparation's first frames) shows once. Without a
     /// new scene (a room waiting for the server) the last one shows again, as a canvas
@@ -681,7 +684,7 @@ impl Frame {
         gpu: &Gpu,
         pipelines: &Pipelines,
         clear: wgpu::Color,
-        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
+        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
     ) {
         let _ = gpu.device.poll(wgpu::PollType::Poll);
         let output = match self.canvas.surface.get_current_texture() {
@@ -731,8 +734,8 @@ impl Frame {
                 ..Default::default()
             });
         }
+        overlay(&gpu.device, &gpu.queue, &mut encoder, &view);
         gpu.queue.submit([encoder.finish()]);
-        overlay(&gpu.device, &gpu.queue, &view);
         gpu.queue.present(output);
         self.shown = true;
     }

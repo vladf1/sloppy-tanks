@@ -2130,13 +2130,13 @@ impl Renderer {
 
     /// Natively, and in the browser once [`Self::present_late`] asked for it, show the
     /// frame `render` drew once `overlay` has drawn the window's menus and HUD over it
-    /// (with the device, the queue and the frame's view). Without a new frame it draws
-    /// over the last scene again, or before any on `clear`.
+    /// (with the device, the queue, the frame's encoder and its view). Without a new
+    /// frame it draws over the last scene again, or before any on `clear`.
     #[cfg(not(feature = "webgl"))]
     pub fn present(
         &mut self,
         clear: wgpu::Color,
-        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
+        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &mut wgpu::CommandEncoder, &wgpu::TextureView),
     ) {
         self.frame
             .present(&self.gpu, &self.pipelines, clear, overlay);
