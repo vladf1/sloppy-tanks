@@ -146,7 +146,7 @@ beyond_geometry! {
     pub use tower_model::tower_debris;
 }
 pub use tree_models::{
-    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, felled_crown,
+    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, oak_pieces,
     tree_branch_stage, tree_foliage, tree_model, tree_part, trunk_fragment,
 };
 

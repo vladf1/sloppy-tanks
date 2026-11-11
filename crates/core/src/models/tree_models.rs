@@ -32,9 +32,11 @@ use crate::geometry::math::{
 use crate::geometry::{CylinderGeometry, Mesh, narrow, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
 use crate::sim::math::Random;
+use crate::sim::oak_layout::{OAK, oak_layout};
 
 mod oak_growth;
-use crate::sim::tree_proportions::{TreeProportions, branching_crown, tree_proportions};
+use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
+pub use oak_growth::oak_pieces;
 
 /// Node names that presentation looks up on a full-detail tree.
 pub mod tree_part {
@@ -49,9 +51,6 @@ pub mod tree_part {
     pub const BRANCH_STAGE_1: &str = "shedding-branch-1";
     /// A bough dropped at 35% health (`dropStage = 2`).
     pub const BRANCH_STAGE_2: &str = "shedding-branch-2";
-    /// A limb of a felled branching crown ([`super::felled_crown`]), which breaks off
-    /// where it hits the ground.
-    pub const LIMB: &str = "broken-limb";
 }
 
 /// `TREE_FAMILIES`, indexed by [`TreeProportions::family`].
@@ -589,6 +588,11 @@ struct Card {
 fn card_tint(rng: &mut Random) -> [f64; 3] {
     let light = rng.range(0.82, 1.12);
     let warm = rng.range(-0.05, 0.07);
+    card_tint_of(light, warm)
+}
+
+/// [`card_tint`] from its two draws.
+fn card_tint_of(light: f64, warm: f64) -> [f64; 3] {
     [light * (1.0 + warm), light, light * (1.0 - warm * 1.6)]
 }
 
@@ -640,22 +644,12 @@ struct Crown {
     detail: TreeDetail,
     /// Foliage cards with the crown child index of their bough (`None`: the crown).
     cards: Vec<(Option<usize>, Card)>,
-    /// Whether each limb grows into a group of its own ([`felled_crown`]).
-    limbs: bool,
 }
 
 impl Crown {
     /// `branchParent(stage)`: the crown for fixed foliage, or a new shedding bough
     /// group (full detail only). Returns the index of the bough among the crown's
     /// children, or `None` for the crown itself.
-    fn limb_parent(&mut self) -> Option<usize> {
-        if !self.limbs {
-            return None;
-        }
-        self.node.children.push(Node::group(tree_part::LIMB));
-        Some(self.node.children.len() - 1)
-    }
-
     fn branch_parent(&mut self, stage: u32) -> Option<usize> {
         if self.detail.background() || stage == 0 {
             return None;
@@ -805,25 +799,6 @@ fn sprig_card(
 
 /// `treeModel(c, detail)`.
 pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
-    build_tree(c, detail, false)
-}
-
-/// The crown a felled tree at `c` falls with, if it breaks up on the ground
-/// ([`branching_crown`]): its [`tree_part::CROWN`] grown the same, but each limb a
-/// [`tree_part::LIMB`] group of its own, centred on its bounds like a shed bough, so
-/// presentation can break the limbs off one by one. Other families fall whole.
-pub fn felled_crown(c: &TreeShape) -> Option<Node> {
-    let family = tree_proportions(c.x, c.z, c.w, c.d, c.h).family;
-    if !branching_crown(family) {
-        return None;
-    }
-    build_tree(c, TreeDetail::Full, true)
-        .children
-        .into_iter()
-        .find(|child| child.name == tree_part::CROWN)
-}
-
-fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
     let TreeProportions {
         seed,
         mut rng,
@@ -874,9 +849,10 @@ fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
         node: Node::group(tree_part::CROWN),
         detail,
         cards: Vec::new(),
-        limbs,
     };
     let variant = seed % 24;
+    // A full-detail oak grows from the skeleton the simulation builds its parts from.
+    let oak = (full && family == OAK).then(|| oak_layout(c.x, c.z, c.w, c.d, c.h));
     if full {
         let mut stump = Node::group(tree_part::STUMP);
         let scale = DVec3::new(radius, stump_height, radius);
@@ -889,7 +865,17 @@ fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
         )
         .set_rotation_euler(0.0, twist, 0.0);
         // Buttress roots flare from the stump and dive into the ground.
-        let root_count = 5 + seed % 3;
+        let root_count = if oak.is_some() { 0 } else { 5 + seed % 3 };
+        for root in oak.iter().flat_map(|oak| &oak.roots) {
+            limb(
+                &mut stump,
+                bark.clone(),
+                root.from,
+                root.to,
+                root.radius,
+                true,
+            );
+        }
         for i in 0..root_count {
             let angle =
                 twist + (f64::from(i) * PI * 2.0) / f64::from(root_count) + rng.range(-0.2, 0.2);
@@ -923,12 +909,13 @@ fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
         cut.visible = false;
         group.children.push(stump);
     }
-    let lean_x = rng.range(-0.1, 0.1) * c.w;
-    let lean_z = rng.range(-0.07, 0.07) * c.d;
+    let (lean_x, lean_z) = match &oak {
+        Some(oak) => oak.lean,
+        None => (rng.range(-0.1, 0.1) * c.w, rng.range(-0.07, 0.07) * c.d),
+    };
     let trunk_base = if full { stump_height * 0.88 } else { 0.0 };
     // A full-detail oak grows its own trunk with its limbs.
-    let grown_oak = full && branching_crown(family);
-    if !grown_oak {
+    if oak.is_none() {
         let trunk = limb(
             &mut crown.node,
             bark.clone(),
@@ -979,17 +966,8 @@ fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
         add_conifer_crown(
             &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
         )
-    } else if grown_oak {
-        oak_growth::add_grown_oak_crown(
-            &mut crown,
-            &mut rng,
-            &bark,
-            twist,
-            height,
-            radius,
-            trunk_base,
-            (lean_x, lean_z),
-        )
+    } else if let Some(oak) = &oak {
+        oak_growth::add_grown_oak_crown(&mut crown, oak, &bark)
     } else {
         add_broadleaf_crown(
             &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,

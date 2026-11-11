@@ -912,6 +912,10 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
     let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
     impact.id = Some(simulation.covers[cover].id);
     impact.height = Some(point.y);
+    // A tree's hit shakes its crown and chips its bark as any tree's does.
+    if simulation.covers[cover].kind == CoverKind::Tree {
+        impact.cover_kind = Some(CoverKind::Tree);
+    }
     match shot.weapon {
         Weapon::Rocket => {
             simulation.events.push(impact);

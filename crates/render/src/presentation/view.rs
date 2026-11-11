@@ -10,9 +10,9 @@ use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     CoverShape, FLAG_CLOTH_NODE, HouseBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
-    create_arena_floor, create_spawn_pads, felled_crown, flags_model, part, pickup_cube,
-    pickup_signal, pickup_tile_offset, release_tank_models, structure_debris, tank_model,
-    tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
+    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, pickup_signal,
+    pickup_tile_offset, release_tank_models, structure_debris, tank_model, tree_branch_stage,
+    tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -23,7 +23,7 @@ use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
-use sloppy_core::sim::structure_physics::structural;
+use sloppy_core::sim::structure_physics::built_of_parts;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
 use sloppy_core::sim::tower_structure::{LOWER_LEGS, tower_structure};
 use sloppy_core::sim::tree_proportions::tree_proportions;
@@ -154,16 +154,12 @@ const MARKER_SCALE: f32 = 1.55;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
-/// A felled oak breaks into its limbs and unshed boughs (eleven), so the pool holds a
-/// few felled oaks' worth.
-const MAX_BRANCHES: usize = 64;
+const MAX_BRANCHES: usize = 32;
 const BRANCH_LIFETIME: f64 = 9.0;
 const BRANCH_GRAVITY: f64 = 9.8;
 const BRANCH_DRAG: f32 = 1.6;
 const BRANCH_TUMBLE: f32 = 1.8;
 const BRANCH_REST: f32 = 0.03;
-/// A felled limb's tumble as it breaks off: a little, since it is already down.
-const FELLED_LIMB_SPIN: f32 = 0.3;
 /// A shell hit shudders a tree's crown about the top of its stump: peak lean
 /// (rad), decay time (s), swing rate (rad/s), and when it is still again (s).
 const TREE_SHUDDER: [f64; 4] = [0.04, 0.5, 9.0, 2.5];
@@ -880,17 +876,6 @@ struct FragmentView {
     /// seconds), for it to grow out of the falling wreck ([`LOOSE_EMERGE`]); None
     /// for every other piece.
     emerges_from: Option<f64>,
-    /// A falling branching crown's limbs still on it ([`felled_crown`]): each breaks
-    /// off where it hits the ground, since limbs cannot hold a trunk up on its side.
-    limbs: Vec<FelledLimb>,
-}
-
-/// A limb of a falling crown: its joint in the crown's model, and its own subtree and
-/// bounds to drop as a loose branch once it hits the ground.
-struct FelledLimb {
-    joint: usize,
-    node: Node,
-    bounds: Aabb,
 }
 
 struct PickupView {
@@ -2776,7 +2761,7 @@ impl Presentation {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
             let shown = self.covers.get(&cover.id);
             // A structure changes as its parts break, levelled or not.
-            let structure = structural(cover.kind);
+            let structure = built_of_parts(cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
             let rebuild = shown.is_none_or(|view| structure && view.marks != look_print(cover));
             // A blast that breaks several structures at once rebuilds them over a few
             // frames on a slow device: one step a frame at least, more while this frame's
@@ -2881,8 +2866,23 @@ impl Presentation {
         let crown = view.tree.as_ref().map_or(view.world, |tree| {
             joint_world(nodes, &[], view.world, tree.crown)
         });
-        let (branch, bounds) = loose_branch(source);
-        let position = world.w_axis.truncate();
+        let mut branch = source.clone();
+        branch.position = DVec3::ZERO;
+        branch.rotation = glam::DQuat::IDENTITY;
+        branch.scale = DVec3::ONE;
+        branch.visible = true;
+        let bounds = node_bounds(&branch, DMat4::IDENTITY);
+        if self.branches.len() == MAX_BRANCHES
+            && let Some(oldest) = self.branches.pop_front()
+        {
+            self.renderer.remove_model(oldest.model);
+        }
+        let model = self.renderer.add_model(&branch, Lifetime::Round);
+        let instance = self
+            .renderer
+            .add_instance(model, world, Lifetime::Round)
+            .expect("branch model");
+        let (scale, rotation, position) = world.to_scale_rotation_translation();
         let mut outward = position - crown.w_axis.truncate();
         outward.y = 0.0;
         let outward = outward.normalize_or_zero();
@@ -2893,33 +2893,6 @@ impl Presentation {
             random.next_f64() as f32 - 0.5,
             random.next_f64() as f32 - 0.5,
         );
-        let velocity = Vec3::new(outward.x * speed, -0.5, outward.z * speed);
-        self.drop_branch(&branch, bounds, world, velocity, spin, BRANCH_LIFETIME);
-    }
-
-    /// A loose branch at `world`, falling with `velocity` and tumbling by `spin` until
-    /// it lands, then lying for the rest of `life` (seconds) until the debris cleanup
-    /// sinks it.
-    fn drop_branch(
-        &mut self,
-        branch: &Node,
-        bounds: Aabb,
-        world: Mat4,
-        velocity: Vec3,
-        spin: Vec3,
-        life: f64,
-    ) {
-        if self.branches.len() == MAX_BRANCHES
-            && let Some(oldest) = self.branches.pop_front()
-        {
-            self.renderer.remove_model(oldest.model);
-        }
-        let model = self.renderer.add_model(branch, Lifetime::Round);
-        let instance = self
-            .renderer
-            .add_instance(model, world, Lifetime::Round)
-            .expect("branch model");
-        let (scale, rotation, position) = world.to_scale_rotation_translation();
         self.branches.push_back(FallingBranch {
             model,
             instance,
@@ -2927,28 +2900,13 @@ impl Presentation {
             position,
             rotation,
             scale,
-            velocity,
+            velocity: Vec3::new(outward.x * speed, -0.5, outward.z * speed),
             spin,
-            life,
+            life: BRANCH_LIFETIME,
             landed: false,
             resting_y: 0.0,
             sink: 0.0,
         });
-    }
-
-    /// Break off the limbs of a falling crown that have reached the ground: each is
-    /// hidden on the crown and drops where it hit, lying as long as the trunk does.
-    fn break_limbs(&mut self, breaks: Vec<(InstanceId, FelledLimb, Mat4, f64)>) {
-        for (instance, limb, world, life) in breaks {
-            self.renderer.set_node_visible(instance, limb.joint, false);
-            let random = &mut self.random;
-            let spin = Vec3::new(
-                random.next_f64() as f32 - 0.5,
-                random.next_f64() as f32 - 0.5,
-                random.next_f64() as f32 - 0.5,
-            ) * FELLED_LIMB_SPIN;
-            self.drop_branch(&limb.node, limb.bounds, world, Vec3::ZERO, spin, life);
-        }
     }
 
     fn update_branches(&mut self, dt: f64) {
@@ -3446,8 +3404,6 @@ impl Presentation {
         }
         // Pieces drawn so far this frame, per shape.
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
-        // Limbs of falling crowns that reached the ground this frame.
-        let mut breaks = Vec::new();
         for fragment in &state.fragments {
             if !self.fragments.contains_key(&fragment.id) {
                 match self.fragment_view(fragment, &state.covers) {
@@ -3519,22 +3475,10 @@ impl Presentation {
                             .get_or_insert_with(|| world_height(&bounds, &world) + SINK_MARGIN);
                         position.y -= cleanup * sink;
                     }
-                    let world = Mat4::from_scale_rotation_translation(scale, rotation, position);
-                    self.renderer.set_transform(view.instance, world);
-                    if let FragmentLook::Owned(model, _) = view.look
-                        && cleanup == 0.0
-                        && !view.limbs.is_empty()
-                    {
-                        let nodes = self.renderer.model_nodes(model);
-                        let instance = view.instance;
-                        for limb in view.limbs.extract_if(.., |limb| {
-                            let at = joint_world(nodes, &[], world, limb.joint);
-                            lowest(&limb.bounds, &at) <= BRANCH_REST
-                        }) {
-                            let at = joint_world(nodes, &[], world, limb.joint);
-                            breaks.push((instance, limb, at, fragment.life));
-                        }
-                    }
+                    self.renderer.set_transform(
+                        view.instance,
+                        Mat4::from_scale_rotation_translation(scale, rotation, position),
+                    );
                     if let FragmentLook::Wreck(..) = view.look {
                         // Burnt paint and team glow darken over the first seconds
                         // (`wreck-aging.ts`), fed per instance to the aging effect.
@@ -3556,7 +3500,6 @@ impl Presentation {
                     .observe(fragment.id, view.pose, cleanup > 0.0, self.time);
             }
         }
-        self.break_limbs(breaks);
         self.settle_piles();
         self.layouts.end_frame(self.time);
     }
@@ -3599,9 +3542,9 @@ impl Presentation {
         fragment: &RenderFragment,
         covers: &[RenderCover],
     ) -> Option<FragmentView> {
-        // A branching crown's breakable parts in crown order, `None` for a bough
-        // already shed.
-        let mut breakable: Vec<Option<(Node, Aabb)>> = Vec::new();
+        // A felled oak's fallen parts carry leaves: they sink away rather than fade, so
+        // their alpha-tested leaves never turn into a blended sheet.
+        let mut leafy = false;
         let (model, look) = if let (Some(parts), Some(structure)) =
             (fragment.structure_parts, fragment.structure_id)
         {
@@ -3621,6 +3564,10 @@ impl Presentation {
                 self.piles
                     .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))
+            } else if source.shape.kind == CoverKind::Tree {
+                leafy = true;
+                let node = self.layouts.body(&source, self.time);
+                owned_look(&mut self.renderer, &node, false)
             } else {
                 // A cottage's bodies falling over a collapse are cut from one build of
                 // its pieces.
@@ -3640,41 +3587,13 @@ impl Presentation {
                     .map(|branch| branch.crown_child)
                     .collect()
             });
-            let center_y = fragment.tree_center_y.unwrap_or(0.0);
-            let felled = covers
-                .iter()
-                .find(|cover| cover.id == tree)
-                .and_then(|cover| {
-                    felled_crown(&TreeShape {
-                        x: cover.x,
-                        z: cover.z,
-                        w: cover.w,
-                        d: cover.d,
-                        h: cover.h,
-                    })
-                });
-            let crown = match felled {
-                Some(mut crown) => {
-                    // Boughs come in crown order in both builds of the crown.
-                    let mut shown = view
-                        .tree
-                        .as_ref()
-                        .map(|tree| tree.branches.iter().map(|branch| branch.shown))
-                        .into_iter()
-                        .flatten();
-                    for part in &mut crown.children {
-                        if TreeParts::is_branch(&part.name) {
-                            part.visible = shown.next().unwrap_or(true);
-                        } else if part.name != tree_part::LIMB {
-                            continue;
-                        }
-                        breakable.push(part.visible.then(|| loose_branch(part)));
-                    }
-                    lowered_crown(crown, center_y)
-                }
-                // Only a tree's model has the crown.
-                None => crown_fragment(&entry.source, tree_part::CROWN, center_y, &shed)?,
-            };
+            // Only a tree's model has the crown.
+            let crown = crown_fragment(
+                &entry.source,
+                tree_part::CROWN,
+                fragment.tree_center_y.unwrap_or(0.0),
+                &shed,
+            )?;
             owned_look(&mut self.renderer, &crown, false)
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
@@ -3701,12 +3620,11 @@ impl Presentation {
             sink: (fragment.structure_parts.is_some()
                 && fragment.source_kind == Some(CoverKind::Tower))
             .then_some(0.0),
-            fades: fragment.tree_cover_id.is_none(),
+            fades: fragment.tree_cover_id.is_none() && !leafy,
             pose: (vec3(fragment.position), quat(fragment.rotation)),
             emerges_from: (fragment.source_kind == Some(CoverKind::House)
                 && fragment.structure_parts.is_none())
             .then_some(self.time),
-            limbs: felled_limbs(self.renderer.model_nodes(model), breakable),
         })
     }
 
@@ -3833,51 +3751,12 @@ fn crown_fragment(source: &Node, crown: &str, center_y: f64, shed: &[usize]) -> 
             bough.visible = false;
         }
     }
-    Some(lowered_crown(node, center_y))
-}
-
-/// `crown` as the falling crown's model: lowered so the fragment body's centre sits
-/// `center_y` up the trunk.
-fn lowered_crown(mut crown: Node, center_y: f64) -> Node {
-    crown.name = String::new();
-    crown.visible = true;
-    crown.position = DVec3::new(0.0, -center_y, 0.0);
+    node.name = String::new();
+    node.visible = true;
+    node.position = DVec3::new(0.0, -center_y, 0.0);
     let mut root = Node::group("crown-fragment");
-    root.children.push(crown);
-    root
-}
-
-/// A bough or limb as a loose branch of its own: its subtree about its own centre, and
-/// its bounds there.
-fn loose_branch(part: &Node) -> (Node, Aabb) {
-    let mut branch = part.clone();
-    branch.position = DVec3::ZERO;
-    branch.rotation = glam::DQuat::IDENTITY;
-    branch.scale = DVec3::ONE;
-    branch.visible = true;
-    let bounds = node_bounds(&branch, DMat4::IDENTITY);
-    (branch, bounds)
-}
-
-/// The joints of a falling crown's model that can break off, matched in crown order
-/// with `breakable` (its limbs and boughs, `None` for one already shed).
-fn felled_limbs(
-    nodes: &[crate::model::ModelNode],
-    breakable: Vec<Option<(Node, Aabb)>>,
-) -> Vec<FelledLimb> {
-    let joints = (0..nodes.len()).filter(|&index| {
-        TreeParts::is_branch(&nodes[index].name) || nodes[index].name == tree_part::LIMB
-    });
-    joints
-        .zip(breakable)
-        .filter_map(|(joint, part)| {
-            part.map(|(node, bounds)| FelledLimb {
-                joint,
-                node,
-                bounds,
-            })
-        })
-        .collect()
+    root.children.push(node);
+    Some(root)
 }
 
 fn environment(look: &ThemeLook) -> Environment {

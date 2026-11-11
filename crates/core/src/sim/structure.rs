@@ -32,6 +32,7 @@ use super::debris_physics::DebrisMaterial;
 use super::house_layout::{HouseDesign, Roof};
 use super::house_structure::{HouseRole, shared_house_structure};
 use super::kinds::CoverKind;
+use super::oak_structure::{TreePart, oak_structure};
 use super::structure_physics::ShapeCache;
 use super::timber_layout::TimberJoin;
 use super::timber_structure::{TimberRole, timber_structure};
@@ -359,6 +360,11 @@ pub struct Part {
     /// The element it belongs to (a wall, a roof slope, a face's bracing): a body landing
     /// hard breaks apart at its elements first.
     pub element: u16,
+    /// The part a hit on it strains instead, if not itself: a tree's trunk and limbs
+    /// pass a shell's blow down to the butt that snaps.
+    pub struck_as: Option<u16>,
+    /// Met by tanks alone while it stands, never by shells (a tree's rooted stump).
+    pub tank_only: bool,
     /// What the kind's model draws it as.
     pub role: Role,
 }
@@ -392,6 +398,8 @@ impl Part {
             braces: Vec::new(),
             lie: Lie::Any,
             element: 0,
+            struck_as: None,
+            tank_only: false,
             role,
         }
     }
@@ -511,6 +519,7 @@ pub enum Role {
     },
     Timber(TimberRole),
     Crate(CratePart),
+    Tree(TreePart),
 }
 
 /// Parts reaching below this height block tanks on the ground.
@@ -572,6 +581,8 @@ pub enum Build {
     Tower,
     Timber,
     Crate,
+    /// A full-detail oak at its cover's place and size (`oak_structure`).
+    Tree { x: f64, z: f64, w: f64, d: f64, h: f64 },
 }
 
 /// A structure's parts and how they hold each other up.
@@ -608,6 +619,12 @@ pub struct Structure {
     /// Whether a bot shoots its way through it: a crate's frame of battens blocks a
     /// tank until it breaks, which takes several shells, so bots drive round a crate.
     pub breachable: bool,
+    /// The box it stands as while intact ([`Self::whole`]), when that is not the box
+    /// round its parts: a tree stands as its cover's box, crown and all.
+    pub stand_box: Option<(DVec3, DVec3)>,
+    /// The part whose strength left its hit points show, when not the share of its parts
+    /// standing: a tree's butt, so its health falls with each hit before it snaps.
+    pub health_part: Option<usize>,
     /// Its parts' collider shapes, each built the first time a collider asks for it.
     pub shapes: ShapeCache,
     /// Its supports turned round, built the first time the share rule runs.
@@ -673,6 +690,7 @@ pub fn structure_of(
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),
+        CoverKind::Tree => oak_structure(x, z, w, d, h),
         _ => None,
     }
 }
@@ -702,6 +720,8 @@ impl Structure {
             whole: false,
             hinges: false,
             breachable: true,
+            stand_box: None,
+            health_part: None,
             shapes: ShapeCache::default(),
             holds: HoldsCache::default(),
         }

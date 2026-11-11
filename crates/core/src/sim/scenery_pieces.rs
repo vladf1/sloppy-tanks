@@ -14,7 +14,7 @@ use super::physics::{
     from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
 };
 use super::simulation::Simulation;
-use super::tree_proportions::{branching_crown, tree_proportions};
+use super::tree_proportions::tree_proportions;
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
 /// A movable cover's world pose when it was destroyed.
@@ -179,20 +179,16 @@ pub fn break_scenery(
             simulation.fragments[trunk].tree_cover_id = Some(cover.id);
             simulation.fragments[trunk].tree_center_y = Some(center);
             let trunk_body = simulation.fragments[trunk].body;
-            // A light crown volume keeps foliage above the ground as the trunk rolls. A
-            // branching crown has none: its limbs break off where they hit the ground
-            // (presentation), so the trunk comes down onto it.
-            if !branching_crown(family) {
-                simulation.world.insert_collider(
-                    ColliderBuilder::ball((cover.w.min(cover.d) * 0.34) as f32)
-                        .translation(vector(0.0, height * 0.72 - center, 0.0))
-                        .collision_groups(interaction_groups(group::FRAGMENT))
-                        .mass(0.12)
-                        .friction(0.9)
-                        .restitution(0.05),
-                    Some(trunk_body),
-                );
-            }
+            // A light crown volume keeps foliage above the ground as the trunk rolls.
+            simulation.world.insert_collider(
+                ColliderBuilder::ball((cover.w.min(cover.d) * 0.34) as f32)
+                    .translation(vector(0.0, height * 0.72 - center, 0.0))
+                    .collision_groups(interaction_groups(group::FRAGMENT))
+                    .mass(0.12)
+                    .friction(0.9)
+                    .restitution(0.05),
+                Some(trunk_body),
+            );
             // A small sideways lean initiates a gravity-driven fall instead of a launch.
             let angle = breakup.rng.range(0.0, PI * 2.0);
             let rigid_body = &mut simulation.world.bodies[trunk_body];

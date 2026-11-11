@@ -24,12 +24,13 @@ use super::quarry_surfaces::{
 };
 use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
-use super::tree_models::{TreeDetail, TreeShape, tree_model};
+use super::tree_models::{TreeDetail, TreeShape, oak_pieces, tree_model};
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
+use crate::sim::oak_structure::{TreePart, oak_structure};
 use crate::sim::structure::{PartSet, Role};
 use crate::sim::timber_layout::{
     TimberJoin, TimberPart, TimberPartKind, TimberWall, post_partner, timber_parts, whole_post,
@@ -281,6 +282,26 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
             }
             let mut root = Node::group("crate-debris");
             root.children.push(group);
+            root
+        }
+        CoverKind::Tree => {
+            let Some(layout) = oak_structure(c.x, c.z, c.w, c.d, c.h) else {
+                return Node::default();
+            };
+            let keep = |part: TreePart| {
+                parts
+                    .iter()
+                    .any(|index| layout.part(index).role == Role::Tree(part))
+            };
+            let tree = TreeShape {
+                x: c.x,
+                z: c.z,
+                w: c.w,
+                d: c.d,
+                h: c.h,
+            };
+            let mut root = Node::group("tree-debris");
+            root.children.push(oak_pieces(&tree, &keep));
             root
         }
         _ => Node::default(),

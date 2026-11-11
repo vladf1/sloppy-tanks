@@ -17,13 +17,6 @@ pub struct TreeProportions {
     pub stump_radius: f64,
 }
 
-/// Whether a family grows a branching crown (oaks, models' `oak_growth`): felled, it
-/// breaks up on the ground limb by limb, so its trunk falls without the crown volume
-/// that holds other families' foliage up.
-pub fn branching_crown(family: u32) -> bool {
-    family == 3
-}
-
 /// Proportions for a tree cover footprint at (x, z) with size w/d/h.
 pub fn tree_proportions(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeProportions {
     let seed = (to_int32(js_round(x * 100.0) * 73_856_093.0)

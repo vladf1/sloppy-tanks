@@ -326,8 +326,17 @@ impl StructureState {
         }
     }
 
-    /// The share of the structure's breakable parts still standing.
+    /// The share of the structure's breakable parts still standing; for one whose health
+    /// follows a part ([`Structure::health_part`]), that part's strength left.
     pub fn standing_share(&self) -> f64 {
+        if let Some(index) = self.layout.health_part {
+            let strength = self.layout.parts[index].strength;
+            return if self.standing(index) {
+                (1.0 - self.damage[index] / strength).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        }
         let parts = &self.layout.parts;
         let standing = (0..parts.len())
             .filter(|&index| !parts[index].footing && self.standing(index))
@@ -537,7 +546,7 @@ pub const WHOLE: u128 = u128::MAX;
 
 /// An intact structure's box as one collider.
 fn whole_collider(layout: &Structure) -> ColliderBuilder {
-    let (min, max) = layout.bounds();
+    let (min, max) = layout.stand_box.unwrap_or_else(|| layout.bounds());
     let inset = DVec3::splat(layout.debris.seam);
     let (a, b) = (layout.to_world(min + inset), layout.to_world(max - inset));
     let (min, max) = (a.min(b), a.max(b));
@@ -550,8 +559,13 @@ fn whole_collider(layout: &Structure) -> ColliderBuilder {
 }
 
 fn standing_collider(layout: &Structure, index: usize) -> ColliderBuilder {
+    let groups = if layout.parts[index].tank_only {
+        group::STUMP_CONTACT
+    } else {
+        group::COVER
+    };
     part_collider(layout, index, -layout.debris.seam)
-        .collision_groups(interaction_groups(group::COVER))
+        .collision_groups(interaction_groups(groups))
         .friction(0.4)
 }
 
@@ -632,11 +646,13 @@ impl Simulation {
         let c = &self.covers[cover];
         let state = c.structure.as_ref()?;
         let data = self.world.colliders.get(collider)?.user_data;
-        if data == WHOLE {
+        let part = if data == WHOLE {
             let local = state.layout.to_local(DVec3::new(at.x - c.x, at.y, at.z - c.z));
-            return Some((cover, state.layout.part_at(local, &state.gone)?));
-        }
-        Some((cover, data as usize))
+            state.layout.part_at(local, &state.gone)?
+        } else {
+            data as usize
+        };
+        Some((cover, state.layout.parts[part].struck_as.map_or(part, usize::from)))
     }
 
     /// The structure a standing collider belongs to.
@@ -709,6 +725,10 @@ impl Simulation {
             return false;
         }
         state.take(part, amount);
+        self.follow_health(cover);
+        let Some(state) = &self.covers[cover].structure else {
+            return false;
+        };
         if !force && state.damage[part] < strength {
             return false;
         }
@@ -833,8 +853,20 @@ impl Simulation {
             }
         }
         self.scratch.structure_hits = hits;
+        self.follow_health(cover);
         if !broken.is_empty() || !loose.is_empty() {
             self.break_structure(cover, broken, loose, Some(point), by);
+        }
+    }
+
+    /// Structure `cover`'s hit points after its parts took damage, when they follow a
+    /// part's ([`Structure::health_part`]): a tree's sinking as its butt is hurt.
+    fn follow_health(&mut self, cover: usize) {
+        let c = &mut self.covers[cover];
+        if let Some(state) = &c.structure
+            && state.layout.health_part.is_some()
+        {
+            c.hp = c.max_hp * state.standing_share();
         }
     }
 
@@ -860,6 +892,7 @@ impl Simulation {
                 }
             }
         }
+        self.follow_health(cover);
         if !broken.is_empty() || !loose.is_empty() {
             self.break_structure(cover, broken, loose, None, by);
         }
@@ -2449,10 +2482,19 @@ pub fn part_box(cover: &Cover, index: usize) -> Option<(Point3, Point3)> {
     ))
 }
 
-/// Whether `kind` is built of parts ([`super::structure::structure_of`]).
+/// Whether every cover of `kind` is built of parts ([`super::structure::structure_of`]).
 pub fn structural(kind: CoverKind) -> bool {
     matches!(
         kind,
         CoverKind::House | CoverKind::Tower | CoverKind::Timber | CoverKind::Cargo
     )
+}
+
+/// Whether the cover of `kind` at (x, z) sized w, d, h is built of parts: every cover of
+/// a [`structural`] kind, and a tree of the family that grows as a structure (an oak).
+pub fn built_of_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> bool {
+    structural(kind)
+        || (kind == CoverKind::Tree
+            && super::tree_proportions::tree_proportions(x, z, w, d, h).family
+                == super::oak_layout::OAK)
 }

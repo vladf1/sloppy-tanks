@@ -183,42 +183,6 @@ fn tree_damage_sheds_boughs_by_stage() {
     assert!(!tree.find(tree_part::CUT_SURFACE).unwrap().visible);
 }
 
-/// A felled oak falls with its crown grown the same but split into limbs, which
-/// presentation breaks off where they hit the ground; other families fall whole.
-#[test]
-fn a_felled_oak_crown_splits_into_limbs() {
-    let oak = TreeShape {
-        x: -36.0,
-        z: -45.0,
-        w: 2.6,
-        d: 2.6,
-        h: 5.8,
-    };
-    let felled = felled_crown(&oak).expect("oaks break up");
-    let named = |name: &str| {
-        felled
-            .children
-            .iter()
-            .filter(|child| child.name == name)
-            .count()
-    };
-    // The leader and six limbs, beside the four boughs damage sheds.
-    assert_eq!(named(tree_part::LIMB), 7);
-    assert_eq!(
-        named(tree_part::BRANCH_STAGE_1) + named(tree_part::BRANCH_STAGE_2),
-        4
-    );
-    let standing = tree_model(&oak, TreeDetail::Full);
-    let crown = standing.find(tree_part::CROWN).unwrap();
-    assert_eq!(drawn_triangles(&felled), drawn_triangles(crown));
-    let birch = TreeShape {
-        x: -36.0,
-        z: -9.0,
-        ..oak
-    };
-    assert!(felled_crown(&birch).is_none());
-}
-
 /// A toppled watchtower's footings keep its concrete and timber stubs, never its
 /// clapboard cabin. A browser can't tell this from texture downloads: village houses
 /// load the same files.

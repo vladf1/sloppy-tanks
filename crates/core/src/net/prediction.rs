@@ -22,7 +22,7 @@ use crate::sim::simulation::structure_parts;
 use crate::sim::structure::{PartSet, Structure, structure_of};
 use crate::sim::structure_physics::{
     WHOLE, cap_loose_speed, debris_colliders, part_collider, passes_through, rest_body,
-    set_passing_through, structural, unrest_body,
+    built_of_parts, set_passing_through, unrest_body,
 };
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
@@ -1209,7 +1209,7 @@ pub fn debris_offset(fragment: &RenderFragment) -> f64 {
 
 /// How a cover record stands in the predicted world, or `None` when nothing is left of it.
 fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
-    if structural(cover.kind) {
+    if built_of_parts(cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h) {
         Some(CoverForm::Parts(cover.broken))
     } else if cover.alive {
         Some(CoverForm::Standing)

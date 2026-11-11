@@ -34,7 +34,7 @@ use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::navigation::GRID_SIZE;
 use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::structure::PartSet;
-use sloppy_core::sim::structure_physics::structural;
+use sloppy_core::sim::structure_physics::built_of_parts;
 use sloppy_core::sim::tower_structure::tower_structure;
 use sloppy_core::sim::types::{Team, VehicleKind};
 use sloppy_core::sim::{CoverKind, RenderState, Simulation, SimulationSetup};
@@ -286,7 +286,9 @@ fn workload(name: &str) -> Box<dyn FnOnce() -> u64> {
                 let mut hasher = DefaultHasher::new();
                 let mut seen = std::collections::HashSet::new();
                 for cover in covers {
-                    if !structural(cover.kind) || !seen.insert(cover.kind) {
+                    if !built_of_parts(cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h)
+                        || !seen.insert(cover.kind)
+                    {
                         continue;
                     }
                     let cover = covers

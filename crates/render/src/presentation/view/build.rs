@@ -9,7 +9,7 @@ use sloppy_core::models::round_texture_files;
 use sloppy_core::models::{CoverShape, structure_debris};
 use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::structure::PartSet;
-use sloppy_core::sim::structure_physics::structural;
+use sloppy_core::sim::structure_physics::built_of_parts;
 use sloppy_core::sim::tower_structure::tower_structure;
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
 
@@ -261,7 +261,10 @@ impl Presentation {
     fn add_cover_samples(&mut self, covers: &[RenderCover]) {
         let mut seen = crate::fixed_hash::HashSet::default();
         for cover in covers {
-            if !structural(cover.kind) || !seen.insert(cover.kind) {
+            let parts = |cover: &RenderCover| {
+                built_of_parts(cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h)
+            };
+            if !parts(cover) || !seen.insert(cover.kind) {
                 continue;
             }
             // A structure with parts broken out registers its torn edges and lining, and
@@ -270,7 +273,7 @@ impl Presentation {
             // page's peak heap for good.
             let cover = covers
                 .iter()
-                .filter(|other| other.kind == cover.kind)
+                .filter(|other| other.kind == cover.kind && parts(other))
                 .min_by(|a, b| (a.w * a.d * a.h).total_cmp(&(b.w * b.d * b.h)))
                 .unwrap_or(cover);
             let broken = match cover.kind {
