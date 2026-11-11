@@ -1395,11 +1395,13 @@ impl Simulation {
             // A piece is a body of its own from its landing: it falls flat over the next
             // moments before it is damped to rest, rather than freezing on its edge.
             piece.created_at = Some(self.elapsed);
+            // What stays together of a tree falls on, to land again ([`Structure::snaps_on_ground`]).
+            let landed = !(layout.snaps_on_ground && section.len() > 1);
             piece.structure = Some(StructureDebris {
                 cover: debris.cover,
                 parts: section,
                 velocity: from_vector(self.world.bodies[body].linvel()),
-                landed: true,
+                landed,
                 landed_at: self.elapsed,
                 ..StructureDebris::default()
             });
@@ -1522,6 +1524,29 @@ impl Simulation {
             debris.landed_at = elapsed;
         }
     }
+}
+
+/// A part of a body this low (m) reaches the ground.
+const GROUND_TOUCH: f32 = 0.2;
+
+/// What a falling body of `parts` that landed hard breaks into when only its parts on the
+/// ground snap off ([`Structure::snaps_on_ground`]): each of those alone, and the rest
+/// together.
+fn ground_snaps(simulation: &Simulation, handle: RigidBodyHandle, layout: &Structure, parts: &PartSet) -> Vec<PartSet> {
+    let mut rest = *parts;
+    let mut bodies = Vec::new();
+    for &collider in simulation.world.bodies[handle].colliders() {
+        let collider = &simulation.world.colliders[collider];
+        let part = collider.user_data as usize;
+        if rest.contains(part) && !layout.part(part).load && collider.compute_aabb().mins.y <= GROUND_TOUCH {
+            rest.remove(part);
+            bodies.push(PartSet::from_indices([part]));
+        }
+    }
+    if !rest.is_empty() {
+        bodies.push(rest);
+    }
+    bodies
 }
 
 /// The first [`SHATTER_EVENTS`] of `items` in `order`, in that order (equal ones as they
@@ -1699,6 +1724,16 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             simulation.burst_bricks(index);
             continue;
         }
+        // A falling tree's limbs that reach the ground cannot hold it up: they snap off
+        // however gently they meet it, until it lies on its trunk.
+        if layout.snaps_on_ground && !debris.landed && alive && debris.parts.len() > 1 {
+            let bodies = ground_snaps(simulation, handle, &layout, &debris.parts);
+            let room = simulation.fragments.len() + bodies.len() - 1 <= simulation.max_fragments;
+            if bodies.len() > 1 && room {
+                simulation.split_debris(index, &layout, bodies, None);
+                continue;
+            }
+        }
         let stopped = !debris.landed
             && debris.parts.len() > 1
             && debris
@@ -1721,7 +1756,11 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
                 simulation.events.push(crash);
             }
             let room = |count: usize| simulation.fragments.len() + count - 1 <= simulation.max_fragments;
-            let mut bodies = layout.landing(&debris.parts, false);
+            let mut bodies = if layout.snaps_on_ground {
+                ground_snaps(simulation, handle, &layout, &debris.parts)
+            } else {
+                layout.landing(&debris.parts, false)
+            };
             if !room(bodies.len()) {
                 bodies = layout.landing(&debris.parts, true);
             }
@@ -1730,8 +1769,10 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
                 continue;
             }
             // A body that lands whole (a lone part, or one the budget has no room to
-            // break) settles from now, however long it has been falling.
-            if let Some(debris) = &mut simulation.fragments[index].structure {
+            // break) settles from now, however long it has been falling; a tree whose
+            // limbs did not reach the ground falls on, to land again.
+            let falls_on = layout.snaps_on_ground && debris.parts.len() > 1;
+            if !falls_on && let Some(debris) = &mut simulation.fragments[index].structure {
                 debris.landed = true;
                 debris.landed_at = simulation.elapsed;
             }

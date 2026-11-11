@@ -637,6 +637,10 @@ pub struct Structure {
     /// What a fallen body of exactly `needs` snaps into where a shell meets it (a limb
     /// in two along its main branch), never on landing: pieces from `pieces` on.
     pub snaps: Vec<Breakup>,
+    /// A falling body landing hard snaps off only its parts that reach the ground (a
+    /// felled tree's limbs under it), never its loads; what stays together falls on and
+    /// may land hard again, until it lies still.
+    pub snaps_on_ground: bool,
     /// Its parts' collider shapes, each built the first time a collider asks for it.
     pub shapes: ShapeCache,
     /// Its supports turned round, built the first time the share rule runs.
@@ -735,6 +739,7 @@ impl Structure {
             health_part: None,
             foliage: Vec::new(),
             snaps: Vec::new(),
+            snaps_on_ground: false,
             shapes: ShapeCache::default(),
             holds: HoldsCache::default(),
         }

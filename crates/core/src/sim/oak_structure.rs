@@ -57,10 +57,10 @@ const OAK_TIPPING: Tipping = Tipping {
     rise: 0.0,
     snap: None,
 };
-/// A felled oak breaks apart where it strikes the ground, never on its own remains, and
-/// clears as other scenery's pieces do.
+/// A felled oak breaks apart only where it strikes the ground hard, never on its own
+/// remains, and clears as other scenery's pieces do.
 const OAK_DEBRIS: DebrisRules = DebrisRules {
-    landing_speed: 1.5,
+    landing_speed: OAK_LANDING_SPEED,
     firm_only: true,
     one_clock: false,
     life: 9.5,
@@ -69,6 +69,9 @@ const OAK_DEBRIS: DebrisRules = DebrisRules {
     seam: 0.0,
 };
 const OAK_DUST: f64 = 2.5;
+/// The change of speed (m/s) in a tick that breaks a felled oak where it lands: a crown
+/// coming down from full height, not a trunk rolling over.
+const OAK_LANDING_SPEED: f64 = 3.0;
 /// The stump's tank-only footprint is this tall, so a hull cannot climb it.
 const STUMP_HEIGHT: f64 = 1.6;
 /// The least thickness (m from its axis) of a limb's hull: its main branch tapers to a
@@ -194,8 +197,11 @@ fn lay_out_oak(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
     for limb in FIRST_LIMB..structure.parts.len() {
         structure.join(OAK_TRUNK, limb);
     }
+    // The trunk and its limbs are one piece of wood: a hard landing breaks it in a few
+    // places (two to four pieces along a break line, `Structure::landing`), not at every
+    // limb. The stump and butt stand apart.
     for (index, part) in structure.parts.iter_mut().enumerate() {
-        part.element = index as u16;
+        part.element = index.min(OAK_TRUNK) as u16;
     }
     // A fallen limb a shell meets snaps in two where its main branch passes the snap
     // ring; a piece of it is knocked aside whole.
@@ -237,6 +243,7 @@ fn lay_out_oak(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
         }
     }
     structure.breachable = false;
+    structure.snaps_on_ground = true;
     structure.health_part = Some(OAK_BUTT);
     structure.variant = proportions.seed;
     structure.levelling = Levelling {

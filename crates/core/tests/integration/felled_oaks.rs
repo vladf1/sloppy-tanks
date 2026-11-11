@@ -1,6 +1,7 @@
 //! A felled oak (`oak_structure`): two standard shells snap its butt, its trunk and limbs
-//! tip over as one body, land and break apart, and lie on the ground, not in it, while
-//! its rooted stump stays for tanks alone.
+//! tip over as one body, the limbs that strike the ground snap off under it, and it lies
+//! on the ground, not in it or up on its limbs, while its rooted stump stays for tanks
+//! alone.
 
 use crate::support::{clear_arena, collider_groups, fire_at, place_tank, run};
 
@@ -8,7 +9,7 @@ use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::group;
 use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::oak_layout::TreePart;
-use sloppy_core::sim::oak_structure::OAK_BUTT;
+use sloppy_core::sim::oak_structure::{OAK_BUTT, OAK_TRUNK};
 use sloppy_core::sim::structure::{PartSet, Role};
 use sloppy_core::sim::{CoverKind, SimEventType, Simulation, Weapon};
 
@@ -57,10 +58,23 @@ fn a_felled_oak_breaks_apart_on_the_ground_and_leaves_its_stump() {
         })
         .collect();
     assert!(
-        fallen.len() >= 4,
-        "the trunk and its limbs break apart where they land: {} bodies",
+        fallen.len() >= 2,
+        "the limbs that strike the ground snap off: {} bodies",
         fallen.len()
     );
+    // The limbs that held it up are gone from under it: its trunk lies on the ground.
+    let trunk = fallen
+        .iter()
+        .find(|piece| piece.structure.as_ref().unwrap().parts.contains(OAK_TRUNK))
+        .expect("the trunk lies on");
+    let trunk_low = s.world.bodies[trunk.body]
+        .colliders()
+        .iter()
+        .map(|&collider| &s.world.colliders[collider])
+        .filter(|collider| collider.user_data as usize == OAK_TRUNK)
+        .map(|collider| collider.compute_aabb().mins.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(trunk_low < 0.3, "the trunk lies on the ground: {trunk_low}");
     for piece in &fallen {
         let body = &s.world.bodies[piece.body];
         let lowest = body
