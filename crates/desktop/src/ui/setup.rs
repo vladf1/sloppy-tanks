@@ -15,7 +15,7 @@ use sloppy_web::catalog::{
 
 use super::icons::{Art, LOGO_BOX};
 use super::paint::{self, fade, hex, hexa, mix};
-use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
+use super::theme::{GOLD, TEXT, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, UiState, View};
 use crate::preferences::Preferences;
 
@@ -682,6 +682,12 @@ const STACKED_TEAM_ART: TeamArt = TeamArt {
     tank_width: 0.62,
     red_top: 0.08,
     blue_bottom: 0.06,
+};
+/// An upright tablet's posters are wider than tall: the tanks face off side by side.
+const WIDE_TEAM_ART: TeamArt = TeamArt {
+    tank_width: 0.5,
+    red_top: 0.0,
+    blue_bottom: 0.0,
 };
 
 /// A battle format's scene washes, which tell a two-sided fight from a lone tank, in
@@ -1853,7 +1859,8 @@ const FIT_MARGIN: f32 = 50.0;
 const MIN_FIT_ROOM: f32 = 120.0;
 /// The stacked layout's widest (`.menu.start`).
 const STACK_MAX_WIDTH: f32 = 1040.0;
-/// Windows this short leave out the logo's row and the key strip (`max-height: 770px`).
+/// Windows this short shrink the logo to the tabs' row and leave out the key strip
+/// (`max-height: 770px`).
 const SHORT_MAX_HEIGHT: f32 = 770.0;
 /// Windows this narrow give a tank card's class a line of its own (`max-width: 900px`),
 /// and these leave out the key strip (`max-width: 800px`).
@@ -1884,8 +1891,13 @@ const LOGO_ABOVE: f32 = 6.0;
 const LOGO_BELOW: f32 = 18.0;
 const NARROW_LOGO_BELOW: f32 = 14.0;
 const LOGO_TAB_GAP: f32 = 22.0;
-/// A narrow window's smaller logo (TANKS at 34 px against 41).
+/// A narrow window's smaller logo (TANKS at 34 px against 41), and a short one's, as tall
+/// as the open tab beside it.
 const NARROW_LOGO_SCALE: f32 = 34.0 / 41.0;
+const SHORT_LOGO_SCALE: f32 = 0.86;
+const SHORT_LOGO_BELOW: f32 = 4.0;
+/// An upright tablet's battle posters, across the panel.
+const UPRIGHT_POSTER: f32 = 190.0;
 /// Between the two play tabs, and between them and the Settings plate.
 const TABS_GAP: f32 = 6.0;
 const CORNER_GAP: f32 = 10.0;
@@ -2031,6 +2043,25 @@ impl StackWindow {
             (dress.open_padding.0 + content + dress.open_padding.1).max(open_least),
             (dress.closed_padding.0 + content + dress.closed_padding.1).max(closed_least),
         )
+    }
+
+    /// An upright tablet lays the battle posters across the panel, over the difficulty
+    /// levels at its full width and GO: in a third of it the levels' lines wrapped four
+    /// and five deep and stretched the posters into empty columns.
+    fn posters_across(&self) -> bool {
+        self.upright_tablet && !self.narrow
+    }
+
+    /// The logo's scale: smaller in one column, and on a short screen, where it fits the
+    /// tabs' row beside it.
+    fn logo_scale(&self) -> f32 {
+        if self.narrow {
+            NARROW_LOGO_SCALE
+        } else if self.short {
+            SHORT_LOGO_SCALE
+        } else {
+            1.0
+        }
     }
 
     fn tank_rows(&self) -> TankRows {
@@ -2421,8 +2452,8 @@ struct Stack {
     size: Vec2,
     content_left: f32,
     content_width: f32,
-    /// The logo's origin and scale, when it shows.
-    logo: Option<(Pos2, f32)>,
+    /// The logo's origin and scale.
+    logo: (Pos2, f32),
     corner: Rect,
     tabs: [Rect; 2],
     tab_line: TabLine,
@@ -2456,36 +2487,28 @@ fn stack_layout(
     let corner_width = corner_plate_width();
     let top = MENU_BORDER + pad_top;
 
-    // The logo (unless the screen is short) and the tabs: beside it, or in one column on
+    // The logo (smaller on a short screen) and the tabs: beside it, or in one column on
     // a row under it. The Settings plate keeps the tabs' row's right end, or the logo's
     // row's in one column.
-    let logo_scale = if window.narrow {
-        NARROW_LOGO_SCALE
-    } else {
-        1.0
-    };
+    let logo_scale = window.logo_scale();
     let logo_size = vec2(LOGO_BOX[0], LOGO_BOX[1]) * logo_scale;
-    let header = if window.short {
-        0.0
-    } else {
-        LOGO_ABOVE
-            + logo_size.y
-            + if window.narrow {
-                NARROW_LOGO_BELOW
-            } else {
-                LOGO_BELOW
-            }
-    };
-    let logo = (!window.short).then(|| {
-        let x = if window.narrow {
-            content_left + (content_width - logo_size.x) / 2.0
+    let header = LOGO_ABOVE
+        + logo_size.y
+        + if window.narrow {
+            NARROW_LOGO_BELOW
+        } else if window.short {
+            SHORT_LOGO_BELOW
         } else {
-            content_left
+            LOGO_BELOW
         };
-        (pos2(x, top + LOGO_ABOVE), logo_scale)
-    });
-    let corner_in_logo_row = window.narrow && !window.short;
-    let tabs_left = if window.narrow || window.short {
+    let logo_x = if window.narrow {
+        content_left + (content_width - logo_size.x) / 2.0
+    } else {
+        content_left
+    };
+    let logo = (pos2(logo_x, top + LOGO_ABOVE), logo_scale);
+    let corner_in_logo_row = window.narrow;
+    let tabs_left = if window.narrow {
         content_left
     } else {
         content_left + logo_size.x + LOGO_TAB_GAP
@@ -2576,7 +2599,17 @@ fn stack_layout(
         + super::rooms::NAME_FIELD_HEIGHT
         + PANEL_ROW_GAP
         + super::rooms::team_well_height(painter, column);
-    let panel_row = difficulty_column.max(driver_column);
+    let panel_row = if window.posters_across() {
+        let levels = 2.0 * WELL_GAP
+            + DIFFICULTY_OPTIONS
+                .iter()
+                .map(|entry| difficulty_height(painter, entry, inner_width - 2.0 * WELL_PADDING))
+                .sum::<f32>();
+        (2.0 * (HEADING_ROW + 2.0 * WELL_PADDING) + UPRIGHT_POSTER + PANEL_ROW_GAP + levels)
+            .max(driver_column)
+    } else {
+        difficulty_column.max(driver_column)
+    };
     let panel = if !window.narrow {
         panel_row + PANEL_ROW_GAP + ACTION_HEIGHT
     } else if rooms.multiplayer {
@@ -2817,9 +2850,8 @@ fn draw_stack(
     let place = |rect: Rect| rect.translate(origin.to_vec2());
     let painter = ui.painter().clone();
     sheet_glass(&painter, Rect::from_min_size(origin, stack.size));
-    if let Some((logo, scale)) = stack.logo {
-        art.logo_scaled(&painter, origin + logo.to_vec2(), scale);
-    }
+    let (logo, scale) = stack.logo;
+    art.logo_scaled(&painter, origin + logo.to_vec2(), scale);
     corner_buttons(ui, art, place(stack.corner), actions);
 
     // The tray under its tabs, the open one covering its edge.
@@ -3040,6 +3072,29 @@ fn draw_stack(
                     go,
                     NARROW_GO_LETTERING,
                 )
+            } else if window.posters_across() {
+                // The posters across the panel, the levels under them and GO at the
+                // bottom, all at the panel's width.
+                let row = stack.panel_row;
+                let battle_well = Rect::from_min_size(
+                    pos2(inner_left, panel_top + HEADING_ROW),
+                    vec2(inner_width, UPRIGHT_POSTER + 2.0 * WELL_PADDING),
+                );
+                let difficulty_label = pos2(inner_left, battle_well.bottom() + PANEL_ROW_GAP);
+                (
+                    battle_well,
+                    difficulty_label,
+                    Rect::from_min_max(
+                        difficulty_label + vec2(0.0, HEADING_ROW),
+                        pos2(inner_right, panel_top + row),
+                    ),
+                    pos2(inner_right, panel_top + 4.0),
+                    Rect::from_min_size(
+                        pos2(inner_left, panel_top + row + PANEL_ROW_GAP),
+                        vec2(inner_width, ACTION_HEIGHT),
+                    ),
+                    GO_LETTERING,
+                )
             } else {
                 let row = stack.panel_row;
                 let battle_well = Rect::from_min_max(
@@ -3118,7 +3173,11 @@ fn draw_stack(
                     &battle.detail_on(options.map_mode),
                     selected,
                     hovered,
-                    STACKED_TEAM_ART,
+                    if window.posters_across() {
+                        WIDE_TEAM_ART
+                    } else {
+                        STACKED_TEAM_ART
+                    },
                 );
             }
             // The format kept for the standard maps changes only by choosing one there,
@@ -3247,42 +3306,100 @@ const PHONE_SIDEWAYS_ROOM_ACTION: f32 = 50.0;
 /// padding and the 10 px gap after it).
 const PHONE_LOGO_SCALE: f32 = 46.0 / 41.0;
 const PHONE_LOGO_BELOW: f32 = 16.0;
-/// The Home Screen tip's line in an iPhone's browser.
-const PHONE_TIP: f32 = 18.0;
+/// The Home Screen tip in an iPhone's browser: its share mark's tile and the mark in it,
+/// and the gap after the tile. It has no box of its own: its words end on the sheet's
+/// padding, opposite the logo's start.
+const HINT_TILE: f32 = 30.0;
+const HINT_MARK: f32 = 18.0;
+const HINT_GAP: f32 = 9.0;
+/// Sideways, one line beside YOUR TANK: its mark and gap.
+const HINT_LINE_MARK: f32 = 16.0;
+const HINT_LINE_GAP: f32 = 6.0;
 /// Tank and map cards' least and most height, upright (narrow tank cards, maps with
 /// their lines where they have the room) and sideways (short cards with their names
-/// alone, at most the page's: the name over a 42 px picture). Upright the least fits an
+/// over their weight beside the tank). Upright the least fits an
 /// iPhone's Safari with its bars (393×659).
-const PHONE_UPRIGHT_TANK: (f32, f32) = (110.0, 200.0);
+const PHONE_UPRIGHT_TANK: (f32, f32) = (110.0, 150.0);
 const PHONE_UPRIGHT_MAP: (f32, f32) = (48.0, 64.0);
 const PHONE_SIDEWAYS_TANK: (f32, f32) = (56.0, 72.0);
 const PHONE_SIDEWAYS_MAP: (f32, f32) = (40.0, 48.0);
-/// A phone's tank card at least this tall stands its labels over the tank.
+/// A phone's tank card at least this tall shows its name, its tank and its weight.
 const PHONE_TALL_CARD: f32 = 110.0;
-/// A tall phone card's padding (above and below, at the sides), its name's line, its
-/// class tag and the gap between its rows (`.phone .menu.start .vehicle`).
+/// A tall phone card's padding (above and below, at the sides) and its name's line.
 const PHONE_CARD_PADDING: [f32; 2] = [10.0, 12.0];
 const PHONE_NAME_LINE: f32 = 20.4;
-const PHONE_TAG_HEIGHT: f32 = 17.6;
-const PHONE_ROW_GAP: f32 = 4.0;
-/// A short (sideways) card's padding above, at the sides and below, its picture's
-/// height, and how far the picture tucks up into the name's line (`.phone .start
-/// .vehicle`, `.phone .menu.start .tank-preview`).
-const PHONE_SHORT_CARD_PADDING: [f32; 3] = [8.0, 10.0, 4.0];
-const PHONE_SHORT_PREVIEW: f32 = 42.0;
-const PHONE_SHORT_PREVIEW_TUCK: f32 = 4.0;
-/// Its hull and speed lines: a label's line and its bar, the two rows' whole height with
-/// production's gaps and closed up, and the least box the tank keeps over them.
-const PHONE_SPEC_LABEL: f32 = 12.6;
-const PHONE_SPEC_BAR: f32 = 4.0;
-const PHONE_SPEC: f32 = 48.2;
-const PHONE_TIGHT_SPEC: f32 = 37.2;
-const PHONE_LEAST_STAGE: f32 = 40.0;
-/// The tank's box, and how much larger than their class's scale the tanks fill it; the
-/// heavy one takes a smaller scale so it stays inside its narrow card.
-const PHONE_PREVIEW: f32 = 82.0;
-const PHONE_TANK_GROWTH: f32 = 1.22;
-const PHONE_HEAVY_SCALE: f32 = 0.88;
+/// A short (sideways) card's padding (above and below, at the sides).
+const PHONE_SHORT_CARD_PADDING: [f32; 2] = [7.0, 12.0];
+/// A tall card's weight line at its foot, each of its three steps (narrowed to the least
+/// where the word leaves little room), the gap between them and before them; how far the tank's box reaches into the name's and the weight's lines, and how
+/// much larger than their class's scale the tanks fill it.
+const PHONE_WEIGHT_LINE: f32 = 14.0;
+const PHONE_WEIGHT_STEP: Vec2 = vec2(9.0, 4.0);
+const PHONE_WEIGHT_STEP_GAP: f32 = 3.0;
+const PHONE_WEIGHT_STEP_LEAST: f32 = 5.0;
+const PHONE_WEIGHT_WORD_GAP: f32 = 6.0;
+/// The weight word's letter spacing.
+const PHONE_WEIGHT_SPACING: f32 = 0.5;
+const PHONE_STAGE_TUCK: f32 = 6.0;
+const PHONE_TANK_GROWTH: f32 = 1.1;
+
+/// Upright, beside the logo: Safari's Share mark in a tile, then "Play full screen" over
+/// "Add to Home Screen", the longer line ending at `right_middle`, level with its middle.
+fn home_screen_chip(painter: &Painter, art: &Art, right_middle: Pos2) {
+    let title = ("Play full screen", bold_font(13.0), TEXT);
+    let steps = (
+        "Add to Home Screen",
+        egui::FontId::proportional(12.0),
+        TEXT_DIM,
+    );
+    let text_width = [&title, &steps]
+        .map(|(line, font, _)| paint::text_width(painter, line, font.clone(), 0.0))
+        .into_iter()
+        .fold(0.0, f32::max);
+    let text_left = right_middle.x - text_width;
+    let tile = Rect::from_center_size(
+        pos2(text_left - HINT_GAP - HINT_TILE / 2.0, right_middle.y),
+        Vec2::splat(HINT_TILE),
+    );
+    painter.rect_filled(tile, 8, hexa(0x8ed4ff, 0.14));
+    art.icon(
+        painter,
+        "share",
+        Rect::from_center_size(tile.center(), Vec2::splat(HINT_MARK)),
+        TEXT_LABEL,
+    );
+    for ((line, font, color), anchor, y) in [
+        (title, Align2::LEFT_BOTTOM, tile.center().y + 0.5),
+        (steps, Align2::LEFT_TOP, tile.center().y + 1.5),
+    ] {
+        paint::text(painter, pos2(text_left, y), anchor, line, font, color, 0.0);
+    }
+}
+
+/// Sideways, beside YOUR TANK: the mark and one line, ending at `right_middle`.
+fn home_screen_line(painter: &Painter, art: &Art, right_middle: Pos2) {
+    let line = "Add to Home Screen to play full screen";
+    let font = egui::FontId::proportional(13.0);
+    let text_width = paint::text_width(painter, line, font.clone(), 0.0);
+    let text_left = right_middle.x - text_width;
+    let mark = Rect::from_center_size(
+        pos2(
+            text_left - HINT_LINE_GAP - HINT_LINE_MARK / 2.0,
+            right_middle.y - 0.5,
+        ),
+        Vec2::splat(HINT_LINE_MARK),
+    );
+    art.icon(painter, "share", mark, TEXT_LABEL);
+    paint::text(
+        painter,
+        pos2(text_left, right_middle.y),
+        Align2::LEFT_CENTER,
+        line,
+        font,
+        TEXT_DIM,
+        0.0,
+    );
+}
 
 /// A phone's play tabs (`.phone .play-tab`): the name alone at 17 px, and held sideways
 /// a small round badge before it.
@@ -3347,13 +3464,7 @@ fn phone_setup(
     // Everything but the rows that grow: upright the logo, the tanks, the tabs and the
     // tray of maps, formats and GO; sideways the tabs over a tray of tanks, maps and the
     // formats beside GO.
-    let tip = if crate::touch::home_screen_tip() {
-        PHONE_TIP
-    } else {
-        0.0
-    };
     let fixed = 2.0 * PHONE_MARGIN + pad_top + pad_bottom + PHONE_TABS - 1.0
-        + tip
         + 2.0 * PHONE_TRAY_PADDING
         + 2.0 * (PHONE_LABEL + PHONE_GAP)
         + action_row
@@ -3454,32 +3565,16 @@ fn phone_setup(
                         }
                         y + tank_height + 2.0 * WELL_PADDING + PHONE_GAP
                     };
-                    // An iPhone's browser suggests the Home Screen: a line under the logo,
-                    // since it is about the whole game; sideways it alone heads the sheet.
-                    let home_screen_tip = |y: f32| {
-                        if tip > 0.0 {
-                            paint::text(
-                                &painter,
-                                pos2(canvas.center().x, y + tip / 2.0),
-                                Align2::CENTER_CENTER,
-                                "Play full screen: Share, then Add to Home Screen",
-                                egui::FontId::proportional(13.0),
-                                TEXT_LABEL,
-                                0.0,
-                            );
-                        }
-                        y + tip
-                    };
+                    // An iPhone's browser suggests the Home Screen in room the header
+                    // leaves: upright beside the logo, sideways beside YOUR TANK.
+                    let tip = crate::touch::home_screen_tip();
                     if upright {
-                        art.logo_scaled(
-                            &painter,
-                            pos2(canvas.center().x - logo.x / 2.0, y),
-                            PHONE_LOGO_SCALE,
-                        );
-                        y = home_screen_tip(y + logo.y) + PHONE_LOGO_BELOW;
+                        art.logo_scaled(&painter, pos2(left, y), PHONE_LOGO_SCALE);
+                        if tip {
+                            home_screen_chip(&painter, art, pos2(left + width, y + logo.y / 2.0));
+                        }
+                        y += logo.y + PHONE_LOGO_BELOW;
                         y = tank_row(ui, y, left, width) + PHONE_GAP;
-                    } else {
-                        y = home_screen_tip(y);
                     }
                     // The play tabs span the sheet's top edge over the tray.
                     let tab_width = (width - TABS_GAP) / 2.0;
@@ -3511,6 +3606,13 @@ fn phone_setup(
                     ));
                     y = inner.top();
                     if !upright {
+                        if tip {
+                            home_screen_line(
+                                &painter,
+                                art,
+                                pos2(inner.right(), y + PHONE_LABEL / 2.0 - 2.0),
+                            );
+                        }
                         y = tank_row(ui, y, inner.left(), inner.width());
                     }
 
@@ -3687,10 +3789,11 @@ fn phone_setup(
         });
 }
 
-/// A phone's tank card (`.phone .start .vehicle`). Upright, a narrow card: the name, the
-/// class in a small tag led by its colour's dot, the tank, and its hull and speed as
-/// bars the card's width, the only way a new player tells the tanks apart. Sideways, a
-/// short card: the name over a small picture of the tank.
+/// A phone's tank card, which tells the tanks apart at a glance: the name, the tank large,
+/// the heavier ones larger, and its weight, a word and up to three steps in its class's
+/// colour. Upright a narrow card, the tank between the name and the weight at the foot;
+/// sideways a short wide one, the name over the weight at the left and the tank at the
+/// right.
 fn phone_tank_card(
     painter: &Painter,
     art: &Art,
@@ -3701,7 +3804,37 @@ fn phone_tank_card(
 ) {
     let rect = showroom(painter, rect, selected, false);
     let tall = rect.height() >= PHONE_TALL_CARD;
-    let [pad_y, pad_x] = PHONE_CARD_PADDING;
+    let [pad_y, pad_x] = if tall {
+        PHONE_CARD_PADDING
+    } else {
+        PHONE_SHORT_CARD_PADDING
+    };
+    let foot = rect.bottom() - pad_y - PHONE_WEIGHT_LINE;
+    // The tank reaches a little into the name's and the weight's lines, at its class's
+    // scale: a heavy one runs off the card's sides, which cut it off. Sideways it has the
+    // card's right half and its full height.
+    let stage = if tall {
+        Rect::from_min_max(
+            pos2(
+                rect.left(),
+                rect.top() + pad_y + PHONE_NAME_LINE - PHONE_STAGE_TUCK,
+            ),
+            pos2(rect.right(), foot + PHONE_STAGE_TUCK),
+        )
+    } else {
+        Rect::from_min_max(
+            pos2(rect.center().x, rect.top()),
+            pos2(rect.right() - pad_x, rect.bottom() + PHONE_STAGE_TUCK),
+        )
+    };
+    art.tank(
+        &painter.with_clip_rect(rect.shrink(1.0)),
+        tank.kind,
+        team,
+        stage,
+        tank.scale * PHONE_TANK_GROWTH,
+        false,
+    );
     paint::shadowed(
         painter,
         pos2(
@@ -3714,127 +3847,55 @@ fn phone_tank_card(
         Color32::WHITE,
         0.5,
     );
-    if !tall {
-        // The picture's box spans the card under the name, tucked up into its line, and
-        // the tank sits in it at its class's scale, centred.
-        let [pad_top, pad_x, pad_bottom] = PHONE_SHORT_CARD_PADDING;
-        let bottom = rect.bottom() - pad_bottom;
-        let top = (bottom - PHONE_SHORT_PREVIEW)
-            .max(rect.top() + pad_top + PHONE_NAME_LINE - PHONE_SHORT_PREVIEW_TUCK);
-        art.tank(
-            &painter.with_clip_rect(rect.shrink(1.0)),
-            tank.kind,
-            team,
-            Rect::from_min_max(
-                pos2(rect.left() + pad_x, top),
-                pos2(rect.right() - pad_x, bottom),
-            ),
-            tank.scale,
-            false,
-        );
-        showroom_ring(painter, rect, selected);
-        return;
-    }
-    // The class in one word in a small tag, led by a dot in its colour.
-    let class = paint::upper(tank.short_class);
-    let font = bold_font(10.5);
-    let tag = Rect::from_min_size(
-        pos2(
-            rect.left() + pad_x,
-            rect.top() + pad_y + PHONE_NAME_LINE + PHONE_ROW_GAP,
-        ),
-        vec2(
-            5.0 + 5.0 + 4.0 + paint::text_width(painter, &class, font.clone(), 0.2) + 6.0,
-            PHONE_TAG_HEIGHT,
-        ),
-    );
-    painter.rect_filled(tag, 4, hexa(0xffffff, 0.06));
-    painter.rect_stroke(
-        tag,
-        4,
-        Stroke::new(1.0, hexa(0xffffff, 0.1)),
-        StrokeKind::Inside,
-    );
-    painter.circle_filled(pos2(tag.left() + 7.5, tag.center().y), 2.5, hex(tank.color));
-    paint::text(
+    // The weight: its word, and its steps at the card's right upright or after the
+    // longest word sideways. Upright they narrow where a small phone leaves the longest
+    // word little room, alike on every card.
+    let middle = foot + PHONE_WEIGHT_LINE / 2.0;
+    let color = hex(tank.color);
+    let font = bold_font(11.0);
+    paint::shadowed(
         painter,
-        pos2(tag.left() + 14.0, tag.center().y),
+        pos2(rect.left() + pad_x, middle),
         Align2::LEFT_CENTER,
-        &class,
-        font,
-        hex(0xdbe8f4),
-        0.2,
+        &paint::upper(tank.weight),
+        font.clone(),
+        color,
+        PHONE_WEIGHT_SPACING,
     );
-    // Hull and speed, each a label over a bar the card's width, their rows closing up
-    // where a short screen leaves the tank little room.
-    let band = rect.height() - (tag.bottom() - rect.top()) - PHONE_ROW_GAP - pad_y;
-    let roomy = ((band - PHONE_LEAST_STAGE - PHONE_TIGHT_SPEC) / (PHONE_SPEC - PHONE_TIGHT_SPEC))
-        .clamp(0.0, 1.0);
-    let label_gap = 1.0 + 4.0 * roomy;
-    let row_gap = 2.0 + 3.0 * roomy;
-    let row = PHONE_SPEC_LABEL + label_gap + PHONE_SPEC_BAR;
-    let spec_top = rect.bottom() - pad_y - 2.0 * row - row_gap;
-    for (index, (label, share)) in [
-        (
-            paint::short(format_args!("{} HP", tank.hit_points())),
-            tank.hit_points_share(),
-        ),
-        (
-            paint::short(format_args!("{} KM/H", tank.km_per_hour())),
-            tank.speed_share(),
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let top = spec_top + index as f32 * (row + row_gap);
-        paint::text(
-            painter,
-            pos2(rect.left() + pad_x, top + PHONE_SPEC_LABEL / 2.0),
-            Align2::LEFT_CENTER,
-            &label,
-            bold_font(10.5),
-            hex(0xdbe9f6),
-            0.0,
-        );
-        let track = Rect::from_min_size(
-            pos2(rect.left() + pad_x, top + PHONE_SPEC_LABEL + label_gap),
-            vec2(rect.width() - 2.0 * pad_x, PHONE_SPEC_BAR),
-        );
-        painter.rect_filled(track, 2, hexa(0xffffff, 0.09));
-        let (from, to) = if index == 0 {
-            (hex(0x6fc6ff), hex(0xb8e4ff))
-        } else {
-            (GOLD, super::theme::GOLD_HOT)
-        };
-        painter.add(paint::hgradient(
-            Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
-            &[(0.0, from), (1.0, to)],
-        ));
-    }
-    // The tank fills its box between the tag and the bars, well clear of the card's
-    // edges: the heavy one a little smaller than its class's scale elsewhere.
-    let between = Rect::from_min_max(
-        pos2(rect.left() + pad_x, tag.bottom() + PHONE_ROW_GAP),
-        pos2(rect.right() - pad_x, spec_top - PHONE_ROW_GAP),
-    );
-    let stage = Rect::from_center_size(
-        between.center() - vec2(0.0, 3.0),
-        vec2(between.width(), between.height().min(PHONE_PREVIEW)),
-    );
-    let class_scale = if tank.kind == VehicleKind::Heavy {
-        PHONE_HEAVY_SCALE
+    let longest = TANK_CARDS
+        .iter()
+        .map(|card| {
+            paint::text_width(
+                painter,
+                &paint::upper(card.weight),
+                font.clone(),
+                PHONE_WEIGHT_SPACING,
+            )
+        })
+        .fold(0.0, f32::max);
+    let steps = TANK_CARDS.len();
+    let gaps = (steps - 1) as f32 * PHONE_WEIGHT_STEP_GAP;
+    let words_end = rect.left() + pad_x + longest + PHONE_WEIGHT_WORD_GAP;
+    let (step_width, step_left) = if tall {
+        let room = rect.right() - pad_x - words_end - gaps;
+        let width = (room / steps as f32).clamp(PHONE_WEIGHT_STEP_LEAST, PHONE_WEIGHT_STEP.x);
+        (width, rect.right() - pad_x - steps as f32 * width - gaps)
     } else {
-        tank.scale
+        (PHONE_WEIGHT_STEP.x, words_end)
     };
-    art.tank(
-        &painter.with_clip_rect(rect.shrink(1.0)),
-        tank.kind,
-        team,
-        stage,
-        class_scale * PHONE_TANK_GROWTH,
-        false,
-    );
+    let step_size = vec2(step_width, PHONE_WEIGHT_STEP.y);
+    for step in 0..steps {
+        let at = pos2(
+            step_left + step as f32 * (step_size.x + PHONE_WEIGHT_STEP_GAP),
+            middle - step_size.y / 2.0,
+        );
+        let fill = if step < tank.weight_level {
+            color
+        } else {
+            hexa(0xffffff, 0.14)
+        };
+        painter.rect_filled(Rect::from_min_size(at, step_size), 2, fill);
+    }
     showroom_ring(painter, rect, selected);
 }
 

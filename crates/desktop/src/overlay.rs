@@ -245,13 +245,14 @@ impl Overlay {
         }
     }
 
-    /// Draw `painted` over the frame's `view`.
+    /// Draw `painted` over the frame's `view`, in the frame's own `encoder`.
     #[cfg(not(feature = "webgl"))]
     pub fn paint(
         &mut self,
         painted: &Painted,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
         view: &wgpu::TextureView,
         target: (u32, u32),
     ) {
@@ -259,12 +260,12 @@ impl Overlay {
             size_in_pixels: [target.0, target.1],
             pixels_per_point: self.pixels_per_point(target.0, painted),
         };
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("overlay"),
-        });
-        let mut buffers =
+        // Only paint callbacks return command buffers of their own, and the menus have
+        // none, so nothing is submitted ahead of the frame's encoder.
+        let callbacks =
             self.painter
-                .update_buffers(device, queue, &mut encoder, &painted.primitives, &screen);
+                .update_buffers(device, queue, encoder, &painted.primitives, &screen);
+        debug_assert!(callbacks.is_empty(), "the overlay has no paint callbacks");
         {
             let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("overlay"),
@@ -282,8 +283,6 @@ impl Overlay {
             self.painter
                 .render(&mut pass.forget_lifetime(), &painted.primitives, &screen);
         }
-        buffers.push(encoder.finish());
-        queue.submit(buffers);
     }
 
     /// Apply the frame's texture changes, whether or not the window shows the frame:
@@ -326,8 +325,8 @@ impl Overlay {
             b: f64::from(blue),
             a: 1.0,
         };
-        renderer.present(clear, |device, queue, view| {
-            self.paint(&painted, device, queue, view, target);
+        renderer.present(clear, |device, queue, encoder, view| {
+            self.paint(&painted, device, queue, encoder, view, target);
         });
         self.free_textures(&mut painted);
     }

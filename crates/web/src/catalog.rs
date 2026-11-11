@@ -117,6 +117,10 @@ pub struct TankCard {
     pub class: &'static str,
     /// The class in one word, where the card is small.
     pub short_class: &'static str,
+    /// Its weight, where a phone's card shows nothing else of the class, and how many of
+    /// three steps it fills.
+    pub weight: &'static str,
+    pub weight_level: usize,
     /// The class tag's dot.
     pub color: u32,
     /// The tank's size in its card: a scout sits small and a heavy fills it.
@@ -162,6 +166,8 @@ pub const TANK_CARDS: [TankCard; VehicleKind::PLAYABLE.len()] = [
         kind: VehicleKind::Scout,
         class: "Light scout",
         short_class: "Scout",
+        weight: "Light",
+        weight_level: 1,
         color: 0x5fd8ff,
         scale: 0.8,
     },
@@ -169,6 +175,8 @@ pub const TANK_CARDS: [TankCard; VehicleKind::PLAYABLE.len()] = [
         kind: VehicleKind::Balanced,
         class: "Balanced tank",
         short_class: "Balanced",
+        weight: "Medium",
+        weight_level: 2,
         color: 0xffcf38,
         scale: 0.94,
     },
@@ -176,6 +184,8 @@ pub const TANK_CARDS: [TankCard; VehicleKind::PLAYABLE.len()] = [
         kind: VehicleKind::Heavy,
         class: "Heavy tank",
         short_class: "Heavy",
+        weight: "Heavy",
+        weight_level: 3,
         color: 0xff8a4c,
         scale: 1.1,
     },
