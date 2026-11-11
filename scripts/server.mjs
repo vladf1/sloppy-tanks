@@ -255,23 +255,25 @@ async function runCommand() {
       // A machine switches once nobody plays on it, at most ten minutes after the tag moves
       // (sloppy-tanks-update), so this waits a little longer than that.
       // Nothing tells the candidate machine from the others but what it plays. When the
-      // release is not the candidate (`--image`), a machine on the candidate's version is
-      // taken for it and left alone rather than waited on for a switch that never comes.
+      // release is not the candidate (`--image`), a machine that plays the candidate's
+      // version, now or once its own pending update lands, is taken for it: it never
+      // switches to the release, so the wait ends there too.
       const { version, candidate } = published;
-      if (candidate && candidate !== version && (await readHealth()).contentVersion === candidate) {
+      console.log(`Waiting for ${health.origin}, which switches once its rooms are empty`);
+      const status = await waitForHealth(
+        ({ contentVersion }) =>
+          contentVersion === version || (candidate !== undefined && contentVersion === candidate),
+        `content ${version} (bun run server:status --app-store shows why not)`,
+        RELEASE_TIMEOUT_MS,
+      );
+      if (status.contentVersion === version) {
+        console.log(`The App Store server at ${server.url} plays the released apps' version`);
+      } else {
         console.log(
           `${health.origin} plays the candidate's version (content ${candidate}): not waiting ` +
             "for it. If it follows :app-store, it switches once its rooms are empty.",
         );
-        break;
       }
-      console.log(`Waiting for ${health.origin}, which switches once its rooms are empty`);
-      await waitForHealth(
-        (status) => status.contentVersion === version,
-        `content ${version} (bun run server:status --app-store shows why not)`,
-        RELEASE_TIMEOUT_MS,
-      );
-      console.log(`The App Store server at ${server.url} plays the released apps' version`);
       break;
     }
     case "update":

@@ -344,8 +344,8 @@ It needs Docker logged in to ghcr.io like `server:publish`, and waits until ever
 Store machine reports the released content version: each switches once its rooms are
 empty, or after ten minutes. The candidate machine already runs it, and both then serve
 the release until the next TestFlight upload. With `--image` of another version, a
-machine that plays the candidate's is taken for the candidate machine and not waited
-for. A released image stays as it is: a later server-only fix reaches the App Store
+machine that plays the candidate's, or comes to while the command waits, is taken for
+the candidate machine and not waited for. A released image stays as it is: a later server-only fix reaches the App Store
 machines with the next release, or with `--image`. Only the latest release plays online:
 an older app then finds no server of its version, says so, and offers UPDATE, which opens
 its App Store page, so release the server only after the store offers the update.
