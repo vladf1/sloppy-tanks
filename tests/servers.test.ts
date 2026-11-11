@@ -26,7 +26,7 @@ test("the production build, the traffic bots, the pilots and the startup scripts
     read("../crates/pilot/src/command_line.rs").match(/DEFAULT_DIRECTORY: &str = "([^"]+)"/)?.[1],
     DIRECTORY_URL,
   );
-  for (const name of ["production", "dev", "app-store"]) {
+  for (const name of ["production", "dev", "app-store", "app-store-candidate"]) {
     assert.equal(
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/DIRECTORY_URL=(\S+)/)?.[1],
       DIRECTORY_URL,
@@ -43,4 +43,22 @@ test("the machines pull the image CI and the dev publish push", () => {
     read("../.github/workflows/check.yml").match(/SERVER_IMAGE: (\S+)/)?.[1],
     SERVER_IMAGE,
   );
+});
+
+test("the App Store candidate machine lists under app-store and follows the tag the Apps workflow moves", () => {
+  const script = read("../deploy/server/cloud-init/app-store-candidate.yaml");
+  assert.equal(script.match(/SERVER_ENVIRONMENT=(\S+)/)?.[1], "app-store");
+  const tag = script.match(/SERVER_IMAGE_TAG=(\S+)/)?.[1];
+  assert.equal(tag, "app-store-candidate");
+  // The Apps workflow moves it, release-app releases it and the updater follows it.
+  assert.ok(read("../.github/workflows/desktop.yml").includes(`--tag ${SERVER_IMAGE}:${tag} `));
+  assert.ok(read("../scripts/server.mjs").includes("`${SERVER_IMAGE}:" + tag + "`"));
+  assert.match(
+    read("../deploy/server/sloppy-tanks-update"),
+    /^follow=\$REGISTRY:\$\{image_tag:-\$\{environment:-production\}\}$/m,
+  );
+  // Only the candidate names a tag; the others follow their environment's.
+  for (const name of ["production", "dev", "app-store"]) {
+    assert.doesNotMatch(read(`../deploy/server/cloud-init/${name}.yaml`), /SERVER_IMAGE_TAG/);
+  }
 });
