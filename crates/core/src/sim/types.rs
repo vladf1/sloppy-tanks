@@ -400,6 +400,8 @@ pub struct Shot {
     pub loosened: Vec<RigidBodyHandle>,
     /// A defense gets one chance per projectile, even after a miss or bounce.
     pub laser_checked_by: Vec<u32>,
+    /// The trees whose leaves it has flown through ([`SimEventType::Rustle`]).
+    pub rustled: Vec<u32>,
 }
 
 impl Shot {
@@ -415,6 +417,7 @@ impl Shot {
         Shot {
             loosened: Vec::new(),
             laser_checked_by: Vec::new(),
+            rustled: Vec::new(),
             ..*self
         }
     }
@@ -584,6 +587,9 @@ pub enum SimEventType {
     /// flew on: `x`/`z`/`height` where, `size` the piece's longest side, `color` its
     /// paint, `cover_kind` what it came from and `from` a point back along the shell.
     Shatter,
+    /// A shell flew through a tree's leaves: `x`/`z`/`height` where, `id` the tree's
+    /// cover. They spray; nothing breaks.
+    Rustle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

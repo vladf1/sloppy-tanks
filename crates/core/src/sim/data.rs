@@ -301,6 +301,8 @@ pub mod group {
     /// Same tank-only membership for rooted stump footprints.
     pub const STUMP_CONTACT: u32 = 0x0020_0001;
     pub const COVER: u32 = 0x0002_000b;
+    /// Cover that shells and debris meet and tanks pass under (a tree's limbs).
+    pub const SHELL_COVER: u32 = 0x0002_000a;
     /// Cover membership also contacts the ground.
     pub const MOVABLE_COVER: u32 = 0x0002_000f;
     /// Accept movable cover as well as tanks and debris.

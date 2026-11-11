@@ -107,7 +107,16 @@ pub enum TreePart {
     Trunk,
     /// The trunk's limb by its growth order ([`OakBranch::limb`]).
     Limb(usize),
+    /// A limb's piece once a shell snapped it where it lay: its main branch up to the
+    /// snap ([`LIMB_SNAP_RING`]) with the twigs that grow there, or the rest.
+    LimbPiece {
+        limb: usize,
+        outer: bool,
+    },
 }
+
+/// A fallen limb's main branch snaps at this ring where a shell meets it.
+pub const LIMB_SNAP_RING: usize = 2;
 
 /// One ring of a grown branch.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -165,6 +174,26 @@ pub struct OakLayout {
     pub sprigs: Vec<OakSprig>,
     /// How many limbs the trunk grows.
     pub limbs: usize,
+}
+
+impl OakLayout {
+    /// The limb an outer branch grows on, and whether past the ring its limb's main
+    /// branch snaps at; none for the trunk and a limb's main branch, which spans both.
+    pub fn limb_side(&self, branch: usize) -> Option<(usize, bool)> {
+        let grown = &self.branches[branch];
+        let limb = grown.limb?;
+        if grown.level < 2 {
+            return None;
+        }
+        let main = self
+            .branches
+            .iter()
+            .find(|main| main.limb == Some(limb) && main.level == 1)?;
+        let base = main.sections[0].origin;
+        let snap = main.sections[LIMB_SNAP_RING.min(main.sections.len() - 1)].origin;
+        let start = grown.sections[0].origin;
+        Some((limb, start.distance(base) >= snap.distance(base)))
+    }
 }
 
 /// The point, heading and radius `along` (0 to 1) a branch's sections.

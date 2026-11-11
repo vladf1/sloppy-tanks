@@ -335,9 +335,15 @@ fn destroyed_trees_leave_a_narrow_stump_rather_than_the_original_canopy_sized_ob
             .iter()
             .filter(|c| c.kind == CoverKind::Tree)
             .all(|c| {
+                // An oak stands again as all its parts (`oak_structure`).
                 c.alive
-                    && packed_groups(s.world.colliders[c.collider].collision_groups())
-                        == group::COVER
+                    && c.structure.as_ref().map_or_else(
+                        || {
+                            packed_groups(s.world.colliders[c.collider].collision_groups())
+                                == group::COVER
+                        },
+                        |state| state.gone.is_empty(),
+                    )
             })
     );
 }

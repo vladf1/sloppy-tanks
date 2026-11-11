@@ -254,6 +254,38 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     }
     simulation.projectile_tank_positions = tank_positions;
     simulation.projectile_structure_bodies = structure_bodies;
+    rustle_leaves(simulation);
+}
+
+/// A shell in a standing tree's leaves rustles them once on its way through: they spray
+/// where it passes, and it flies on unhurt (`Structure::foliage`).
+fn rustle_leaves(simulation: &mut Simulation) {
+    for si in 0..simulation.shots.len() {
+        let shot = &simulation.shots[si];
+        let point = Point3::new(shot.x, shot.combat_y(), shot.z);
+        let rustled = simulation.covers.iter().find(|cover| {
+            let Some(state) = &cover.structure else {
+                return false;
+            };
+            !shot.rustled.contains(&cover.id)
+                && state.layout.foliage.iter().any(|&(part, low, high)| {
+                    let local = state
+                        .layout
+                        .to_local(glam::DVec3::new(point.x - cover.x, point.y, point.z - cover.z));
+                    state.standing(part) && local.cmpge(low).all() && local.cmple(high).all()
+                })
+        });
+        let Some(cover) = rustled else {
+            continue;
+        };
+        let mut rustle = SimEvent::at(SimEventType::Rustle, point.x, point.z);
+        rustle.id = Some(cover.id);
+        rustle.height = Some(point.y);
+        rustle.cover_kind = Some(cover.kind);
+        let id = cover.id;
+        simulation.events.push(rustle);
+        simulation.shots[si].rustled.push(id);
+    }
 }
 
 /// The earliest contact found for one shell, returned beside that shell's index; indices

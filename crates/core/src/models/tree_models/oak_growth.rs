@@ -20,7 +20,7 @@ use crate::geometry::math::quat_from_euler;
 use crate::geometry::{Mesh, narrow};
 use crate::scene::{Material, Node};
 use crate::sim::oak_layout::{
-    BUTT_RINGS, OAK, OakBranch, OakLayout, OakSprig, Section, TreePart, oak_layout,
+    BUTT_RINGS, LIMB_SNAP_RING, OAK, OakLayout, OakSprig, Section, TreePart, oak_layout,
 };
 use crate::sim::tree_proportions::TreeProportions;
 
@@ -144,7 +144,18 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
         detail: TreeDetail::Full,
         cards: Vec::new(),
     };
-    let part_of = |branch: &OakBranch| branch.limb.map_or(TreePart::Trunk, TreePart::Limb);
+    // Whether an outer branch (and its leaves) is drawn: with its whole limb, or with
+    // the piece of it it grows on once the limb snapped.
+    let kept = |branch: usize| match oak.limb_side(branch) {
+        Some((limb, outer)) => {
+            keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer })
+        }
+        None => keep(
+            oak.branches[branch]
+                .limb
+                .map_or(TreePart::Trunk, TreePart::Limb),
+        ),
+    };
     let tube = |crown: &mut Crown, sections: &[Section], sides: u32| {
         crown
             .node
@@ -165,7 +176,20 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
                     branch.sides,
                 );
             }
-        } else if keep(part_of(branch)) {
+        } else if let (1, Some(limb)) = (branch.level, branch.limb) {
+            // A limb's main branch, whole or as the pieces it snapped into.
+            let last = branch.sections.len() - 1;
+            let snap = LIMB_SNAP_RING.min(last);
+            if keep(TreePart::Limb(limb)) {
+                tube(&mut crown, &branch.sections, branch.sides);
+            } else {
+                for (outer, rings) in [(false, 0..=snap), (true, snap..=last)] {
+                    if keep(TreePart::LimbPiece { limb, outer }) {
+                        tube(&mut crown, &branch.sections[rings], branch.sides);
+                    }
+                }
+            }
+        } else if kept(index) {
             tube(&mut crown, &branch.sections, branch.sides);
         }
     }
@@ -207,7 +231,7 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
             low = low.min(corner);
             high = high.max(corner);
         }
-        if keep(part_of(&oak.branches[sprig.branch])) {
+        if kept(sprig.branch) {
             crown.card(None, sprig_card(sprig));
         }
     }

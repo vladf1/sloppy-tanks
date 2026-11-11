@@ -136,6 +136,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             pierced_shot: None,
             loosened: Vec::new(),
             laser_checked_by: Vec::new(),
+            rustled: Vec::new(),
             fuse: None,
         });
         simulation.shots_fired += 1;

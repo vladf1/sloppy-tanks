@@ -2196,7 +2196,7 @@ impl Presentation {
     /// nearest one within reach.
     fn tree_event(&mut self, event: &SimEvent) {
         let tree = match event.kind {
-            SimEventType::Destroy => event
+            SimEventType::Destroy | SimEventType::Rustle => event
                 .id
                 .and_then(|id| self.covers.get_mut(&id))
                 .and_then(|view| view.tree.as_mut()),
@@ -2217,7 +2217,7 @@ impl Presentation {
             return;
         };
         self.effects.systems.shed_leaves(event, &tree.leaves);
-        if event.kind == SimEventType::Impact {
+        if matches!(event.kind, SimEventType::Impact | SimEventType::Rustle) {
             // The crown leans away from the shell first.
             let push = Vec3::new(
                 (tree.leaves.x - event.x) as f32,

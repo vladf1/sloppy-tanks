@@ -317,6 +317,15 @@ pub struct Breakup {
     pub alone: bool,
 }
 
+/// What meets a standing part: shells and tanks, tanks alone (a tree's rooted stump,
+/// which a shell flies over) or shells alone (a tree's limb, high over a tank's hull).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Contact {
+    All,
+    Tanks,
+    Shells,
+}
+
 /// One part of a structure, or one landing piece.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
@@ -363,8 +372,8 @@ pub struct Part {
     /// The part a hit on it strains instead, if not itself: a tree's trunk and limbs
     /// pass a shell's blow down to the butt that snaps.
     pub struck_as: Option<u16>,
-    /// Met by tanks alone while it stands, never by shells (a tree's rooted stump).
-    pub tank_only: bool,
+    /// What meets it while it stands.
+    pub contact: Contact,
     /// What the kind's model draws it as.
     pub role: Role,
 }
@@ -399,7 +408,7 @@ impl Part {
             lie: Lie::Any,
             element: 0,
             struck_as: None,
-            tank_only: false,
+            contact: Contact::All,
             role,
         }
     }
@@ -619,12 +628,15 @@ pub struct Structure {
     /// Whether a bot shoots its way through it: a crate's frame of battens blocks a
     /// tank until it breaks, which takes several shells, so bots drive round a crate.
     pub breachable: bool,
-    /// The box it stands as while intact ([`Self::whole`]), when that is not the box
-    /// round its parts: a tree stands as its cover's box, crown and all.
-    pub stand_box: Option<(DVec3, DVec3)>,
     /// The part whose strength left its hit points show, when not the share of its parts
     /// standing: a tree's butt, so its health falls with each hit before it snaps.
     pub health_part: Option<usize>,
+    /// Leaves a shell flies through, rustling them, as boxes (build frame) by the part
+    /// that carries them: only a standing part's count.
+    pub foliage: Vec<(usize, DVec3, DVec3)>,
+    /// What a fallen body of exactly `needs` snaps into where a shell meets it (a limb
+    /// in two along its main branch), never on landing: pieces from `pieces` on.
+    pub snaps: Vec<Breakup>,
     /// Its parts' collider shapes, each built the first time a collider asks for it.
     pub shapes: ShapeCache,
     /// Its supports turned round, built the first time the share rule runs.
@@ -720,8 +732,9 @@ impl Structure {
             whole: false,
             hinges: false,
             breachable: true,
-            stand_box: None,
             health_part: None,
+            foliage: Vec::new(),
+            snaps: Vec::new(),
             shapes: ShapeCache::default(),
             holds: HoldsCache::default(),
         }

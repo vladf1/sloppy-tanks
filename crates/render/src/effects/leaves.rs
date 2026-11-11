@@ -25,6 +25,9 @@ const REST: [f64; 2] = [3.0, 4.0];
 const SHRINK: f64 = 1.2;
 /// Leaves a shell hit shakes loose, and a felled crown sheds as it goes over.
 const HIT_LEAVES: usize = 26;
+/// Leaves a shell knocks loose flying through a crown, round where it passed (m).
+const RUSTLE_LEAVES: usize = 18;
+const RUSTLE_SPREAD: f64 = 0.7;
 const FELL_LEAVES: usize = 64;
 /// Of every hundred leaves, this many have turned yellow and this many brown.
 const YELLOWED: f64 = 0.12;
@@ -155,7 +158,17 @@ impl LeafFall {
         let (count, burst) = match event.kind {
             SimEventType::Impact => (HIT_LEAVES, [0.4, 1.4]),
             SimEventType::Destroy => (FELL_LEAVES, [0.2, 0.7]),
+            SimEventType::Rustle => (RUSTLE_LEAVES, [0.6, 1.8]),
             _ => return,
+        };
+        // A shell through the leaves sprays them where it passed; a hit or a fall shakes
+        // them from all over the crown.
+        let rustle = event.kind == SimEventType::Rustle;
+        let height = event.height.unwrap_or(1.0);
+        let (center_x, center_z) = if rustle {
+            (event.x, event.z)
+        } else {
+            (crown.x, crown.z)
         };
         let foliage = &crown.foliage;
         let count = if foliage.conifer {
@@ -172,7 +185,12 @@ impl LeafFall {
             }
             let mut next = || random.next_f64();
             let angle = next() * TAU;
-            let distance = next().sqrt() * foliage.radius;
+            let reach = if rustle {
+                RUSTLE_SPREAD
+            } else {
+                foliage.radius
+            };
+            let distance = next().sqrt() * reach;
             let (out_x, out_z) = (angle.cos(), angle.sin());
             let speed = burst[0] + next() * (burst[1] - burst[0]);
             let light = 0.72 + next() * 0.5;
@@ -190,9 +208,13 @@ impl LeafFall {
                 0.15 + next() * 0.09
             };
             self.leaves.push(Leaf {
-                x: crown.x + out_x * distance,
-                y: foliage.bottom + next() * (foliage.top - foliage.bottom),
-                z: crown.z + out_z * distance,
+                x: center_x + out_x * distance,
+                y: if rustle {
+                    height + (next() - 0.5) * RUSTLE_SPREAD
+                } else {
+                    foliage.bottom + next() * (foliage.top - foliage.bottom)
+                },
+                z: center_z + out_z * distance,
                 vx: out_x * speed,
                 vy: -0.3 + next() * 1.2,
                 vz: out_z * speed,
