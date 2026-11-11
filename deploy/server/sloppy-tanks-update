@@ -18,9 +18,12 @@
 # beside it. A machine follows the tag named after its environment: production's
 # :production, which CI moves; dev's :dev, which `bun scripts/server.mjs publish --dev`
 # moves from a developer's checkout; or app-store's :app-store, the released App Store
-# apps' content version, which `bun scripts/server.mjs release-app` moves. Anything but
-# `pull` of that tag leaves a hold that auto-update respects until `resume` or such a
-# pull, and on dev until the next publish.
+# apps' content version, which `bun scripts/server.mjs release-app` moves. A machine whose
+# server.env names another tag (SERVER_IMAGE_TAG) follows that one instead: the App Store
+# candidate machine lists itself under app-store but follows :app-store-candidate, the
+# latest TestFlight builds' server, which the Apps workflow moves. Anything but
+# `pull` of the followed tag leaves a hold that auto-update respects until `resume` or
+# such a pull, and on dev until the next publish.
 set -euo pipefail
 
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
@@ -61,9 +64,10 @@ failed_file=$STATE/failed
 mkdir -p "$STATE"
 
 # The machine's environment (server.env, which the provider's user data writes)
-# names the tag auto-update follows.
+# names the tag auto-update follows, unless SERVER_IMAGE_TAG there names another.
 environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
-follow=$REGISTRY:${environment:-production}
+image_tag=$(sed -n 's/^SERVER_IMAGE_TAG=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
+follow=$REGISTRY:${image_tag:-${environment:-production}}
 
 # One change at a time. The timer skips a check while another runs.
 exec 9>/run/lock/sloppy-tanks-update.lock
@@ -288,9 +292,9 @@ case $command in
     # tag moves again rather than until the next check.
     digest=""
     if [[ $ref == "$follow" ]]; then digest=$(remote_digest) || true; fi
-    # A machine created before anything was published to its tag (:dev, :app-store) runs
-    # production's server meanwhile, so it is up and listed; auto-update still follows its
-    # tag and switches to the first publish or release.
+    # A machine created before anything was published to its tag (:dev, :app-store,
+    # :app-store-candidate) runs production's server meanwhile, so it is up and listed;
+    # auto-update still follows its tag and switches to the first publish or release.
     if [[ $ref == "$follow" && -z $digest && $follow != "$REGISTRY:production" ]]; then
       ref=$REGISTRY:production
       echo "Nothing to read on $follow; starting $ref until a publish moves it"
