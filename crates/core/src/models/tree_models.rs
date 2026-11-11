@@ -34,7 +34,7 @@ use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSourc
 use crate::sim::math::Random;
 
 mod oak_growth;
-use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
+use crate::sim::tree_proportions::{TreeProportions, branching_crown, tree_proportions};
 
 /// Node names that presentation looks up on a full-detail tree.
 pub mod tree_part {
@@ -49,6 +49,9 @@ pub mod tree_part {
     pub const BRANCH_STAGE_1: &str = "shedding-branch-1";
     /// A bough dropped at 35% health (`dropStage = 2`).
     pub const BRANCH_STAGE_2: &str = "shedding-branch-2";
+    /// A limb of a felled branching crown ([`super::felled_crown`]), which breaks off
+    /// where it hits the ground.
+    pub const LIMB: &str = "broken-limb";
 }
 
 /// `TREE_FAMILIES`, indexed by [`TreeProportions::family`].
@@ -637,12 +640,22 @@ struct Crown {
     detail: TreeDetail,
     /// Foliage cards with the crown child index of their bough (`None`: the crown).
     cards: Vec<(Option<usize>, Card)>,
+    /// Whether each limb grows into a group of its own ([`felled_crown`]).
+    limbs: bool,
 }
 
 impl Crown {
     /// `branchParent(stage)`: the crown for fixed foliage, or a new shedding bough
     /// group (full detail only). Returns the index of the bough among the crown's
     /// children, or `None` for the crown itself.
+    fn limb_parent(&mut self) -> Option<usize> {
+        if !self.limbs {
+            return None;
+        }
+        self.node.children.push(Node::group(tree_part::LIMB));
+        Some(self.node.children.len() - 1)
+    }
+
     fn branch_parent(&mut self, stage: u32) -> Option<usize> {
         if self.detail.background() || stage == 0 {
             return None;
@@ -792,6 +805,25 @@ fn sprig_card(
 
 /// `treeModel(c, detail)`.
 pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
+    build_tree(c, detail, false)
+}
+
+/// The crown a felled tree at `c` falls with, if it breaks up on the ground
+/// ([`branching_crown`]): its [`tree_part::CROWN`] grown the same, but each limb a
+/// [`tree_part::LIMB`] group of its own, centred on its bounds like a shed bough, so
+/// presentation can break the limbs off one by one. Other families fall whole.
+pub fn felled_crown(c: &TreeShape) -> Option<Node> {
+    let family = tree_proportions(c.x, c.z, c.w, c.d, c.h).family;
+    if !branching_crown(family) {
+        return None;
+    }
+    build_tree(c, TreeDetail::Full, true)
+        .children
+        .into_iter()
+        .find(|child| child.name == tree_part::CROWN)
+}
+
+fn build_tree(c: &TreeShape, detail: TreeDetail, limbs: bool) -> Node {
     let TreeProportions {
         seed,
         mut rng,
@@ -842,6 +874,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         node: Node::group(tree_part::CROWN),
         detail,
         cards: Vec::new(),
+        limbs,
     };
     let variant = seed % 24;
     if full {
@@ -894,7 +927,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
     let lean_z = rng.range(-0.07, 0.07) * c.d;
     let trunk_base = if full { stump_height * 0.88 } else { 0.0 };
     // A full-detail oak grows its own trunk with its limbs.
-    let grown_oak = full && family == 3;
+    let grown_oak = full && branching_crown(family);
     if !grown_oak {
         let trunk = limb(
             &mut crown.node,

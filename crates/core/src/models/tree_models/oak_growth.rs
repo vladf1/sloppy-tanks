@@ -191,13 +191,20 @@ impl Grower<'_> {
     fn branch_out(&mut self, parent: &Branch, sections: &[Section]) {
         let child = &OAK_LEVELS[parent.level + 1];
         let tip = sections[sections.len() - 1];
+        // A felled crown's limbs (the trunk's children) each break off on their own.
+        let limb = parent.level == 0;
+        let bough = if limb {
+            self.crown.limb_parent().or(parent.bough)
+        } else {
+            parent.bough
+        };
         self.grow(Branch {
             origin: tip.origin,
             orientation: tip.orientation,
             length: self.height * child.length * CARRY_ON_LENGTH,
             radius: tip.radius,
             level: parent.level + 1,
-            bough: parent.bough,
+            bough,
         });
         let offset = self.rng.next();
         for i in 0..child.children {
@@ -212,6 +219,8 @@ impl Grower<'_> {
                 self.shed += 1;
                 self.crown
                     .branch_parent(if self.shed <= SHED_BRANCHES / 2 { 1 } else { 2 })
+            } else if limb {
+                self.crown.limb_parent().or(parent.bough)
             } else {
                 parent.bough
             };
