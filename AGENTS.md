@@ -449,10 +449,17 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   more if the layout shows that stage any texture), then a machine-code compile
   at each fragment stage's first draw per blend state. Metal caches libraries by
   their text, so each stage is a module with only its own code (`StageSources`)
-  and textures are visible to the fragment stage alone. Count a new variant or
-  effect as its stages' compiles, and time startup with Playwright WebKit's Metal
-  cache cleared (`com.apple.metal` under `$(getconf DARWIN_USER_CACHE_DIR)`
-  `com.apple.WebKit.GPU+org.webkit.Playwright/com.apple.WebKit.GPU/`).
+  and textures are visible to the fragment stage alone. Safari's page therefore has
+  Web Workers with GPU devices of their own compile and draw each pipeline first
+  (`gpu/webgpu/precompile/workers.rs`, `src/pipeline-worker.ts`; `?pipeline-workers=on|off`
+  decides in any browser): Safari keeps their work for the page's device, and the page
+  draws on meanwhile. Chrome, which compiles in the background already, starts slower
+  with them. Count a new variant or effect as its stages' compiles. Time a cold start
+  in the Safari app, with a used number changed in every shader text so the texts are
+  new to its cache: Playwright's WebKit compiles one device's pipelines in parallel and
+  has no first-draw compile, so its cold start (Metal cache cleared: `com.apple.metal`
+  under `$(getconf DARWIN_USER_CACHE_DIR)`
+  `com.apple.WebKit.GPU+org.webkit.Playwright/com.apple.WebKit.GPU/`) is not Safari's.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
