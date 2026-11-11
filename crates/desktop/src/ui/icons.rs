@@ -326,6 +326,14 @@ const SOURCES: &[Source] = &[
         &[stroke(2.2, "M12 3v8M7.1 6.2a7.5 7.5 0 1 0 9.8 0")],
     ),
     // Battle Setup's symbols.
+    // Safari's Share mark (a tray with an arrow out of it), for the Home Screen tip.
+    icon(
+        "share",
+        &[stroke(
+            1.8,
+            "M8.5 9H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1.5M12 14.5V3M8.5 6.5 12 3l3.5 3.5",
+        )],
+    ),
     icon("team", &[stroke(2.0, "M6 21V4h11l-2.5 4 2.5 4H6")]),
     icon(
         "solo",
