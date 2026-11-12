@@ -1,0 +1,306 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1590" height="1296" viewBox="0 0 1590 1296">
+<!-- The Neighborhood's streets, rows and lots. Written by crates/core/examples/neighborhood_map.rs from the level's layout: do not edit by hand. 9 px per metre, north up. -->
+<defs><clipPath id="map"><rect x="0" y="0" width="1260" height="1296"/></clipPath></defs>
+<rect x="0" y="0" width="1590" height="1296" fill="#fbfaf5"/>
+<rect x="0" y="0" width="1260" height="1296" fill="#d9d2b4"/>
+<g clip-path="url(#map)">
+<polygon points="738.6,162.0 671.0,186.6 607.4,213.6 546.6,247.3 503.3,281.1 495.0,285.4 485.6,286.0 476.6,283.1 469.5,276.9 433.2,230.5 397.0,184.2 390.4,177.6 381.3,175.0 372.0,176.3 364.1,181.4 328.0,217.5 292.0,253.6 268.7,278.5 260.6,283.5 251.2,284.2 242.5,280.2 192.7,239.8 179.7,231.0 164.7,226.1 149.0,225.0 133.5,228.1 119.1,234.7 107.0,244.9 97.8,257.7 92.1,272.4 90.0,287.3 90.0,1116.0 91.8,1130.7 96.9,1144.6 105.1,1156.9 116.0,1166.9 128.9,1174.1 143.1,1178.2 157.9,1178.7 172.4,1175.9 252.2,1150.0 331.9,1124.1 411.7,1098.1 491.4,1072.2 508.8,1069.5 526.2,1071.3 592.6,1086.7 676.8,1092.5 738.3,1100.1 798.2,1116.1 847.9,1137.2 904.3,1160.0 960.7,1182.8 1024.9,1179.4 1107.0,1179.4 1123.3,1176.9 1138.4,1170.4 1151.6,1160.6 1161.5,1147.4 1167.9,1132.3 1170.0,1115.0 1170.0,162.0" fill="#c9cf9f" stroke="none"/>
+<polyline points="90.2,384.0 161.9,382.6 235.3,380.1 261.0,377.0 285.6,369.8 307.9,356.9 327.4,340.1 352.2,309.8 427.5,233.0 499.8,177.3 569.8,138.2 639.1,108.0 711.2,80.9 782.9,71.2 864.2,66.4 954.0,62.5 1044.1,55.9 1116.0,45.3 1170.2,22.7 1215.1,-17.7 1251.0,-81.3 1277.9,-161.7 1296.1,-252.3" fill="none" stroke="#cfc9bb" stroke-width="111.6" stroke-linejoin="round" stroke-linecap="butt"/>
+<polyline points="287.0,387.0 332.3,465.4 377.3,542.6 422.1,620.8 466.9,698.9 500.3,755.5 528.8,793.4 566.1,822.1 609.8,839.6 656.2,846.1 722.0,847.8 774.6,856.0 826.6,868.6 878.3,882.9 929.7,899.0 978.9,912.2" fill="none" stroke="#cfc9bb" stroke-width="75.6" stroke-linejoin="round" stroke-linecap="butt"/>
+<circle cx="999.1" cy="908.1" r="73.8" fill="#cfc9bb"/>
+<polyline points="393.1,571.5 429.0,541.2 461.8,522.6 506.0,513.4 549.8,507.7 609.8,501.4 669.6,496.9 723.7,493.7 778.0,489.7 832.2,486.5 885.7,488.6 938.7,493.3 989.1,497.8" fill="none" stroke="#cfc9bb" stroke-width="75.6" stroke-linejoin="round" stroke-linecap="butt"/>
+<circle cx="999.2" cy="488.7" r="73.8" fill="#cfc9bb"/>
+<polyline points="90.2,384.0 161.9,382.6 235.3,380.1 261.0,377.0 285.6,369.8 307.9,356.9 327.4,340.1 352.2,309.8 427.5,233.0 499.8,177.3 569.8,138.2 639.1,108.0 711.2,80.9 782.9,71.2 864.2,66.4 954.0,62.5 1044.1,55.9 1116.0,45.3 1170.2,22.7 1215.1,-17.7 1251.0,-81.3 1277.9,-161.7 1296.1,-252.3" fill="none" stroke="#5b5d60" stroke-width="75.6" stroke-linejoin="round" stroke-linecap="butt"/>
+<polyline points="287.0,387.0 332.3,465.4 377.3,542.6 422.1,620.8 466.9,698.9 500.3,755.5 528.8,793.4 566.1,822.1 609.8,839.6 656.2,846.1 722.0,847.8 774.6,856.0 826.6,868.6 878.3,882.9 929.7,899.0 978.9,912.2" fill="none" stroke="#5b5d60" stroke-width="50.4" stroke-linejoin="round" stroke-linecap="butt"/>
+<circle cx="999.1" cy="908.1" r="61.2" fill="#5b5d60"/>
+<circle cx="999.1" cy="908.1" r="18.0" fill="#8fae6a"/>
+<polyline points="393.1,571.5 429.0,541.2 461.8,522.6 506.0,513.4 549.8,507.7 609.8,501.4 669.6,496.9 723.7,493.7 778.0,489.7 832.2,486.5 885.7,488.6 938.7,493.3 989.1,497.8" fill="none" stroke="#5b5d60" stroke-width="50.4" stroke-linejoin="round" stroke-linecap="butt"/>
+<circle cx="999.2" cy="488.7" r="61.2" fill="#5b5d60"/>
+<circle cx="999.2" cy="488.7" r="18.0" fill="#8fae6a"/>
+<polyline points="90.2,384.0 161.9,382.6 235.3,380.1 261.0,377.0 285.6,369.8 307.9,356.9 327.4,340.1 352.2,309.8 427.5,233.0 499.8,177.3 569.8,138.2 639.1,108.0 711.2,80.9 782.9,71.2 864.2,66.4 954.0,62.5 1044.1,55.9 1116.0,45.3 1170.2,22.7 1215.1,-17.7 1251.0,-81.3 1277.9,-161.7 1296.1,-252.3" fill="none" stroke="#8fae6a" stroke-width="14.4" stroke-linejoin="round" stroke-linecap="butt"/>
+<polyline points="502.9,686.2 511.9,686.2 520.9,686.2 529.9,686.2 538.9,684.5 547.9,681.1 556.9,677.9 565.9,674.0 574.9,670.8 583.9,668.1 592.9,666.8 601.9,666.8 610.9,667.4 619.9,667.7 628.9,668.3 637.9,668.7 646.9,667.4 655.9,666.4 664.9,667.4 673.9,669.6 682.9,671.2 691.9,672.1 700.9,672.6 709.9,671.2 718.9,669.9 727.9,669.4 736.9,669.4 745.9,670.3 754.9,670.7 763.9,671.4 772.9,672.6 781.9,673.9 790.9,673.0 799.9,673.0 808.9,673.9 817.9,674.5 826.9,675.4 835.9,676.1 844.9,676.7 853.9,676.8 862.9,676.3 871.9,680.3 880.9,686.8 889.9,692.7 898.9,695.3 907.9,698.1 916.9,699.1 925.9,699.1 934.9,699.5 943.9,699.8 952.9,699.8 961.9,699.3 970.9,699.3 979.9,698.9 988.9,698.4 997.9,698.0 1006.9,699.2 1015.9,699.2 1024.9,698.8 1033.9,698.8 1042.9,698.8 1051.9,698.3 1060.9,698.3 1069.9,698.2 1078.9,698.5 1087.9,698.7 1096.9,698.6 1105.9,698.4 1114.9,698.6 1123.9,698.6 1132.9,698.6 1141.9,698.6 1150.9,698.6 1159.9,698.6 1168.9,698.6" fill="none" stroke="#4f7a3a" stroke-width="2.5" stroke-dasharray="9 7"/>
+<polygon points="425.9,496.6 478.0,476.6 437.3,370.8 385.2,390.8" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="489.5,478.7 544.5,469.1 525.2,359.9 470.3,369.6" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="557.4,468.9 612.9,463.1 601.1,350.3 545.6,356.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="626.6,462.1 682.3,458.2 674.4,345.1 618.7,349.0" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="696.7,457.7 752.4,453.9 744.5,340.7 688.8,344.6" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="766.0,451.8 821.7,449.9 817.8,336.6 762.0,338.5" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="834.9,448.9 890.6,450.9 894.6,337.5 838.8,335.6" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="943.5,433.2 994.0,409.7 946.9,308.5 896.3,332.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="993.5,409.8 1046.9,426.1 1077.2,326.9 1023.9,310.6" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="534.3,544.9 480.2,558.4 506.3,663.2 560.4,649.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="617.4,538.6 561.9,544.5 572.6,646.7 628.1,640.8" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="690.5,533.4 634.9,537.3 642.0,639.9 697.7,636.0" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="760.7,529.0 705.0,532.9 712.5,640.6 768.2,636.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="834.0,524.9 778.2,526.9 782.1,640.2 837.9,638.3" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="912.0,527.9 856.3,524.9 850.3,638.2 906.1,641.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="1000.3,567.6 947.8,548.5 912.7,644.9 965.2,664.0" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="1052.2,547.4 1000.1,567.4 1036.2,661.5 1088.3,641.5" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="575.3,789.9 626.4,800.7 647.3,702.1 596.3,691.3" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="640.8,802.4 691.8,813.2 712.4,716.4 661.4,705.5" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="708.3,806.0 759.3,816.8 781.0,714.7 730.0,703.9" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="773.9,817.7 824.9,828.5 848.5,717.6 797.4,706.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="838.5,834.1 889.6,845.0 913.2,734.1 862.1,723.2" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="951.0,846.1 1000.6,830.0 969.4,734.1 919.8,750.2" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="1001.8,830.2 1050.5,848.9 1086.7,754.8 1037.9,736.0" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="522.7,839.3 484.5,803.7 407.2,886.7 445.4,922.3" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="481.0,793.1 451.0,750.3 358.2,815.4 388.1,858.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="446.3,738.6 420.2,693.4 322.0,750.1 348.1,795.3" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="379.9,623.0 353.8,577.8 255.5,634.5 281.6,679.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="346.6,565.2 320.5,520.0 222.2,576.7 248.3,621.9" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="313.1,507.6 287.0,462.4 201.2,511.9 227.3,557.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="626.8,883.7 573.1,868.3 541.9,977.3 595.5,992.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="693.3,886.9 637.8,881.1 625.9,993.9 681.4,999.7" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="766.5,892.5 711.2,884.7 695.4,997.0 750.7,1004.8" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="843.8,911.8 789.7,898.3 762.3,1008.4 816.4,1021.9" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="914.2,933.1 860.6,917.7 829.3,1026.7 883.0,1042.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="988.5,986.6 939.7,959.6 884.7,1058.8 933.5,1085.8" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<polygon points="1042.9,973.7 988.5,986.3 1012.6,1090.7 1067.0,1078.1" fill="#e6dfc8" fill-opacity="0.75" stroke="#8d8672" stroke-width="1"/>
+<circle cx="565.3" cy="477.6" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="757.5" cy="462.9" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="895.5" cy="461.0" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="567.5" cy="534.5" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="826.8" cy="515.2" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="917.8" cy="519.9" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="1007.7" cy="552.6" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="565.0" cy="785.3" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="779.0" cy="828.0" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="886.6" cy="855.6" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="963.3" cy="854.7" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="524.7" cy="826.0" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="464.8" cy="750.4" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="452.4" cy="729.3" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="331.9" cy="520.1" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="586.2" cy="860.5" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="774.3" cy="884.9" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="840.6" cy="901.7" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="921.3" cy="926.0" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="998.0" cy="972.4" r="5.4" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="130.8" cy="383.2" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="169.9" cy="341.4" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="172.9" cy="430.0" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="211.8" cy="380.9" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="247.2" cy="337.5" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="257.7" cy="425.5" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="297.1" cy="312.4" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="355.2" cy="379.7" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="349.9" cy="312.8" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="350.1" cy="254.9" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="413.0" cy="317.0" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="406.4" cy="254.7" r="6.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="709.6" cy="316.1" r="10.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="732.6" cy="291.3" r="11.7" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="837.5" cy="318.4" r="10.3" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="1033.5" cy="266.8" r="11.7" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="531.9" cy="988.3" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="686.8" cy="1011.6" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="754.1" cy="1019.4" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="820.2" cy="1037.2" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="999.6" cy="908.1" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="1000.4" cy="488.7" r="10.8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/>
+<circle cx="153.0" cy="288.0" r="20.7" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/>
+<circle cx="153.0" cy="495.0" r="20.7" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/>
+<circle cx="153.0" cy="702.0" r="20.7" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/>
+<circle cx="153.0" cy="909.0" r="20.7" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/>
+<circle cx="153.0" cy="1116.0" r="20.7" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/>
+<circle cx="1107.0" cy="1116.0" r="20.7" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/>
+<circle cx="1107.0" cy="909.0" r="20.7" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/>
+<circle cx="1107.0" cy="702.0" r="20.7" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/>
+<circle cx="1107.0" cy="495.0" r="20.7" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/>
+<circle cx="1107.0" cy="288.0" r="20.7" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/>
+<polygon points="738.6,162.0 671.0,186.6 607.4,213.6 546.6,247.3 503.3,281.1 495.0,285.4 485.6,286.0 476.6,283.1 469.5,276.9 433.2,230.5 397.0,184.2 390.4,177.6 381.3,175.0 372.0,176.3 364.1,181.4 328.0,217.5 292.0,253.6 268.7,278.5 260.6,283.5 251.2,284.2 242.5,280.2 192.7,239.8 179.7,231.0 164.7,226.1 149.0,225.0 133.5,228.1 119.1,234.7 107.0,244.9 97.8,257.7 92.1,272.4 90.0,287.3 90.0,1116.0 91.8,1130.7 96.9,1144.6 105.1,1156.9 116.0,1166.9 128.9,1174.1 143.1,1178.2 157.9,1178.7 172.4,1175.9 252.2,1150.0 331.9,1124.1 411.7,1098.1 491.4,1072.2 508.8,1069.5 526.2,1071.3 592.6,1086.7 676.8,1092.5 738.3,1100.1 798.2,1116.1 847.9,1137.2 904.3,1160.0 960.7,1182.8 1024.9,1179.4 1107.0,1179.4 1123.3,1176.9 1138.4,1170.4 1151.6,1160.6 1161.5,1147.4 1167.9,1132.3 1170.0,1115.0 1170.0,162.0" fill="none" stroke="#7a5a40" stroke-width="5" stroke-linejoin="round"/>
+<polygon points="419.4,479.8 471.5,459.8 447.6,397.7 395.5,417.7" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="419.4,479.8 471.5,459.8" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="485.8,457.5 540.7,447.8 528.7,379.5 473.7,389.2" fill="#7a7874" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="485.8,457.5 540.7,447.8" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="555.3,449.2 610.8,443.4 603.3,371.8 547.8,377.6" fill="#8a8278" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="555.3,449.2 610.8,443.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="625.4,444.1 681.0,440.2 676.4,373.8 620.7,377.7" fill="#8e6c5e" stroke="#ffcf2e" stroke-width="5" stroke-linejoin="round"/>
+<polyline points="625.4,444.1 681.0,440.2" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="695.2,436.2 750.9,432.3 745.9,360.5 690.2,364.4" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="695.2,436.2 750.9,432.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="765.3,432.1 821.0,430.1 818.5,358.1 762.8,360.1" fill="#94705f" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="765.3,432.1 821.0,430.1" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="835.5,430.9 891.3,432.9 893.8,360.9 838.0,359.0" fill="#6e6458" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="835.5,430.9 891.3,432.9" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="934.3,413.7 984.9,390.1 956.8,329.7 906.2,353.3" fill="#7d6a5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="934.3,413.7 984.9,390.1" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="999.3,390.9 1052.7,407.2 1072.1,343.5 1018.8,327.2" fill="#8a7f70" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="999.3,390.9 1052.7,407.2" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="539.5,565.9 485.4,579.4 502.1,646.6 556.3,633.1" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="539.5,565.9 485.4,579.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="619.4,558.3 563.9,564.2 571.5,635.8 627.0,629.9" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="619.4,558.3 563.9,564.2" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="691.8,551.4 636.1,555.3 640.8,621.7 696.4,617.8" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="691.8,551.4 636.1,555.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="762.2,550.6 706.5,554.4 711.1,620.9 766.8,617.0" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="762.2,550.6 706.5,554.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="834.6,544.7 778.9,546.7 781.4,618.6 837.2,616.7" fill="#8a7f70" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="834.6,544.7 778.9,546.7" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="911.1,545.8 855.3,542.9 851.9,609.4 907.6,612.3" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="911.1,545.8 855.3,542.9" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="992.9,587.9 940.4,568.8 916.7,633.9 969.2,653.0" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="992.9,587.9 940.4,568.8" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="1059.3,565.9 1007.2,585.9 1033.0,653.1 1085.1,633.1" fill="#94705f" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="1059.3,565.9 1007.2,585.9" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="579.4,770.5 630.5,781.3 645.5,710.9 594.4,700.1" fill="#8a7f70" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="579.4,770.5 630.5,781.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="644.5,784.8 695.6,795.6 709.4,730.5 658.4,719.6" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="644.5,784.8 695.6,795.6" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="712.4,786.6 763.4,797.5 777.8,729.7 726.8,718.8" fill="#8a7f70" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="712.4,786.6 763.4,797.5" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="778.0,798.3 829.0,809.1 844.0,738.7 792.9,727.9" fill="#94705f" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="778.0,798.3 829.0,809.1" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="842.3,816.5 893.3,827.4 907.2,762.2 856.1,751.4" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="842.3,816.5 893.3,827.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="944.8,827.3 994.5,811.1 973.1,745.2 923.4,761.4" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="944.8,827.3 994.5,811.1" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="1008.9,811.7 1057.6,830.4 1083.4,763.2 1034.7,744.4" fill="#6e6458" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="1008.9,811.7 1057.6,830.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="510.4,852.5 472.3,816.9 426.8,865.6 465.0,901.2" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="510.4,852.5 472.3,816.9" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="463.3,805.5 433.4,762.7 376.6,802.5 406.5,845.2" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="463.3,805.5 433.4,762.7" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="430.7,747.6 404.6,702.4 342.2,738.4 368.3,783.6" fill="#8a8278" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="430.7,747.6 404.6,702.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="364.3,632.0 338.2,586.8 278.2,621.5 304.3,666.7" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="364.3,632.0 338.2,586.8" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="331.0,574.2 304.9,529.0 242.5,565.0 268.6,610.2" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="331.0,574.2 304.9,529.0" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="297.5,516.6 271.4,471.4 211.4,506.0 237.5,551.2" fill="#7a7670" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="297.5,516.6 271.4,471.4" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="620.8,904.4 567.2,889.1 548.1,955.7 601.7,971.1" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="620.8,904.4 567.2,889.1" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="691.2,906.6 635.7,900.8 628.2,972.4 683.7,978.2" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="691.2,906.6 635.7,900.8" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="764.0,910.3 708.7,902.6 699.4,968.5 754.7,976.3" fill="#8e6c5e" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="764.0,910.3 708.7,902.6" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="838.6,932.8 784.5,919.3 767.7,986.5 821.8,1000.0" fill="#86675a" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="838.6,932.8 784.5,919.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="908.8,952.1 855.1,936.7 835.3,1005.9 888.9,1021.3" fill="#8a7f70" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="908.8,952.1 855.1,936.7" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="979.8,1002.4 931.0,975.3 898.7,1033.6 947.5,1060.6" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="979.8,1002.4 931.0,975.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<polygon points="1047.7,994.8 993.4,1007.3 1008.9,1074.9 1063.3,1062.3" fill="#7d7266" stroke="#3a2e26" stroke-width="1.5" stroke-linejoin="round"/>
+<polyline points="1047.7,994.8 993.4,1007.3" fill="none" stroke="#2a211b" stroke-width="5" stroke-linecap="butt"/>
+<text x="477.9" y="717.5" font-size="21" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.6" stroke-linejoin="round" paint-order="stroke" letter-spacing="3.4" transform="rotate(59.5 477.9 717.5)">NEBLINA</text>
+<text x="770.5" y="855.4" font-size="21" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.6" stroke-linejoin="round" paint-order="stroke" letter-spacing="3.4" transform="rotate(8.9 770.5 855.4)">GAVIOTA</text>
+<text x="670.0" y="496.9" font-size="21" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.6" stroke-linejoin="round" paint-order="stroke" letter-spacing="3.4" transform="rotate(-3.3 670.0 496.9)">RUMBO</text>
+<text x="574.5" y="136.1" font-size="25" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="5.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="4.0" transform="rotate(-23.5 574.5 136.1)">SENDA PARKWAY</text>
+<text x="433.5" y="432.8" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 1</text>
+<text x="433.5" y="452.8" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Sp</text>
+<text x="507.2" y="412.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 2</text>
+<text x="507.2" y="432.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Cr</text>
+<text x="579.3" y="404.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 3</text>
+<text x="579.3" y="424.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="650.9" y="403.0" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 4</text>
+<text x="650.9" y="423.0" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Mo</text>
+<text x="720.5" y="392.3" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 5</text>
+<text x="720.5" y="412.3" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Sp</text>
+<text x="791.9" y="389.1" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 6</text>
+<text x="791.9" y="409.1" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="864.6" y="389.9" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 7</text>
+<text x="864.6" y="409.9" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="945.5" y="365.7" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 8</text>
+<text x="945.5" y="385.7" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Mo</text>
+<text x="1035.7" y="361.2" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RN 9</text>
+<text x="1035.7" y="381.2" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Cr</text>
+<text x="520.8" y="600.2" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 1</text>
+<text x="520.8" y="620.2" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="595.4" y="591.1" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 2</text>
+<text x="595.4" y="611.1" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="666.3" y="580.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 3</text>
+<text x="666.3" y="600.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Sp</text>
+<text x="736.6" y="579.7" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 4</text>
+<text x="736.6" y="599.7" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Mo</text>
+<text x="808.0" y="575.7" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 5</text>
+<text x="808.0" y="595.7" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="881.5" y="571.6" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 6</text>
+<text x="881.5" y="591.6" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Cr</text>
+<text x="954.8" y="604.9" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 7</text>
+<text x="954.8" y="624.9" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="1046.2" y="603.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >RS 8</text>
+<text x="1046.2" y="623.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="612.4" y="734.7" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 1</text>
+<text x="612.4" y="754.7" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="677.0" y="751.6" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 2</text>
+<text x="677.0" y="771.6" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Cr</text>
+<text x="745.1" y="752.2" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 3</text>
+<text x="745.1" y="772.2" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="811.0" y="762.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 4</text>
+<text x="811.0" y="782.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="874.7" y="783.4" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 5</text>
+<text x="874.7" y="803.4" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Sp</text>
+<text x="958.9" y="780.2" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 6</text>
+<text x="958.9" y="800.2" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Sp</text>
+<text x="1046.2" y="781.4" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GN 7</text>
+<text x="1046.2" y="801.4" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="468.6" y="853.1" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 1</text>
+<text x="468.6" y="873.1" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Sp</text>
+<text x="419.9" y="798.0" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 2</text>
+<text x="419.9" y="818.0" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Sp</text>
+<text x="386.5" y="737.0" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 3</text>
+<text x="386.5" y="757.0" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="321.2" y="620.8" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 4</text>
+<text x="321.2" y="640.8" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="286.7" y="563.6" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 5</text>
+<text x="286.7" y="583.6" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="254.4" y="505.3" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >NW 6</text>
+<text x="254.4" y="525.3" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="584.5" y="924.1" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 1</text>
+<text x="584.5" y="944.1" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="659.7" y="933.5" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 2</text>
+<text x="659.7" y="953.5" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Mo</text>
+<text x="731.7" y="933.4" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 3</text>
+<text x="731.7" y="953.4" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Sp</text>
+<text x="803.2" y="953.7" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 4</text>
+<text x="803.2" y="973.7" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Sp</text>
+<text x="872.0" y="973.0" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 5</text>
+<text x="872.0" y="993.0" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >L·Cr</text>
+<text x="939.2" y="1012.0" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 6</text>
+<text x="939.2" y="1032.0" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >S·Cr</text>
+<text x="1028.3" y="1028.8" font-size="19" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="4.2" stroke-linejoin="round" paint-order="stroke" >GS 7</text>
+<text x="1028.3" y="1048.8" font-size="11.5" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#ffffff" stroke="#1c1c1c" stroke-width="2.5" stroke-linejoin="round" paint-order="stroke" >M·Mo</text>
+<text x="710.5" y="254.7" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">BANK</text>
+<text x="221.1" y="756.6" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">PARK</text>
+<text x="520.3" y="901.7" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">BEND PARK</text>
+<text x="816.3" y="674.4" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">GREENBELT</text>
+<text x="770.8" y="1089.4" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">SOUTH SLOPE</text>
+<text x="594.0" y="1260.0" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" letter-spacing="1.5" font-style="italic">↓ to Gardenia</text>
+<text x="714.9" y="317.5" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" >Rumbo north row</text>
+<text x="603.9" y="677.6" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" >Rumbo south row</text>
+<text x="934.3" y="710.5" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" >Gaviota north row</text>
+<text x="252.2" y="666.6" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" >Neblina west row</text>
+<text x="783.9" y="1037.0" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.5" stroke-linejoin="round" paint-order="stroke" >Gaviota south row</text>
+</g>
+<polygon points="48,28 63,78 48,66 33,78" fill="#1c1c1c"/>
+<text x="48.0" y="96.0" font-size="20" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="4.4" stroke-linejoin="round" paint-order="stroke" >N</text>
+<rect x="26" y="1262" width="90" height="8" fill="#1c1c1c"/><rect x="116" y="1262" width="90" height="8" fill="#ffffff" stroke="#1c1c1c" stroke-width="1"/>
+<text x="116.0" y="1248.0" font-size="14" font-family="Helvetica,Arial,sans-serif" font-weight="700" text-anchor="middle" dominant-baseline="central" fill="#1c1c1c" stroke="#ffffff" stroke-width="3.1" stroke-linejoin="round" paint-order="stroke" >20 m</text>
+<text x="1282" y="44" font-size="27" font-family="Helvetica,Arial,sans-serif" font-weight="700" fill="#1c1c1c">NEIGHBORHOOD</text>
+<text x="1282" y="70" font-size="14" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Streets, rows and lots, as the level is built</text>
+<text x="1282" y="110" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" fill="#1c1c1c">Naming a house</text>
+<text x="1282" y="132" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Row, then lot: “Rumbo north lot 4” is RN 4.</text>
+<text x="1282" y="151" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Lots count the houses along their row.</text>
+<text x="1282" y="170" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">The heavy edge of a house is its front.</text>
+<text x="1282" y="206" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" fill="#1c1c1c">Rows</text>
+<text x="1282" y="228" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">RN  Rumbo north row, lots 1 to 9</text>
+<text x="1282" y="247" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">RS  Rumbo south row, lots 1 to 8</text>
+<text x="1282" y="266" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">GN  Gaviota north row, lots 1 to 7</text>
+<text x="1282" y="285" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">NW  Neblina west row, lots 1 to 6</text>
+<text x="1282" y="304" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">GS  Gaviota south row, lots 1 to 7</text>
+<text x="1282" y="340" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" fill="#1c1c1c">Designs (under each lot)</text>
+<text x="1282" y="362" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">S, M, L  small, medium, large plan</text>
+<text x="1282" y="381" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Sp  Spanish</text>
+<text x="1282" y="400" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Cr  Craftsman</text>
+<text x="1282" y="419" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Mo  Monterey</text>
+<text x="1282" y="438" font-size="13.5" font-family="Helvetica,Arial,sans-serif" font-weight="400" fill="#1c1c1c">Roofs are drawn in their tile's colour.</text>
+<text x="1282" y="474" font-size="16" font-family="Helvetica,Arial,sans-serif" font-weight="700" fill="#1c1c1c">Marks</text>
+<g transform="translate(1282,500)"><rect x="0" y="-11" width="22" height="14" fill="#8e6c5e" stroke="#ffcf2e" stroke-width="4"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Reference house (RN 4)</text></g>
+<g transform="translate(1282,523)"><rect x="0" y="-11" width="22" height="14" fill="#e6dfc8" stroke="#8d8672" stroke-width="1"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Lot (house and yards)</text></g>
+<g transform="translate(1282,546)"><circle cx="11" cy="-4" r="8" fill="#3f8a45" fill-opacity="0.55" stroke="#2c6331" stroke-width="1"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Tree that is cover</text></g>
+<g transform="translate(1282,569)"><circle cx="11" cy="-4" r="8" fill="#8fb3ff" stroke="#1f55d6" stroke-width="2"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Blue team's spawn pads</text></g>
+<g transform="translate(1282,592)"><circle cx="11" cy="-4" r="8" fill="#ff9c9c" stroke="#d62a2a" stroke-width="2"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Red team's spawn pads</text></g>
+<g transform="translate(1282,615)"><line x1="0" y1="-4" x2="22" y2="-4" stroke="#7a5a40" stroke-width="5"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">The level's wall</text></g>
+<g transform="translate(1282,638)"><line x1="0" y1="-4" x2="22" y2="-4" stroke="#4f7a3a" stroke-width="2.5" stroke-dasharray="6 4"/><text x="32" y="0" font-size="13.5" font-family="Helvetica,Arial,sans-serif" fill="#1c1c1c">Greenbelt lane</text></g>
+</svg>
