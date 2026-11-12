@@ -221,6 +221,52 @@ fn a_predicted_shell_stops_at_cover_and_a_ricochet_bounces_off_it() {
 }
 
 #[test]
+fn a_shell_predicted_with_the_old_weapon_bounces_as_the_hosts_once_its_launch_arrives() {
+    let (mut sim, viewer) = alone(VehicleKind::Balanced);
+    sim.add_cover(&CoverDef {
+        kind: CoverKind::Concrete,
+        x: 0.0,
+        z: 8.0,
+        w: 6.0,
+        d: 1.0,
+        h: 2.0,
+        hp: f64::INFINITY,
+        color: 0x888888,
+        timber_join: None,
+        timber_bays: None,
+    });
+    sim.world.step();
+    let cover = predictor(&sim, viewer);
+    // The host fired a ricochet; the client guessed its standard round.
+    let (launches, _, position) = host_fires(&mut sim, viewer, Weapon::Ricochet, 0.0);
+    let mut own = OwnShots::default();
+    own.fire(
+        Firing {
+            tick: 1,
+            position,
+            aim: 0.0,
+            kind: VehicleKind::Balanced,
+            weapon: Weapon::Standard,
+            team: Team::Blue,
+            tank_id: viewer,
+            damage: weapon_damage(Weapon::Standard),
+        },
+        &cover,
+    );
+    let mut paths = vec![PathEntry::Launch(launches[0])];
+    own.claim(&mut paths, &mut Vec::new(), Team::Blue, viewer, &cover);
+    assert!(
+        paths.is_empty(),
+        "the host's launch is the predicted shell's"
+    );
+    let speed = launches[0].vx.hypot(launches[0].vz);
+    let at_face = launches[0].tick + (7.5 - launches[0].z) / speed / STEP;
+    let after = drawn_at(&mut own, at_face + 6.0);
+    assert_eq!(after.len(), 1, "the host's ricochet flies on: {after:?}");
+    assert!(after[0].vz < 0.0, "back off the face: {after:?}");
+}
+
+#[test]
 fn own_shells_leave_in_the_present_and_ease_into_the_display_at_a_steady_pace() {
     // A 200 ms view delay: 12 ticks between the predicted present and the display.
     let delay = 12.0;

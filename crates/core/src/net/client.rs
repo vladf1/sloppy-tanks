@@ -1521,6 +1521,9 @@ impl NetworkClient {
         } else {
             Vec2::ZERO
         };
+        // A weapon picked this frame loads before this frame's shot is predicted, as the
+        // host applies the selection before it fires.
+        let queued = active && self.queue_actions(input);
         let gun = self.gun();
         let fired = self.prediction.advance(
             now_ms,
@@ -1661,7 +1664,7 @@ impl NetworkClient {
                 event,
             }));
         self.displayed = displayed;
-        self.collect(now_ms, input);
+        self.collect(now_ms, input, queued);
         Some(ClientFrame {
             state: self.display.as_ref().expect("checked above"),
             events: &mut self.frame_events,
@@ -1669,7 +1672,36 @@ impl NetworkClient {
         })
     }
 
-    fn collect(&mut self, now_ms: f64, input: &LocalInput) {
+    /// Queues this frame's mine and ammo selection as actions for the next input. False,
+    /// queuing nothing, while no viewer is displayed.
+    fn queue_actions(&mut self, input: &LocalInput) -> bool {
+        let Some(viewer) = self.display.as_ref().and_then(RenderState::viewer) else {
+            return false;
+        };
+        let (kind, ammo, selected) = (viewer.kind, viewer.ammo, viewer.selected_ammo);
+        if input.mine {
+            self.pending.push(Action::Mine);
+        }
+        let selection = input
+            .ammo_selection
+            .or(self.requested_ammo.take().map(AmmoSelection::Weapon));
+        if let Some(selection) = selection {
+            let weapon = match selection {
+                AmmoSelection::Weapon(weapon) => weapon,
+                AmmoSelection::Step(step) => {
+                    let current = self.pending_weapon.unwrap_or(selected);
+                    step_ammo(kind, &ammo, current, step).unwrap_or(current)
+                }
+            };
+            self.pending_weapon = Some(weapon);
+            self.pending.push(Action::Ammo(weapon));
+        }
+        true
+    }
+
+    /// Sends this frame's input; `queued` says its actions were queued before the shot
+    /// was predicted.
+    fn collect(&mut self, now_ms: f64, input: &LocalInput, queued: bool) {
         if !self.active_input() {
             return;
         }
@@ -1683,24 +1715,9 @@ impl NetworkClient {
                 tank.aim = input.aim_angle;
             }
         }
-        let viewer = display.viewer().expect("active input has a viewer");
         let control_epoch = control.control_epoch;
-        if input.mine {
-            self.pending.push(Action::Mine);
-        }
-        let selection = input
-            .ammo_selection
-            .or(self.requested_ammo.take().map(AmmoSelection::Weapon));
-        if let Some(selection) = selection {
-            let weapon = match selection {
-                AmmoSelection::Weapon(weapon) => weapon,
-                AmmoSelection::Step(step) => {
-                    let current = self.pending_weapon.unwrap_or(viewer.selected_ammo);
-                    step_ammo(viewer.kind, &viewer.ammo, current, step).unwrap_or(current)
-                }
-            };
-            self.pending_weapon = Some(weapon);
-            self.pending.push(Action::Ammo(weapon));
+        if !queued {
+            self.queue_actions(input);
         }
         self.pending
             .drain(..self.pending.len().saturating_sub(MAX_QUEUED_ACTIONS));
