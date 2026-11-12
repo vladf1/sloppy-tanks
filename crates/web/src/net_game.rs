@@ -187,8 +187,9 @@ pub struct NetGame {
     /// A dialog the page blurred the arena behind is open (`set_backdrop_blur`).
     backdrop_blur: bool,
     graphics: Graphics,
-    /// The last frame's result, which a frame skipped for the GPU hands back.
-    last_result: [f32; net_frame_slot::LENGTH],
+    /// Whether the last frame that ran drew the arena, which a frame skipped for the
+    /// GPU still shows.
+    last_drawn: bool,
     /// Main-thread milliseconds spent applying received messages (including deliveries of
     /// the development delay) this page session, for the statistics.
     receive_ms: f64,
@@ -478,14 +479,7 @@ impl NetGame {
             if active && self.view.rig.first_person.enabled {
                 self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
             }
-            let mut result = self.last_result;
-            result[net_frame_slot::RAN] = 0.0;
-            result[net_frame_slot::EVENTS] = self.events.len() as f32;
-            result[net_frame_slot::HUD_DUE] = 0.0;
-            result[net_frame_slot::SIM_MS] = 0.0;
-            result[net_frame_slot::RENDER_MS] = 0.0;
-            result[net_frame_slot::DT] = 0.0;
-            return Ok(result);
+            return Ok(self.state_result(self.last_drawn));
         }
         let dt = self.times.advance(now);
         if let Some(baseline) = self.baseline.take() {
@@ -505,6 +499,7 @@ impl NetGame {
             client,
             view,
             events,
+            graphics,
             ..
         } = self;
         let drawn = match client.frame(now, &local) {
@@ -527,6 +522,7 @@ impl NetGame {
                     );
                 }
                 let render_start = now_ms();
+                graphics.before_render(&mut view.renderer);
                 view.render(frame.state, 1.0, frame.dt, false)
                     .map_err(js_error)?;
                 render_ms = now_ms() - render_start;
@@ -543,9 +539,8 @@ impl NetGame {
                 .is_some_and(|state| state.match_state.phase == MatchPhase::Playing);
         self.graphics
             .frame(&mut self.view.renderer, &self.times, playing);
-        let result = self.frame_result(drawn, dt);
-        self.last_result = result;
-        Ok(result)
+        self.last_drawn = drawn;
+        Ok(self.frame_result(drawn, dt))
     }
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
@@ -738,7 +733,7 @@ impl NetGame {
             backdrop_blur: false,
             shell,
             graphics,
-            last_result: [0.0; net_frame_slot::LENGTH],
+            last_drawn: false,
             receive_ms: 0.0,
             network_sampler: NetworkSampler::default(),
         };
@@ -1034,6 +1029,25 @@ impl NetGame {
 
     fn frame_result(&mut self, drawn: bool, dt: f64) -> [f32; net_frame_slot::LENGTH] {
         use net_frame_slot as slot;
+        let mut result = self.state_result(drawn);
+        let hud_due = drawn
+            && (self.frame_index.is_multiple_of(HUD_UPDATE_EVERY_FRAMES)
+                || !self.events.is_empty());
+        result[slot::HUD_DUE] = f32::from(u8::from(hud_due));
+        result[slot::SIM_MS] = self.times.sim_ms as f32;
+        result[slot::RENDER_MS] = self.times.render_ms as f32;
+        result[slot::DT] = dt as f32;
+        result[slot::RAN] = 1.0;
+        self.frame_index += 1;
+        result
+    }
+
+    /// The slots that describe the room and view as they are now, which a frame
+    /// skipped for the GPU reports too: after `resume` it must not repeat the open
+    /// menu's freed pointer. The frame's own work (`RAN`, `HUD_DUE`, the timings and
+    /// `DT`) stays 0 for the caller to fill.
+    fn state_result(&self, drawn: bool) -> [f32; net_frame_slot::LENGTH] {
+        use net_frame_slot as slot;
         let mut result = [0.0; slot::LENGTH];
         let phase = self.client.phase();
         let menu = self.client.menu_open();
@@ -1049,23 +1063,13 @@ impl NetGame {
             self.view.rig.first_person.screen_angle(viewer.heading) as f32
         });
         result[slot::EVENTS] = self.events.len() as f32;
-        result[slot::HUD_DUE] = flag(
-            drawn
-                && (self.frame_index.is_multiple_of(HUD_UPDATE_EVERY_FRAMES)
-                    || !self.events.is_empty()),
-        );
-        result[slot::SIM_MS] = self.times.sim_ms as f32;
-        result[slot::RENDER_MS] = self.times.render_ms as f32;
         result[slot::FIRST_PERSON] = flag(self.view.rig.first_person.enabled);
-        result[slot::DT] = dt as f32;
         result[slot::DRAWN] = flag(drawn);
-        result[slot::RAN] = 1.0;
         result[slot::POINTER_FREE] =
             flag(!drawn || !self.client.connected || menu || phase != RoomPhase::Playing);
         let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
         result[slot::VIEWER_X] = viewer_x;
         result[slot::VIEWER_Y] = viewer_y;
-        self.frame_index += 1;
         result
     }
 }
