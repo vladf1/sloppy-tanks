@@ -31,7 +31,7 @@ PLAN = {
     "w": 2 * HALF_W,
     "d": 2 * HALF_D,
     "walls": {
-        "front": {"ground": [[-1.91, "Window"], [-0.66, "Door"], [1.4, "Garage"]], "upper": [0.5, 1.8, -1.91], "garage_bay": GARAGE_BAY},
+        "front": {"ground": [[-1.91, "Window"], [-0.66, "Door"], [1.4, "Garage"]], "upper": [0.85, 1.85, -1.91], "garage_bay": GARAGE_BAY},
         "back": {"ground": [[-2.0, "Window"], [0.0, "Window"], [2.0, "Window"]], "upper": [-2.0, 0.0, 2.0], "garage_bay": 0.0},
         "right": {"ground": [[-2.3, "Window"], [1.5, "Window"]], "upper": [-2.3, 1.5], "garage_bay": 0.0},
         "left": {"ground": [[-1.8, "Window"], [1.9, "Window"]], "upper": [-1.8, 1.9], "garage_bay": 0.0},
@@ -46,10 +46,15 @@ upper = _front["upper"]
 
 # ---------------------------------------------------------------- the front wall
 GARAGE = garage_opening(garage_u)
-# Over the garage two windows apart, each between its own pair of board shutters: a small
-# one by the gable, its sill higher, and a larger one on a shelf.
-SMALL = (upper[0] - 0.21, 2.3, upper[0] + 0.21, UPPER_GLASS[1])
+# Over the garage two windows apart, each between its own pair of narrow board shutters: a
+# smaller one toward the gable, its sill a little higher, and a larger one on a shelf. The
+# game's front keeps its coded upper windows over the garage (1.0 and 1.8 on this lot,
+# house_layout.rs garage_front), so each window's glass spans one of them at the coded
+# window's middle height; the small one sits as far toward the gable as that allows (the
+# real one is nearer still).
+SMALL = (upper[0] - 0.25, UPPER_GLASS[0] + 0.1, upper[0] + 0.25, UPPER_GLASS[1])
 LARGE = (upper[1] - 0.27, UPPER_GLASS[0], upper[1] + 0.27, UPPER_GLASS[1])
+UPPER_SHUTTER = 0.2
 BAY = (upper[2] - 0.66, upper[2] + 0.66)  # the box bay high in the gable
 BAY_LO, BAY_HI = 2.12, 2.96
 BAY_HOLE = (BAY[0] + 0.07, BAY_LO + 0.06, BAY[1] - 0.07, BAY_HI - 0.04)
@@ -61,7 +66,8 @@ holes = [GARAGE, DOOR, BAY_HOLE, OFFICE_WINDOW, SMALL, LARGE]
 wall("FrontWall", front, 0, 2 * HALF_W, 0, WALL_TOP, [(fx(a), y0, fx(b), y1) for a, y0, b, y1 in holes])
 sectional_garage_door(front, garage_u, decor=None, boards=False)
 lantern(front, GARAGE[2] + 0.17)
-window("FrontWall", front, fx(OFFICE_WINDOW[0]), OFFICE_WINDOW[1], fx(OFFICE_WINDOW[2]), OFFICE_WINDOW[3])
+# (no sill: it would stand out into the entry's box)
+window("FrontWall", front, fx(OFFICE_WINDOW[0]), OFFICE_WINDOW[1], fx(OFFICE_WINDOW[2]), OFFICE_WINDOW[3], sill=False)
 
 # The front door at the back of the porch: a painted leaf in two raised panels over the
 # porch floor, its casing filling the hole, a knob.
@@ -80,7 +86,7 @@ front.block("FrontWall__Iron", a + 0.045, PASSAGE_FLOOR + 0.5, a + 0.07, PASSAGE
 # brackets under the larger one.
 for (u0, y0, u1, y1), sill in ((SMALL, True), (LARGE, False)):
     window("FrontWall", front, fx(u0), y0, fx(u1), y1, mullion=False, sill=sill)
-    board_shutters(front, fx(u0), fx(u1), y0 - 0.01, y1 + 0.01)
+    board_shutters(front, fx(u0), fx(u1), y0 - 0.01, y1 + 0.01, width=UPPER_SHUTTER)
 s0, s1 = fx(LARGE[0]) - 0.05, fx(LARGE[2]) + 0.05
 front.block("FrontWall__Wood", s0, LARGE[1] - 0.05, s1, LARGE[1] - 0.01, 0.0, -0.08)
 for u in (s0 + 0.1, s1 - 0.1):
