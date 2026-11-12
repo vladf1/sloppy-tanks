@@ -13,8 +13,8 @@
 //! row (rosemary and olives under the dark perimeter block) and the scrub behind
 //! Gaviota's south row, the park's walks, plazas, benches and trees, the terrace walk and
 //! spur walks on the bank and the drains round the cul-de-sacs' ends, the spawn pads,
-//! oaks and sage past the arena's east edge and in a belt past the south and west walls,
-//! and the tract's rows of homes up the hills ([`senda_neighbours`]). The lots' walls are cover
+//! and oaks and sage past the arena's east edge and in a belt past the south and west
+//! walls. The lots' walls are cover
 //! ([`crate::sim::senda_yards`]); [`yard_wall`] draws them.
 //!
 //! The paving is drawn, not collided: tanks drive on the arena's flat floor, and the
@@ -59,7 +59,6 @@ use super::model_primitives::{
 };
 use super::scenery::create_spawn_pads;
 use super::senda_hills::Hills;
-use super::senda_neighbours::senda_neighbours;
 use super::senda_plants::{ShrubForm, rounded_shrub};
 use super::tree_models::{TreeDetail, TreeShape, leafy_shrub, tree_model};
 
@@ -152,19 +151,14 @@ const UNDER_TREES_COVER: (f64, f64) = (0.25, 0.35);
 const PLANTED_REACH: f64 = 12.0;
 const PLANTED_STEP: f64 = 1.0;
 /// The foothills' ground over the dry-grass tile: tan dry grass, gold where it faces the
-/// low sun, olive scrub, dark chaparral, the planted terrace benches up the cuts and the
-/// rows' bare pads.
+/// low sun, olive scrub and dark chaparral.
 const FOOTHILL_TAN: [f32; 3] = [0.92, 1.0, 2.5];
 const FOOTHILL_GOLD: [f32; 3] = [1.08, 1.08, 2.4];
 const FOOTHILL_OLIVE: [f32; 3] = [0.5, 0.6, 1.25];
 const FOOTHILL_CHAPARRAL: [f32; 3] = [0.17, 0.24, 0.42];
-const FOOTHILL_TERRACE: [f32; 3] = [0.3, 0.44, 0.7];
-const FOOTHILL_PAD: [f32; 3] = [0.95, 1.0, 2.2];
 /// The fold oaks' crowns (radius range, m) and leaves.
 const FOLD_OAK_CROWN: (f64, f64) = (1.7, 2.6);
 const FOLD_OAK_LEAVES: [u32; 3] = [0x3c4a2c, 0x46532f, 0x515a36];
-/// The terraces' clipped shrubs: their radius range (m).
-const TERRACE_SHRUB: (f64, f64) = (0.8, 1.2);
 /// The natural hillside's grass where the winter rains leave it green.
 const HILLS: [f32; 3] = [0.4, 0.62, 0.78];
 /// How far (m) past the houses' fronts the front yards' planted beds reach (the ground's
@@ -563,7 +557,6 @@ pub fn senda_scenery() -> Node {
     root.children.push(bank_planting());
     root.children.push(yard_props());
     root.children.push(street_lamps());
-    root.children.push(senda_neighbours(&hills.rows));
     root
 }
 
@@ -592,7 +585,7 @@ fn grass(hills: &Hills) -> Node {
             if share <= 0.0 {
                 return tint;
             }
-            let foothill = foothill_tint(at, *normal, hills);
+            let foothill = foothill_tint(at, *normal);
             std::array::from_fn(|i| tint[i] + (foothill[i] - tint[i]) * share)
         })
         .collect();
@@ -4178,7 +4171,7 @@ fn sage_clumps(group: &mut Node, hills: &Hills) {
         &dense,
         (low, high),
         &|p| hills.height(p.x, p.y),
-        &|p| hill_patch(p) > 0.5 && !hills.on_pad(p),
+        &|p| hill_patch(p) > 0.5,
     );
 }
 
@@ -4230,28 +4223,13 @@ fn fold_oaks(group: &mut Node, hills: &Hills) {
             &FOLD_OAK_LEAVES,
             seed,
         );
-    } // The planted terraces up the cuts behind the rows' pads: rows of clipped shrubs.
-    for (at, seed) in hills.terrace_plants() {
-        let ground = hills.height(at.x, at.y);
-        let (least, most) = TERRACE_SHRUB;
-        let size = least + (most - least) * hash(seed);
-        rounded_shrub(
-            group,
-            (at, ground - 0.1),
-            (size, size * 1.1),
-            ShrubForm::Mound,
-            FOLD_OAK_LEAVES[(hash(seed + 0.4) * 3.0) as usize % 3],
-            None,
-            seed,
-        );
     }
 }
 
 /// The ground's colour on the hills at `p` whose surface faces `normal`: dry tan grass
 /// (gold where it faces the sun), olive scrub drifting over it, dark chaparral in
-/// patches, down the gullies and on the steeper and north-facing slopes, and the planted
-/// terraces up the cuts behind the rows' pads.
-fn foothill_tint(p: DVec2, normal: [f32; 3], hills: &Hills) -> [f32; 3] {
+/// patches, down the gullies and on the steeper and north-facing slopes.
+fn foothill_tint(p: DVec2, normal: [f32; 3]) -> [f32; 3] {
     let n = glam::DVec3::new(
         f64::from(normal[0]),
         f64::from(normal[1]),
@@ -4271,20 +4249,11 @@ fn foothill_tint(p: DVec2, normal: [f32; 3], hills: &Hills) -> [f32; 3] {
     let drift = 0.5 + 0.5 * wave(0.41, 0.33, 0.9) * wave(-0.27, 0.47, 3.1);
     let chaparral = rise((patch - 0.36) / 0.14 + steep * 1.5 + shaded * 1.4 - 0.2);
     let olive = rise((drift - 0.35) / 0.3) * 0.8;
-    let terraced = hills.terraced(p);
-    let planted = terraced * rise((0.5 - hills.terrace_band(p.x, p.y)) / 0.15);
-    let pad = if hills.on_pad(p) { 1.0 } else { 0.0 };
     let mix = |a: f32, b: f32, t: f64| a + (b - a) * t as f32;
     std::array::from_fn(|i| {
         let grass = mix(FOOTHILL_TAN[i], FOOTHILL_GOLD[i], sunny * 0.8);
         let scrub = mix(grass, FOOTHILL_OLIVE[i], olive);
-        let wild = mix(scrub, FOOTHILL_CHAPARRAL[i], chaparral);
-        let cut = mix(
-            mix(wild, FOOTHILL_TAN[i], terraced * 0.6),
-            FOOTHILL_TERRACE[i],
-            planted,
-        );
-        mix(cut, FOOTHILL_PAD[i], pad)
+        mix(scrub, FOOTHILL_CHAPARRAL[i], chaparral)
     })
 }
 
