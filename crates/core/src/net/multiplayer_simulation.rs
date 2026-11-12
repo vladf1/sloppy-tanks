@@ -99,12 +99,14 @@ pub fn set_driver(
         tank.kills = 0;
         tank.deaths = 0;
         tank.life += 1;
+        tank.seat_life = tank.life;
     } else if driver != Driver::Bot
         && let Some(name) = tank.away_player.take()
     {
         tank.name = name;
         tank.bot = false;
         tank.life += 1;
+        tank.seat_life = tank.life;
     }
     tank.driver = driver;
     tank.command = VehicleCommand::idle_aiming(tank.aim);
@@ -143,6 +145,7 @@ pub fn reassign_tank(
     let tank = &mut simulation.tanks[tank_index];
     tank.alive = false;
     tank.life += 1;
+    tank.seat_life = tank.life;
     tank.player_id = player.map(|player| player.player_id.clone());
     tank.name = name;
     tank.human = player.is_some();

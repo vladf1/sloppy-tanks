@@ -138,7 +138,7 @@ fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
             standard_damage,
             enemy_shot.owner,
             enemy_shot.team,
-            enemy_shot.owner_life,
+            enemy_shot.firer(),
             Some(DamageSource {
                 cause: DamageCause::Interception,
                 origin: point,
@@ -582,7 +582,7 @@ fn rocket_blast(simulation: &mut Simulation, shot: &Shot) {
         shot.damage,
         shot.owner,
         shot.team,
-        shot.owner_life,
+        shot.firer(),
         DamageCause::Rocket,
     );
 }
@@ -657,7 +657,7 @@ fn resolve_contact(
         Contact::Mine { mine: mi } => {
             // Remove first so the blast cannot rediscover and detonate this mine twice.
             let mine = simulation.mines.remove(mi);
-            simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
+            simulation.detonate_mine(&mine, shot.owner, shot.team, shot.firer());
         }
         Contact::Debris {
             fragment: fi,
@@ -751,7 +751,7 @@ fn resolve_contact(
                     shot.damage,
                     shot.owner,
                     shot.team,
-                    shot.owner_life,
+                    shot.firer(),
                     Some(DamageSource {
                         cause: shot.weapon.into(),
                         origin: Vec2::new(
@@ -803,7 +803,7 @@ fn resolve_contact(
                     shot.damage,
                     shot.owner,
                     shot.team,
-                    shot.owner_life,
+                    shot.firer(),
                     Some(Point3::new(shot.x, shot.combat_y(), shot.z)),
                 );
                 if simulation.covers[ci].alive && shot.bounces > 0 {

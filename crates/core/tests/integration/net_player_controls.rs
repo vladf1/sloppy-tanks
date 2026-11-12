@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use net_support::set_translation;
 use serde_json::{Value, json};
 use sloppy_core::net::multiplayer_simulation::{
-    MultiplayerOptions, create_multiplayer_simulation, release_player_tank, set_driver,
+    MultiplayerOptions, claim_player_tank, create_multiplayer_simulation, release_player_tank,
+    set_driver,
 };
 use sloppy_core::net::player_controls::{
     Ack, Action, Aim, ControlInput, PlayerControls, encode_input, read_input,
@@ -20,7 +21,7 @@ use sloppy_core::sim::combat_record::CombatRecord;
 use sloppy_core::sim::debris_cleanup::cleanup_candidate;
 use sloppy_core::sim::difficulty::{Difficulty, enemy_difficulty};
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::mines::place_mine;
+use sloppy_core::sim::mines::{place_mine, step_mines};
 use sloppy_core::sim::shooter_rewind::ShooterRewind;
 use sloppy_core::sim::types::{
     AmmoSelection, CoverKind, Driver, FragmentShape, PlayerAssignment, SimEventType, Team,
@@ -28,7 +29,7 @@ use sloppy_core::sim::types::{
 };
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{GameMode, Simulation, SimulationSetup};
-use support::{clear_arena, tank_index};
+use support::{clear_arena, fired, tank_index};
 
 fn alice_room() -> (Simulation, u32) {
     let sim = create_multiplayer_simulation(
@@ -775,8 +776,8 @@ fn driver_handoff_preserves_player_balance_and_respawn_uses_each_seats_chassis()
     sim.tanks[b].protection = 0.0;
     let (b_id, b_team, b_life) = (sim.tanks[b].id, sim.tanks[b].team, sim.tanks[b].life);
     let (a_id, a_team, a_life) = (sim.tanks[a].id, sim.tanks[a].team, sim.tanks[a].life);
-    sim.damage_tank(a, 10000.0, b_id, b_team, Some(b_life), None);
-    sim.damage_tank(b, 10000.0, a_id, a_team, Some(a_life), None);
+    sim.damage_tank(a, 10000.0, b_id, b_team, fired(&sim, b_id, b_life), None);
+    sim.damage_tank(b, 10000.0, a_id, a_team, fired(&sim, a_id, a_life), None);
     for _ in 0..240 {
         sim.step_with(&BTreeMap::new());
     }
@@ -799,7 +800,7 @@ fn old_life_ordnance_cannot_award_replacement_xp_or_life_kills_and_the_recap_sta
     // A future seat reassignment starts a new generation without a fake death.
     sim.tanks[0].life += 1;
     let (a_id, a_team) = (sim.tanks[0].id, sim.tanks[0].team);
-    sim.damage_tank(1, 10000.0, a_id, a_team, Some(old_life), None);
+    sim.damage_tank(1, 10000.0, a_id, a_team, fired(&sim, a_id, old_life), None);
     assert_eq!(sim.tanks[0].deaths, 0);
     assert_eq!(sim.tanks[0].kills, 1);
     assert_eq!(sim.tanks[0].life_kills, 0);
@@ -822,10 +823,93 @@ fn old_life_ordnance_cannot_award_replacement_xp_or_life_kills_and_the_recap_sta
         0x888888,
     ));
     let life = sim.tanks[0].life;
-    sim.damage_cover(drum, 100.0, a_id, a_team, Some(life), None);
+    sim.damage_cover(drum, 100.0, a_id, a_team, fired(&sim, a_id, life), None);
     for event in &sim.events {
         assert!(event.x.is_finite());
     }
+}
+
+/// Bob on armed mine `mine`, the only one, with only the mines stepping: it goes off.
+/// His hull before and after.
+fn bob_drives_over(sim: &mut Simulation, mine: usize) -> (f64, f64) {
+    let bob = 1;
+    let (x, z) = (sim.mines[mine].x, sim.mines[mine].z);
+    sim.mines[mine].arm = 0.0;
+    sim.tanks[bob].protection = 0.0;
+    set_translation(sim, bob, x, 0.65, z);
+    let before = sim.tanks[bob].hp;
+    sim.events.clear();
+    step_mines(sim, 0.0);
+    assert!(sim.mines.is_empty(), "it went off");
+    (before, sim.tanks[bob].hp)
+}
+
+#[test]
+fn a_departed_players_mine_credits_nobody_and_its_killer_is_unknown() {
+    let mut sim = alice_and_bob_room(MultiplayerOptions::default());
+    let alice = sim.tanks[0].id;
+    place_mine(&mut sim, 0);
+    let laid_on = sim.mines[0].owner_life;
+    release_player_tank(&mut sim, alice);
+    assert!(!sim.tanks[0].human, "a fill bot holds Alice's seat now");
+    sim.tanks[1].hp = 1.0;
+    bob_drives_over(&mut sim, 0);
+    assert!(!sim.tanks[1].alive, "the mine destroyed Bob");
+    let seat = &sim.tanks[0];
+    assert_eq!((seat.kills, seat.life_kills, seat.xp), (0, 0, 0.0));
+    let death = sim
+        .events
+        .iter()
+        .find(|event| event.kind == SimEventType::Death)
+        .unwrap();
+    assert_eq!(death.owner, None, "not the fill bot in her seat");
+    assert_eq!(death.owner_life, laid_on, "an owner nobody holds: unknown");
+}
+
+#[test]
+fn a_mine_keeps_the_damage_of_whoever_laid_it_after_the_seat_changes_hands() {
+    let hard = || {
+        let mut sim = alice_and_bob_room(MultiplayerOptions {
+            difficulty: Some(Difficulty::Hard),
+            ..MultiplayerOptions::default()
+        });
+        sim
+    };
+    // Alice's mine, after she leaves and a fill bot takes her seat: a player's damage.
+    let mut sim = hard();
+    place_mine(&mut sim, 0);
+    let damage = sim.mines[0].damage.unwrap();
+    let alice = sim.tanks[0].id;
+    release_player_tank(&mut sim, alice);
+    let (before, after) = bob_drives_over(&mut sim, 0);
+    assert!(
+        (before - after - damage).abs() < 1e-9,
+        "{} for {damage}",
+        before - after
+    );
+    // A fill bot's mine, after Carol takes its seat: still a fill bot's on Hard.
+    let mut sim = hard();
+    let bot = (0..sim.tanks.len())
+        .find(|&i| !sim.tanks[i].human && sim.tanks[i].team == Team::Blue)
+        .unwrap();
+    set_translation(&mut sim, bot, 0.0, 0.65, 0.0);
+    place_mine(&mut sim, bot);
+    let damage = sim.mines[0].damage.unwrap();
+    let carol = PlayerAssignment {
+        player_id: "carol".into(),
+        name: "Carol".into(),
+        team: Team::Blue,
+        slot: bot / 2,
+        kind: VehicleKind::Balanced,
+    };
+    assert_eq!(claim_player_tank(&mut sim, &carol), bot);
+    assert!(sim.tanks[bot].human);
+    let (before, after) = bob_drives_over(&mut sim, 0);
+    assert!(
+        (before - after - damage * 1.15).abs() < 1e-9,
+        "{} for {damage} x 1.15",
+        before - after
+    );
 }
 
 #[test]
@@ -844,14 +928,14 @@ fn fill_bot_damage_applies_equally_on_both_teams_and_never_changes_player_seat_d
         sim.tanks[victim].protection = 0.0;
         let hp = sim.tanks[victim].hp;
         let (id, team, life) = (sim.tanks[bot].id, sim.tanks[bot].team, sim.tanks[bot].life);
-        sim.damage_tank(victim, 10.0, id, team, Some(life), None);
+        sim.damage_tank(victim, 10.0, id, team, fired(&sim, id, life), None);
         assert_eq!(sim.tanks[victim].hp, hp - 11.5);
     }
     let (a, b) = (humans[0], humans[1]);
     set_driver(&mut sim, a, Driver::Bot).unwrap();
     let hp = sim.tanks[b].hp;
     let (id, team, life) = (sim.tanks[a].id, sim.tanks[a].team, sim.tanks[a].life);
-    sim.damage_tank(b, 10.0, id, team, Some(life), None);
+    sim.damage_tank(b, 10.0, id, team, fired(&sim, id, life), None);
     assert_eq!(sim.tanks[b].hp, hp - 10.0);
 }
 

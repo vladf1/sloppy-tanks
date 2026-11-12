@@ -43,6 +43,7 @@ fn mine(s: &mut Simulation, x: f64, owner: u32, team: Team, arm: f64) -> Mine {
         id,
         owner,
         owner_life: None,
+        owner_fill_bot: false,
         damage: None,
         team,
         x,

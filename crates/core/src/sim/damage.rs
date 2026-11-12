@@ -24,7 +24,7 @@ use super::structure_physics::{
 use super::tank_destruction::tank_burnout;
 use super::tree_proportions::tree_proportions;
 use super::types::{
-    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
+    CoverKind, DamageCause, DamageSource, DeathStyle, Firer, FragmentShape, Mine, SimEvent,
     SimEventType, Team, VehicleKind,
 };
 use super::veterancy::{KILL_XP, earn_experience};
@@ -68,7 +68,7 @@ impl Simulation {
         amount: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         source: Option<DamageSource>,
     ) {
         let mut amount = amount;
@@ -76,9 +76,20 @@ impl Simulation {
         if !tank.alive || tank.protection > 0.0 || (tank.team == team && tank.id != owner) {
             return;
         }
-        let attacker = self.tank_index(owner);
-        if self.multiplayer()
-            && attacker.is_some_and(|a| !self.tanks[a].human && self.tanks[a].team == team)
+        let owner_tank = self.tank_index(owner);
+        // Ordnance an earlier occupant of the owner's seat fired credits nobody: not the
+        // player or bot who holds the seat now.
+        let earlier_occupant = owner_tank
+            .zip(firer)
+            .is_some_and(|(a, firer)| firer.life < self.tanks[a].seat_life);
+        let attacker = owner_tank.filter(|_| !earlier_occupant);
+        let owner_life = firer.map(|firer| firer.life);
+        // A fill bot's ordnance is scaled by the room's difficulty, as whoever fired it was.
+        let fill_bot = match firer {
+            Some(firer) => firer.fill_bot,
+            None => owner_tank.is_some_and(|a| !self.tanks[a].human),
+        };
+        if self.multiplayer() && fill_bot && owner_tank.is_some_and(|a| self.tanks[a].team == team)
         {
             amount *= difficulty_tuning(self.difficulty).damage;
         }
@@ -130,7 +141,7 @@ impl Simulation {
                 let mut hurt = SimEvent::at(SimEventType::Hurt, position.x, position.z);
                 hurt.damage_source = source;
                 hurt.id = Some(victim_id);
-                hurt.owner = Some(owner);
+                hurt.owner = (!earlier_occupant).then_some(owner);
                 hurt.team = Some(victim_team);
                 hurt.size = Some(amount);
                 self.events.push(hurt);
@@ -192,7 +203,9 @@ impl Simulation {
         death.death_style = burnout.then_some(DeathStyle::Burnout);
         death.damage_source = source;
         death.id = Some(victim_id);
-        death.owner = Some(owner);
+        // An earlier occupant's ordnance: no owner, its life left to say the killer is
+        // unknown rather than the yard.
+        death.owner = (!earlier_occupant).then_some(owner);
         death.owner_life = owner_life;
         death.team = Some(victim_team);
         death.size = Some(match kind {
@@ -210,7 +223,7 @@ impl Simulation {
         amount: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         impact: Option<Point3>,
     ) {
         if let Some(cover) = self.covers.get(cover_index)
@@ -307,7 +320,7 @@ impl Simulation {
                 COMBAT.drum_damage,
                 owner,
                 team,
-                owner_life,
+                firer,
                 DamageCause::Drum,
             );
         }
@@ -322,7 +335,7 @@ impl Simulation {
         damage: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         cause: DamageCause,
     ) {
         let mut explosion = SimEvent::at(SimEventType::Explosion, position.x, position.z);
@@ -342,7 +355,7 @@ impl Simulation {
                 .extract_if(.., |mine| distance(position, Vec2::new(mine.x, mine.z)) < radius),
         );
         for mine in chained.drain(..) {
-            self.detonate_mine(&mine, owner, team, owner_life);
+            self.detonate_mine(&mine, owner, team, firer);
         }
         self.scratch.chained_mines = chained;
         for i in 0..self.tanks.len() {
@@ -360,7 +373,7 @@ impl Simulation {
                 damage * factor,
                 owner,
                 team,
-                owner_life,
+                firer,
                 Some(DamageSource {
                     cause,
                     origin: position,
@@ -400,7 +413,7 @@ impl Simulation {
                     damage,
                     owner,
                     team,
-                    owner_life,
+                    firer,
                     Some(Point3::new(position.x, 1.0, position.z)),
                 );
             }
@@ -414,7 +427,7 @@ impl Simulation {
         mine: &Mine,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
     ) {
         self.explode(
             Vec2::new(mine.x, mine.z),
@@ -422,7 +435,7 @@ impl Simulation {
             mine.damage.unwrap_or(MINE.damage),
             owner,
             team,
-            owner_life,
+            firer,
             DamageCause::Mine,
         );
     }

@@ -1250,6 +1250,8 @@ pub fn read_mine(record: &WireRecord) -> ReadResult<Mine> {
         z: fields.fixed(Z)?,
         owner: fields.count32(OWNER)?,
         owner_life: fields.opt_count32(OWNER_LIFE)?,
+        // The host alone scales a mine's damage, so its layer's kind stays there.
+        owner_fill_bot: false,
         damage: fields.opt_fixed(DAMAGE)?,
         team: fields.team(TEAM)?,
         arm: fields.fixed(ARM)?,

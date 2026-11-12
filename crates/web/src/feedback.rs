@@ -35,6 +35,15 @@ pub const CRITICAL_HULL: f64 = 0.25;
 /// or a player who has left).
 pub const VIEWER_NAME: &str = "YOU";
 pub const YARD_NAME: &str = "YARD";
+/// The kill feed's name for ordnance an earlier occupant of a seat fired, whose owner the
+/// seat's current occupant is not.
+pub const UNKNOWN_NAME: &str = "UNKNOWN";
+
+/// Whether a death event's killer is unknown: ordnance from an earlier occupant of its
+/// owner's seat, which the host reports with the life it was fired on but no owner.
+fn unknown_killer(event: &SimEvent) -> bool {
+    event.owner.is_none() && event.owner_life.is_some()
+}
 
 /// What destroyed a tank, as the respawn card and the death sentence name it.
 pub fn damage_label(cause: DamageCause) -> &'static str {
@@ -74,8 +83,8 @@ pub fn cause_icon(cause: Option<DamageCause>) -> &'static str {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeathReport {
-    /// The killer's name; `None` for the yard, a departed player or the viewer's own
-    /// ordnance.
+    /// The killer's name; "Unknown" for ordnance a seat's earlier occupant fired, `None`
+    /// for the yard, a departed player or the viewer's own ordnance.
     pub killer: Option<String>,
     /// The viewer's own ordnance did it.
     #[serde(rename = "self")]
@@ -220,10 +229,12 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
         let vowel = label.starts_with(['a', 'e', 'i', 'o', 'u']);
         format!("{} {label}", if vowel { "an" } else { "a" })
     });
+    let unknown = unknown_killer(event).then_some("Unknown");
     let name = killer
         .as_ref()
         .map(|row| row.name.as_ref())
-        .filter(|name| !name.is_empty());
+        .filter(|name| !name.is_empty())
+        .or(unknown);
     let sentence = match (own_goal, name, &with) {
         (true, _, Some(with)) => format!("You destroyed yourself with {with}."),
         (true, _, None) => "You destroyed yourself.".to_owned(),
@@ -241,7 +252,9 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
                 ordinal(u64::from(row.kills)).to_ascii_lowercase()
             )
         }),
-        killer: killer.map(|row| row.name.into_owned()),
+        killer: killer
+            .map(|row| row.name.into_owned())
+            .or(unknown.map(str::to_owned)),
         own_goal,
         weapon,
         icon: cause_icon(cause),
@@ -259,8 +272,11 @@ fn feed_row(event: &SimEvent, own: bool, viewer: u32, scoreboard: &Scoreboard) -
         ),
         None => (YARD_NAME.to_owned(), false),
     };
-    let [(killer_name, killer_bot), (victim_name, victim_bot)] =
+    let [(mut killer_name, killer_bot), (victim_name, victim_bot)] =
         [name(event.owner), name(event.id)];
+    if unknown_killer(event) {
+        UNKNOWN_NAME.clone_into(&mut killer_name);
+    }
     // The victim's team comes with the event; allies take no hull damage from each
     // other, so the killer is on the other side unless the tank destroyed itself or the
     // yard did it.
@@ -437,6 +453,27 @@ mod tests {
         assert_eq!(yard.icon, "skull");
         assert!(!yard.own_death && !yard.own_kill);
         assert_eq!(yard.bots, [false, false]);
+    }
+
+    #[test]
+    fn ordnance_from_a_seats_earlier_occupant_has_an_unknown_killer() {
+        let board = scoreboard();
+        // The host sends no owner, but the life the mine was laid on.
+        let unknown = SimEvent {
+            owner_life: Some(3),
+            ..death(None, Some(DamageCause::Mine))
+        };
+        let report = report(&unknown, &board);
+        assert_eq!(report.killer.as_deref(), Some("Unknown"));
+        assert_eq!(
+            report.sentence,
+            "Unknown destroyed you with a mine explosion."
+        );
+        assert_eq!((report.killer_team, report.killer_vehicle), (None, None));
+        let row = event_feedback(&unknown, true, VIEWER, &board).feed.unwrap();
+        assert_eq!(row.names, ["UNKNOWN", "YOU"]);
+        assert_eq!(row.sides[0], FeedSide::Neutral);
+        assert!(!row.own_kill);
     }
 
     #[test]
