@@ -106,7 +106,7 @@ use crate::page::{
     queue_event, touch_fires,
 };
 use crate::room_notices::RoomNotice;
-use crate::room_text::RoomText;
+use crate::room_text::{Invite, RoomText};
 use crate::stats::{frame_readings, presentation_stats, renderer_readings};
 use sloppy_render::gpu::RenderTarget;
 
@@ -131,6 +131,10 @@ pub struct NetConfig {
     pub dodge: Option<String>,
     /// Development switch: `"0"` sends no view delay, so the host favors no shooter.
     pub shooter: Option<String>,
+    /// How the room menu tells a player alone to bring friends: a page always shares its
+    /// address, so only the typed shell sets this.
+    #[serde(skip)]
+    pub invite: Invite,
 }
 
 impl NetConfig {
@@ -724,7 +728,7 @@ impl NetGame {
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             notices: Vec::new(),
-            room_text: RoomText::default(),
+            room_text: RoomText::new(config.invite),
             effect_timers: EffectTimers::default(),
             frame_index: 0,
             times: FrameTimes::default(),

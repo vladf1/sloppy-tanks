@@ -3,7 +3,10 @@
 //! the room played, so a reload comes back there: `?multiplayer` on the Multiplayer tab,
 //! `?room=<CODE>` in a room or back from one that ended, neither in single player. A
 //! room's invite link is that address. The app has no address; its invite link opens
-//! the web version.
+//! the web version, where that lists the app's servers, and otherwise it invites with the
+//! room's code.
+
+use sloppy_web::room_text::Invite;
 
 use crate::tasks::Background;
 
@@ -134,6 +137,39 @@ pub fn invite_link(room: &str) -> String {
     #[cfg(not(target_arch = "wasm32"))]
     {
         format!("{}?{}", web_site(), query_for("", Place::Room(room)))
+    }
+}
+
+/// How friends are invited to a room: by its link where a web version lists the room's
+/// server (a page, and the apps on production's or the dev site's servers), else by its
+/// code. The App Store apps list the app-store environment's servers, which run the
+/// released apps' content version; the site lists production's and would not find the
+/// room.
+pub fn invite() -> Invite {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Invite::Link
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        invite_from(crate::directory::ENVIRONMENT)
+    }
+}
+
+/// How an app that lists `environment`'s servers invites friends.
+#[cfg(not(target_arch = "wasm32"))]
+fn invite_from(environment: &str) -> Invite {
+    match environment {
+        "production" | "dev" => Invite::Link,
+        _ => Invite::Code,
+    }
+}
+
+/// What the room menu copies to invite friends to `room`: its link or its code.
+pub fn invitation(room: &str) -> String {
+    match invite() {
+        Invite::Link => invite_link(room),
+        Invite::Code => room.to_owned(),
     }
 }
 
@@ -281,5 +317,19 @@ mod tests {
         let link = invite_link("ABCD2345");
         assert_eq!(link, format!("{}?room=ABCD2345", web_site()));
         assert!(web_site().starts_with("https://"), "{link}");
+    }
+
+    #[test]
+    fn only_apps_on_servers_a_site_lists_invite_by_link() {
+        assert_eq!(invite_from("production"), Invite::Link);
+        assert_eq!(invite_from("dev"), Invite::Link);
+        // The App Store apps' servers run another content version than the site's.
+        assert_eq!(invite_from("app-store"), Invite::Code);
+        assert_eq!(invite(), invite_from(crate::directory::ENVIRONMENT));
+        let copied = invitation("ABCD2345");
+        match invite() {
+            Invite::Link => assert_eq!(copied, invite_link("ABCD2345")),
+            Invite::Code => assert_eq!(copied, "ABCD2345"),
+        }
     }
 }
