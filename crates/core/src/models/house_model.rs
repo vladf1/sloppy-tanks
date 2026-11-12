@@ -1679,28 +1679,37 @@ fn house_wall(
         );
     }
     if let Some(door_opening) = door_opening {
-        let beds = flower_beds(door_opening.u, half, garage_opening, entry);
-        foundation_bed(parts, frame, &beds, design.variant);
+        // A garage house (Senda's) keeps no foundation beds: its front beds are the
+        // street's scenery, planted there with shrubs of their own.
+        let bedded = design.garage.is_none();
+        if bedded {
+            let beds = flower_beds(door_opening.u, half, garage_opening, entry);
+            foundation_bed(parts, frame, &beds, design.variant);
+        }
         if let Some(wing) = wing_plan(design) {
             match entry {
                 Entry::BrickWing | Entry::ArchWing | Entry::BrickArch => {
                     front_wing(parts, design, roof, piece, &wing, entry);
-                    foundation_bed(
-                        parts,
-                        frame * shift(DVec3::Z * WING_DEPTH),
-                        &wing.beds(entry, design.style.loggia),
-                        design.variant,
-                    );
+                    if bedded {
+                        foundation_bed(
+                            parts,
+                            frame * shift(DVec3::Z * WING_DEPTH),
+                            &wing.beds(entry, design.style.loggia),
+                            design.variant,
+                        );
+                    }
                 }
                 Entry::SkirtPorch => skirt_porch(parts, design, roof, piece, &wing),
                 Entry::RoomPorch => {
                     room_porch(parts, design, roof, piece, &wing);
-                    foundation_bed(
-                        parts,
-                        frame * shift(DVec3::Z * WING_DEPTH),
-                        &wing.beds(entry, false),
-                        design.variant,
-                    );
+                    if bedded {
+                        foundation_bed(
+                            parts,
+                            frame * shift(DVec3::Z * WING_DEPTH),
+                            &wing.beds(entry, false),
+                            design.variant,
+                        );
+                    }
                 }
                 _ => {}
             }
