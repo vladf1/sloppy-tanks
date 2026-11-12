@@ -662,6 +662,7 @@ impl Game {
             "covers": inspection.covers.iter().map(|cover| json!({
                 "id": cover.id, "shown": cover.shown,
                 "modelKey": cover.model_key, "crown": cover.crown, "cut": cover.cut,
+                "boughsShed": cover.boughs_shed,
             })).collect::<Vec<_>>(),
             "pickups": inspection.pickups.iter().map(|pickup| json!({
                 "id": pickup.id, "baseShown": pickup.base_shown, "gem": pickup.gem,

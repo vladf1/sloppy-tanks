@@ -1789,8 +1789,23 @@ impl Presentation {
         );
     }
 
-    /// Install a cover's view, retiring the look it replaces.
-    fn replace_cover(&mut self, id: u32, view: CoverView) {
+    /// Install a cover's view, retiring the look it replaces. A tree's new look keeps the
+    /// boughs it already shed off it: they fell on their own, and stay shed on its fallen
+    /// pieces too, which read its stage.
+    fn replace_cover(&mut self, id: u32, mut view: CoverView) {
+        let shed = self
+            .covers
+            .get(&id)
+            .and_then(|old| old.tree.as_ref())
+            .map_or(0, |tree| tree.branch_stage);
+        if let Some(tree) = view.tree.as_mut().filter(|_| shed > 0) {
+            tree.branch_stage = shed;
+            for branch in &mut tree.branches {
+                branch.shown = branch.drop_stage > shed;
+                self.renderer
+                    .set_node_visible(view.instance, branch.joint, branch.shown);
+            }
+        }
         if let Some(old) = self.covers.insert(id, view) {
             match old.joint {
                 Some(joint) => self.renderer.set_node_visible(old.instance, joint, false),
