@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { environment, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { environment, gameServers, option, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate the game server machines, one after another and over SSH except for
  * `publish` and `release-app`: the ones the server directory lists for production, or
@@ -31,11 +31,17 @@ const RELEASE_TIMEOUT_MS = 12 * 60_000;
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
 const role = command === "release-app" ? "app-store" : environment(process.argv);
+const USAGE =
+  "Usage: bun scripts/server.mjs publish|release-app|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]";
+/** Read before anything is pushed, listed or reached over SSH: a flag without its value
+ * stops the command rather than widening it to every machine. */
+const ip = commandOption("--ip");
+const imageArgument = commandOption("--image");
 /** What a publish or release pushed, for every machine to switch to. It pushes before
  * looking for machines: one still booting is not listed yet, and starts it by itself. */
 const published =
   command === "publish" ? await publish() : command === "release-app" ? release() : undefined;
-const servers = await gameServers(role, option("--ip"), published !== undefined);
+const servers = await gameServers(role, ip, published !== undefined);
 if (published && servers.length === 0) {
   console.log(`The directory lists no ${role} server; one that boots starts this by itself.`);
 }
@@ -51,9 +57,13 @@ function run(program, args, options = {}) {
 const ssh = (script, options) => run("ssh", [...SSH_OPTIONS, server.ssh, script], options);
 const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
 
-function option(name) {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? undefined : process.argv[index + 1];
+function commandOption(name) {
+  try {
+    return option(process.argv, name);
+  } catch (error) {
+    console.error(`${error.message}\n${USAGE}`);
+    process.exit(1);
+  }
 }
 
 /** The server's /health through Caddy, by the name that always reaches this machine.
@@ -224,10 +234,11 @@ function release() {
 
 /** A registry tag such as `pr-12`, or a full image name. */
 function imageOption() {
-  const value = option("--image");
-  if (value === undefined) return "";
-  if (!/^[\w.:/@-]+$/.test(value)) throw new Error(`Not an image or tag: ${value}`);
-  return value.includes(":") || value.includes("/") ? value : `${SERVER_IMAGE}:${value}`;
+  if (imageArgument === undefined) return "";
+  if (!/^[\w.:/@-]+$/.test(imageArgument)) throw new Error(`Not an image or tag: ${imageArgument}`);
+  return imageArgument.includes(":") || imageArgument.includes("/")
+    ? imageArgument
+    : `${SERVER_IMAGE}:${imageArgument}`;
 }
 
 async function printHealth() {
@@ -322,9 +333,7 @@ async function runCommand() {
       break;
     }
     default:
-      console.error(
-        "Usage: bun scripts/server.mjs publish|release-app|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]",
-      );
+      console.error(USAGE);
       process.exit(1);
   }
 }

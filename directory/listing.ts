@@ -8,7 +8,8 @@ export type Environment = (typeof ENVIRONMENTS)[number];
 
 /** Game servers announce at least every 15 s, so an entry outlives two missed announcements. */
 export const ENTRY_TTL_MS = 45_000;
-/** Far above a busy server's listing; bounds what one caller can make the directory store. */
+/** Far above a busy server's listing (about 67 KB at MAX_LISTED_ROOMS full rooms, 3 KB at
+ * a server's default ten); bounds what one caller can make the directory store. */
 export const MAX_BODY_BYTES = 256 * 1024;
 /** Bounds on the announced load figures, far above any game server's. */
 const MAX_CPUS = 1024;
@@ -54,6 +55,41 @@ export function nipUrl(ip: string | null): string | undefined {
     octets.length === 4 &&
     octets.every((octet) => /^(0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255);
   return ipv4 ? `wss://${octets.join("-")}.nip.io` : undefined;
+}
+
+/**
+ * A request's body, or undefined when it is longer than `limit` bytes. A declared
+ * Content-Length over the limit is refused unread, and the body is counted as it streams
+ * in, so a sender that declares nothing (or too little) costs at most one chunk past the
+ * limit before the stream is cancelled.
+ */
+export async function readBody(
+  request: { headers: Headers; body: ReadableStream<Uint8Array> | null },
+  limit: number,
+): Promise<Uint8Array | undefined> {
+  if (Number(request.headers.get("Content-Length")) > limit) return undefined;
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  if (request.body) {
+    const reader = request.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) {
+        await reader.cancel();
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 /** A short text field, or undefined when `value` is not one. */
