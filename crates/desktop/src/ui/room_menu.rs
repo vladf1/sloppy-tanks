@@ -19,7 +19,7 @@ use sloppy_web::battle_report::{count_line, title_case};
 use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
 use sloppy_web::events::PendingEvent;
 use sloppy_web::hud::BOT_TAG;
-use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText, team_word};
+use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, Invite, MenuText, team_word};
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
@@ -112,9 +112,9 @@ pub struct RoomMenu {
     minutes_draft: Option<String>,
     /// A one-line answer in the room menu, such as a full team.
     pub notice: String,
-    /// Seconds left on "Code copied".
+    /// Seconds left on "Link copied" (or "Code copied").
     copied: f64,
-    /// The invite link on its way to the clipboard, which a page's browser may refuse.
+    /// The invite on its way to the clipboard, which a page's browser may refuse.
     copying: Option<Background<bool>>,
     /// Who destroyed the viewer, while the respawn card shows.
     pub death_cause: String,
@@ -175,7 +175,7 @@ impl RoomMenu {
         })
     }
 
-    /// Say whether the invite link reached the clipboard, once that is known.
+    /// Say whether the invite reached the clipboard, once that is known.
     fn copy_answered(&mut self) {
         let Some(answer) = self.copying.as_ref().map(Background::answer) else {
             return;
@@ -184,7 +184,11 @@ impl RoomMenu {
             Err(TryRecvError::Empty) => return,
             Ok(true) => {
                 self.copied = COPIED_SECONDS;
-                self.notice = "Invite link copied. Send it to your friends.".into();
+                self.notice = match links::invite() {
+                    Invite::Link => "Invite link copied. Send it to your friends.",
+                    Invite::Code => "Room code copied. Send it to your friends.",
+                }
+                .into();
             }
             Ok(false) | Err(TryRecvError::Disconnected) => {
                 self.notice = "Copy the address from your browser to invite friends.".into();
@@ -761,10 +765,11 @@ fn room_menu(
             true,
             &[(&text.hint, hex(LEDE)), (&menu.notice, GOLD)],
         );
-        let copy = if menu.copied > 0.0 {
-            "Link copied"
-        } else {
-            "Copy invite link"
+        let copy = match (links::invite(), menu.copied > 0.0) {
+            (Invite::Link, true) => "Link copied",
+            (Invite::Link, false) => "Copy invite link",
+            (Invite::Code, true) => "Code copied",
+            (Invite::Code, false) => "Copy room code",
         };
         if text_button_at(
             ui,
@@ -773,8 +778,8 @@ fn room_menu(
             copy,
             "copy room invite",
         ) {
-            let link = links::invite_link(&menu.room);
-            menu.copying = Some(links::copy_text(ui.ctx(), link));
+            let invitation = links::invitation(&menu.room);
+            menu.copying = Some(links::copy_text(ui.ctx(), invitation));
             menu.copy_answered();
         }
         // The final score stands at the end of the title's line, centred on it.
@@ -1980,6 +1985,7 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
             &menu.player_id,
             outcome.as_ref(),
             None,
+            links::invite(),
         ));
     }
     menu

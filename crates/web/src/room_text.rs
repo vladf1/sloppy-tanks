@@ -53,6 +53,16 @@ pub struct Arrival {
     pub team: Team,
 }
 
+/// How the room menu tells the only player to bring friends: by the room's link, or by its
+/// code where no web version lists the room's server (the App Store apps play on servers
+/// of their own content version, which the site does not list).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Invite {
+    #[default]
+    Link,
+    Code,
+}
+
 /// The room menu's words for one lobby.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct MenuText {
@@ -77,6 +87,8 @@ pub struct RoomText {
     ended_round: Option<u64>,
     /// The connection dialog's title while the socket is down; `None` while it is live.
     dropped: Option<&'static str>,
+    /// How the only player is told to bring friends.
+    invite: Invite,
 }
 
 impl Default for RoomText {
@@ -86,11 +98,20 @@ impl Default for RoomText {
             outcome: None,
             ended_round: None,
             dropped: Some(FIRST_CONNECTION),
+            invite: Invite::default(),
         }
     }
 }
 
 impl RoomText {
+    /// The words for a room whose only player brings friends by `invite`.
+    pub fn new(invite: Invite) -> Self {
+        Self {
+            invite,
+            ..Self::default()
+        }
+    }
+
     /// Connection progress: the dialog while the socket is down, `None` once it is back.
     pub fn status(&mut self, text: &str, connected: bool) -> Option<ConnectionDialog> {
         if connected {
@@ -144,7 +165,13 @@ impl RoomText {
         if lobby.phase != RoomPhase::Results {
             self.outcome = None;
         }
-        let menu = menu_text(lobby, player_id, self.outcome.as_ref(), self.ended_round);
+        let menu = menu_text(
+            lobby,
+            player_id,
+            self.outcome.as_ref(),
+            self.ended_round,
+            self.invite,
+        );
         self.lobby = Some(lobby.clone());
         (menu, arrivals)
     }
@@ -225,12 +252,14 @@ pub fn team_word(team: Team) -> &'static str {
 }
 
 /// The room menu's words for `lobby` as `player_id` sees it. `outcome` is the finished
-/// round, and `ended_round` the round this player ended as host.
+/// round, `ended_round` the round this player ended as host, and `invite` how a player
+/// alone brings friends.
 pub fn menu_text(
     lobby: &Lobby,
     player_id: &str,
     outcome: Option<&(Match, Team)>,
     ended_round: Option<u64>,
+    invite: Invite,
 ) -> MenuText {
     let title = match lobby.phase {
         RoomPhase::Playing => "BATTLE IN PROGRESS",
@@ -239,7 +268,7 @@ pub fn menu_text(
     };
     MenuText {
         title,
-        hint: hint(lobby, player_id),
+        hint: hint(lobby, player_id, invite),
         summary: summary(&lobby.settings),
     }
 }
@@ -261,7 +290,7 @@ fn results_title(outcome: Option<&(Match, Team)>, ended_it: bool) -> &'static st
 
 /// The line under the title: what the open menu costs during a battle, and between
 /// battles who starts the next one.
-fn hint(lobby: &Lobby, player_id: &str) -> String {
+fn hint(lobby: &Lobby, player_id: &str, invite: Invite) -> String {
     let next = if lobby.phase == RoomPhase::Results {
         "the next battle"
     } else {
@@ -284,7 +313,11 @@ fn hint(lobby: &Lobby, player_id: &str) -> String {
             format!("You stay in this room with everyone. Waiting for {host} to start {next}.")
         }
         _ if lobby.players.len() == 1 => {
-            format!("You're the only one here. Share the invite link, or start {next} on your own.")
+            let share = match invite {
+                Invite::Link => "the invite link",
+                Invite::Code => "the room code",
+            };
+            format!("You're the only one here. Share {share}, or start {next} on your own.")
         }
         RoomPhase::Results => {
             "Everyone stays in this room. Play again to keep the teams together.".into()
@@ -554,7 +587,7 @@ mod tests {
         let hint = |phase, players: &[Player], viewer: &str, humans_only| {
             let mut lobby = lobby(phase, players.to_vec());
             lobby.settings.humans_only = humans_only;
-            menu_text(&lobby, viewer, None, None).hint
+            menu_text(&lobby, viewer, None, None, Invite::Link).hint
         };
         assert_eq!(
             hint(RoomPhase::Playing, &players, "me", false),
@@ -579,6 +612,12 @@ mod tests {
         assert_eq!(
             hint(RoomPhase::Results, &players[..1], "me", false),
             "You're the only one here. Share the invite link, or start the next battle on your own."
+        );
+        // An app whose rooms no web version lists shares the room's code instead.
+        let alone = lobby(RoomPhase::Lobby, players[..1].to_vec());
+        assert_eq!(
+            RoomText::new(Invite::Code).lobby(&alone, "me").0.hint,
+            "You're the only one here. Share the room code, or start the battle on your own."
         );
         assert_eq!(
             hint(RoomPhase::Lobby, &players, "me", false),

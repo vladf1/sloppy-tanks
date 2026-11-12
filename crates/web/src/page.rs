@@ -172,6 +172,10 @@ pub struct Graphics {
     controller: QualityController,
     /// The GPU's frame time, smoothed over recent samples, for Stats for nerds.
     gpu_ms: Option<f64>,
+    /// The controller moved to another rung after a frame drew: applied before the
+    /// next scene renders, since a new scale replaces the scene's targets and would
+    /// blank the drawn frame the shell has yet to present.
+    rung_pending: bool,
 }
 
 impl Graphics {
@@ -191,6 +195,7 @@ impl Graphics {
         let graphics = Self {
             controller,
             gpu_ms: None,
+            rung_pending: false,
         };
         graphics.apply(renderer);
         graphics
@@ -220,10 +225,18 @@ impl Graphics {
             .controller
             .observe(times.frame_ms, times.sim_ms + times.render_ms, gpu_ms)
         {
-            self.apply(renderer);
+            self.rung_pending = true;
         }
         if self.controller.take_pacing_reset() {
             renderer.reset_canvas_pacing();
+        }
+    }
+
+    /// Before rendering a scene: draw it at the rung the controller moved to after
+    /// an earlier frame ([`Graphics::frame`]).
+    pub fn before_render(&mut self, renderer: &mut Renderer) {
+        if std::mem::take(&mut self.rung_pending) {
+            self.apply(renderer);
         }
     }
 

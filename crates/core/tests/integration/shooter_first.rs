@@ -10,7 +10,7 @@ use sloppy_core::sim::Simulation;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::shooter_rewind::{MAX_REWIND_TICKS, ShooterRewind};
 use sloppy_core::sim::types::{PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind};
-use support::{clear_arena, place_tank, tank_index};
+use support::{clear_arena, fired, place_tank, tank_index};
 
 /// Bob stands broadside 15 m ahead of Alice at x = 0, then moves to `MOVED` m to the side.
 const RANGE: f64 = 15.0;
@@ -68,7 +68,14 @@ fn shell_hits_bob_after(view: u32, aim: f64, moves: u64, killed: bool) -> Option
         place_tank(&mut sim, bob_index, x, RANGE, Some(90f64.to_radians()));
         if killed && tick == FIRE + 1 {
             let life = sim.tanks[bob_index].life;
-            sim.damage_tank(0, f64::INFINITY, bob, Team::Red, Some(life), None);
+            sim.damage_tank(
+                0,
+                f64::INFINITY,
+                bob,
+                Team::Red,
+                fired(&sim, bob, life),
+                None,
+            );
             assert!(!sim.tanks[0].alive, "alice is destroyed");
         }
         let mut command = VehicleCommand::idle_aiming(aim);

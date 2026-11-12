@@ -22,7 +22,7 @@ use sloppy_core::net::shot_paths::{MAX_LIVE_PATHS, PATH_TOLERANCE, ShotLaunch, S
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::projectiles::RocketThrust;
 use sloppy_core::sim::types::{CoverKind, Driver, Shot, SimEvent, SimEventType, Team};
-use support::{clear_arena, tank_index};
+use support::{clear_arena, fired, tank_index};
 
 fn apply_latest(h: &Harness, name: &str, mirror: &mut StateMirror) {
     apply_batch(mirror, &h.latest_binary(name, SNAPSHOT_MESSAGE));
@@ -116,8 +116,9 @@ fn humans_only_handles_pause_reconnect_late_join_death_and_departures_without_fi
         h.sim().tanks[alice_index].team,
         h.sim().tanks[alice_index].life,
     );
+    let firer = fired(h.sim(), alice, life);
     h.sim()
-        .damage_tank(carol, 10000.0, alice, team, Some(life), None);
+        .damage_tank(carol, 10000.0, alice, team, firer, None);
     h.advance();
     let carol = h.tank_of("carol");
     assert!(!h.sim().tanks[carol].alive);
@@ -314,6 +315,24 @@ fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
             "and it ends where the shell stopped"
         );
     }
+}
+
+#[test]
+fn a_finished_round_falls_back_to_the_plain_host_interval() {
+    let (mut h, _) = alice_fires_alone();
+    h.advance();
+    assert!(
+        h.host.until_next_batch_ms(h.now).is_some(),
+        "a running round asks for its next batch"
+    );
+    h.action("alice", "end", json!({}));
+    assert_eq!(h.host.phase, RoomPhase::Results);
+    h.now += 1_000;
+    assert_eq!(
+        h.host.until_next_batch_ms(h.now),
+        None,
+        "the stopped clock's overdue batch must not re-arm a 1 ms timer"
+    );
 }
 
 /// Applies the snapshot batches `name` received after the first `seen`, asserting each
@@ -641,8 +660,9 @@ fn late_join_starts_a_fresh_chassis_and_score_and_departed_ordnance_cannot_credi
         .position(|tank| tank.team == Team::Red)
         .unwrap();
     h.sim().tanks[victim].protection = 0.0;
+    let firer = fired(h.sim(), carol.id, old_life);
     h.sim()
-        .damage_tank(victim, 10000.0, carol.id, carol.team, Some(old_life), None);
+        .damage_tank(victim, 10000.0, carol.id, carol.team, firer, None);
     h.advance();
     let c = h.tank_of("carol");
     assert_eq!(h.sim().tanks[c].kills, 0);
@@ -657,7 +677,8 @@ fn late_join_starts_a_fresh_chassis_and_score_and_departed_ordnance_cannot_credi
             .find(|player| player["name"] == shown(name))
             .map(|player| player["kills"].clone())
     };
-    assert_eq!(kills("alice"), Some(json!(1)));
+    // Ordnance from an earlier occupant credits nobody, not even the player who left.
+    assert_eq!(kills("alice"), Some(json!(0)));
     assert_eq!(kills("carol"), Some(json!(0)));
     h.action("bob", "start", json!({}));
     assert_eq!(h.host.round_id, 2);
@@ -1082,8 +1103,9 @@ fn live_snapshots_carry_each_players_authoritative_kills_and_preserve_them_throu
     let bob = h.sim().tanks[1].id;
     let mut mirror = h.mirror_from_latest_full("alice");
     h.sim().tanks[1].protection = 0.0;
+    let firer = fired(h.sim(), alice.id, alice.life);
     h.sim()
-        .damage_tank(1, 10000.0, alice.id, alice.team, Some(alice.life), None);
+        .damage_tank(1, 10000.0, alice.id, alice.team, firer, None);
     h.advance();
     apply_latest(&h, "alice", &mut mirror);
     assert_eq!(mirror.render(alice.id).unwrap().viewer().unwrap().kills, 1);
@@ -1169,8 +1191,9 @@ fn scoreboard_updates_after_idle_ticks_disconnect_and_reconnect() {
     let alice = h.sim().tanks[alice_index].clone();
     let bob = h.tank_of("bob");
     h.sim().tanks[bob].protection = 0.0;
+    let firer = fired(h.sim(), alice.id, alice.life);
     h.sim()
-        .damage_tank(bob, 10000.0, alice.id, alice.team, Some(alice.life), None);
+        .damage_tank(bob, 10000.0, alice.id, alice.team, firer, None);
     h.advance();
     h.disconnect("alice");
     h.advance();

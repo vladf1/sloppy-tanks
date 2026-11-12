@@ -20,8 +20,8 @@ use super::json::{self, POSITION_SCALE, ROTATION_SCALE, VALUE_SCALE};
 use super::protocol::MAP_MODES;
 use super::schema::{NUMBER_BOUND, ReadResult, text_length};
 use super::wire::{
-    Field, FieldKind, Motion, Slot, WireReader, WireRecord, names, put_signed, put_varint,
-    read_changes, thousandths, wire_fields, write_changes,
+    Field, FieldKind, Motion, Slot, WireReader, WireRecord, index_below, names, put_signed,
+    put_varint, read_changes, thousandths, wire_fields, write_changes,
 };
 use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::replicated_life;
@@ -424,9 +424,8 @@ pub(crate) fn read_index<T: Copy>(
     reader: &mut WireReader<'_>,
     table: &[(&str, T)],
 ) -> ReadResult<T> {
-    table
-        .get(reader.varint()? as usize)
-        .map(|(_, value)| *value)
+    index_below(reader.varint()?, table.len())
+        .map(|index| table[index].1)
         .ok_or_else(|| "Invalid choice".into())
 }
 
@@ -986,7 +985,7 @@ impl<'a> Fields<'a> {
     fn opt_choice<T: Copy>(&self, field: usize, table: &[(&str, T)]) -> ReadResult<Option<T>> {
         self.number(field)
             .map(|index| {
-                let value = table.get(index as usize).map(|(_, value)| *value);
+                let value = index_below(index, table.len()).map(|index| table[index].1);
                 self.required(field, value, "Invalid choice")
             })
             .transpose()
@@ -1237,6 +1236,8 @@ pub fn read_mine(record: &WireRecord) -> ReadResult<Mine> {
         z: fields.fixed(Z)?,
         owner: fields.count32(OWNER)?,
         owner_life: fields.opt_count32(OWNER_LIFE)?,
+        // The host alone scales a mine's damage, so its layer's kind stays there.
+        owner_fill_bot: false,
         damage: fields.opt_fixed(DAMAGE)?,
         team: fields.team(TEAM)?,
         arm: fields.fixed(ARM)?,

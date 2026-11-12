@@ -36,6 +36,13 @@ pub fn put_signed(out: &mut Vec<u8>, value: i64) {
     put_varint(out, ((value << 1) ^ (value >> 63)) as u64);
 }
 
+/// A decoded `value` as an index into a table of `len` entries, or `None` when it is out
+/// of range. It is compared before it narrows to `usize`: on wasm32 a cast would wrap
+/// 2^32 to 0 and accept it.
+pub fn index_below(value: impl TryInto<usize>, len: usize) -> Option<usize> {
+    value.try_into().ok().filter(|index| *index < len)
+}
+
 pub fn put_text(out: &mut Vec<u8>, text: &str) {
     put_varint(out, text.len() as u64);
     out.extend_from_slice(text.as_bytes());
@@ -517,9 +524,9 @@ fn read_value<'a>(
             value @ (0 | 1) => Incoming::Number(value as i64),
             _ => return Err("Invalid boolean".into()),
         },
-        FieldKind::Choice(names) => match reader.varint()? {
-            index if (index as usize) < names.len() => Incoming::Number(index as i64),
-            _ => return Err("Invalid choice".into()),
+        FieldKind::Choice(names) => match index_below(reader.varint()?, names.len()) {
+            Some(index) => Incoming::Number(index as i64),
+            None => return Err("Invalid choice".into()),
         },
         FieldKind::Text(max) => Incoming::Text(reader.text(max)?),
         FieldKind::Blob(max, _) => {
@@ -716,6 +723,25 @@ mod tests {
         };
         read_changes(SAMPLE_FIELDS, &mut fresh, &mut WireReader::new(&out)).unwrap();
         assert_eq!(fresh, before);
+    }
+
+    #[test]
+    fn indices_past_32_bits_are_out_of_range_rather_than_wrapping() {
+        // A cast to a 32-bit `usize` (wasm32) would read 2^32 as 0 and accept it.
+        assert_eq!(index_below(1u64, 2), Some(1));
+        assert_eq!(index_below(2u64, 2), None);
+        assert_eq!(index_below(1u64 << 32, 2), None);
+        assert_eq!(index_below((1u64 << 32) + 1, 2), None);
+        assert_eq!(index_below(u64::MAX, 2), None);
+        assert_eq!(index_below(1i64 << 32, 2), None);
+        assert_eq!(index_below(-1i64, 2), None);
+        // So does a choice field read from the wire.
+        let mut out = Vec::new();
+        put_varint(&mut out, 1 << (sample::KIND + 1));
+        put_varint(&mut out, 1 << 32);
+        let mut copy = record(1.0, None);
+        let error = read_changes(SAMPLE_FIELDS, &mut copy, &mut WireReader::new(&out));
+        assert_eq!(error.unwrap_err(), "kind: Invalid choice");
     }
 
     #[test]

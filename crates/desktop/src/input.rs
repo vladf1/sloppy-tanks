@@ -92,6 +92,9 @@ pub struct Controls {
     right: [bool; 2],
     fire_key: bool,
     fire_button: bool,
+    /// Space or the left button went down since the last frame: a click released
+    /// before the frame is taken still fires once.
+    fire_pressed: bool,
     mine: bool,
     ammo_slot: u8,
     ammo_step: i8,
@@ -280,7 +283,10 @@ impl Controls {
             KeyCode::ArrowLeft => self.left[1] = pressed,
             KeyCode::KeyD => self.right[0] = pressed,
             KeyCode::ArrowRight => self.right[1] = pressed,
-            KeyCode::Space => self.fire_key = pressed,
+            KeyCode::Space => {
+                self.fire_key = pressed;
+                self.fire_pressed |= pressed && !repeat;
+            }
             KeyCode::KeyV if pressed && !repeat => return Some(Shortcut::ToggleView),
             KeyCode::KeyN if pressed && !repeat => return Some(Shortcut::NerdStats),
             KeyCode::KeyQ if pressed && !repeat && playing => self.ammo_step = -1,
@@ -298,7 +304,10 @@ impl Controls {
     pub fn button(&mut self, button: MouseButton, state: ElementState) {
         let pressed = state == ElementState::Pressed;
         match button {
-            MouseButton::Left => self.fire_button = pressed,
+            MouseButton::Left => {
+                self.fire_button = pressed;
+                self.fire_pressed |= pressed;
+            }
             MouseButton::Right if pressed => self.mine = true,
             _ => {}
         }
@@ -392,7 +401,11 @@ impl Controls {
             left: self.left.contains(&true),
             right: self.right.contains(&true),
             touch_move: (if self.stick_turns { 0.0 } else { push_x }, push_z),
-            fire: self.fire_key || self.fire_button || self.touch.arena.is_some() || stick_fire,
+            fire: self.fire_key
+                || self.fire_button
+                || self.fire_pressed
+                || self.touch.arena.is_some()
+                || stick_fire,
             mine: self.mine,
             ammo_slot: self.ammo_slot,
             ammo_step: self.ammo_step,
@@ -405,6 +418,7 @@ impl Controls {
             aim_stick,
             aim_mode,
         };
+        self.fire_pressed = false;
         self.mine = false;
         self.ammo_slot = 0;
         self.ammo_step = 0;
@@ -445,6 +459,20 @@ mod tests {
         let second = controls.take_input();
         assert!(second.up && !second.mine);
         assert_eq!(second.ammo_slot, 0);
+    }
+
+    #[test]
+    fn a_click_released_between_frames_fires_once() {
+        let mut controls = Controls::default();
+        let now = Instant::now();
+        controls.button(MouseButton::Left, ElementState::Pressed);
+        controls.button(MouseButton::Left, ElementState::Released);
+        assert!(controls.take_input_at(now).fire);
+        assert!(!controls.take_input_at(now).fire);
+        controls.key(KeyCode::Space, ElementState::Pressed, false, true);
+        controls.key(KeyCode::Space, ElementState::Released, false, true);
+        assert!(controls.take_input_at(now).fire);
+        assert!(!controls.take_input_at(now).fire);
     }
 
     #[test]

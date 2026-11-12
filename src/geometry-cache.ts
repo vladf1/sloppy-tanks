@@ -84,40 +84,58 @@ export function startGeometryCache(): void {
   if (new URLSearchParams(location.search).get("geometry-cache") === "off") return;
   if (typeof indexedDB !== "object" || typeof Worker !== "function") return;
   const memory = recall();
-  const reader = chooseReader(memory.reads);
+  let reader = chooseReader(memory.reads);
   const files = new Map<string, FileState>();
   const stats: GeometryCache["stats"] = {};
   const stat = (name: string) => (stats[name] ??= {});
 
   let worker: Worker | undefined;
-  const waiting = new Map<string, (reply: WorkerReply) => void>();
+  const waiting = new Map<string, { resolve: (reply: WorkerReply) => void; reject: () => void }>();
+  // A worker that fails (its script did not load, a reply could not be read) answers
+  // nothing more: every waiting request fails, and the page reads and writes from now on.
+  const workerFailed = () => {
+    worker?.terminate();
+    reader = "page";
+    for (const { reject } of waiting.values()) reject();
+    waiting.clear();
+  };
   const ask = (request: WorkerRequest, transfer: Transferable[] = []) => {
-    worker ??= new Worker(new URL("./geometry-worker.ts", import.meta.url), { type: "module" });
-    worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
-      // Dropped once answered: the reply holds the file's bytes until the shell takes them.
-      const key = `${data.op}:${data.name}`;
-      const resolve = waiting.get(key);
-      waiting.delete(key);
-      resolve?.(data);
-    };
-    const reply = new Promise<WorkerReply>((resolve) =>
-      waiting.set(`${request.op}:${request.name}`, resolve),
+    if (!worker) {
+      worker = new Worker(new URL("./geometry-worker.ts", import.meta.url), { type: "module" });
+      worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
+        // Dropped once answered: the reply holds the file's bytes until the shell takes them.
+        const key = `${data.op}:${data.name}`;
+        const reply = waiting.get(key);
+        waiting.delete(key);
+        reply?.resolve(data);
+      };
+      worker.onerror = workerFailed;
+      worker.onmessageerror = workerFailed;
+    }
+    const reply = new Promise<WorkerReply>((resolve, reject) =>
+      waiting.set(`${request.op}:${request.name}`, {
+        resolve,
+        reject: () => reject(new Error("the cache worker failed")),
+      }),
     );
     worker.postMessage(request, transfer);
     return reply;
   };
 
   let firstRead = true;
+  const isScenery = (name: string) => name.startsWith("scenery-");
   const request = (name: string): FileState => {
-    if (files.has(name)) return files.get(name) ?? null;
-    if (name.startsWith("scenery-") && memory.theme !== name) {
+    if (isScenery(name) && memory.theme !== name) {
       memory.theme = name;
       remember(memory);
       // The last theme's file, read for nothing: its bytes go.
       for (const [other, state] of files) {
-        if (other.startsWith("scenery-") && state instanceof ArrayBuffer) files.set(other, null);
+        if (isScenery(other) && other !== name && state instanceof ArrayBuffer) {
+          files.set(other, null);
+        }
       }
     }
+    if (files.has(name)) return files.get(name) ?? null;
     if (!memory.stored) {
       files.set(name, null);
       return null;
@@ -125,17 +143,25 @@ export function startGeometryCache(): void {
     const started = performance.now();
     const timed = firstRead;
     firstRead = false;
+    let via = reader;
     const bytes =
-      reader === "worker"
-        ? ask({ op: "read", name }).then((reply) => (reply.op === "read" ? reply.buffer : null))
+      via === "worker"
+        ? ask({ op: "read", name }).then(
+            (reply) => (reply.op === "read" ? reply.buffer : null),
+            () => {
+              via = "page";
+              return readFile(name);
+            },
+          )
         : readFile(name);
     const read = bytes
       .then((buffer) => {
-        files.set(name, buffer);
+        // A scenery the shell no longer wants (it asked for another theme meanwhile) goes.
+        files.set(name, isScenery(name) && memory.theme !== name ? null : buffer);
         const ms = performance.now() - started;
-        Object.assign(stat(name), { reader, arrivedMs: ms, bytes: buffer?.byteLength ?? 0 });
+        Object.assign(stat(name), { reader: via, arrivedMs: ms, bytes: buffer?.byteLength ?? 0 });
         if (timed && buffer) {
-          memory.reads = { ...memory.reads, [reader]: ms };
+          memory.reads = { ...memory.reads, [via]: ms };
           remember(memory);
         }
       })

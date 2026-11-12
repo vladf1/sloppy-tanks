@@ -46,7 +46,8 @@ use super::hud::{
     protection_meters, spawn_pulse,
 };
 use super::model_catalog::{
-    self, CoverModel, SceneryModel, SceneryMover, SceneryWater, TreeParts, cover_key,
+    self, CoverModel, MoverPlacement, SceneryModel, SceneryMover, SceneryWater, TreeParts,
+    cover_key,
 };
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
@@ -991,7 +992,7 @@ struct SceneryView {
     scenery: sloppy_core::models::Scenery,
     statics: InstanceId,
     /// Animated parts and their instances.
-    movers: Vec<(InstanceId, SceneryMover)>,
+    movers: Vec<(InstanceId, MoverPlacement)>,
     water: Option<WaterSettings>,
     /// The village chimney smoke model and its instance.
     smoke: Option<(ModelId, InstanceId)>,
@@ -1391,17 +1392,18 @@ impl Presentation {
         let movers = model
             .movers
             .into_iter()
-            .map(|mover| {
-                self.textures
-                    .request_scenery(&mut self.renderer, &mover.root);
-                let model_id = self.renderer.add_model(&mover.root, Lifetime::Shared);
-                let (world, _) = mover.pose(&model.scenery);
+            .map(|SceneryMover { root, placement }| {
+                // The subtree drops here: the GPU holds its meshes, and the instance
+                // needs only where the mover sits.
+                self.textures.request_scenery(&mut self.renderer, &root);
+                let model_id = self.renderer.add_model(&root, Lifetime::Shared);
+                let (world, _) = placement.pose(&model.scenery);
                 let instance = self
                     .renderer
                     .add_instance(model_id, world.as_mat4(), Lifetime::Shared)
                     .expect("model just added");
                 self.renderer.set_visible(instance, false);
-                (instance, mover)
+                (instance, placement)
             })
             .collect();
         let water = model.water.map(|water| match water {

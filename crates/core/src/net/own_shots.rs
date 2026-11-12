@@ -695,6 +695,14 @@ impl OwnShots {
                 self.stats
                     .error
                     .add((predicted.x - host.x).hypot(predicted.z - host.z));
+                // The host's weapon wins where the prediction guessed another (a pick that
+                // reached it first): its bounces, and its damage at the viewer's rank.
+                let guessed = shell.legs[0].path.launch.weapon;
+                if path.launch.weapon != guessed {
+                    let (guessed, fired) = (weapon(guessed), weapon(path.launch.weapon));
+                    shell.damage *= fired.damage / guessed.damage;
+                    shell.bounces = fired.bounces;
+                }
                 shell.server_id = Some(path.id);
                 shell.handover = Some((shell.legs[0].path, None));
                 shell.legs = vec![Leg {

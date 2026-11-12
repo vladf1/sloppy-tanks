@@ -394,6 +394,32 @@ fn mirror_rejects_corrupt_or_skipped_deltas_atomically_and_a_full_baseline_repai
     assert!(!mirror.needs_full);
 }
 
+#[test]
+fn record_counts_that_would_overflow_their_sum_reject_the_frame() {
+    let sim = room(MapId::Village, &[]);
+    let state = Scene::capture(&sim);
+    let mut mirror = StateMirror::default();
+    let full_message = full(&mut StateStream::new("r", 1), &state, 0);
+    mirror.apply_full(&baseline(&full_message), "r", 1).unwrap();
+    let tank = sim.tanks[0].id;
+    // One tank, then a mine count that wraps the running total back under the limit
+    // when added unchecked (and that a 32-bit cast would read as 0).
+    for mines in [u64::MAX, 1 << 32] {
+        let body = frame_body(UPDATES_SECTION, |out| {
+            put_varint(out, (1 << TANKS) | (1 << MINES));
+            put_varint(out, 1);
+            put_varint(out, u64::from(tank));
+            out.extend_from_slice(&hp_change(-1));
+            put_varint(out, mines);
+        });
+        let message = batch(1, 0, 1, &[(1, body)]);
+        let error = mirror
+            .decode(&mut snapshot_batch(&message), false)
+            .unwrap_err();
+        assert_eq!(error, "Invalid changes", "{mines} mines");
+    }
+}
+
 /// A frame of path entries alone, as a one-frame batch.
 fn paths_frame(seq: u64, tick: u64, entries: &[PathEntry]) -> Vec<u8> {
     let body = frame_body(PATHS_SECTION, |out| {
