@@ -9,7 +9,7 @@
 # the eave wall (its hip's ridge along the street). A broad two-storey warm stucco block
 # under a clay barrel-tile hip; beside the garage the office under a clay hip, its street
 # window arched, and the entry passage beside it under a clay shed on stucco arches (the
-# kit's office_entry); twin arched windows over the office, a small single and a shuttered
+# kit's office_entry); twin arched windows over the office, a small single and a bare
 # pair over the garage across the upper floor, clay pipe vents, and the garage's one-piece
 # sectional board door with strap hinges under a clay pent. The paints are the style's.
 
@@ -65,8 +65,8 @@ for a, b in TWIN:
     window("FrontWall", front, fx(a), UPPER_GLASS[0], fx(b), TWIN_TOP, mullion=False)
     arch_head("FrontWall", front, fx(a), fx(b), TWIN_TOP - TWIN_RISE, TWIN_RISE, depth=WALL)
 window("FrontWall", front, fx(SINGLE[0]), UPPER_GLASS[0], fx(SINGLE[1]), UPPER_GLASS[1], mullion=False)
+# bare, like every window of the tract's Spanish fronts: board shutters are the Monterey's
 window("FrontWall", front, fx(PAIR[0]), UPPER_GLASS[0], fx(PAIR[1]), UPPER_GLASS[1])
-board_shutters(front, fx(PAIR[0]), fx(PAIR[1]), UPPER_GLASS[0] - 0.01, UPPER_GLASS[1] + 0.01, width=0.22)
 vent("FrontWall", front, fx(0.22), 2.96)
 
 # The garage's one-piece sectional door in boards, strap hinges on its sections, under a
@@ -90,7 +90,8 @@ for side in ("right", "left"):
 for side in ("back", "right", "left"):
     vent(WALL_PARTS[side], WALL_FRAMES[side], 1.0 if side == "back" else -0.4, 2.62)
 
-# The array: a block on the street slope.
-solar_array("FrontRoof", Slope(along_hip()["front"]), 4, 2)
+# The array where the tract's clay hips carry theirs: a squarish block high on the street
+# slope, its top just under the ridge, off centre toward the garage.
+solar_array("FrontRoof", Slope(along_hip()["front"]), 3, 2, up=0.5, across=0.6)
 
 export(PLAN, frame="along")
