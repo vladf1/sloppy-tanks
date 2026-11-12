@@ -221,6 +221,52 @@ fn a_predicted_shell_stops_at_cover_and_a_ricochet_bounces_off_it() {
 }
 
 #[test]
+fn a_shell_predicted_with_the_old_weapon_bounces_as_the_hosts_once_its_launch_arrives() {
+    let (mut sim, viewer) = alone(VehicleKind::Balanced);
+    sim.add_cover(&CoverDef {
+        kind: CoverKind::Concrete,
+        x: 0.0,
+        z: 8.0,
+        w: 6.0,
+        d: 1.0,
+        h: 2.0,
+        hp: f64::INFINITY,
+        color: 0x888888,
+        timber_join: None,
+        timber_bays: None,
+    });
+    sim.world.step();
+    let cover = predictor(&sim, viewer);
+    // The host fired a ricochet; the client guessed its standard round.
+    let (launches, _, position) = host_fires(&mut sim, viewer, Weapon::Ricochet, 0.0);
+    let mut own = OwnShots::default();
+    own.fire(
+        Firing {
+            tick: 1,
+            position,
+            aim: 0.0,
+            kind: VehicleKind::Balanced,
+            weapon: Weapon::Standard,
+            team: Team::Blue,
+            tank_id: viewer,
+            damage: weapon_damage(Weapon::Standard),
+        },
+        &cover,
+    );
+    let mut paths = vec![PathEntry::Launch(launches[0])];
+    own.claim(&mut paths, &mut Vec::new(), Team::Blue, viewer, &cover);
+    assert!(
+        paths.is_empty(),
+        "the host's launch is the predicted shell's"
+    );
+    let speed = launches[0].vx.hypot(launches[0].vz);
+    let at_face = launches[0].tick + (7.5 - launches[0].z) / speed / STEP;
+    let after = drawn_at(&mut own, at_face + 6.0);
+    assert_eq!(after.len(), 1, "the host's ricochet flies on: {after:?}");
+    assert!(after[0].vz < 0.0, "back off the face: {after:?}");
+}
+
+#[test]
 fn own_shells_leave_in_the_present_and_ease_into_the_display_at_a_steady_pace() {
     // A 200 ms view delay: 12 ticks between the predicted present and the display.
     let delay = 12.0;
@@ -627,5 +673,38 @@ fn a_shell_at_a_cracked_part_is_drawn_no_further_than_the_host_flies_it() {
                 );
             }
         }
+    }
+}
+
+/// A shell on a tree's trunk strains its butt, the part that snaps: the client's forecast
+/// meets the butt's strength there as the host does, not the trunk's, which never breaks.
+#[test]
+fn a_trunk_hit_is_forecast_on_the_butt_it_strains() {
+    use sloppy_core::net::own_shots::CoverCast;
+    use sloppy_core::sim::math::Vec2;
+    use sloppy_core::sim::tree_structure::TREE_BUTT;
+    let (mut sim, viewer) = alone(VehicleKind::Balanced);
+    let tree = sim.add_cover(&CoverDef::new(
+        CoverKind::Tree,
+        0.0,
+        6.0,
+        2.6,
+        2.6,
+        5.8,
+        80.0,
+        0x169f65,
+    ));
+    sim.world.step();
+    let predictor = predictor(&sim, viewer);
+    let layout = sim.covers[tree].structure.as_ref().unwrap().layout.clone();
+    for height in [1.2, 2.0] {
+        let hit = predictor
+            .cast_cover(Point3::new(0.0, height, 0.0), Vec2::new(0.0, 1.0), 20.0)
+            .expect("the shell meets the tree");
+        let part = hit.part.expect("a part that breaks");
+        assert_eq!(
+            part.strength, layout.parts[TREE_BUTT].strength,
+            "a trunk hit at {height} m strains the butt"
+        );
     }
 }

@@ -46,6 +46,24 @@ export function environment(args) {
   return args.includes("--app-store") ? "app-store" : "production";
 }
 
+/** The value a command line gives `name`, as `--name VALUE` or `--name=VALUE`, or
+ * nothing when it leaves the flag out. A flag without a value (the last argument, or one
+ * followed by another flag) throws rather than reading as left out: `--ip` with nothing
+ * after it would otherwise reach every machine the directory lists. */
+export function option(args, name) {
+  const inline = args.find((arg) => arg.startsWith(`${name}=`));
+  if (inline !== undefined) {
+    const value = inline.slice(name.length + 1);
+    if (value === "") throw new Error(`${name} needs a value`);
+    return value;
+  }
+  const index = args.indexOf(name);
+  if (index === -1) return undefined;
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`${name} needs a value`);
+  return value;
+}
+
 /** The machines the directory lists for `role`, an environment; with `ip`, that one
  * machine, listed or not (one whose server is down, or still booting). Listing none is an
  * error unless `noneListed` allows it. */

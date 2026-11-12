@@ -172,6 +172,7 @@ impl RoomSession {
             stall: network.stall,
             dodge: network.dodge,
             shooter: network.shooter,
+            invite: crate::links::invite(),
         };
         let view = view_config(&window, &shell.prefs);
         let created = match render_target(&window) {

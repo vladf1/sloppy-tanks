@@ -123,6 +123,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             target_life: tow_target.map(|(_, target_life, _)| target_life),
             owner: id,
             owner_life: Some(life),
+            owner_fill_bot: !human,
             team,
             vx: angle.sin() * stats.speed,
             vz: angle.cos() * stats.speed,
@@ -136,6 +137,7 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
             pierced_shot: None,
             loosened: Vec::new(),
             laser_checked_by: Vec::new(),
+            rustled: Vec::new(),
             fuse: None,
         });
         simulation.shots_fired += 1;

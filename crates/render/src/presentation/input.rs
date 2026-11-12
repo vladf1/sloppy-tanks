@@ -173,6 +173,9 @@ impl InputFrame {
 /// Queued one-shot actions between frames and ticks (`Controls` state).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CommandBuilder {
+    /// Fire pressed since the last tick: a click on a frame that runs no tick (or
+    /// waits for the GPU) still fires once after its release.
+    fire: bool,
     mine: bool,
     ammo_selection: Option<AmmoSelection>,
     last_ammo_scroll_ms: Option<f64>,
@@ -186,6 +189,7 @@ impl CommandBuilder {
         if !active {
             return;
         }
+        self.fire |= input.fire;
         if input.mine {
             self.mine = true;
         }
@@ -217,13 +221,16 @@ impl CommandBuilder {
             let keys = f64::from(positive as u8) - f64::from(negative as u8);
             if keys != 0.0 { keys } else { touch }
         };
+        // Taken even while fire is held, so a click held over ticks fires no extra
+        // shot after its release.
+        let fire_pressed = std::mem::take(&mut self.fire);
         let mine = std::mem::take(&mut self.mine);
         let ammo_selection = self.ammo_selection.take().filter(|_| active);
         VehicleCommand {
             move_x: axis(input.right, input.left, input.touch_move.0),
             move_z: axis(input.down, input.up, input.touch_move.1),
             aim,
-            fire: input.fire,
+            fire: input.fire || fire_pressed,
             mine,
             ammo_selection,
         }
@@ -294,6 +301,27 @@ mod tests {
         // A second tick in the same frame keeps held input but not the one-shots.
         let again = builder.command(&input, 1.5, true);
         assert!(!again.mine && again.ammo_selection.is_none() && again.fire);
+    }
+
+    #[test]
+    fn a_click_released_before_a_tick_fires_once() {
+        let pressed = InputFrame::from_slice(&packed(&[(slot::FIRE, 1.0)]));
+        let released = InputFrame::default();
+        let mut builder = CommandBuilder::default();
+        // Pressed on a frame that ran no tick, released before the next one.
+        builder.queue(&pressed, true, 0.0);
+        builder.queue(&released, true, 8.0);
+        assert!(builder.command(&released, 0.0, true).fire);
+        assert!(!builder.command(&released, 0.0, true).fire);
+        // Held over a tick, then released: no extra shot.
+        builder.queue(&pressed, true, 16.0);
+        assert!(builder.command(&pressed, 0.0, true).fire);
+        builder.queue(&released, true, 32.0);
+        assert!(!builder.command(&released, 0.0, true).fire);
+        // A cleared builder (pause, death) forgets the click.
+        builder.queue(&pressed, true, 48.0);
+        builder.clear();
+        assert!(!builder.command(&released, 0.0, true).fire);
     }
 
     #[test]

@@ -73,7 +73,14 @@ function linkPage() {
 
 /** Serve only files inside dist/, under the page's base path. */
 function serveBuild(request, response) {
-  const path = decodeURIComponent(new URL(request.url, "http://local").pathname);
+  let path;
+  try {
+    path = decodeURIComponent(new URL(request.url, "http://local").pathname);
+  } catch {
+    // A malformed escape (`%FF`) would otherwise throw out of the server and end it.
+    response.writeHead(400).end("Bad request");
+    return;
+  }
   if (path === BASE.slice(0, -1)) {
     response.writeHead(301, { location: BASE }).end();
     return;

@@ -1324,6 +1324,7 @@ fn a_shell_that_sets_off_a_mine_stops_drawing_at_the_mine() {
         id,
         owner,
         owner_life: None,
+        owner_fill_bot: false,
         damage: None,
         team,
         x: 0.0,

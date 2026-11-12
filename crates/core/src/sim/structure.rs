@@ -32,6 +32,7 @@ use super::debris_physics::DebrisMaterial;
 use super::house_layout::{HouseDesign, Roof};
 use super::house_structure::{HouseRole, shared_house_structure};
 use super::kinds::CoverKind;
+use super::tree_structure::{TreePart, tree_structure};
 use super::structure_physics::ShapeCache;
 use super::timber_layout::TimberJoin;
 use super::timber_structure::{TimberRole, timber_structure};
@@ -316,6 +317,17 @@ pub struct Breakup {
     pub alone: bool,
 }
 
+/// What meets a standing part: shells and tanks, tanks alone (a tree's rooted stump,
+/// which a shell flies over), shells alone (a tree's limb, high over a tank's hull) or
+/// nothing (a conifer's thin boughs, which a shell flies through).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Contact {
+    All,
+    Tanks,
+    Shells,
+    Nothing,
+}
+
 /// One part of a structure, or one landing piece.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
@@ -359,6 +371,11 @@ pub struct Part {
     /// The element it belongs to (a wall, a roof slope, a face's bracing): a body landing
     /// hard breaks apart at its elements first.
     pub element: u16,
+    /// The part a hit on it strains instead, if not itself: a tree's trunk and limbs
+    /// pass a shell's blow down to the butt that snaps.
+    pub struck_as: Option<u16>,
+    /// What meets it while it stands.
+    pub contact: Contact,
     /// What the kind's model draws it as.
     pub role: Role,
 }
@@ -392,6 +409,8 @@ impl Part {
             braces: Vec::new(),
             lie: Lie::Any,
             element: 0,
+            struck_as: None,
+            contact: Contact::All,
             role,
         }
     }
@@ -511,6 +530,7 @@ pub enum Role {
     },
     Timber(TimberRole),
     Crate(CratePart),
+    Tree(TreePart),
 }
 
 /// Parts reaching below this height block tanks on the ground.
@@ -572,6 +592,8 @@ pub enum Build {
     Tower,
     Timber,
     Crate,
+    /// A cover tree at its cover's place and size (`tree_structure`).
+    Tree { x: f64, z: f64, w: f64, d: f64, h: f64 },
 }
 
 /// A structure's parts and how they hold each other up.
@@ -608,6 +630,19 @@ pub struct Structure {
     /// Whether a bot shoots its way through it: a crate's frame of battens blocks a
     /// tank until it breaks, which takes several shells, so bots drive round a crate.
     pub breachable: bool,
+    /// The part whose strength left its hit points show, when not the share of its parts
+    /// standing: a tree's butt, so its health falls with each hit before it snaps.
+    pub health_part: Option<usize>,
+    /// Leaves a shell flies through, rustling them, as boxes (build frame) by the part
+    /// that carries them: only a standing part's count.
+    pub foliage: Vec<(usize, DVec3, DVec3)>,
+    /// What a fallen body of exactly `needs` snaps into where a shell meets it (a limb
+    /// in two along its main branch), never on landing: pieces from `pieces` on.
+    pub snaps: Vec<Breakup>,
+    /// A falling body landing hard snaps off only its parts that reach the ground (a
+    /// felled tree's limbs under it), never its loads; what stays together falls on and
+    /// may land hard again, until it lies still.
+    pub snaps_on_ground: bool,
     /// Its parts' collider shapes, each built the first time a collider asks for it.
     pub shapes: ShapeCache,
     /// Its supports turned round, built the first time the share rule runs.
@@ -673,6 +708,7 @@ pub fn structure_of(
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),
+        CoverKind::Tree => Some(tree_structure(x, z, w, d, h)),
         _ => None,
     }
 }
@@ -702,6 +738,10 @@ impl Structure {
             whole: false,
             hinges: false,
             breachable: true,
+            health_part: None,
+            foliage: Vec::new(),
+            snaps: Vec::new(),
+            snaps_on_ground: false,
             shapes: ShapeCache::default(),
             holds: HoldsCache::default(),
         }

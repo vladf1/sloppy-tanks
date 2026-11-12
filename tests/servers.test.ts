@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DIRECTORY_URL, SERVER_IMAGE, serverMachine } from "../scripts/servers.mjs";
+import { DIRECTORY_URL, option, SERVER_IMAGE, serverMachine } from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -12,6 +12,18 @@ test("a machine is reached over SSH at its address and checked through its nip.i
   assert.equal(server.checkUrl, "https://45-63-56-58.nip.io");
   assert.equal(server.ssh, "root@45.63.56.58");
   assert.throws(() => serverMachine("dev", "45-63-56-58.nip.io"), /Not an IPv4 address/);
+});
+
+test("a command line names a machine as --ip ADDRESS or --ip=ADDRESS, never as a bare --ip", () => {
+  assert.equal(option(["rollback", "--ip", "1.2.3.4"], "--ip"), "1.2.3.4");
+  assert.equal(option(["rollback", "--ip=1.2.3.4", "--dev"], "--ip"), "1.2.3.4");
+  assert.equal(option(["rollback", "--dev"], "--ip"), undefined);
+  // A flag left without its value would otherwise reach every listed machine.
+  assert.throws(() => option(["rollback", "--ip"], "--ip"), /--ip needs a value/);
+  assert.throws(() => option(["rollback", "--ip", "--dev"], "--ip"), /--ip needs a value/);
+  assert.throws(() => option(["rollback", "--ip="], "--ip"), /--ip needs a value/);
+  // Another flag that starts the same is not this one.
+  assert.equal(option(["update", "--image-tag", "x"], "--image"), undefined);
 });
 
 test("the production build, the traffic bots, the pilots and the startup scripts use one server directory", () => {

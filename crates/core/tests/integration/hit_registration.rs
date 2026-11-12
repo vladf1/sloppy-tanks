@@ -596,6 +596,7 @@ fn mines_barrels_and_shell_collisions_preserve_distinct_death_causes() {
                     z: 0.0,
                     owner: enemy_id,
                     owner_life: None,
+                    owner_fill_bot: false,
                     team: enemy_team,
                     arm: 0.0,
                     life: 10.0,

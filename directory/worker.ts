@@ -28,6 +28,7 @@ import {
   nipUrl,
   parseAnnouncement,
   parseEnvironment,
+  readBody,
   type Announcement,
   type ListedServer,
 } from "./listing";
@@ -37,7 +38,9 @@ interface Env {
 }
 
 const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
-const MAX_TRACE_BYTES = 262_144;
+/** In UTF-8 bytes. The page uploads at most 60,000 characters of notes (index.html), in
+ * keepalive requests the browser caps at 64 KB; the largest traces stored are 60 KB. */
+const MAX_TRACE_BYTES = 256 * 1024;
 const MAX_TRACES = 40;
 // Any page may read the listing, and it changes with every announcement.
 const HEADERS = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
@@ -54,8 +57,8 @@ async function announce(
   if (!url) {
     return text("announce over IPv4", 400);
   }
-  const body = await request.arrayBuffer();
-  if (body.byteLength > MAX_BODY_BYTES) {
+  const body = await readBody(request, MAX_BODY_BYTES);
+  if (!body) {
     return text(`announcements are limited to ${MAX_BODY_BYTES} bytes`, 413);
   }
   const announcement = parseAnnouncement(new TextDecoder().decode(body));
@@ -75,11 +78,12 @@ async function traces(request: Request, url: URL, env: Env): Promise<Response> {
   if (request.method !== "POST" || !/^[\w-]{1,64}$/.test(id)) {
     return text("POST a trace with an id", 400);
   }
-  const body = await request.text();
-  if (body.length > MAX_TRACE_BYTES) {
+  const body = await readBody(request, MAX_TRACE_BYTES);
+  if (!body) {
     return text(`traces are limited to ${MAX_TRACE_BYTES} bytes`, 413);
   }
-  await store.addTrace(id, request.headers.get("User-Agent") ?? "", body);
+  const trace = new TextDecoder().decode(body);
+  await store.addTrace(id, request.headers.get("User-Agent") ?? "", trace);
   return new Response(null, { status: 204, headers: HEADERS });
 }
 

@@ -24,12 +24,17 @@ use super::quarry_surfaces::{
 };
 use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
-use super::tree_models::{TreeDetail, TreeShape, tree_model};
+use super::tree_models::{
+    TreeDetail, TreeShape, grown_pieces, standing_tree_model, tree_model, tree_pieces,
+};
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
+use crate::sim::grown_layout::grows;
+use crate::sim::tree_proportions::tree_proportions;
+use crate::sim::tree_structure::{TreePart, tree_structure};
 use crate::sim::structure::{PartSet, Role};
 use crate::sim::timber_layout::{
     TimberJoin, TimberPart, TimberPartKind, TimberWall, post_partner, timber_parts, whole_post,
@@ -83,16 +88,28 @@ impl From<&RenderCover> for CoverShape {
 /// `coverModel(c, detail)`: rebuild it when a structure's broken parts change.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
     if c.kind == CoverKind::Tree {
-        return tree_model(
-            &TreeShape {
-                x: c.x,
-                z: c.z,
-                w: c.w,
-                d: c.d,
-                h: c.h,
-            },
-            detail,
-        );
+        let tree = TreeShape {
+            x: c.x,
+            z: c.z,
+            w: c.w,
+            d: c.d,
+            h: c.h,
+        };
+        if c.broken.is_empty() || detail != TreeDetail::Full {
+            return tree_model(&tree, detail);
+        }
+        // Limbs a shell snapped off fell away, both halves of them.
+        let layout = tree_structure(c.x, c.z, c.w, c.d, c.h);
+        let gone = |part: TreePart| {
+            let whole = match part {
+                TreePart::LimbPiece { limb, .. } => TreePart::Limb(limb),
+                part => part,
+            };
+            c.broken
+                .iter()
+                .any(|index| layout.part(index).role == Role::Tree(whole))
+        };
+        return standing_tree_model(&tree, detail, &|part| !gone(part));
     }
     let mut node = Node::default();
     let group = &mut node;
@@ -283,6 +300,33 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
             root.children.push(group);
             root
         }
+        CoverKind::Tree => tree_debris(c, parts, 0),
         _ => Node::default(),
     }
+}
+
+/// A cover tree's fallen `parts` ([`structure_debris`]), without the boughs it shed at
+/// damage stages up to `shed` ([`super::tree_branch_stage`]) before it fell: those fell
+/// on their own.
+pub fn tree_debris(c: &CoverShape, parts: &PartSet, shed: u32) -> Node {
+    let layout = tree_structure(c.x, c.z, c.w, c.d, c.h);
+    let keep = |part: TreePart| {
+        parts
+            .iter()
+            .any(|index| layout.part(index).role == Role::Tree(part))
+    };
+    let tree = TreeShape {
+        x: c.x,
+        z: c.z,
+        w: c.w,
+        d: c.d,
+        h: c.h,
+    };
+    let mut root = Node::group("tree-debris");
+    root.children.push(if grows(tree_proportions(c.x, c.z, c.w, c.d, c.h).family) {
+        grown_pieces(&tree, &keep, shed)
+    } else {
+        tree_pieces(&tree, &keep, shed)
+    });
+    root
 }

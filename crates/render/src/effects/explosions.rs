@@ -15,7 +15,7 @@ use std::f64::consts::{PI, TAU};
 use glam::{Mat4, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::sim::math::Point3;
-use sloppy_core::sim::render_state::RenderFragment;
+
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::Flash;
@@ -338,15 +338,6 @@ const LANDING_DUST: [f64; 2] = [0.45, 0.85];
 const TREE_SNAP_DUST: f64 = 0.55;
 /// Pieces remembered for `LANDING_REPEAT`.
 const LANDING_MEMORY: usize = 24;
-/// A felled trunk has landed once its axis tilts this low (its up's height),
-/// and dust bursts at these shares of its half-length from its middle (the
-/// crown end positive), at this scale. The last trunks that did are kept.
-const FELLED_TILT: f64 = 0.3;
-const FELLED_DUST: [f64; 3] = [-0.3, 0.45, 1.05];
-const FELLED_DUST_SCALE: f64 = 0.85;
-const FELLED_MEMORY: usize = 8;
-/// About where a trunk breaks off its stump (m).
-const TRUNK_STUMP: f64 = 0.4;
 
 /// Wood dust: a struck face's puff and a burst crate's cloud last this long.
 const WOOD_HIT_LIFETIME: f64 = 0.9;
@@ -968,8 +959,6 @@ pub struct ExplosionEffects {
     landings: [(u32, f64); LANDING_MEMORY],
     landing_cursor: usize,
     last_landing: f64,
-    felled: [u32; FELLED_MEMORY],
-    felled_cursor: usize,
 }
 
 impl Default for ExplosionEffects {
@@ -995,8 +984,6 @@ impl Default for ExplosionEffects {
             landings: [(0, f64::NEG_INFINITY); LANDING_MEMORY],
             landing_cursor: 0,
             last_landing: f64::NEG_INFINITY,
-            felled: [u32::MAX; FELLED_MEMORY],
-            felled_cursor: 0,
         }
     }
 }
@@ -1028,31 +1015,6 @@ impl ExplosionEffects {
             LANDING_DUST[0] + LANDING_DUST[1] * strength.clamp(0.0, 1.0),
             (f64::from(id) * 2.399).rem_euclid(TAU),
         );
-    }
-
-    /// A felled trunk slamming down: once it lies nearly flat, dust bursts up
-    /// along its length where the crown and the log strike the ground.
-    pub fn felled_trees(&mut self, fragments: &[RenderFragment]) {
-        for fragment in fragments {
-            let (Some(_), Some(center)) = (fragment.tree_cover_id, fragment.tree_center_y) else {
-                continue;
-            };
-            let r = fragment.rotation;
-            let up = glam::DQuat::from_xyzw(r.x, r.y, r.z, r.w).normalize() * glam::DVec3::Y;
-            if up.y > FELLED_TILT || self.felled.contains(&fragment.id) {
-                continue;
-            }
-            self.felled[self.felled_cursor] = fragment.id;
-            self.felled_cursor = (self.felled_cursor + 1) % FELLED_MEMORY;
-            let half = (center - TRUNK_STUMP).max(1.0);
-            let p = fragment.position;
-            for (j, along) in FELLED_DUST.into_iter().enumerate() {
-                let x = p.x + up.x * half * along;
-                let z = p.z + up.z * half * along;
-                let phase = (f64::from(fragment.id) * 1.7 + j as f64 * 2.399).rem_euclid(TAU);
-                self.dust_skirt(x, z, FELLED_DUST_SCALE * (0.8 + 0.25 * along), phase);
-            }
-        }
     }
 
     /// A skirt of the ground's dust rolling out low from `(x, z)` at `scale`.
@@ -1446,8 +1408,6 @@ impl ExplosionEffects {
         self.cursor = 0;
         self.landings = [(0, f64::NEG_INFINITY); LANDING_MEMORY];
         self.last_landing = f64::NEG_INFINITY;
-        self.felled = [u32::MAX; FELLED_MEMORY];
-        self.felled_cursor = 0;
         self.tank_sequence = 0;
         self.barrel_sequence = 0;
         self.scorch_count = 0;

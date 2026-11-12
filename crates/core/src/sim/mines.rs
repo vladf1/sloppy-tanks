@@ -18,6 +18,7 @@ pub fn place_mine(simulation: &mut Simulation, tank_index: usize) {
         id,
         owner: tank.id,
         owner_life: Some(tank.life),
+        owner_fill_bot: !tank.human,
         damage: Some(MINE.damage * rank_stats(tank.xp).damage),
         team: tank.team,
         x: position.x,
@@ -58,7 +59,7 @@ pub fn step_mines(simulation: &mut Simulation, dt: f64) {
             });
         if triggered {
             simulation.mines.remove(index);
-            simulation.detonate_mine(&mine, mine.owner, mine.team, mine.owner_life);
+            simulation.detonate_mine(&mine, mine.owner, mine.team, mine.firer());
         } else if mine.life <= 0.0 {
             simulation.mines.remove(index);
         }

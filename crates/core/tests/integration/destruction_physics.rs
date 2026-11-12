@@ -5,7 +5,7 @@
 
 use crate::support;
 
-use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_2, PI};
+use std::f64::consts::{FRAC_PI_2, PI};
 
 use rapier3d::prelude::{ColliderBuilder, QueryFilter, Ray, RigidBodyBuilder, RigidBodyHandle};
 use sloppy_core::sim::arena::CoverDef;
@@ -24,6 +24,7 @@ use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::tank_destruction::tank_burnout;
 use sloppy_core::sim::tree_proportions::tree_proportions;
+use sloppy_core::sim::tree_structure::TREE_STUMP;
 use sloppy_core::sim::{
     CoverKind, DamageCause, Fragment, FragmentShape, Shot, SimEventType, Simulation, Team,
     VehicleCommand, VehicleKind, Weapon, WreckPart,
@@ -232,7 +233,7 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
         let mut s = arena();
         let tree = cover(&mut s, CoverKind::Tree, 0.0, 0.0);
         s.damage_cover(tree, 1000.0, 999, Team::Blue, None, None);
-        // Isolate the permanent stump from the temporary falling log.
+        // Isolate the permanent stump from the felled tree.
         remove_all_fragments(&mut s);
         let tank = s.add_tank(Team::Blue, true, kind, 0);
         let direction = Vec2::new(heading.sin(), heading.cos());
@@ -291,13 +292,19 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
             "local steering must detect the stump"
         );
         let t = &s.covers[tree];
-        let radius = s.world.colliders[t.collider]
-            .shape()
-            .as_cylinder()
-            .expect("stump cylinder")
-            .radius;
+        let stump = s.world.bodies[t.body]
+            .colliders()
+            .iter()
+            .map(|&collider| &s.world.colliders[collider])
+            .find(|collider| collider.user_data as usize == TREE_STUMP)
+            .expect("the stump stands");
+        let aabb = stump.compute_aabb();
+        let radius = f64::from(aabb.maxs.x - aabb.mins.x) / 2.0;
         let expected = tree_proportions(t.x, t.z, t.w, t.d, t.h).stump_radius;
-        assert!((radius as f64 - expected).abs() < 1e-6);
+        assert!(
+            (radius - expected).abs() < 0.05,
+            "the stump is {radius} m round, not {expected}"
+        );
         let destroyed = s.destroyed;
         s.damage_cover(tree, 1000.0, 999, Team::Blue, None, None);
         assert_eq!(s.destroyed, destroyed, "a stump cannot be destroyed twice");
@@ -335,9 +342,15 @@ fn destroyed_trees_leave_a_narrow_stump_rather_than_the_original_canopy_sized_ob
             .iter()
             .filter(|c| c.kind == CoverKind::Tree)
             .all(|c| {
+                // A tree stands again as all its parts (`tree_structure`).
                 c.alive
-                    && packed_groups(s.world.colliders[c.collider].collision_groups())
-                        == group::COVER
+                    && c.structure.as_ref().map_or_else(
+                        || {
+                            packed_groups(s.world.colliders[c.collider].collision_groups())
+                                == group::COVER
+                        },
+                        |state| state.gone.is_empty(),
+                    )
             })
     );
 }
@@ -459,15 +472,12 @@ fn repeated_impacts_displace_concrete_update_old_and_new_navigation_footprints_a
 #[test]
 fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimensions_and_contact_telemetry()
  {
-    use FragmentShape::{Beam, DrumLid, DrumShell, Log};
-    let cases: [(CoverKind, &[FragmentShape], usize); 2] = [
-        (CoverKind::Tree, &[Log, Beam], 99),
-        (
-            CoverKind::Drum,
-            &[DrumShell, DrumShell, DrumShell, DrumLid],
-            33,
-        ),
-    ];
+    use FragmentShape::{DrumLid, DrumShell};
+    let cases: [(CoverKind, &[FragmentShape], usize); 1] = [(
+        CoverKind::Drum,
+        &[DrumShell, DrumShell, DrumShell, DrumLid],
+        33,
+    )];
     for (kind, shapes, old_draws) in cases {
         let mut s = arena();
         let c = cover(&mut s, kind, 0.0, 0.0);
@@ -488,25 +498,6 @@ fn authored_scenery_emits_a_few_material_specific_pieces_with_matching_dimension
             assert!(s.world.bodies[f.body].is_dynamic());
             assert_eq!(collider_groups(&s, f.body), group::PUSHABLE_DEBRIS);
             assert!(!s.world.bodies[f.body].is_ccd_enabled());
-        }
-        if kind == CoverKind::Tree {
-            let trunk = s.fragments.iter().find(|f| f.shape == Some(Log)).unwrap();
-            assert_eq!(
-                trunk.tree_cover_id,
-                Some(s.covers[c].id),
-                "the falling model retains its source crown"
-            );
-            assert!((s.body_translation(trunk.body).y - trunk.tree_center_y.unwrap()).abs() < 1e-5);
-            assert_eq!(
-                s.body_linvel(trunk.body).y,
-                0.0,
-                "a severed tree falls rather than launching upward"
-            );
-            assert_eq!(
-                s.world.bodies[trunk.body].colliders().len(),
-                2,
-                "both trunk and crown contact the ground"
-            );
         }
         tick(&mut s, 4.0);
         assert!(
@@ -847,7 +838,6 @@ fn shells_shove_indestructible_wrecks_rockets_detonate_on_them_and_high_rounds_c
 #[test]
 fn a_scout_pushes_fallen_logs_beams_panels_and_drum_pieces_while_small_chips_stay_nonblocking() {
     for (kind, shape) in [
-        (CoverKind::Tree, FragmentShape::Log),
         (CoverKind::Drum, FragmentShape::DrumShell),
         (CoverKind::Drum, FragmentShape::DrumLid),
     ] {
@@ -858,15 +848,6 @@ fn a_scout_pushes_fallen_logs_beams_panels_and_drum_pieces_while_small_chips_sta
         let f = fragment_where(&s, |fragment| fragment.shape == Some(shape));
         park_others(&mut s, &[f]);
         let body = fragment_body(&s, f);
-        // Lay tall panels and logs flat, exercising ground contact rather than upright props.
-        let tipped = shape == FragmentShape::Log;
-        let rotation = Quat4 {
-            x: if tipped { FRAC_1_SQRT_2 } else { 0.0 },
-            y: 0.0,
-            z: 0.0,
-            w: if tipped { FRAC_1_SQRT_2 } else { 1.0 },
-        };
-        s.world.bodies[body].set_rotation(to_rotation(rotation), true);
         park(&mut s, body, 0.0, 2.0, 0.0);
         s.world.bodies[body].wake_up(true);
         tick(&mut s, 1.5);
@@ -1073,12 +1054,12 @@ fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_
 }
 
 #[test]
-fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concrete() {
+fn identical_hits_and_blasts_move_scrap_more_than_hulls_and_hulls_more_than_concrete() {
     let mut s = arena();
-    // A felled tree's splintered stump piece: a light length of wood.
-    let tree = cover(&mut s, CoverKind::Tree, 20.0, 20.0);
-    s.damage_cover(tree, 999.0, 999, Team::Blue, None, None);
-    let wood = fragment_where(&s, |f| f.shape == Some(FragmentShape::Beam));
+    // A burst drum's torn sheet: a light piece of scrap.
+    let drum = cover(&mut s, CoverKind::Drum, 20.0, 20.0);
+    s.damage_cover(drum, 999.0, 999, Team::Blue, None, None);
+    let scrap = fragment_where(&s, |f| f.shape == Some(FragmentShape::DrumShell));
     wreck(&mut s);
     let hull = fragment_where(&s, |f| f.part == Some(WreckPart::Hull));
     let concrete = cover(&mut s, CoverKind::Teeth, 20.0, 20.0);
@@ -1086,9 +1067,9 @@ fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concr
         x: 1.0,
         ..round(&mut s, Weapon::Standard, 0.5)
     };
-    let (wood_body, hull_body) = (fragment_body(&s, wood), fragment_body(&s, hull));
+    let (scrap_body, hull_body) = (fragment_body(&s, scrap), fragment_body(&s, hull));
     let concrete_body = s.covers[concrete].body;
-    for f in [wood, hull] {
+    for f in [scrap, hull] {
         let body = fragment_body(&s, f);
         park(&mut s, body, 1.0, 0.5, 0.0);
         let index = s
@@ -1100,15 +1081,15 @@ fn identical_hits_and_blasts_move_wood_more_than_hulls_and_hulls_more_than_concr
     }
     park(&mut s, concrete_body, 1.0, 0.5, 0.0);
     hit_movable_cover(&mut s, concrete, &shell);
-    assert!(s.body_linvel(wood_body).x > s.body_linvel(hull_body).x);
+    assert!(s.body_linvel(scrap_body).x > s.body_linvel(hull_body).x);
     assert!(s.body_linvel(hull_body).x > s.body_linvel(concrete_body).x);
-    for body in [wood_body, hull_body, concrete_body] {
+    for body in [scrap_body, hull_body, concrete_body] {
         park(&mut s, body, 1.0, 0.5, 0.0);
     }
     blast_debris(&mut s, Vec2::ZERO, 5.0, 60.0);
-    assert!(s.body_linvel(wood_body).x > s.body_linvel(hull_body).x);
+    assert!(s.body_linvel(scrap_body).x > s.body_linvel(hull_body).x);
     assert!(s.body_linvel(hull_body).x > s.body_linvel(concrete_body).x);
     let mass = |body: RigidBodyHandle| s.world.bodies[body].mass();
-    assert!(mass(hull_body) > mass(wood_body));
+    assert!(mass(hull_body) > mass(scrap_body));
     assert!(mass(concrete_body) > mass(hull_body));
 }

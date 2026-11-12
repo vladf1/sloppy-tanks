@@ -12,7 +12,7 @@ use sloppy_core::models::{
     CoverShape, FLAG_CLOTH_NODE, HouseBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
     create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, pickup_signal,
     pickup_tile_offset, release_tank_models, structure_debris, tank_model, tree_branch_stage,
-    tree_foliage, tree_part, wreck_brightness, wreck_model,
+    tree_debris, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -46,7 +46,8 @@ use super::hud::{
     protection_meters, spawn_pulse,
 };
 use super::model_catalog::{
-    self, CoverModel, SceneryModel, SceneryMover, SceneryWater, TreeParts, cover_key,
+    self, CoverModel, MoverPlacement, SceneryModel, SceneryMover, SceneryWater, TreeParts,
+    cover_key,
 };
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
@@ -180,15 +181,13 @@ const COVER_REBUILD_MS: f64 = 3.0;
 const CUSTOM_FLOOR_Y: f64 = 0.008;
 const CUSTOM_OUTER_FLOOR_Y: f64 = -0.002;
 
-const DEBRIS_SHAPES: [FragmentShape; 10] = [
+const DEBRIS_SHAPES: [FragmentShape; 8] = [
     FragmentShape::Armor,
     FragmentShape::Wheel,
     FragmentShape::Track,
     FragmentShape::Shard,
     FragmentShape::Wood,
     FragmentShape::Panel,
-    FragmentShape::Beam,
-    FragmentShape::Log,
     FragmentShape::DrumShell,
     FragmentShape::DrumLid,
 ];
@@ -993,7 +992,7 @@ struct SceneryView {
     scenery: sloppy_core::models::Scenery,
     statics: InstanceId,
     /// Animated parts and their instances.
-    movers: Vec<(InstanceId, SceneryMover)>,
+    movers: Vec<(InstanceId, MoverPlacement)>,
     water: Option<WaterSettings>,
     /// The village chimney smoke model and its instance.
     smoke: Option<(ModelId, InstanceId)>,
@@ -1393,17 +1392,18 @@ impl Presentation {
         let movers = model
             .movers
             .into_iter()
-            .map(|mover| {
-                self.textures
-                    .request_scenery(&mut self.renderer, &mover.root);
-                let model_id = self.renderer.add_model(&mover.root, Lifetime::Shared);
-                let (world, _) = mover.pose(&model.scenery);
+            .map(|SceneryMover { root, placement }| {
+                // The subtree drops here: the GPU holds its meshes, and the instance
+                // needs only where the mover sits.
+                self.textures.request_scenery(&mut self.renderer, &root);
+                let model_id = self.renderer.add_model(&root, Lifetime::Shared);
+                let (world, _) = placement.pose(&model.scenery);
                 let instance = self
                     .renderer
                     .add_instance(model_id, world.as_mat4(), Lifetime::Shared)
                     .expect("model just added");
                 self.renderer.set_visible(instance, false);
-                (instance, mover)
+                (instance, placement)
             })
             .collect();
         let water = model.water.map(|water| match water {
@@ -1791,8 +1791,23 @@ impl Presentation {
         );
     }
 
-    /// Install a cover's view, retiring the look it replaces.
-    fn replace_cover(&mut self, id: u32, view: CoverView) {
+    /// Install a cover's view, retiring the look it replaces. A tree's new look keeps the
+    /// boughs it already shed off it: they fell on their own, and stay shed on its fallen
+    /// pieces too, which read its stage.
+    fn replace_cover(&mut self, id: u32, mut view: CoverView) {
+        let shed = self
+            .covers
+            .get(&id)
+            .and_then(|old| old.tree.as_ref())
+            .map_or(0, |tree| tree.branch_stage);
+        if let Some(tree) = view.tree.as_mut().filter(|_| shed > 0) {
+            tree.branch_stage = shed;
+            for branch in &mut tree.branches {
+                branch.shown = branch.drop_stage > shed;
+                self.renderer
+                    .set_node_visible(view.instance, branch.joint, branch.shown);
+            }
+        }
         if let Some(old) = self.covers.insert(id, view) {
             match old.joint {
                 Some(joint) => self.renderer.set_node_visible(old.instance, joint, false),
@@ -2196,7 +2211,7 @@ impl Presentation {
     /// nearest one within reach.
     fn tree_event(&mut self, event: &SimEvent) {
         let tree = match event.kind {
-            SimEventType::Destroy => event
+            SimEventType::Destroy | SimEventType::Rustle => event
                 .id
                 .and_then(|id| self.covers.get_mut(&id))
                 .and_then(|view| view.tree.as_mut()),
@@ -2217,7 +2232,7 @@ impl Presentation {
             return;
         };
         self.effects.systems.shed_leaves(event, &tree.leaves);
-        if event.kind == SimEventType::Impact {
+        if matches!(event.kind, SimEventType::Impact | SimEventType::Rustle) {
             // The crown leans away from the shell first.
             let push = Vec3::new(
                 (tree.leaves.x - event.x) as f32,
@@ -3542,6 +3557,9 @@ impl Presentation {
         fragment: &RenderFragment,
         covers: &[RenderCover],
     ) -> Option<FragmentView> {
+        // A felled tree's fallen parts carry leaves: they sink away rather than fade, so
+        // their alpha-tested leaves never turn into a blended sheet.
+        let mut leafy = false;
         let (model, look) = if let (Some(parts), Some(structure)) =
             (fragment.structure_parts, fragment.structure_id)
         {
@@ -3561,6 +3579,16 @@ impl Presentation {
                 self.piles
                     .track(fragment.id, structure, source, None, self.time);
                 (model, FragmentLook::Shared(bounds, key))
+            } else if source.shape.kind == CoverKind::Tree {
+                leafy = true;
+                // The boughs it dropped as it was hit fell on their own: they stay off it.
+                let shed = self
+                    .covers
+                    .get(&structure)
+                    .and_then(|view| view.tree.as_ref())
+                    .map_or(0, |tree| tree.branch_stage);
+                let node = tree_debris(&source.shape, &parts, shed);
+                owned_look(&mut self.renderer, &node, false)
             } else {
                 // A cottage's bodies falling over a collapse are cut from one build of
                 // its pieces.
@@ -3570,24 +3598,6 @@ impl Presentation {
                     .track(fragment.id, structure, source, Some(node), self.time);
                 look
             }
-        } else if let Some(tree) = fragment.tree_cover_id {
-            let view = self.covers.get(&tree)?;
-            let entry = self.cover_models.get(&view.key)?;
-            let shed: Vec<usize> = view.tree.as_ref().map_or_else(Vec::new, |tree| {
-                tree.branches
-                    .iter()
-                    .filter(|branch| !branch.shown)
-                    .map(|branch| branch.crown_child)
-                    .collect()
-            });
-            // Only a tree's model has the crown.
-            let crown = crown_fragment(
-                &entry.source,
-                tree_part::CROWN,
-                fragment.tree_center_y.unwrap_or(0.0),
-                &shed,
-            )?;
-            owned_look(&mut self.renderer, &crown, false)
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
             let part = fragment.part.unwrap_or(WreckPart::Hull);
@@ -3613,7 +3623,7 @@ impl Presentation {
             sink: (fragment.structure_parts.is_some()
                 && fragment.source_kind == Some(CoverKind::Tower))
             .then_some(0.0),
-            fades: fragment.tree_cover_id.is_none(),
+            fades: !leafy,
             pose: (vec3(fragment.position), quat(fragment.rotation)),
             emerges_from: (fragment.source_kind == Some(CoverKind::House)
                 && fragment.structure_parts.is_none())
@@ -3732,24 +3742,6 @@ fn owned_look(renderer: &mut Renderer, node: &Node, fades: bool) -> (ModelId, Fr
         renderer.add_model(node, Lifetime::Round)
     };
     (model, FragmentLook::Owned(model, bounds))
-}
-
-/// The falling crown of a felled tree: its trunk-and-crown subtree, lowered so
-/// the fragment body's centre sits `center_y` up the trunk.
-fn crown_fragment(source: &Node, crown: &str, center_y: f64, shed: &[usize]) -> Option<Node> {
-    let mut node = source.find(crown)?.clone();
-    // Boughs already shed stay gone from the falling crown.
-    for &index in shed {
-        if let Some(bough) = node.children.get_mut(index) {
-            bough.visible = false;
-        }
-    }
-    node.name = String::new();
-    node.visible = true;
-    node.position = DVec3::new(0.0, -center_y, 0.0);
-    let mut root = Node::group("crown-fragment");
-    root.children.push(node);
-    Some(root)
 }
 
 fn environment(look: &ThemeLook) -> Environment {

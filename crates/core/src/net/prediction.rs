@@ -24,7 +24,6 @@ use crate::sim::structure_physics::{
     WHOLE, cap_loose_speed, debris_colliders, part_collider, passes_through, rest_body,
     set_passing_through, structural, unrest_body,
 };
-use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
 use crate::sim::projectiles::arena_edge;
@@ -38,7 +37,7 @@ use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderT
 use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
-use crate::sim::types::{CoverKind, FragmentShape, VehicleKind};
+use crate::sim::types::{CoverKind, VehicleKind};
 use crate::sim::wrecks::wreck_piece_box;
 
 /// The viewer's hull after one host tick, as the host's physics holds it.
@@ -347,8 +346,7 @@ struct PredictedHull {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum CoverForm {
     Standing,
-    Stump,
-    /// A cottage's standing parts: those not in the set.
+    /// A structure's standing parts: those not in the set.
     Parts(PartSet),
 }
 
@@ -803,16 +801,6 @@ impl TankPredictor {
                     self.world.insert_collider(footprint, Some(body));
                 }
             }
-            CoverForm::Stump => {
-                let stump = tree_stump(x, z, w, d, cover.h);
-                self.world.insert_collider(
-                    ColliderBuilder::new(stump.shape)
-                        .translation(stump.offset)
-                        .collision_groups(interaction_groups(group::STUMP_CONTACT))
-                        .friction(0.4),
-                    Some(body),
-                );
-            }
         }
         body
     }
@@ -1122,9 +1110,13 @@ impl CoverCast for TankPredictor {
                 }
                 (None, index) => index as usize,
             };
+            // A hit on a tree's trunk strains its butt, as the host has it
+            // (`Simulation::structure_part`).
+            let layout = cover.layout.as_ref()?;
+            let index = layout.parts.get(index)?.struck_as.map_or(index, usize::from);
             let cottage = cover.struck.kind == CoverKind::House;
             // A watchtower's footing takes a shell as other concrete does.
-            let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)
+            let strength = Some(layout.parts.get(index)?.strength)
                 .filter(|strength| strength.is_finite())?;
             let key = if user == WHOLE {
                 whole_part_key(collider, index)
@@ -1213,8 +1205,6 @@ fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
         Some(CoverForm::Parts(cover.broken))
     } else if cover.alive {
         Some(CoverForm::Standing)
-    } else if cover.kind == CoverKind::Tree {
-        Some(CoverForm::Stump)
     } else {
         None
     }
@@ -1238,11 +1228,7 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
     }
     let size = fragment.dimensions?;
     let (w, h, d) = (size.x, size.y, size.z);
-    let builder = if fragment.shape == Some(FragmentShape::Log) {
-        ColliderBuilder::cylinder((h / 2.0) as f32, (w / 2.0) as f32)
-    } else {
-        ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
-    };
+    let builder = ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32);
     let material = fragment.material.unwrap_or(DebrisMaterial::Wood);
     let density = if material == DebrisMaterial::Metal {
         0.65
