@@ -1,9 +1,9 @@
-//! The tract beyond Senda's walls: the next street's row of homes standing back to back
-//! with the level past its south and west walls, as the real tract runs on there, drawn
-//! as simple low blocks (stucco walls under a hip or gable tile roof, a single-storey
-//! office and a garage door on their fronts, which face away), their block back walls
-//! and paved back yards, a strip of planting along the level's wall, and a few trees
-//! among them. Far scenery: a handful of triangles a house, merged into one draw.
+//! The tract stepping on up the hills past Senda's north and east edges: rows of homes
+//! on the pads cut into the hillside ([`super::senda_hills`]), drawn as simple low blocks
+//! (stucco walls under a hip or gable tile roof, a single-storey office and a garage
+//! door on their fronts, which face downhill). Far scenery: a handful of triangles a
+//! house, merged into one draw. Nothing of the tract stands against the level's own
+//! walls: past the south and west ones grow oaks and sage ([`super::senda_scenery`]).
 
 use std::sync::Arc;
 
@@ -11,19 +11,13 @@ use glam::{DVec2, DVec3};
 
 use crate::geometry::Mesh;
 use crate::scene::Node;
-use crate::sim::senda_layout::{
-    HOUSE_WIDTH, Street, WALL_THICKNESS, WAY_PARKWAY, WAY_PATH, inside_boundary, left,
-    senda_boundary,
-};
+use crate::sim::senda_layout::{HOUSE_WIDTH, left};
 
 use super::batching::batch;
-use super::model_primitives::{
-    box_part, material as model_material, paint, put, rotated, shadowed,
-};
+use super::model_primitives::{material as model_material, paint, shadowed};
 use super::senda_hills::HillRow;
-use super::tree_models::{TreeDetail, TreeShape, tree_model};
 
-/// The neighbours' homes: their pitch along the wall, their depths (front to back, m) by
+/// The neighbours' homes: their pitch along their row, their depths (front to back, m) by
 /// turns, their eave and ridge heights, the eaves' overhang (m), and the single-storey
 /// office on their fronts (width, depth, eave and the shed roof's top, m).
 const NEIGHBOUR_PITCH: f64 = 7.9;
@@ -32,17 +26,11 @@ const NEIGHBOUR_EAVE: f64 = 3.2;
 const NEIGHBOUR_RIDGE: f64 = 4.5;
 const NEIGHBOUR_OVERHANG: f64 = 0.3;
 const NEIGHBOUR_OFFICE: (f64, f64, f64, f64) = (2.6, 1.4, 1.7, 2.1);
-/// From the level wall's inside face out to the neighbours' back walls: the planting
-/// strip between (m); their back yards' depth (m); their block back walls' height (m).
-const NEIGHBOUR_STRIP: f64 = 1.4;
-const NEIGHBOUR_YARD: f64 = 1.8;
-const NEIGHBOUR_WALL: f64 = 1.0;
-/// How far (m) the row keeps from Senda Parkway's paving where the Way leaves the level.
-const NEIGHBOUR_WAY_ROOM: f64 = 4.0;
-/// The tract's stucco (the homes' apricot, cream and tan) and its three roof tiles (their
-/// rose-brown clay, grey-brown flat tile and dark clay), in the homes' satin tile finish.
+/// The tract's stucco (the homes' apricot, cream and tan) and three of its roof tiles
+/// (their rose-brown clay, grey-brown flat tile and brown clay), in the homes' satin tile
+/// finish.
 const NEIGHBOUR_STUCCO: [u32; 3] = [0xdcb48c, 0xe6d9bf, 0xc9a57a];
-const NEIGHBOUR_TILE: [u32; 3] = [0x8e6c5e, 0x8a7f70, 0x6b4540];
+const NEIGHBOUR_TILE: [u32; 3] = [0x8e6c5e, 0x8a7f70, 0x7d6a5e];
 const TILE_FINISH: (f64, f64) = (0.0, 0.6);
 /// How much (m) the ridges vary from house to house, either way, and the houses' widths.
 const NEIGHBOUR_RIDGE_VARIES: f64 = 0.35;
@@ -53,88 +41,19 @@ const NEIGHBOUR_SOLAR_EVERY: usize = 3;
 const NEIGHBOUR_SOLAR: ((f64, f64), (f64, f64)) = ((0.2, 0.62), (0.15, 0.6));
 const SOLAR_GLASS: u32 = 0x1c2433;
 const NEIGHBOUR_DOOR: u32 = 0x5b4636;
-const NEIGHBOUR_BLOCK: u32 = 0x8f7762;
-const NEIGHBOUR_PATIO: u32 = 0xc9c1b2;
-const NEIGHBOUR_MULCH: u32 = 0x5c4a36;
-/// A tree beside every this-many-th house (the bank's trees' crown and height ranges, m).
-const NEIGHBOUR_TREE_EVERY: usize = 4;
-const NEIGHBOUR_TREE_CROWN: (f64, f64) = (2.7, 3.8);
-const NEIGHBOUR_TREE_HEIGHT: (f64, f64) = (3.4, 4.6);
 
-/// One house of the row: its back's middle on the ground, the way its front faces (away
-/// from the level), and its place in the row.
+/// One house of a row: its back's middle on the ground, the way its front faces
+/// (downhill), and its place among the rows' houses.
 struct Neighbour {
     back: DVec2,
     out: DVec2,
     k: usize,
-    /// The ground's height under it: on the hills, its row's pad.
+    /// The ground's height under it: its row's pad.
     y: f64,
-    /// A house of a row up the hills, with no back yard against the level's wall.
-    on_hill: bool,
 }
 
-/// Whether a stretch of the level's wall whose outside lies toward `out` backs onto the
-/// next row of the tract: the walls facing south and west.
-fn backs_onto_tract(out: DVec2) -> bool {
-    out.x < -0.7 || out.y > 0.7
-}
-
-/// The row's houses: one every [`NEIGHBOUR_PITCH`] along the south and west walls, square
-/// to the wall, short of Senda Parkway and of each other where the wall turns.
-fn neighbours() -> Vec<Neighbour> {
-    let boundary = senda_boundary();
-    let way = Street::SendaParkway.line();
-    let way_reach = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + NEIGHBOUR_WAY_ROOM;
-    let closed: Vec<DVec2> = boundary.iter().chain(boundary.first()).copied().collect();
-    let back = WALL_THICKNESS + NEIGHBOUR_STRIP + NEIGHBOUR_YARD;
-    let mut houses: Vec<Neighbour> = Vec::new();
-    let (mut walked, mut next) = (0.0, NEIGHBOUR_PITCH / 2.0);
-    for pair in closed.windows(2) {
-        let (a, b) = (pair[0], pair[1]);
-        let span = a.distance(b);
-        let along = (b - a) / span.max(1e-9);
-        let side = left(along);
-        let middle = (a + b) / 2.0;
-        let out = if inside_boundary(&boundary, middle + side * 0.3) {
-            -side
-        } else {
-            side
-        };
-        while next < walked + span {
-            let point = a + along * (next - walked);
-            next += NEIGHBOUR_PITCH;
-            if !backs_onto_tract(out) {
-                continue;
-            }
-            let at = point + out * back;
-            let k = houses.len();
-            let depth = NEIGHBOUR_DEPTHS[k % NEIGHBOUR_DEPTHS.len()];
-            let front = at + out * depth;
-            let far = way.distance(at).min(way.distance(front)) < way_reach
-                || houses
-                    .iter()
-                    .any(|house| house.back.distance(at) < NEIGHBOUR_PITCH - 0.6)
-                || [at, front, (at + front) / 2.0]
-                    .iter()
-                    .any(|&p| inside_boundary(&boundary, p));
-            if !far {
-                houses.push(Neighbour {
-                    back: at,
-                    out,
-                    k,
-                    y: 0.0,
-                    on_hill: false,
-                });
-            }
-        }
-        walked += span;
-    }
-    houses
-}
-
-/// The houses of the rows up the hills: one every [`NEIGHBOUR_PITCH`] along each row,
-/// counted on from `first` so they vary on from the row along the walls.
-fn hill_houses(rows: &[HillRow], first: usize) -> Vec<Neighbour> {
+/// The houses of the rows up the hills: one every [`NEIGHBOUR_PITCH`] along each row.
+fn hill_houses(rows: &[HillRow]) -> Vec<Neighbour> {
     let mut houses = Vec::new();
     for row in rows {
         let length = row.from.distance(row.to);
@@ -145,9 +64,8 @@ fn hill_houses(rows: &[HillRow], first: usize) -> Vec<Neighbour> {
             houses.push(Neighbour {
                 back: row.from + along * (start + n as f64 * NEIGHBOUR_PITCH),
                 out: row.out,
-                k: first + houses.len(),
+                k: houses.len(),
                 y: row.level,
-                on_hill: true,
             });
         }
     }
@@ -327,79 +245,14 @@ fn house(group: &mut Node, house: &Neighbour) {
             .children
             .push(shadowed(Arc::new(faces(&world(tris))), material));
     }
-    if house.on_hill {
-        return;
-    }
-    // The paved back yard, its block back wall and the planting strip along the level's
-    // wall behind it.
-    let yaw = house.out.x.atan2(house.out.y);
-    let flat = |group: &mut Node, (z, depth): (f64, f64), (h, y): (f64, f64), color: u32| {
-        let middle = house.back + house.out * z;
-        let piece = rotated(
-            box_part(NEIGHBOUR_PITCH - 0.1, h, depth, color, 0.0),
-            0.0,
-            yaw,
-            0.0,
-        );
-        put(group, piece, middle.x, y + house.y, middle.y);
-    };
-    flat(
-        group,
-        (-NEIGHBOUR_YARD / 2.0, NEIGHBOUR_YARD),
-        (0.05, 0.02),
-        NEIGHBOUR_PATIO,
-    );
-    flat(
-        group,
-        (-NEIGHBOUR_YARD - 0.1, 0.2),
-        (NEIGHBOUR_WALL, NEIGHBOUR_WALL / 2.0),
-        NEIGHBOUR_BLOCK,
-    );
-    flat(
-        group,
-        (
-            -NEIGHBOUR_YARD - 0.2 - NEIGHBOUR_STRIP / 2.0,
-            NEIGHBOUR_STRIP,
-        ),
-        (0.05, 0.02),
-        NEIGHBOUR_MULCH,
-    );
 }
 
-/// The tract's next row past the level's south and west walls, its houses merged into
-/// one draw, and a tree beside every few of them.
+/// The rows of homes up the hills, merged into one draw.
 pub fn senda_neighbours(hill_rows: &[HillRow]) -> Node {
     let mut group = Node::group("senda-neighbours");
-    let row = neighbours();
-    for neighbour in &row {
-        house(&mut group, neighbour);
-    }
-    for neighbour in hill_houses(hill_rows, row.len()) {
+    for neighbour in hill_houses(hill_rows) {
         house(&mut group, &neighbour);
     }
     batch(&mut group);
-    for neighbour in row.iter().filter(|n| n.k % NEIGHBOUR_TREE_EVERY == 2) {
-        let seed = neighbour.k as f64 * 1.37;
-        let share = |a: f64| ((a * 12.9898).sin() * 43_758.545).fract().abs();
-        let (least, most) = NEIGHBOUR_TREE_CROWN;
-        let (low, high) = NEIGHBOUR_TREE_HEIGHT;
-        // In the side yard's gap between this house and the next, toward its back.
-        let across = left(neighbour.out);
-        let at = neighbour.back + across * (NEIGHBOUR_PITCH / 2.0) + neighbour.out * 2.0;
-        let shape = TreeShape {
-            x: at.x,
-            z: at.y,
-            w: least + (most - least) * share(seed),
-            d: least + (most - least) * share(seed + 0.3),
-            h: low + (high - low) * share(seed + 0.6),
-        };
-        put(
-            &mut group,
-            tree_model(&shape, TreeDetail::Background),
-            at.x,
-            0.0,
-            at.y,
-        );
-    }
     group
 }

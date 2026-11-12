@@ -13,8 +13,8 @@
 //! row (rosemary and olives under the dark perimeter block) and the scrub behind
 //! Gaviota's south row, the park's walks, plazas, benches and trees, the terrace walk and
 //! spur walks on the bank and the drains round the cul-de-sacs' ends, the spawn pads,
-//! oaks and sage past the arena's east edge, and past the south and west walls the
-//! tract's next row of homes ([`senda_neighbours`]). The lots' walls are cover
+//! oaks and sage past the arena's east edge and in a belt past the south and west walls,
+//! and the tract's rows of homes up the hills ([`senda_neighbours`]). The lots' walls are cover
 //! ([`crate::sim::senda_yards`]); [`yard_wall`] draws them.
 //!
 //! The paving is drawn, not collided: tanks drive on the arena's flat floor, and the
@@ -360,6 +360,23 @@ const WAY_LAMP_GLOBE: f64 = 0.22;
 /// Senda Parkway, and the hillside's few oaks among its sage.
 const SLOPE_TREE_SPACING: f64 = 11.0;
 const HILLSIDE_OAK_SPACING: f64 = 26.0;
+/// The belt of oaks past the level's south and west walls: its rows stand this far (m)
+/// outside the wall, an oak every [`BELT_SPACING`] along it in each (the outermost row
+/// on every other place), set off its place by up to [`BELT_WANDER`] (m) either way and
+/// no nearer another than [`BELT_ROOM`]; their crowns' and heights' ranges (m).
+const BELT_ROWS: [f64; 3] = [4.5, 10.0, 16.0];
+const BELT_SPACING: f64 = 7.5;
+const BELT_WANDER: f64 = 1.5;
+const BELT_ROOM: f64 = 3.4;
+const BELT_CROWN: (f64, f64) = (3.0, 4.2);
+const BELT_HEIGHT: (f64, f64) = (4.4, 6.0);
+/// Its sage: a clump every this many metres, from this near the wall (m) out to the
+/// belt's depth, where the hillside's patch noise passes [`BELT_SAGE_PATCH`].
+const BELT_SAGE_SPACING: f64 = 6.5;
+const BELT_SAGE_REACH: (f64, f64) = (1.6, 17.0);
+const BELT_SAGE_PATCH: f64 = 0.6;
+/// The belt keeps this far (m) from Senda Parkway's path where the Way leaves the level.
+const BELT_WAY_ROOM: f64 = 4.0;
 /// Shrub clumps of two or three lumps: a clump every so many metres on a jittered grid
 /// (the hillside's sage, the planted slopes' shrubs, the greenbelt's scrub, the
 /// ornamental grasses down Senda Parkway's median and on the corner beds), their leaves
@@ -3872,9 +3889,101 @@ fn aloe(group: &mut Node, lump: &Arc<Mesh>, at: DVec2, seed: f64) {
     }
 }
 
+/// The land past the level's south and west walls, a belt of oaks over sage where a
+/// tank cannot go.
+struct Belt {
+    boundary: Vec<DVec2>,
+    /// The stretches of the level's wall that face south or west, each with the way out.
+    walls: Vec<(Line, DVec2)>,
+    way: Line,
+}
+
+impl Belt {
+    fn new() -> Belt {
+        let boundary = senda_boundary();
+        let closed: Vec<DVec2> = boundary.iter().chain(boundary.first()).copied().collect();
+        let walls = closed
+            .windows(2)
+            .filter_map(|pair| {
+                let (a, b) = (pair[0], pair[1]);
+                let side = left((b - a).normalize_or_zero());
+                let out = if inside_boundary(&boundary, (a + b) / 2.0 + side * 0.3) {
+                    -side
+                } else {
+                    side
+                };
+                (out.x < -0.7 || out.y > 0.7).then(|| (Line(vec![a, b]), out))
+            })
+            .collect();
+        Belt {
+            boundary,
+            walls,
+            way: Street::SendaParkway.line(),
+        }
+    }
+
+    /// How far (m) `p` stands outside the belt's walls: `None` inside the level or on
+    /// Senda Parkway's verge.
+    fn depth(&self, p: DVec2) -> Option<f64> {
+        let way_reach = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + BELT_WAY_ROOM;
+        if inside_boundary(&self.boundary, p) || self.way.distance(p) < way_reach {
+            return None;
+        }
+        self.walls
+            .iter()
+            .map(|(wall, _)| wall.distance(p))
+            .min_by(f64::total_cmp)
+    }
+
+    /// Where the belt's oaks stand, row by row out from the wall, the rows staggered.
+    fn oaks(&self) -> Vec<DVec2> {
+        let mut sites: Vec<DVec2> = Vec::new();
+        for (row, &depth) in BELT_ROWS.iter().enumerate() {
+            let outermost = row + 1 == BELT_ROWS.len();
+            let (mut walked, mut k) = (0.0, 0usize);
+            let mut next = BELT_SPACING * (0.5 + row as f64 / BELT_ROWS.len() as f64);
+            for (wall, out) in &self.walls {
+                let span = wall.length();
+                while next < walked + span {
+                    let seed = next * 0.731 + row as f64 * 5.3;
+                    let wander = |salt: f64| (hash(seed + salt) - 0.5) * 2.0 * BELT_WANDER;
+                    let (point, _) = wall.at(next - walked + wander(0.0));
+                    let at = point + *out * (depth + wander(0.4));
+                    next += BELT_SPACING;
+                    k += 1;
+                    if outermost && k.is_multiple_of(2) {
+                        continue;
+                    }
+                    // Clear of every wall, the ones round a corner too.
+                    let clear = self.depth(at).is_some_and(|d| d > BELT_ROWS[0] * 0.6)
+                        && sites.iter().all(|site| site.distance(at) > BELT_ROOM);
+                    if clear {
+                        sites.push(at);
+                    }
+                }
+                walked += span;
+            }
+        }
+        sites
+    }
+
+    /// The corners of the rectangle the belt lies in.
+    fn bounds(&self) -> (DVec2, DVec2) {
+        let reach = DVec2::splat(BELT_SAGE_REACH.1);
+        let points = self
+            .walls
+            .iter()
+            .flat_map(|(wall, _)| wall.0.iter().copied());
+        let low = points.clone().fold(DVec2::MAX, DVec2::min);
+        let high = points.fold(DVec2::MIN, DVec2::max);
+        (low - reach, high + reach)
+    }
+}
+
 /// Oaks and sycamores along Senda Parkway outside the walls, the band of oak and ficus
 /// crowns down the slope behind Gaviota's south row past the level's wall, the
-/// hillside's oaks in clusters past the arena's east edge, and their sage.
+/// hillside's oaks in clusters past the arena's east edge, the belt of oaks past the
+/// south and west walls, and their sage.
 fn slope_trees(hills: &Hills) -> Node {
     let mut group = Node::group("senda-slope-trees");
     let mut place = |x: f64, z: f64, (w, h): (f64, f64)| {
@@ -3910,8 +4019,22 @@ fn slope_trees(hills: &Hills) -> Node {
         }
         s += SLOPE_TREE_SPACING;
     }
-    // Past the south and west walls the tract runs on (`senda_neighbours`); the park's
-    // trees on the west field are with its other furniture.
+    // Past the south and west walls, a belt of oaks; the park's trees on the west field
+    // are with its other furniture.
+    let belt = Belt::new();
+    for (k, at) in belt.oaks().into_iter().enumerate() {
+        let seed = k as f64 * 1.37;
+        let (least, most) = BELT_CROWN;
+        let (low, high) = BELT_HEIGHT;
+        place(
+            at.x,
+            at.y,
+            (
+                least + (most - least) * hash(seed),
+                low + (high - low) * hash(seed + 0.6),
+            ),
+        );
+    }
     // The hillside east of the arena: oaks in clusters of three to five among its sage.
     let mut z = -ARENA;
     let mut k = 0;
@@ -3942,6 +4065,7 @@ fn slope_trees(hills: &Hills) -> Node {
         z += HILLSIDE_OAK_SPACING;
     }
     sage_clumps(&mut group, hills);
+    belt_sage(&mut group, hills, &belt);
     batch_in_cells(&mut group, 40.0);
     // The fold oaks, far out round the ring, merged whole: a few draws however many
     // cells they span.
@@ -4055,6 +4179,29 @@ fn sage_clumps(group: &mut Node, hills: &Hills) {
         (low, high),
         &|p| hills.height(p.x, p.y),
         &|p| hill_patch(p) > 0.5 && !hills.on_pad(p),
+    );
+}
+
+/// Sage under the belt's oaks past the south and west walls, in the hillside's patches.
+fn belt_sage(group: &mut Node, hills: &Hills, belt: &Belt) {
+    let lump = Arc::new(heart_geometry());
+    let sage = Clumps {
+        spacing: BELT_SAGE_SPACING,
+        ..SAGE_CLUMPS
+    };
+    let (near, far) = BELT_SAGE_REACH;
+    clumps(
+        group,
+        &lump,
+        &sage,
+        belt.bounds(),
+        &|p| hills.height(p.x, p.y),
+        &|p| {
+            hill_patch(p) > BELT_SAGE_PATCH
+                && belt
+                    .depth(p)
+                    .is_some_and(|depth| depth > near && depth < far)
+        },
     );
 }
 
