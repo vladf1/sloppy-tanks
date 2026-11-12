@@ -130,7 +130,7 @@ beyond_geometry! {
 // Cover, trees and props.
 beyond_geometry! {
     pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
-    pub use cover_model::{CoverShape, cover_model, structure_debris};
+    pub use cover_model::{CoverShape, cover_model, structure_debris, tree_debris};
     pub use house_parts_model::{HouseBuild, HouseDebris, house_debris, structural_house};
     pub use crate_model::crate_piece_model;
     pub use effects_props::{aged_wreck_material, wreck_brightness};

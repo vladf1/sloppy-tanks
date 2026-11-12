@@ -909,7 +909,7 @@ pub fn standing_tree_model(
             grown.lean,
             tints.map_or([1.0; 3], |(leaf, _)| leaf),
         ),
-        (_, Some(grown)) => tree_growth::add_tree_crown(&mut crown, grown, &bark, true, keep),
+        (_, Some(grown)) => tree_growth::add_tree_crown(&mut crown, grown, &bark, true, 0, keep),
         _ => unreachable!("an oak or another tree"),
     };
     crown.grow_foliage(&foliage, &shape, tints.map_or([1.0; 3], |(leaf, _)| leaf));

@@ -203,6 +203,42 @@ fn a_standing_tree_leaves_out_its_snapped_limbs() {
     }
 }
 
+/// A felled tree's pieces leave out the boughs it already shed as it was hit: they fell
+/// on their own and are not drawn again on the fallen crown.
+#[test]
+fn a_felled_tree_leaves_out_the_boughs_it_shed() {
+    use crate::sim::oak_layout::TreePart;
+    use crate::sim::structure::Role;
+    use crate::sim::tree_structure::tree_structure;
+    for family in 0..6 {
+        let name = TREE_FAMILIES[family as usize];
+        let (x, z) = (0..400)
+            .map(|step| (-25.0 + f64::from(step) * 0.37, -12.0))
+            .find(|&(x, z)| tree_proportions(x, z, 2.6, 2.6, 5.8).family == family)
+            .unwrap();
+        let shape = CoverShape {
+            x,
+            z,
+            ..cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65)
+        };
+        let layout = tree_structure(x, z, 2.6, 2.6, 5.8);
+        // The trunk and every limb, falling together.
+        let crown = PartSet::from_indices((0..layout.parts.len()).filter(|&index| {
+            matches!(
+                layout.parts[index].role,
+                Role::Tree(TreePart::Trunk | TreePart::Limb(_))
+            )
+        }));
+        let whole = drawn_triangles(&tree_debris(&shape, &crown, 0));
+        let once = drawn_triangles(&tree_debris(&shape, &crown, 1));
+        let twice = drawn_triangles(&tree_debris(&shape, &crown, 2));
+        assert!(
+            twice < once && once < whole,
+            "{name}: {whole} whole, {once} after the first boughs fell, {twice} after the rest"
+        );
+    }
+}
+
 #[test]
 fn tree_damage_sheds_boughs_by_stage() {
     let shape = TreeShape {

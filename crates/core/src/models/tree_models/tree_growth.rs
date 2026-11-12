@@ -27,6 +27,7 @@ pub(super) fn add_tree_crown(
     tree: &TreeLayout,
     bark: &Arc<Material>,
     boughs: bool,
+    shed: u32,
     keep: &dyn Fn(TreePart) -> bool,
 ) -> CrownShape {
     let TreeProportions { family, height, .. } = tree.proportions;
@@ -42,6 +43,10 @@ pub(super) fn add_tree_crown(
         Some(limb) => keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer: true }),
     };
     let mut groups: Vec<Option<usize>> = Vec::new();
+    // Each shedding bough's damage stage, and whether it already fell on its own.
+    let mut stages: Vec<u32> = Vec::new();
+    let shed_off =
+        |stages: &[u32], bough: Option<usize>| bough.is_some_and(|bough| stages[bough] <= shed);
     let (mut low, mut high) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
     for step in &tree.growth {
         match *step {
@@ -52,6 +57,7 @@ pub(super) fn add_tree_crown(
                     None
                 };
                 groups.push(group);
+                stages.push(stage);
             }
             Growth::Limb {
                 from,
@@ -63,6 +69,7 @@ pub(super) fn add_tree_crown(
             } => {
                 let parent = bough.and_then(|bough| groups[bough]);
                 let spans: &[(DVec3, DVec3)] = match part {
+                    _ if shed_off(&stages, bough) => &[],
                     Some(limb) if main && !keep(TreePart::Limb(limb)) => {
                         let middle = from.lerp(to, 0.5);
                         let inner = keep(TreePart::LimbPiece { limb, outer: false });
@@ -87,7 +94,7 @@ pub(super) fn add_tree_crown(
                 bough,
                 limb,
             } => {
-                if kept(limb) {
+                if kept(limb) && !shed_off(&stages, bough) {
                     let parent = bough.and_then(|bough| groups[bough]);
                     crown.spray(parent, transform, card_tint_of(tint[0], tint[1]));
                 }
@@ -97,7 +104,7 @@ pub(super) fn add_tree_crown(
                     low = low.min(corner);
                     high = high.max(corner);
                 }
-                if kept(limb) {
+                if kept(limb) && !shed_off(&stages, bough) {
                     let mut cell = cells[sprig.cell];
                     if sprig.mirrored {
                         cell.swap(0, 2);
@@ -131,9 +138,10 @@ pub(super) fn add_tree_crown(
 }
 
 /// The parts of the full-detail tree at `c` (not an oak: [`super::oak_pieces`]) that
-/// `keep` picks, drawn where they stood about its ground centre and still (no sway):
-/// what a felled tree's bodies look like as they fall and lie (`structure_debris`).
-pub fn tree_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
+/// `keep` picks, drawn where they stood about its ground centre and still (no sway),
+/// without the boughs it shed at damage stages up to `shed`: what a felled tree's bodies
+/// look like as they fall and lie (`structure_debris`).
+pub fn tree_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> Node {
     let tree = tree_layout(c.x, c.z, c.w, c.d, c.h, LayoutDetail::Full);
     let TreeProportions {
         seed,
@@ -211,7 +219,7 @@ pub fn tree_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
             );
         }
     }
-    let shape = add_tree_crown(&mut crown, &tree, &bark, false, keep);
+    let shape = add_tree_crown(&mut crown, &tree, &bark, false, shed, keep);
     crown.grow_foliage(&foliage, &shape, [1.0; 3]);
     let mut node = crown.node;
     batch(&mut node);

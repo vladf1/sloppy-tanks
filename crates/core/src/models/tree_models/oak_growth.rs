@@ -137,9 +137,10 @@ pub(super) fn add_grown_oak_crown(
 }
 
 /// The parts of the full-detail oak at `c` that `keep` picks, drawn where they stood
-/// about its ground centre and still (no sway): what a felled oak's bodies look like as
-/// they fall and lie (`structure_debris`). Its leaves shade as the whole crown did.
-pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
+/// about its ground centre and still (no sway), without the boughs it shed at damage
+/// stages up to `shed`: what a felled oak's bodies look like as they fall and lie
+/// (`structure_debris`). Its leaves shade as the whole crown did.
+pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> Node {
     let oak = oak_layout(c.x, c.z, c.w, c.d, c.h);
     let TreeProportions {
         seed,
@@ -159,15 +160,21 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool) -> Node {
     };
     // Whether an outer branch (and its leaves) is drawn: with its whole limb, or with
     // the piece of it it grows on once the limb snapped.
-    let kept = |branch: usize| match oak.limb_side(branch) {
-        Some((limb, outer)) => {
-            keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer })
-        }
-        None => keep(
-            oak.branches[branch]
-                .limb
-                .map_or(TreePart::Trunk, TreePart::Limb),
-        ),
+    let kept = |branch: usize| {
+        let shed_off = oak.branches[branch]
+            .bough
+            .is_some_and(|(bough, _)| shed_stage(bough) <= shed);
+        !shed_off
+            && match oak.limb_side(branch) {
+                Some((limb, outer)) => {
+                    keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer })
+                }
+                None => keep(
+                    oak.branches[branch]
+                        .limb
+                        .map_or(TreePart::Trunk, TreePart::Limb),
+                ),
+            }
     };
     let tube = |crown: &mut Crown, sections: &[Section], sides: u32| {
         crown

@@ -629,3 +629,36 @@ fn a_shell_at_a_cracked_part_is_drawn_no_further_than_the_host_flies_it() {
         }
     }
 }
+
+/// A shell on a tree's trunk strains its butt, the part that snaps: the client's forecast
+/// meets the butt's strength there as the host does, not the trunk's, which never breaks.
+#[test]
+fn a_trunk_hit_is_forecast_on_the_butt_it_strains() {
+    use sloppy_core::net::own_shots::CoverCast;
+    use sloppy_core::sim::math::Vec2;
+    use sloppy_core::sim::tree_structure::TREE_BUTT;
+    let (mut sim, viewer) = alone(VehicleKind::Balanced);
+    let tree = sim.add_cover(&CoverDef::new(
+        CoverKind::Tree,
+        0.0,
+        6.0,
+        2.6,
+        2.6,
+        5.8,
+        80.0,
+        0x169f65,
+    ));
+    sim.world.step();
+    let predictor = predictor(&sim, viewer);
+    let layout = sim.covers[tree].structure.as_ref().unwrap().layout.clone();
+    for height in [1.2, 2.0] {
+        let hit = predictor
+            .cast_cover(Point3::new(0.0, height, 0.0), Vec2::new(0.0, 1.0), 20.0)
+            .expect("the shell meets the tree");
+        let part = hit.part.expect("a part that breaks");
+        assert_eq!(
+            part.strength, layout.parts[TREE_BUTT].strength,
+            "a trunk hit at {height} m strains the butt"
+        );
+    }
+}

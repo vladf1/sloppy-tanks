@@ -300,28 +300,33 @@ pub fn structure_debris(c: &CoverShape, parts: &PartSet) -> Node {
             root.children.push(group);
             root
         }
-        CoverKind::Tree => {
-            let layout = tree_structure(c.x, c.z, c.w, c.d, c.h);
-            let keep = |part: TreePart| {
-                parts
-                    .iter()
-                    .any(|index| layout.part(index).role == Role::Tree(part))
-            };
-            let tree = TreeShape {
-                x: c.x,
-                z: c.z,
-                w: c.w,
-                d: c.d,
-                h: c.h,
-            };
-            let mut root = Node::group("tree-debris");
-            root.children.push(if tree_proportions(c.x, c.z, c.w, c.d, c.h).family == OAK {
-                oak_pieces(&tree, &keep)
-            } else {
-                tree_pieces(&tree, &keep)
-            });
-            root
-        }
+        CoverKind::Tree => tree_debris(c, parts, 0),
         _ => Node::default(),
     }
+}
+
+/// A cover tree's fallen `parts` ([`structure_debris`]), without the boughs it shed at
+/// damage stages up to `shed` ([`super::tree_branch_stage`]) before it fell: those fell
+/// on their own.
+pub fn tree_debris(c: &CoverShape, parts: &PartSet, shed: u32) -> Node {
+    let layout = tree_structure(c.x, c.z, c.w, c.d, c.h);
+    let keep = |part: TreePart| {
+        parts
+            .iter()
+            .any(|index| layout.part(index).role == Role::Tree(part))
+    };
+    let tree = TreeShape {
+        x: c.x,
+        z: c.z,
+        w: c.w,
+        d: c.d,
+        h: c.h,
+    };
+    let mut root = Node::group("tree-debris");
+    root.children.push(if tree_proportions(c.x, c.z, c.w, c.d, c.h).family == OAK {
+        oak_pieces(&tree, &keep, shed)
+    } else {
+        tree_pieces(&tree, &keep, shed)
+    });
+    root
 }

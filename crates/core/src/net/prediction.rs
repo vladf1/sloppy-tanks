@@ -1110,9 +1110,13 @@ impl CoverCast for TankPredictor {
                 }
                 (None, index) => index as usize,
             };
+            // A hit on a tree's trunk strains its butt, as the host has it
+            // (`Simulation::structure_part`).
+            let layout = cover.layout.as_ref()?;
+            let index = layout.parts.get(index)?.struck_as.map_or(index, usize::from);
             let cottage = cover.struck.kind == CoverKind::House;
             // A watchtower's footing takes a shell as other concrete does.
-            let strength = Some(cover.layout.as_ref()?.parts.get(index)?.strength)
+            let strength = Some(layout.parts.get(index)?.strength)
                 .filter(|strength| strength.is_finite())?;
             let key = if user == WHOLE {
                 whole_part_key(collider, index)

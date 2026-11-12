@@ -12,7 +12,7 @@ use sloppy_core::models::{
     CoverShape, FLAG_CLOTH_NODE, HouseBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
     create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, pickup_signal,
     pickup_tile_offset, release_tank_models, structure_debris, tank_model, tree_branch_stage,
-    tree_foliage, tree_part, wreck_brightness, wreck_model,
+    tree_debris, tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -3540,7 +3540,7 @@ impl Presentation {
         fragment: &RenderFragment,
         covers: &[RenderCover],
     ) -> Option<FragmentView> {
-        // A felled oak's fallen parts carry leaves: they sink away rather than fade, so
+        // A felled tree's fallen parts carry leaves: they sink away rather than fade, so
         // their alpha-tested leaves never turn into a blended sheet.
         let mut leafy = false;
         let (model, look) = if let (Some(parts), Some(structure)) =
@@ -3564,7 +3564,13 @@ impl Presentation {
                 (model, FragmentLook::Shared(bounds, key))
             } else if source.shape.kind == CoverKind::Tree {
                 leafy = true;
-                let node = self.layouts.body(&source, self.time);
+                // The boughs it dropped as it was hit fell on their own: they stay off it.
+                let shed = self
+                    .covers
+                    .get(&structure)
+                    .and_then(|view| view.tree.as_ref())
+                    .map_or(0, |tree| tree.branch_stage);
+                let node = tree_debris(&source.shape, &parts, shed);
                 owned_look(&mut self.renderer, &node, false)
             } else {
                 // A cottage's bodies falling over a collapse are cut from one build of
