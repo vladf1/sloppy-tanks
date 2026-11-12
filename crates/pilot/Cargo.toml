@@ -17,7 +17,6 @@ doctest = false
 [[bin]]
 name = "sloppy-pilot"
 path = "src/main.rs"
-test = false
 
 [dependencies]
 sloppy-core.workspace = true
@@ -39,3 +38,7 @@ rustls.workspace = true
 rustls-rustcrypto.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# A paused clock, so the sockets' timeouts are tested without waiting.
+tokio = { workspace = true, features = ["test-util"] }

@@ -973,12 +973,14 @@ impl StateMirror {
             let value = read_match(wire).map_err(|error| format!("match: {error}"))?;
             frame.match_change = Some((value, changed));
         }
-        let mut count = 0;
+        // Summed in u64 and checked: a count near 2^64, or past 2^32 on wasm32, must not
+        // wrap back under the limit.
+        let mut count = 0u64;
         let mut claim = |items: u64| -> ReadResult<()> {
-            count += items as usize;
-            if count > MAX_CHANGES {
-                return Err("Invalid changes".into());
-            }
+            count = count
+                .checked_add(items)
+                .filter(|count| *count <= MAX_CHANGES as u64)
+                .ok_or_else(|| "Invalid changes".to_string())?;
             Ok(())
         };
         let kinds = |reader: &mut WireReader<'_>, present: bool| -> ReadResult<u64> {
@@ -1155,7 +1157,7 @@ impl StateMirror {
                 return Ok(0);
             }
             match reader.varint()? {
-                count if count as usize <= MAX_FRAME_ITEMS => Ok(count),
+                count if count <= MAX_FRAME_ITEMS as u64 => Ok(count),
                 _ => Err("Invalid list".into()),
             }
         };

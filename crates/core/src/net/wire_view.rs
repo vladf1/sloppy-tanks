@@ -16,7 +16,7 @@ use super::replication::{
 use super::scene_codec::{ENTITY_FIELDS, ENTITY_TYPES, EVENT_FIELDS, MATCH_FIELDS, write_event};
 use super::schema::ReadResult;
 use super::shot_paths::PathEntry;
-use super::wire::{ChangedFields, Field, FieldKind, Slot, WireRecord};
+use super::wire::{ChangedFields, Field, FieldKind, Slot, WireRecord, index_below};
 use crate::sim::math::json_number;
 
 fn value_json(field: &Field, slot: &Slot) -> ReadResult<Value> {
@@ -24,7 +24,10 @@ fn value_json(field: &Field, slot: &Slot) -> ReadResult<Value> {
         (_, Slot::Absent) => Value::Null,
         (FieldKind::Fixed(scale), Slot::Number(units)) => json_number(*units as f64 / scale),
         (FieldKind::Flag, Slot::Number(value)) => Value::Bool(*value != 0),
-        (FieldKind::Choice(names), Slot::Number(index)) => Value::from(names[*index as usize]),
+        (FieldKind::Choice(names), Slot::Number(index)) => match index_below(*index, names.len()) {
+            Some(index) => Value::from(names[index]),
+            None => return Err(format!("{}: Invalid choice", field.name)),
+        },
         (_, Slot::Number(value)) => Value::from(*value),
         (_, Slot::Text(text)) => Value::from(text.as_str()),
         (FieldKind::Blob(_, view), Slot::Blob(bytes)) => {

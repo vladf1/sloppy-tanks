@@ -2,12 +2,12 @@
 //! on its pilot's sends and the server's frames at once, and reports what happens over
 //! one channel the run loop reads (as the desktop app's `sockets.rs` does on threads).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{Sink, SinkExt, Stream, StreamExt};
 use sloppy_core::net::client::MAX_BUFFERED_BYTES;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
@@ -16,6 +16,8 @@ use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes};
 
 /// Connecting and the opening handshake give up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// One write to the server gives up after this long, and the socket with it.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 /// A close this side started waits this long for the server's close frame.
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 /// Close codes a browser reports: normal, no status, abnormal (no close frame).
@@ -129,7 +131,7 @@ async fn run(
     id: u32,
     url: &str,
     tls: Arc<rustls::ClientConfig>,
-    mut commands: UnboundedReceiver<Command>,
+    commands: UnboundedReceiver<Command>,
     buffered: &AtomicUsize,
     events: &UnboundedSender<SocketEvent>,
 ) -> u16 {
@@ -141,46 +143,190 @@ async fn run(
     if events.send(SocketEvent::Opened(pilot, id)).is_err() {
         return NORMAL_CLOSE;
     }
-    let (mut write, mut read) = socket.split();
-    loop {
-        tokio::select! {
-            command = commands.recv() => match command {
-                Some(Command::Send(text)) => {
-                    let length = text.len();
-                    let sent = write.send(Message::Text(Utf8Bytes::from(text))).await;
-                    buffered.fetch_sub(length, Ordering::Relaxed);
-                    if sent.is_err() {
-                        return ABNORMAL_CLOSE;
+    let (write, read) = socket.split();
+    carry(pilot, id, write, read, commands, buffered, events).await
+}
+
+/// What ends a socket.
+enum Ending {
+    /// This side closes: a close command, or the run loop dropped the socket.
+    Close,
+    /// The server sent its close frame, with this code; a flush sends the reply.
+    ServerClosed(u16),
+    /// The connection failed, or a write stalled past [`SEND_TIMEOUT`].
+    Lost,
+}
+
+/// Carries the pilot's sends to `write` and the server's frames from `read` until either
+/// side closes. Sends go out one at a time, in order; while one is pending the socket
+/// still reads frames and takes commands, so a write the server does not take cannot keep
+/// a close waiting, and none waits longer than [`SEND_TIMEOUT`].
+async fn carry<W, R, E>(
+    pilot: usize,
+    id: u32,
+    mut write: W,
+    mut read: R,
+    mut commands: UnboundedReceiver<Command>,
+    buffered: &AtomicUsize,
+    events: &UnboundedSender<SocketEvent>,
+) -> u16
+where
+    W: Sink<Message> + Unpin,
+    R: Stream<Item = Result<Message, E>> + Unpin,
+{
+    let mut queued = VecDeque::new();
+    let ending = loop {
+        let Some(text) = queued.pop_front() else {
+            tokio::select! {
+                command = commands.recv() => match command {
+                    Some(Command::Send(text)) => queued.push_back(text),
+                    Some(Command::Close) | None => break Ending::Close,
+                },
+                message = read.next() => {
+                    if let Some(ending) = deliver(pilot, id, message, events) {
+                        break ending;
                     }
                 }
-                Some(Command::Close) | None => {
-                    let _ = write.send(Message::Close(None)).await;
-                    let _ = tokio::time::timeout(CLOSE_WAIT, async {
-                        while let Some(Ok(message)) = read.next().await {
-                            if matches!(message, Message::Close(_)) {
-                                break;
-                            }
-                        }
-                    })
-                    .await;
-                    return NORMAL_CLOSE;
+            }
+            continue;
+        };
+        let length = text.len();
+        let send = tokio::time::timeout(
+            SEND_TIMEOUT,
+            write.send(Message::Text(Utf8Bytes::from(text))),
+        );
+        tokio::pin!(send);
+        let ending = loop {
+            tokio::select! {
+                sent = &mut send => {
+                    buffered.fetch_sub(length, Ordering::Relaxed);
+                    break match sent {
+                        Ok(Ok(())) => None,
+                        Ok(Err(_)) | Err(_) => Some(Ending::Lost),
+                    };
                 }
-            },
-            message = read.next() => match message {
-                Some(Ok(Message::Text(text))) => {
-                    let _ = events.send(SocketEvent::Text(pilot, id, text));
+                command = commands.recv() => match command {
+                    Some(Command::Send(text)) => queued.push_back(text),
+                    Some(Command::Close) | None => break Some(Ending::Close),
+                },
+                message = read.next() => {
+                    if let Some(ending) = deliver(pilot, id, message, events) {
+                        break Some(ending);
+                    }
                 }
-                Some(Ok(Message::Binary(bytes))) => {
-                    let _ = events.send(SocketEvent::Binary(pilot, id, bytes));
-                }
-                Some(Ok(Message::Close(frame))) => {
-                    let code = frame.map_or(NO_STATUS, |frame| frame.code.into());
-                    let _ = write.flush().await;
-                    return code;
-                }
-                Some(Ok(_)) => {}
-                Some(Err(_)) | None => return ABNORMAL_CLOSE,
-            },
+            }
+        };
+        if let Some(ending) = ending {
+            break ending;
         }
+    };
+    match ending {
+        Ending::Close => {
+            // Bounded as a whole: a sink still stalled on an interrupted write gives up
+            // with the close frame.
+            let _ = tokio::time::timeout(CLOSE_WAIT, async {
+                if write.send(Message::Close(None)).await.is_err() {
+                    return;
+                }
+                while let Some(Ok(message)) = read.next().await {
+                    if matches!(message, Message::Close(_)) {
+                        break;
+                    }
+                }
+            })
+            .await;
+            NORMAL_CLOSE
+        }
+        Ending::ServerClosed(code) => {
+            let _ = tokio::time::timeout(CLOSE_WAIT, write.flush()).await;
+            code
+        }
+        Ending::Lost => ABNORMAL_CLOSE,
+    }
+}
+
+/// Reports one of the server's frames, or returns what it ends the socket with.
+fn deliver<E>(
+    pilot: usize,
+    id: u32,
+    message: Option<Result<Message, E>>,
+    events: &UnboundedSender<SocketEvent>,
+) -> Option<Ending> {
+    match message {
+        Some(Ok(Message::Text(text))) => {
+            let _ = events.send(SocketEvent::Text(pilot, id, text));
+        }
+        Some(Ok(Message::Binary(bytes))) => {
+            let _ = events.send(SocketEvent::Binary(pilot, id, bytes));
+        }
+        Some(Ok(Message::Close(frame))) => {
+            let code = frame.map_or(NO_STATUS, |frame| frame.code.into());
+            return Some(Ending::ServerClosed(code));
+        }
+        Some(Ok(_)) => {}
+        Some(Err(_)) | None => return Some(Ending::Lost),
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    /// A sink whose peer never reads: every write waits forever.
+    struct Stalled;
+
+    impl Sink<Message> for Stalled {
+        type Error = ();
+        fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+        fn start_send(self: Pin<&mut Self>, _: Message) -> Result<(), ()> {
+            Ok(())
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+        fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), ()>> {
+            Poll::Pending
+        }
+    }
+
+    /// Runs a socket on a stalled sink and a silent server with `commands` queued,
+    /// returning its close code and how long it lasted on the paused clock.
+    async fn stalled_socket(commands: Vec<Command>) -> (u16, Duration) {
+        let (sender, receiver) = unbounded_channel();
+        let (events, _events) = unbounded_channel();
+        let buffered = AtomicUsize::new(0);
+        for command in commands {
+            if let Command::Send(text) = &command {
+                buffered.fetch_add(text.len(), Ordering::Relaxed);
+            }
+            sender.send(command).unwrap();
+        }
+        let read = futures_util::stream::pending::<Result<Message, ()>>();
+        let started = tokio::time::Instant::now();
+        let code = carry(0, 1, Stalled, read, receiver, &buffered, &events).await;
+        // Held to here, so only the commands sent can end the socket.
+        drop(sender);
+        (code, started.elapsed())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_close_interrupts_a_stalled_send() {
+        let commands = vec![Command::Send("input".into()), Command::Close];
+        let (code, elapsed) = stalled_socket(commands).await;
+        assert_eq!(code, NORMAL_CLOSE);
+        // The close frame's bound alone, not the send's.
+        assert_eq!(elapsed, CLOSE_WAIT);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_send_gives_up_after_its_timeout() {
+        let (code, elapsed) = stalled_socket(vec![Command::Send("input".into())]).await;
+        assert_eq!(code, ABNORMAL_CLOSE);
+        assert_eq!(elapsed, SEND_TIMEOUT);
     }
 }
