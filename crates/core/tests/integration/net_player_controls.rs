@@ -869,11 +869,10 @@ fn a_departed_players_mine_credits_nobody_and_its_killer_is_unknown() {
 #[test]
 fn a_mine_keeps_the_damage_of_whoever_laid_it_after_the_seat_changes_hands() {
     let hard = || {
-        let mut sim = alice_and_bob_room(MultiplayerOptions {
+        alice_and_bob_room(MultiplayerOptions {
             difficulty: Some(Difficulty::Hard),
             ..MultiplayerOptions::default()
-        });
-        sim
+        })
     };
     // Alice's mine, after she leaves and a fill bot takes her seat: a player's damage.
     let mut sim = hard();

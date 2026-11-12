@@ -59,7 +59,7 @@ fn destroy(h: &mut Harness, killer: usize, victim: usize) {
         sim.tanks[killer].life,
     );
     sim.tanks[victim].protection = 0.0;
-    sim.damage_tank(victim, 10000.0, id, team, fired(&sim, id, life), None);
+    sim.damage_tank(victim, 10000.0, id, team, fired(sim, id, life), None);
     h.advance();
 }
 
@@ -260,7 +260,7 @@ fn a_stand_ins_late_ordnance_never_credits_the_player_it_stood_in_for() {
         sim.respawn(bob, None);
         sim.tanks[bob].protection = 0.0;
         let (id, team) = (sim.tanks[alice].id, sim.tanks[alice].team);
-        sim.damage_tank(bob, 10000.0, id, team, fired(&sim, id, stand_in_life), None);
+        sim.damage_tank(bob, 10000.0, id, team, fired(sim, id, stand_in_life), None);
         h.advance();
     };
 
