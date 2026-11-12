@@ -31,6 +31,7 @@ import {
   json,
   region,
   roomCode,
+  swarmServer,
   type DirectoryEnv,
   type Environment,
   type Region,
@@ -317,15 +318,14 @@ export class BotSwarm extends DurableObject<Env> {
       if (!idle.length) {
         return;
       }
-      // The swarm plays on one server, the directory's least busy when it picks, until that
-      // server leaves the list or refuses its version.
+      // The swarm plays on one server, the directory's least busy when it picks (or the one
+      // hosting its configured room), until that server leaves the list or refuses its version.
       const servers = await this.listServers();
-      let server = servers.find((listed) => listed.url === this.serverUrl);
-      if (!this.server || !server) {
-        server = servers[0];
-        if (!server) {
-          throw new Error(`${directoryList(this.env, config.environment)} lists no game server`);
-        }
+      const server = swarmServer(servers, this.server ? this.serverUrl : undefined, config.room);
+      if (!server) {
+        throw new Error(`${directoryList(this.env, config.environment)} lists no game server`);
+      }
+      if (!this.server || server.url !== this.serverUrl) {
         this.serverUrl = server.url;
         this.server = { version: server.protocol, contentVersion: server.contentVersion };
       }
