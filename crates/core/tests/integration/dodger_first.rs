@@ -7,7 +7,7 @@ use sloppy_core::net::own_shots::{CoverCast, CoverHit, NoCover};
 use sloppy_core::net::replication::TimedEvent;
 use sloppy_core::net::shot_paths::{LivePaths, PathEntry, ShotLaunch, ShotPath};
 use sloppy_core::sim::data::{STEP, weapon};
-use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
+use sloppy_core::sim::hitboxes::{HIT_HALF_HEIGHT, SHELL_HIT_RADIUS};
 use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::render_state::{RenderShot, RenderState};
 use sloppy_core::sim::shooter_rewind::MAX_REWIND_TICKS;
@@ -33,12 +33,16 @@ struct Frame {
     ended: Vec<(u32, Team, Vec2)>,
 }
 
+/// The viewer's hull height, level with the shells' flight.
+const HULL_Y: f64 = 1.0;
+
 /// The viewer, at the origin facing +z.
 fn dodger(present: f64) -> Dodger {
     Dodger {
         present,
         position: Vec2::new(0.0, 0.0),
         heading: 0.0,
+        y: HULL_Y,
         kind: VehicleKind::Balanced,
         team: Team::Blue,
         tank_id: VIEWER,
@@ -255,6 +259,35 @@ fn an_incoming_shell_meets_the_hull_as_the_present_reaches_the_hit() {
 }
 
 #[test]
+fn an_incoming_shell_above_the_hit_box_flies_over_the_hull() {
+    let flight = |y: f64| {
+        let mut path = enemy_shell(10.0, 0.0, 20.0);
+        path.launch.y = Some(y);
+        let last = reaches(&path, -10.0).ceil() as u64;
+        let flies_on = move |tick: u64| {
+            if tick == 10 {
+                (Vec::new(), vec![PathEntry::Launch(path)])
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        };
+        play(last, true, &NoCover, flies_on).0
+    };
+    let frames = flight(HULL_Y + HIT_HALF_HEIGHT + 0.2);
+    assert!(kinds(&frames, SimEventType::Impact).is_empty(), "no strike");
+    assert!(frames.iter().all(|frame| frame.ended.is_empty()));
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.shots.first().is_some_and(|shot| shot.z < -2.0)),
+        "it is drawn past the hull"
+    );
+    // Level with the hull, the same shell strikes it.
+    let frames = flight(HULL_Y);
+    assert_eq!(kinds(&frames, SimEventType::Impact).len(), 1);
+}
+
+#[test]
 fn a_shell_that_passes_the_viewer_eases_back_onto_the_display_clock() {
     // Three metres to the side: it misses.
     let path = enemy_shell(10.0, 3.0, 20.0);
@@ -413,7 +446,7 @@ fn a_players_shell_strikes_the_hull_where_its_shooter_saw_it() {
     // The viewer slid 3 m along -x over the last ticks: a player's shell, judged against
     // where its shooter saw the hull 12 ticks ago, strikes it there.
     let moved = |present: f64| Dodger {
-        trail: std::array::from_fn(|back| Some((Vec2::new(0.25 * back as f64, 0.0), 0.0))),
+        trail: std::array::from_fn(|back| Some((Vec2::new(0.25 * back as f64, 0.0), 0.0, HULL_Y))),
         ..dodger(present)
     };
     let fire = |rewind: u32| {

@@ -27,9 +27,9 @@ use super::replication::TimedEvent;
 use super::shot_paths::{LivePaths, PathEntry, ShotPath};
 use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::weapon;
-use crate::sim::hitboxes::SHELL_HIT_RADIUS;
+use crate::sim::hitboxes::{HIT_HALF_HEIGHT, SHELL_HIT_RADIUS};
 use crate::sim::math::{Vec2, distance};
-use crate::sim::render_state::RenderState;
+use crate::sim::render_state::{RenderShot, RenderState};
 use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, target_ticks};
 use crate::sim::tank_dimensions::tank_hull;
 use crate::sim::types::{SimEvent, SimEventType, Team, VehicleKind, Weapon};
@@ -68,28 +68,44 @@ pub struct Dodger {
     pub present: f64,
     pub position: Vec2,
     pub heading: f64,
+    /// The hull's height (its body's y), which a shell must pass within
+    /// [`HIT_HALF_HEIGHT`] of to strike it.
+    pub y: f64,
     pub kind: VehicleKind,
     pub team: Team,
     pub tank_id: u32,
-    /// Where the hull was drawn whole ticks before the present (position and heading),
-    /// newest first, for players' shells the host judges against its past.
-    pub trail: [Option<(Vec2, f64)>; TRAIL_TICKS],
+    /// Where the hull was drawn whole ticks before the present (position, heading and
+    /// height), newest first, for players' shells the host judges against its past.
+    pub trail: [Option<(Vec2, f64, f64)>; TRAIL_TICKS],
 }
 
 /// Ticks of the viewer's past hull a [`Dodger`] keeps: the host's longest rewind.
 pub const TRAIL_TICKS: usize = MAX_REWIND_TICKS as usize + 1;
 
 impl Dodger {
-    /// How far `point` is from the hit box of the hull as drawn `back` ticks ago.
-    fn gap(&self, point: Vec2, back: u32) -> f64 {
-        let (position, heading) = self
-            .trail
+    /// The hull as drawn `back` ticks ago: position, heading and height.
+    fn past(&self, back: u32) -> (Vec2, f64, f64) {
+        self.trail
             .get(back as usize)
             .copied()
             .flatten()
             .filter(|_| back > 0)
-            .unwrap_or((self.position, self.heading));
+            .unwrap_or((self.position, self.heading, self.y))
+    }
+
+    /// How far `point` is from the hit box of the hull as drawn `back` ticks ago.
+    fn gap(&self, point: Vec2, back: u32) -> f64 {
+        let (position, heading, _) = self.past(back);
         hull_gap(self.kind, position, heading, point)
+    }
+
+    /// Whether a shell drawn at `at` is inside the hit box of the hull as drawn `back`
+    /// ticks ago: over it in the plane, and not passing over or under it, as own-shot
+    /// prediction and the host judge it.
+    fn struck_by(&self, at: &RenderShot, back: u32) -> bool {
+        let (position, heading, y) = self.past(back);
+        (at.y.unwrap_or(1.0) - y).abs() <= HIT_HALF_HEIGHT
+            && hull_gap(self.kind, position, heading, Vec2::new(at.x, at.z)) == 0.0
     }
 }
 
@@ -550,7 +566,7 @@ impl NetworkTimeline {
                 if shell.struck.is_some() {
                     drawn = None;
                 } else if let Some(at) = drawn.filter(|at| {
-                    !shell.missed && dodger.gap(Vec2::new(at.x, at.z), shell.back(dodger)) == 0.0
+                    !shell.missed && dodger.struck_by(at, shell.back(dodger))
                 }) {
                     // It reaches the viewer's hull on the viewer's clock.
                     shell.struck = Some(tick);

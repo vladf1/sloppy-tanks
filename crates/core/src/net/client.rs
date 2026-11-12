@@ -386,7 +386,7 @@ pub struct NetworkClient {
     mirror: StateMirror,
     timeline: NetworkTimeline,
     /// The viewer's drawn hull over the last frames: predicted present, position, heading.
-    hull_trail: VecDeque<(f64, Vec2, f64)>,
+    hull_trail: VecDeque<(f64, Vec2, f64, f64)>,
     control: Option<Control>,
     display: Option<RenderState>,
     ready_round: u64,
@@ -1143,7 +1143,7 @@ impl NetworkClient {
             .is_none_or(|(tick, ..)| *tick < present)
         {
             self.hull_trail
-                .push_back((present, position, drawn.heading));
+                .push_back((present, position, drawn.heading, drawn.position.y));
         }
         self.hull_trail.retain_back(MAX_HULL_TRAIL);
         let mut trail = [None; TRAIL_TICKS];
@@ -1154,12 +1154,13 @@ impl NetworkClient {
                 .iter()
                 .min_by(|a, b| (a.0 - tick).abs().total_cmp(&(b.0 - tick).abs()))
                 .filter(|(at, ..)| (at - tick).abs() <= 0.5)
-                .map(|&(_, position, heading)| (position, heading));
+                .map(|&(_, position, heading, y)| (position, heading, y));
         }
         Some(Dodger {
             present,
             position,
             heading: drawn.heading,
+            y: drawn.position.y,
             kind: viewer.kind,
             team: viewer.team,
             tank_id: control.tank_id,
