@@ -13,8 +13,9 @@ use winit::window::Window;
 /// A browser may release the lock on Esc just before it delivers the key; a key this
 /// soon after the release belongs to the same press.
 const ESC_RELEASE_WINDOW_MS: f64 = 250.0;
-/// A lock the browser has granted before but not this time within this long was
-/// refused (it wants a click first): aiming waits for one.
+/// A lock the browser has not granted within this long was refused (it wants a click
+/// first, as one asked for outside a click or key handler may be): aiming waits for one,
+/// and the click asks again from inside its handler.
 const LOCK_ANSWER_MS: f64 = 1000.0;
 
 /// What the window's cursor should do.
@@ -30,8 +31,9 @@ pub struct PointerLock {
     held: bool,
     /// A page's browser has reported this lock in place.
     confirmed: bool,
-    /// A page's browser has granted a lock before: one it does not grant was refused.
-    works: bool,
+    /// The lock is a page's, which its browser answers later; natively the window's
+    /// grab is the lock at once.
+    page: bool,
     /// When the lock was last asked for, ms.
     requested_at: f64,
     /// First person wanted the lock when the player or the browser freed it: aiming
@@ -50,7 +52,7 @@ impl Default for PointerLock {
         Self {
             held: false,
             confirmed: false,
-            works: false,
+            page: false,
             requested_at: f64::NEG_INFINITY,
             freed: false,
             released_at: f64::NEG_INFINITY,
@@ -61,9 +63,18 @@ impl Default for PointerLock {
 }
 
 impl PointerLock {
-    /// The cursor is locked: the mouse turns the view and egui sees no pointer.
+    /// The cursor is locked, or a page asked for its lock and waits for the answer: the
+    /// mouse turns the view.
     pub fn held(&self) -> bool {
         self.held
+    }
+
+    /// The cursor is locked for sure (natively once grabbed, in a page once its browser
+    /// reported it): egui sees no pointer and every press on the arena fires. While a
+    /// page's request waits for its answer the cursor is still free, so the HUD's
+    /// buttons take its clicks.
+    pub fn locked(&self) -> bool {
+        self.held && (self.confirmed || !self.page)
     }
 
     /// First person steers with a free cursor: the view holds still and the next click
@@ -84,13 +95,13 @@ impl PointerLock {
         now: f64,
     ) -> Option<Grab> {
         self.wanted = wanted;
+        self.page = browser.is_some();
         if let Some(locked) = browser
             && self.held
         {
             if locked {
                 self.confirmed = true;
-                self.works = true;
-            } else if self.confirmed || (self.works && now - self.requested_at > LOCK_ANSWER_MS) {
+            } else if self.confirmed || now - self.requested_at > LOCK_ANSWER_MS {
                 // The browser let it go (Esc, a window switch) or refused it: the round
                 // plays on and aiming waits for a click.
                 if self.confirmed {
@@ -317,7 +328,7 @@ mod tests {
         let mut lock = PointerLock::default();
         assert_eq!(lock.frame(true, true, Some(false), 0.0), Some(Grab::Lock));
         assert_eq!(lock.frame(true, true, Some(true), 16.0), None);
-        assert!(lock.held());
+        assert!(lock.held() && lock.locked());
         lock
     }
 
@@ -398,7 +409,7 @@ mod tests {
     }
 
     #[test]
-    fn a_refused_lock_waits_for_a_click_once_locks_have_worked() {
+    fn a_refused_lock_waits_for_a_click() {
         let mut lock = locked_page();
         lock.frame(false, true, Some(true), 100.0);
         assert_eq!(lock.frame(true, true, Some(false), 200.0), Some(Grab::Lock));
@@ -412,17 +423,36 @@ mod tests {
             Some(Grab::Release)
         );
         assert!(lock.waits_for_click());
-        // A browser that never locks keeps looking with the free mouse.
+        // A browser that never answers looks with the free mouse while it is asked, with
+        // the HUD still clickable, and a click on the arena asks again.
         let mut lock = PointerLock::default();
         assert_eq!(lock.frame(true, true, Some(false), 0.0), Some(Grab::Lock));
-        assert_eq!(lock.frame(true, true, Some(false), 5000.0), None);
-        assert!(lock.held());
+        assert_eq!(lock.frame(true, true, Some(false), 500.0), None);
+        assert!(lock.held() && !lock.locked());
+        assert_eq!(
+            lock.frame(true, true, Some(false), 1500.0),
+            Some(Grab::Release)
+        );
+        assert_eq!(lock.press(true, 2000.0), Some(Grab::Lock));
+        assert!(lock.held() && !lock.locked());
+    }
+
+    #[test]
+    fn a_first_lock_the_browser_never_answers_waits_for_a_click() {
+        let mut lock = PointerLock::default();
+        assert_eq!(lock.frame(true, true, Some(false), 0.0), Some(Grab::Lock));
+        assert_eq!(
+            lock.frame(true, true, Some(false), 5000.0),
+            Some(Grab::Release)
+        );
+        assert!(!lock.held() && lock.waits_for_click());
     }
 
     #[test]
     fn natively_the_grab_is_the_lock() {
         let mut lock = PointerLock::default();
         assert_eq!(lock.frame(true, true, None, 0.0), Some(Grab::Lock));
+        assert!(lock.locked());
         assert_eq!(lock.frame(true, true, None, 5000.0), None);
         assert_eq!(lock.escape(6000.0), Some(Grab::Release));
         assert_eq!(lock.escape(6100.0), None);
