@@ -12,21 +12,19 @@
 
 use std::collections::HashMap;
 
-use rapier3d::prelude::{Collider, PhysicsWorld, Vector};
+use rapier3d::prelude::{PhysicsWorld, Vector};
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::BotPersonality;
-use sloppy_core::sim::damage::tree_stump;
-use sloppy_core::sim::data::group;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Quat4, Vec2, distance};
 use sloppy_core::sim::navigation::Footprint;
-use sloppy_core::sim::physics::{interaction_groups, to_rotation, to_vector};
+use sloppy_core::sim::physics::{to_rotation, to_vector};
 use sloppy_core::sim::render_state::{RenderCover, RenderState, RenderTank};
 use sloppy_core::sim::tank_lifecycle::tank_body_parts;
-use sloppy_core::sim::types::{Brain, CoverKind, Driver, Tank};
+use sloppy_core::sim::types::{Brain, Driver, Tank};
 
 /// A movable cover's navigation footprint is patched once it has moved this far (metres),
 /// as the host patches its own (`MOVING_REBUILD_DISTANCE` in `sim/movable_cover.rs`).
@@ -158,8 +156,7 @@ impl WorldModel {
         index
     }
 
-    /// Takes a cover out as the host's destruction does: no colliders and no footprint, or
-    /// for a tree its stump, which only tanks touch.
+    /// Takes a cover out as the host's destruction does: no colliders and no footprint.
     fn fell(&mut self, index: usize) {
         let simulation = &mut self.simulation;
         let cover = &simulation.covers[index];
@@ -168,15 +165,7 @@ impl WorldModel {
             for collider in simulation.world.bodies[body].colliders().to_vec() {
                 simulation.cover_by_collider.remove(&collider);
             }
-            if cover.kind == CoverKind::Tree {
-                let stump = tree_stump(cover.x, cover.z, cover.w, cover.d, cover.h);
-                let collider: &mut Collider = &mut simulation.world.colliders[cover.collider];
-                collider.set_shape(stump.shape);
-                collider.set_translation_wrt_parent(stump.offset);
-                collider.set_collision_groups(interaction_groups(group::STUMP_CONTACT));
-            } else {
-                simulation.remove_body(body);
-            }
+            simulation.remove_body(body);
         }
         simulation.covers[index].alive = false;
         let region = Footprint::from(&simulation.covers[index]);

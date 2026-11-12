@@ -20,7 +20,7 @@ use sloppy_core::sim::{
     CoverKind, MatchPhase, Mine, PickupKind, Shot, SimEventType, Simulation, VehicleCommand,
     VehicleKind, Weapon,
 };
-use support::{ALLY, ENEMY, PLAYER, damage_from, player_enemy_ally, supply};
+use support::{ALLY, ENEMY, PLAYER, damage_from, fired, player_enemy_ally, supply};
 
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-8, "{a} != {b}");
@@ -252,6 +252,7 @@ fn mine_and_drum_chains_retain_the_initiating_tanks_xp_and_life_attribution() {
             id,
             owner: enemy_id,
             owner_life: None,
+            owner_fill_bot: false,
             damage: None,
             team: enemy_team,
             x: 0.0,
@@ -263,7 +264,14 @@ fn mine_and_drum_chains_retain_the_initiating_tanks_xp_and_life_attribution() {
             s.damage_tank(PLAYER, 9999.0, player_id, player_team, None, None);
             s.respawn(PLAYER, None);
         }
-        s.damage_cover(drum, 10.0, player_id, player_team, Some(0), None);
+        s.damage_cover(
+            drum,
+            10.0,
+            player_id,
+            player_team,
+            fired(&s, player_id, 0),
+            None,
+        );
         assert!(!s.tanks[ENEMY].alive);
         assert_eq!(s.tanks[PLAYER].xp, if old_life { 0.0 } else { 60.0 });
         assert_eq!(s.mines.len(), 0);

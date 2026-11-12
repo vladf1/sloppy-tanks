@@ -343,16 +343,16 @@ impl Game {
     /// Damage a tank through the shared damage path.
     pub fn debug_damage_tank(&mut self, id: u32, amount: f64, owner: u32, owner_team: u8) {
         if let Some(index) = self.sim.tank_index(id) {
-            let life = self
+            let firer = self
                 .sim
                 .tank_index(owner)
-                .map(|owner| self.sim.tanks[owner].life);
+                .map(|owner| self.sim.tanks[owner].firer());
             self.sim.damage_tank(
                 index,
                 amount,
                 owner,
                 Team::from_index(usize::from(owner_team)),
-                life,
+                firer,
                 None,
             );
         }
@@ -364,7 +364,7 @@ impl Game {
             return;
         };
         let human = self.sim.human();
-        let (owner, team, life) = (human.id, human.team, human.life);
+        let (owner, team, firer) = (human.id, human.team, human.firer());
         let cover = &self.sim.covers[index];
         if cover.alive && !cover.destructible {
             // Hard cover shrugs off damage; show what shells striking it look like
@@ -382,7 +382,7 @@ impl Game {
             return;
         }
         self.sim
-            .damage_cover(index, amount, owner, team, Some(life), None);
+            .damage_cover(index, amount, owner, team, Some(firer), None);
     }
 
     /// Damage a cover as a human shell striking it at world `(x, y, z)` would.
@@ -391,13 +391,13 @@ impl Game {
             return;
         };
         let human = self.sim.human();
-        let (owner, team, life) = (human.id, human.team, human.life);
+        let (owner, team, firer) = (human.id, human.team, human.firer());
         self.sim.damage_cover(
             index,
             amount,
             owner,
             team,
-            Some(life),
+            Some(firer),
             Some(Point3::new(x, y, z)),
         );
     }
@@ -504,6 +504,7 @@ impl Game {
             id,
             owner,
             owner_life: None,
+            owner_fill_bot: false,
             damage: None,
             team: Team::from_index(usize::from(team)),
             x,
@@ -648,6 +649,7 @@ impl Game {
             "covers": inspection.covers.iter().map(|cover| json!({
                 "id": cover.id, "shown": cover.shown,
                 "modelKey": cover.model_key, "crown": cover.crown, "cut": cover.cut,
+                "boughsShed": cover.boughs_shed,
             })).collect::<Vec<_>>(),
             "pickups": inspection.pickups.iter().map(|pickup| json!({
                 "id": pickup.id, "baseShown": pickup.base_shown, "gem": pickup.gem,

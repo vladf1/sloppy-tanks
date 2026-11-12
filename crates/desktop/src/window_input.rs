@@ -100,7 +100,7 @@ impl WindowInput {
             self.mouse_last = true;
         }
         let keys_to_menus = !battle.keys || overlay.typing();
-        let locked = self.pointer.held();
+        let locked = self.pointer.locked();
         let consumed = overlay.event(event, !locked, keys_to_menus);
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -187,7 +187,7 @@ impl WindowInput {
     ) {
         let cursor = egui::pos2((position.0 / scale) as f32, (position.1 / scale) as f32);
         self.cursor = Some(cursor);
-        if self.pointer.held() || !crate::touch::over_ui(context, cursor) {
+        if self.pointer.locked() || !crate::touch::over_ui(context, cursor) {
             self.controls
                 .aim_at(position, (width * scale, height * scale));
         }

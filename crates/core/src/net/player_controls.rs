@@ -488,12 +488,14 @@ impl PlayerControls {
                 overtaken_fire |= overtaken.fire;
             }
             self.input_due = tick;
-            for action in &waiting.input.actions {
-                self.actions.push_back((*action, waiting.received_ms));
-            }
-            // An input asked to wait keeps its whole lease for when it starts driving.
+            // An input asked to wait keeps its whole lease for when it starts driving, and
+            // so do its actions.
             let wait_ms = (waiting.tick - waiting.arrival_tick) as f64 * SIMULATION_STEP_MS;
-            self.lease_from_ms = self.lease_from_ms.max(waiting.received_ms + wait_ms);
+            let leased_from_ms = waiting.received_ms + wait_ms;
+            for action in &waiting.input.actions {
+                self.actions.push_back((*action, leased_from_ms));
+            }
+            self.lease_from_ms = self.lease_from_ms.max(leased_from_ms);
             self.input_arrival = waiting.arrival_tick;
             self.input = Some(waiting.input);
         }
@@ -558,6 +560,8 @@ impl PlayerControls {
         // A stand-in starts a life of its own; one epoch announces both changes.
         self.take_life(simulation);
         self.new_epoch();
+        // The stand-in sees the present: its shells rewind nothing.
+        forget_view(simulation, self.tank_id);
     }
 
     /// Gives the tank back to the player under a new control epoch.
@@ -606,5 +610,13 @@ impl PlayerControls {
     fn expire_actions(&mut self, now_ms: f64) {
         self.actions
             .retain(|(_, received)| now_ms - received < INPUT_LEASE_MS);
+    }
+}
+
+/// Drops tank `tank_id`'s view delay, so shells it fires from now on meet the present.
+/// Shells already in flight keep the rewind they were fixed with.
+pub fn forget_view(simulation: &mut Simulation, tank_id: u32) {
+    if let Some(rewind) = &mut simulation.shooter_rewind {
+        rewind.view_ticks.remove(&tank_id);
     }
 }

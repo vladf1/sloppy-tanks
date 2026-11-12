@@ -168,7 +168,7 @@ page-shell tests against it, then builds the image and pushes it to
 | `pr-<number>`         | each pull request push                           | That pull request's latest server             |
 | `main`, `sha-…`       | each push to `main`                              | Main's latest server, and per commit          |
 | `production`          | the deploy workflow, after the site deploys      | What production should run                    |
-| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | The App Store builds' `sha-…`                 |
+| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | What the App Store candidate machine runs     |
 | `app-store`           | `bun run server:release-app`                     | What the App Store machines should run        |
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
@@ -320,10 +320,20 @@ version and players install it, so they play in an environment of their own, `ap
 one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the first
 release it runs production's image.
 
-Each run of the Apps workflow that uploads to TestFlight points `:app-store-candidate` at
-its commit's server image, `sha-<commit>` (the run fails before building when main's build
-has not pushed it yet). When Apple has approved the iOS and the Mac version, release both
-together in App Store Connect (each set to release manually) and run:
+A version must also play online before its release, for TestFlight's testers and for App
+Review, while the released one keeps its servers. So the environment has a second machine,
+the candidate, created from `deploy/server/cloud-init/app-store-candidate.yaml`: its
+`server.env` names the tag it follows (`SERVER_IMAGE_TAG=app-store-candidate`) instead of
+its environment's. An app joins only servers of its own content version, so both versions
+share the environment's list and nothing else tells the machines apart. Each run of the Apps
+workflow that uploads to TestFlight points `:app-store-candidate` at its commit's server
+image, `sha-<commit>` (the run fails before building when main's build has not pushed it
+yet), and the candidate machine switches to it once its rooms are empty, or after ten
+minutes. Do not run it again while a version waits for review or release: the builds Apple
+holds would lose their server.
+
+When Apple has approved the iOS and the Mac version, release both together in App Store
+Connect (each set to release manually) and, once the App Store offers them, run:
 
 ```sh
 bun run server:release-app                  # :app-store := :app-store-candidate, then wait
@@ -332,11 +342,16 @@ bun run server:release-app --image sha-<commit>   # release another commit's ser
 
 It needs Docker logged in to ghcr.io like `server:publish`, and waits until every App
 Store machine reports the released content version: each switches once its rooms are
-empty, or after ten minutes. A released image stays as it is: a later server-only fix
-reaches the App Store machines with the next release, or with `--image`. Only the latest release plays online: an older app then finds
-no server of its version, says so, and offers UPDATE, which opens its App Store page.
+empty, or after ten minutes. The candidate machine already runs it, and both then serve
+the release until the next TestFlight upload. With `--image` of another version, a
+machine that plays the candidate's, or comes to while the command waits, is taken for
+the candidate machine and not waited for. A released image stays as it is: a later server-only fix reaches the App Store
+machines with the next release, or with `--image`. Only the latest release plays online:
+an older app then finds no server of its version, says so, and offers UPDATE, which opens
+its App Store page, so release the server only after the store offers the update.
 Single player keeps working. `server:update`, `rollback`, `deploy`, `auto-update`,
-`status`, `logs` and `stats` take `--app-store` as they take `--dev`;
+`status`, `logs` and `stats` take `--app-store` as they take `--dev` and act on both
+kinds of machine (`--ip` names one);
 `server:deploy --app-store` refuses a checkout's build without `--force`.
 
 ## Monitoring

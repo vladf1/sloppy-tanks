@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { environment, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { environment, gameServers, option, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate the game server machines, one after another and over SSH except for
  * `publish` and `release-app`: the ones the server directory lists for production, or
@@ -12,7 +12,8 @@ import { environment, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.m
  *   release-app [--image TAG]
  *                            point :app-store at the App Store build TestFlight has
  *                            (:app-store-candidate, or TAG), which the App Store machines
- *                            follow; wait until each serves it
+ *                            follow; wait until each serves it (the candidate machine
+ *                            keeps following :app-store-candidate)
  *   update [--image TAG]     pull an image CI published (default the followed tag) and switch
  *   deploy [--force]         build the image here, copy it over SSH and switch (the SSH
  *                            fallback; for production only from a clean origin/main)
@@ -30,11 +31,17 @@ const RELEASE_TIMEOUT_MS = 12 * 60_000;
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
 const role = command === "release-app" ? "app-store" : environment(process.argv);
+const USAGE =
+  "Usage: bun scripts/server.mjs publish|release-app|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]";
+/** Read before anything is pushed, listed or reached over SSH: a flag without its value
+ * stops the command rather than widening it to every machine. */
+const ip = commandOption("--ip");
+const imageArgument = commandOption("--image");
 /** What a publish or release pushed, for every machine to switch to. It pushes before
  * looking for machines: one still booting is not listed yet, and starts it by itself. */
 const published =
   command === "publish" ? await publish() : command === "release-app" ? release() : undefined;
-const servers = await gameServers(role, option("--ip"), published !== undefined);
+const servers = await gameServers(role, ip, published !== undefined);
 if (published && servers.length === 0) {
   console.log(`The directory lists no ${role} server; one that boots starts this by itself.`);
 }
@@ -50,9 +57,13 @@ function run(program, args, options = {}) {
 const ssh = (script, options) => run("ssh", [...SSH_OPTIONS, server.ssh, script], options);
 const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
 
-function option(name) {
-  const index = process.argv.indexOf(name);
-  return index === -1 ? undefined : process.argv[index + 1];
+function commandOption(name) {
+  try {
+    return option(process.argv, name);
+  } catch (error) {
+    console.error(`${error.message}\n${USAGE}`);
+    process.exit(1);
+  }
 }
 
 /** The server's /health through Caddy, by the name that always reaches this machine.
@@ -182,40 +193,52 @@ async function publish() {
   return { version, build };
 }
 
-/** Points :app-store at the App Store build's server image, :app-store-candidate (which
- * the Apps workflow moves with each TestFlight upload) unless `--image` names another, and
- * returns the content version the App Store machines then report. Needs Docker logged in
- * to ghcr.io with a token that can write packages, as `publish` does. */
-function release() {
-  const source = imageOption() || `${SERVER_IMAGE}:app-store-candidate`;
+/** The content version a server image in the registry plays, or nothing when the registry
+ * has no such image. */
+function imageContentVersion(image) {
   const inspected = spawnSync(
     "docker",
-    ["buildx", "imagetools", "inspect", source, "--format", "{{json .Image}}"],
+    ["buildx", "imagetools", "inspect", image, "--format", "{{json .Image}}"],
     { cwd: repo, encoding: "utf8" },
   );
-  if (inspected.status !== 0) {
-    console.error(`The registry has no ${source}; run the Apps workflow on main first.`);
-    process.exit(1);
-  }
+  if (inspected.status !== 0) return undefined;
   const config = JSON.parse(inspected.stdout);
   // A manifest list maps each platform to its config; the image has only linux/amd64.
   const labels = (config.config ?? config["linux/amd64"]?.config)?.Labels ?? {};
   const version = labels["me.fridman.sloppy-tanks.content-version"];
   if (!version) {
-    console.error(`${source} has no content version label; is it a server image?`);
+    console.error(`${image} has no content version label; is it a server image?`);
     process.exit(1);
   }
+  return version;
+}
+
+/** Points :app-store at the App Store build's server image, :app-store-candidate (which
+ * the Apps workflow moves with each TestFlight upload) unless `--image` names another, and
+ * returns the content version the App Store machines then report, beside the candidate's:
+ * the candidate machine follows :app-store-candidate, not this release. Needs Docker
+ * logged in to ghcr.io with a token that can write packages, as `publish` does. */
+function release() {
+  const candidateImage = `${SERVER_IMAGE}:app-store-candidate`;
+  const source = imageOption() || candidateImage;
+  const version = imageContentVersion(source);
+  if (!version) {
+    console.error(`The registry has no ${source}; run the Apps workflow on main first.`);
+    process.exit(1);
+  }
+  const candidate = source === candidateImage ? version : imageContentVersion(candidateImage);
   console.log(`Releasing ${source} (content ${version}) to the App Store machines as :app-store`);
   run("docker", ["buildx", "imagetools", "create", "--tag", `${SERVER_IMAGE}:app-store`, source]);
-  return { version };
+  return { version, candidate };
 }
 
 /** A registry tag such as `pr-12`, or a full image name. */
 function imageOption() {
-  const value = option("--image");
-  if (value === undefined) return "";
-  if (!/^[\w.:/@-]+$/.test(value)) throw new Error(`Not an image or tag: ${value}`);
-  return value.includes(":") || value.includes("/") ? value : `${SERVER_IMAGE}:${value}`;
+  if (imageArgument === undefined) return "";
+  if (!/^[\w.:/@-]+$/.test(imageArgument)) throw new Error(`Not an image or tag: ${imageArgument}`);
+  return imageArgument.includes(":") || imageArgument.includes("/")
+    ? imageArgument
+    : `${SERVER_IMAGE}:${imageArgument}`;
 }
 
 async function printHealth() {
@@ -242,13 +265,26 @@ async function runCommand() {
     case "release-app": {
       // A machine switches once nobody plays on it, at most ten minutes after the tag moves
       // (sloppy-tanks-update), so this waits a little longer than that.
+      // Nothing tells the candidate machine from the others but what it plays. When the
+      // release is not the candidate (`--image`), a machine that plays the candidate's
+      // version, now or once its own pending update lands, is taken for it: it never
+      // switches to the release, so the wait ends there too.
+      const { version, candidate } = published;
       console.log(`Waiting for ${health.origin}, which switches once its rooms are empty`);
-      await waitForHealth(
-        (status) => status.contentVersion === published.version,
-        `content ${published.version} (bun run server:status --app-store shows why not)`,
+      const status = await waitForHealth(
+        ({ contentVersion }) =>
+          contentVersion === version || (candidate !== undefined && contentVersion === candidate),
+        `content ${version} (bun run server:status --app-store shows why not)`,
         RELEASE_TIMEOUT_MS,
       );
-      console.log(`The App Store server at ${server.url} plays the released apps' version`);
+      if (status.contentVersion === version) {
+        console.log(`The App Store server at ${server.url} plays the released apps' version`);
+      } else {
+        console.log(
+          `${health.origin} plays the candidate's version (content ${candidate}): not waiting ` +
+            "for it. If it follows :app-store, it switches once its rooms are empty.",
+        );
+      }
       break;
     }
     case "update":
@@ -297,9 +333,7 @@ async function runCommand() {
       break;
     }
     default:
-      console.error(
-        "Usage: bun scripts/server.mjs publish|release-app|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]",
-      );
+      console.error(USAGE);
       process.exit(1);
   }
 }

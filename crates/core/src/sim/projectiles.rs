@@ -138,7 +138,7 @@ fn intercept(simulation: &mut Simulation, a: &Shot, b: &Shot) {
             standard_damage,
             enemy_shot.owner,
             enemy_shot.team,
-            enemy_shot.owner_life,
+            enemy_shot.firer(),
             Some(DamageSource {
                 cause: DamageCause::Interception,
                 origin: point,
@@ -254,6 +254,38 @@ pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion:
     }
     simulation.projectile_tank_positions = tank_positions;
     simulation.projectile_structure_bodies = structure_bodies;
+    rustle_leaves(simulation);
+}
+
+/// A shell in a standing tree's leaves rustles them once on its way through: they spray
+/// where it passes, and it flies on unhurt (`Structure::foliage`).
+fn rustle_leaves(simulation: &mut Simulation) {
+    for si in 0..simulation.shots.len() {
+        let shot = &simulation.shots[si];
+        let point = Point3::new(shot.x, shot.combat_y(), shot.z);
+        let rustled = simulation.covers.iter().find(|cover| {
+            let Some(state) = &cover.structure else {
+                return false;
+            };
+            !shot.rustled.contains(&cover.id)
+                && state.layout.foliage.iter().any(|&(part, low, high)| {
+                    let local = state
+                        .layout
+                        .to_local(glam::DVec3::new(point.x - cover.x, point.y, point.z - cover.z));
+                    state.standing(part) && local.cmpge(low).all() && local.cmple(high).all()
+                })
+        });
+        let Some(cover) = rustled else {
+            continue;
+        };
+        let mut rustle = SimEvent::at(SimEventType::Rustle, point.x, point.z);
+        rustle.id = Some(cover.id);
+        rustle.height = Some(point.y);
+        rustle.cover_kind = Some(cover.kind);
+        let id = cover.id;
+        simulation.events.push(rustle);
+        simulation.shots[si].rustled.push(id);
+    }
 }
 
 /// The earliest contact found for one shell, returned beside that shell's index; indices
@@ -582,7 +614,7 @@ fn rocket_blast(simulation: &mut Simulation, shot: &Shot) {
         shot.damage,
         shot.owner,
         shot.team,
-        shot.owner_life,
+        shot.firer(),
         DamageCause::Rocket,
     );
 }
@@ -657,7 +689,7 @@ fn resolve_contact(
         Contact::Mine { mine: mi } => {
             // Remove first so the blast cannot rediscover and detonate this mine twice.
             let mine = simulation.mines.remove(mi);
-            simulation.detonate_mine(&mine, shot.owner, shot.team, shot.owner_life);
+            simulation.detonate_mine(&mine, shot.owner, shot.team, shot.firer());
         }
         Contact::Debris {
             fragment: fi,
@@ -665,7 +697,7 @@ fn resolve_contact(
         } if structure_debris(&simulation.fragments[fi]) => {
             // A structure's fallen part breaks where the shell meets it: an HE round
             // bursts on it, an armour-piercing round breaks the part it strikes and
-            // flies on, a rocket goes off.
+            // flies on (or stops in wood that only gives a little), a rocket goes off.
             let color = simulation.fragments[fi].color;
             let shell_point = Point3::new(shot.x, shot.combat_y(), shot.z);
             let (point, part) = simulation.world.colliders.get(collider).map_or(
@@ -687,10 +719,9 @@ fn resolve_contact(
             match shot.weapon {
                 Weapon::Rocket => rocket_blast(simulation, &shot),
                 Weapon::Piercing => {
-                    simulation.break_loose_body(fi, part, point, PIERCING_THROW);
-                    remove = false;
+                    remove = !simulation.break_loose_body(fi, part, point, PIERCING_THROW);
                 }
-                _ => burst_at(simulation, &shot, point),
+                _ => burst_at(simulation, &shot, point, None),
             }
         }
         Contact::Debris { fragment: fi, .. } => {
@@ -751,7 +782,7 @@ fn resolve_contact(
                     shot.damage,
                     shot.owner,
                     shot.team,
-                    shot.owner_life,
+                    shot.firer(),
                     Some(DamageSource {
                         cause: shot.weapon.into(),
                         origin: Vec2::new(
@@ -803,7 +834,7 @@ fn resolve_contact(
                     shot.damage,
                     shot.owner,
                     shot.team,
-                    shot.owner_life,
+                    shot.firer(),
                     Some(Point3::new(shot.x, shot.combat_y(), shot.z)),
                 );
                 if simulation.covers[ci].alive && shot.bounces > 0 {
@@ -850,11 +881,13 @@ fn resolve_contact(
 /// round it take the blast; tanks are hit only by what strikes them. A burst inside a
 /// cottage names the hole the shell came in by, which its flash and dust escape through.
 fn burst(simulation: &mut Simulation, shot: &Shot) {
-    burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z));
+    burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z), None);
 }
 
-/// [`burst`] at `point`: on a structure's fallen part, where the shell met it.
-fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
+/// [`burst`] at `point`: on a structure's fallen part, where the shell met it. The
+/// structure `spared` (a tree the shell just struck) takes none of it: the strike was
+/// its damage.
+fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3, spared: Option<usize>) {
     let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = Some(point.y);
@@ -890,11 +923,12 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
     } else {
         simulation.events.push(explosion);
     }
-    simulation.structure_blast(
+    simulation.structure_blast_sparing(
         point,
         HE_BLAST_RADIUS,
         shot.damage,
         Some((shot.owner, shot.team)),
+        spared,
     );
 }
 
@@ -912,6 +946,10 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
     let mut impact = impact_event(shot.x, shot.z, 0.6, weapon(shot.weapon).color);
     impact.id = Some(simulation.covers[cover].id);
     impact.height = Some(point.y);
+    // A tree's hit shakes its crown and chips its bark as any tree's does.
+    if simulation.covers[cover].kind == CoverKind::Tree {
+        impact.cover_kind = Some(CoverKind::Tree);
+    }
     match shot.weapon {
         Weapon::Rocket => {
             simulation.events.push(impact);
@@ -936,7 +974,11 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
                 if shot.fuse.is_none() {
                     simulation.events.push(impact);
                 }
-                burst(simulation, &shot);
+                // A tree takes a shell's damage once, where it struck: two standard
+                // shells fell it, its burst no third.
+                let tree = simulation.covers[cover].kind == CoverKind::Tree;
+                let at = Point3::new(shot.x, shot.combat_y(), shot.z);
+                burst_at(simulation, &shot, at, tree.then_some(cover));
                 true
             }
         }

@@ -25,7 +25,9 @@ use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Point3, Vec2, distance};
 use sloppy_core::sim::render_state::RenderShot;
-use sloppy_core::sim::types::{Driver, SimEvent, SimEventType, Team, VehicleKind, Weapon};
+use sloppy_core::sim::types::{
+    AmmoSelection, Driver, SimEvent, SimEventType, Team, VehicleKind, Weapon,
+};
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
@@ -720,6 +722,35 @@ fn a_pushed_drum_is_drawn_ahead_of_the_hull_and_handed_back_without_a_jump() {
 fn percentile_of(values: &mut [f64], fraction: f64) -> f64 {
     values.sort_by(f64::total_cmp);
     values[((values.len() - 1) as f64 * fraction).round() as usize]
+}
+
+#[test]
+fn a_weapon_picked_in_the_frame_of_a_shot_fires_that_shot() {
+    let (mut net, alice, tank_id) = alone_with_a_clear_lane();
+    let sim = net.host.simulation.as_mut().unwrap();
+    let index = sim.tank_index(tank_id).unwrap();
+    sim.tanks[index].ammo.rocket = 3.0;
+    net.run(500.0);
+    net.peers[alice].recording = true;
+    net.peers[alice].input.ammo_selection = Some(AmmoSelection::Weapon(Weapon::Rocket));
+    net.peers[alice].input.fire = true;
+    net.run(FRAME_MS);
+    net.peers[alice].input.ammo_selection = None;
+    net.peers[alice].input.fire = false;
+    net.run(1500.0);
+    let peer = &net.peers[alice];
+    let flash = peer.drawn[0]
+        .events
+        .iter()
+        .find(|event| event.kind == SimEventType::Shot && event.id == Some(tank_id))
+        .expect("the shot flashes at once");
+    assert_eq!(
+        flash.weapon,
+        Some(Weapon::Rocket),
+        "with the weapon just picked"
+    );
+    let stats = &peer.client.own_shots.stats;
+    assert_eq!((stats.predicted, stats.confirmed), (1, 1), "{stats:?}");
 }
 
 #[test]

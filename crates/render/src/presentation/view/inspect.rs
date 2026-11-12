@@ -47,6 +47,8 @@ pub struct CoverInspection {
     /// Trees: whether the crown and the cut stump surface show.
     pub crown: Option<bool>,
     pub cut: Option<bool>,
+    /// Trees: the damage stage up to which its boughs are shed.
+    pub boughs_shed: Option<u32>,
 }
 
 #[derive(Clone, Debug)]
@@ -168,6 +170,7 @@ impl Presentation {
                     .as_ref()
                     .map(|tree| joint_shown(&state, tree.crown)),
                 cut: view.tree.as_ref().map(|tree| joint_shown(&state, tree.cut)),
+                boughs_shed: view.tree.as_ref().map(|tree| tree.branch_stage),
             });
         }
         for (&id, view) in &self.pickups {

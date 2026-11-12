@@ -1,19 +1,17 @@
 //! The damage paths for tanks and cover, and blasts. Every tank or cover hit routes through
 //! these helpers so team immunity, XP attribution and destruction chains stay consistent.
 
-use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{BlastFalloff, COMBAT, MINE, StructureBlast};
-use super::data::group;
 use super::debris_physics::{blast_debris, blast_loose_debris};
 use super::difficulty::difficulty_tuning;
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
-use super::physics::{from_rotation, from_vector, interaction_groups, vector};
+use super::physics::{from_rotation, from_vector, vector};
 use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
@@ -22,20 +20,12 @@ use super::structure_physics::{
     throw_structure_debris,
 };
 use super::tank_destruction::tank_burnout;
-use super::tree_proportions::tree_proportions;
 use super::types::{
-    CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
+    CoverKind, DamageCause, DamageSource, DeathStyle, Firer, FragmentShape, Mine, SimEvent,
     SimEventType, Team, VehicleKind,
 };
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
-
-/// The upright footprint a felled tree leaves on its cover body: the stump's shape and
-/// its offset from the body origin (the trunk's mid-height).
-pub struct TreeStump {
-    pub shape: SharedShape,
-    pub offset: Vector,
-}
 
 /// How a blast from outside (a drum, a rocket, a mine) meets a structure's standing parts:
 /// a drum's over its whole radius, the others' over [`STRUCTURE_BLAST_REACH`] of theirs.
@@ -52,14 +42,6 @@ fn outside_structure_blast(cause: DamageCause, radius: f64, damage: f64) -> Stru
     }
 }
 
-pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
-    let stump_radius = tree_proportions(x, z, w, d, h).stump_radius;
-    TreeStump {
-        shape: SharedShape::cylinder(0.8, stump_radius as f32),
-        offset: vector(0.0, 0.8 - h / 2.0, 0.0),
-    }
-}
-
 impl Simulation {
     /// Damage a tank: team immunity, shields, XP attribution, kills and its wreck. A calm
     /// field ([`Simulation::calm`]) damages nobody.
@@ -69,7 +51,7 @@ impl Simulation {
         amount: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         source: Option<DamageSource>,
     ) {
         let mut amount = amount;
@@ -80,9 +62,20 @@ impl Simulation {
         if !tank.alive || tank.protection > 0.0 || (tank.team == team && tank.id != owner) {
             return;
         }
-        let attacker = self.tank_index(owner);
-        if self.multiplayer()
-            && attacker.is_some_and(|a| !self.tanks[a].human && self.tanks[a].team == team)
+        let owner_tank = self.tank_index(owner);
+        // Ordnance an earlier occupant of the owner's seat fired credits nobody: not the
+        // player or bot who holds the seat now.
+        let earlier_occupant = owner_tank
+            .zip(firer)
+            .is_some_and(|(a, firer)| firer.life < self.tanks[a].seat_life);
+        let attacker = owner_tank.filter(|_| !earlier_occupant);
+        let owner_life = firer.map(|firer| firer.life);
+        // A fill bot's ordnance is scaled by the room's difficulty, as whoever fired it was.
+        let fill_bot = match firer {
+            Some(firer) => firer.fill_bot,
+            None => owner_tank.is_some_and(|a| !self.tanks[a].human),
+        };
+        if self.multiplayer() && fill_bot && owner_tank.is_some_and(|a| self.tanks[a].team == team)
         {
             amount *= difficulty_tuning(self.difficulty).damage;
         }
@@ -134,7 +127,7 @@ impl Simulation {
                 let mut hurt = SimEvent::at(SimEventType::Hurt, position.x, position.z);
                 hurt.damage_source = source;
                 hurt.id = Some(victim_id);
-                hurt.owner = Some(owner);
+                hurt.owner = (!earlier_occupant).then_some(owner);
                 hurt.team = Some(victim_team);
                 hurt.size = Some(amount);
                 self.events.push(hurt);
@@ -196,7 +189,9 @@ impl Simulation {
         death.death_style = burnout.then_some(DeathStyle::Burnout);
         death.damage_source = source;
         death.id = Some(victim_id);
-        death.owner = Some(owner);
+        // An earlier occupant's ordnance: no owner, its life left to say the killer is
+        // unknown rather than the yard.
+        death.owner = (!earlier_occupant).then_some(owner);
         death.owner_life = owner_life;
         death.team = Some(victim_team);
         death.size = Some(match kind {
@@ -214,7 +209,7 @@ impl Simulation {
         amount: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         impact: Option<Point3>,
     ) {
         if let Some(cover) = self.covers.get(cover_index)
@@ -264,18 +259,7 @@ impl Simulation {
         for &collider in self.world.bodies[body].colliders() {
             self.cover_by_collider.remove(&collider);
         }
-        let cover = &self.covers[cover_index];
-        if cover.kind == CoverKind::Tree {
-            // A tank-only upright footprint stops planar hulls climbing or crossing the
-            // stump while shells can still fly through the space left by the crown.
-            let stump = tree_stump(cover.x, cover.z, cover.w, cover.d, cover.h);
-            let collider = &mut self.world.colliders[cover.collider];
-            collider.set_shape(stump.shape);
-            collider.set_translation_wrt_parent(stump.offset);
-            collider.set_collision_groups(interaction_groups(group::STUMP_CONTACT));
-        } else {
-            self.remove_body(body);
-        }
+        self.remove_body(body);
         let region = moved_cover_region(&self.covers[cover_index]);
         self.nav.rebuild(&self.covers, Some(region));
         let cover = &self.covers[cover_index];
@@ -311,7 +295,7 @@ impl Simulation {
                 COMBAT.drum_damage,
                 owner,
                 team,
-                owner_life,
+                firer,
                 DamageCause::Drum,
             );
         }
@@ -326,7 +310,7 @@ impl Simulation {
         damage: f64,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
         cause: DamageCause,
     ) {
         let mut explosion = SimEvent::at(SimEventType::Explosion, position.x, position.z);
@@ -346,7 +330,7 @@ impl Simulation {
                 .extract_if(.., |mine| distance(position, Vec2::new(mine.x, mine.z)) < radius),
         );
         for mine in chained.drain(..) {
-            self.detonate_mine(&mine, owner, team, owner_life);
+            self.detonate_mine(&mine, owner, team, firer);
         }
         self.scratch.chained_mines = chained;
         for i in 0..self.tanks.len() {
@@ -364,7 +348,7 @@ impl Simulation {
                 damage * factor,
                 owner,
                 team,
-                owner_life,
+                firer,
                 Some(DamageSource {
                     cause,
                     origin: position,
@@ -404,7 +388,7 @@ impl Simulation {
                     damage,
                     owner,
                     team,
-                    owner_life,
+                    firer,
                     Some(Point3::new(position.x, 1.0, position.z)),
                 );
             }
@@ -418,7 +402,7 @@ impl Simulation {
         mine: &Mine,
         owner: u32,
         team: Team,
-        owner_life: Option<u32>,
+        firer: Option<Firer>,
     ) {
         self.explode(
             Vec2::new(mine.x, mine.z),
@@ -426,7 +410,7 @@ impl Simulation {
             mine.damage.unwrap_or(MINE.damage),
             owner,
             team,
-            owner_life,
+            firer,
             DamageCause::Mine,
         );
     }

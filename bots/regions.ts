@@ -31,6 +31,19 @@ export interface DirectoryEnv {
 export const directoryList = (env: DirectoryEnv, environment?: Environment) =>
   `${env.DIRECTORY_URL}/servers?environment=${environment ?? env.SERVER_ENVIRONMENT}`;
 
+/** The listed server a swarm plays on: the one whose rooms include its configured `room`,
+ * else the one it plays on now (`current`) while the directory lists it, else the
+ * directory's first, its least busy. */
+export function swarmServer<Server extends { url: string; rooms: readonly { room: string }[] }>(
+  servers: readonly Server[],
+  current: string | undefined,
+  room: string | undefined,
+): Server | undefined {
+  const hosting =
+    room && servers.find((server) => server.rooms.some((entry) => entry.room === room));
+  return hosting || servers.find((server) => server.url === current) || servers[0];
+}
+
 export function json(value: unknown, status = 200): Response {
   return Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
 }

@@ -314,8 +314,13 @@ impl MatchHost {
     }
 
     /// While a round runs, milliseconds from `now_ms` until its next batch of ticks is due;
-    /// the runtime's timer should call [`advance`](Self::advance) then.
+    /// the runtime's timer should call [`advance`](Self::advance) then. `None` outside
+    /// Playing: the clock stops with the round, and its last due time would stay overdue
+    /// for the whole Results screen.
     pub fn until_next_batch_ms(&self, now_ms: u64) -> Option<f64> {
+        if self.phase != RoomPhase::Playing {
+            return None;
+        }
         self.clock
             .as_ref()
             .map(|clock| clock.until_next_batch_ms(now_ms as f64))

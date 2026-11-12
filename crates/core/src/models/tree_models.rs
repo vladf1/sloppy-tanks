@@ -26,13 +26,21 @@ use super::batching::{batch, paint_mesh};
 use super::effects_scenery::FOLIAGE;
 use super::model_primitives::{Cache, shadowed, span_between};
 use crate::geometry::math::{
-    hex_to_linear, lerp_color, multiply_hex, quat_from_euler, quat_from_euler_yxz, quat_rotate_z,
-    smoothstep, transform_point,
+    hex_to_linear, lerp_color, multiply_hex, quat_from_euler, smoothstep, transform_point,
 };
 use crate::geometry::{CylinderGeometry, Mesh, narrow, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
+use crate::sim::grown_layout::{TreePart, grown_layout, grows};
 use crate::sim::math::Random;
+use crate::sim::tree_layout::{
+    BROADLEAF_STEM_TOP, CONIFER_STEM_TOP, GOLDEN_ANGLE, LayoutDetail, tree_layout,
+};
+
+mod grown_crown;
+mod tree_growth;
 use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
+pub use grown_crown::grown_pieces;
+pub use tree_growth::tree_pieces;
 
 /// Node names that presentation looks up on a full-detail tree.
 pub mod tree_part {
@@ -78,6 +86,14 @@ pub enum TreeDetail {
 impl TreeDetail {
     fn background(self) -> bool {
         self != TreeDetail::Full
+    }
+
+    fn layout(self) -> LayoutDetail {
+        match self {
+            TreeDetail::Full => LayoutDetail::Full,
+            TreeDetail::Background => LayoutDetail::Background,
+            TreeDetail::Distant => LayoutDetail::Distant,
+        }
     }
 }
 
@@ -323,8 +339,8 @@ fn open_cylinder(radius_top: f64, radial_segments: u32) -> Mesh {
 fn geometry(kind: TreeGeometry) -> Arc<Mesh> {
     GEOMETRY.get_or_insert(kind, || match kind {
         TreeGeometry::Stem => open_cylinder(0.6, 8),
-        TreeGeometry::ConiferStem => open_cylinder(0.025, 7),
-        TreeGeometry::BroadleafStem => open_cylinder(0.35, 8),
+        TreeGeometry::ConiferStem => open_cylinder(CONIFER_STEM_TOP, 7),
+        TreeGeometry::BroadleafStem => open_cylinder(BROADLEAF_STEM_TOP, 8),
         TreeGeometry::Branch => open_cylinder(0.6, 5),
         TreeGeometry::Root => open_cylinder(0.3, 6),
         TreeGeometry::StumpBark(variant) => stump_geometry(variant).0,
@@ -463,7 +479,6 @@ const RINGS_COLOR: u32 = 0xd9b77f;
 const SPRIG_GREEN: u32 = 0x7d964b;
 const SPRAY_GREEN: u32 = 0x8b9d6f;
 /// Golden-angle step between successive whorls, lobes and cards.
-const GOLDEN_ANGLE: f64 = 2.39996;
 /// The cells of `leaf-sprigs.webp` as (u0, v0, u1, v1) with V up the image: two
 /// lobed oak sprigs across its top half, two small ovate sprigs below. Each sprig's
 /// twig enters at the bottom centre of its cell.
@@ -580,10 +595,9 @@ struct Card {
     clump: DVec3,
 }
 
-/// A card's color variation: a little lighter or darker, a little yellower or bluer.
-fn card_tint(rng: &mut Random) -> [f64; 3] {
-    let light = rng.range(0.82, 1.12);
-    let warm = rng.range(-0.05, 0.07);
+/// A card's color variation from its two draws: a little lighter or darker, a little
+/// yellower or bluer.
+fn card_tint_of(light: f64, warm: f64) -> [f64; 3] {
     [light * (1.0 + warm), light, light * (1.0 - warm * 1.6)]
 }
 
@@ -667,9 +681,8 @@ impl Crown {
 
     /// Add the three crossed cards of a needle spray: its local Z runs from the
     /// branch along the spray, X across it, and `transform` places it.
-    fn spray(&mut self, bough: Option<usize>, transform: DMat4, rng: &mut Random) {
+    fn spray(&mut self, bough: Option<usize>, transform: DMat4, tint: [f64; 3]) {
         let clump = transform_point(&transform, DVec3::new(0.0, 0.0, 0.5));
-        let tint = card_tint(rng);
         // Distant sprays cross two cards instead of three.
         let crossed = if self.detail == TreeDetail::Distant {
             2
@@ -736,63 +749,20 @@ impl Crown {
     }
 }
 
-/// A sprig card in a clump at `tip` with ellipsoid `radii`: the `k`th of `count`
-/// spread over the clump from `phase`, its twig toward the inside and its leaves
-/// reaching out and up, `size` metres across.
-#[allow(clippy::too_many_arguments)]
-fn sprig_card(
-    rng: &mut Random,
-    tip: DVec3,
-    radii: DVec3,
-    k: u32,
-    count: u32,
-    phase: f64,
-    size: f64,
-    cells: &[[f64; 4]; 2],
-) -> Card {
-    let y = 1.0 - (f64::from(k) + 0.5) / f64::from(count) * 1.7;
-    let ring = (1.0 - y * y).max(0.0).sqrt();
-    let theta = phase + f64::from(k) * GOLDEN_ANGLE;
-    let direction = DVec3::new(theta.cos() * ring, y, theta.sin() * ring);
-    let center = tip + direction * radii * rng.range(0.3, 0.75);
-    let outward = (direction + DVec3::Y * 0.3).normalize();
-    let wander = DVec3::new(
-        rng.range(-1.0, 1.0),
-        rng.range(-1.0, 1.0),
-        rng.range(-1.0, 1.0),
-    );
-    // Sprigs face out of the clump like shingles, so the crown shows leaves rather
-    // than card edges, and grow up and outward from a twig inside it.
-    let face = (outward + wander * 0.4).normalize_or(outward);
-    let rise = outward * 0.6 + DVec3::Y + wander * 0.3;
-    let up = (rise - face * rise.dot(face)).normalize_or(face.any_orthonormal_vector());
-    let across = up.cross(face);
-    let size = size * rng.range(0.88, 1.18);
-    // The leafy mass sits a little below the card's middle.
-    let bottom = center - up * size * 0.42;
-    let half = across * size * 0.5;
-    let mut cell = cells[usize::from(rng.next() < 0.5)];
-    if rng.next() < 0.5 {
-        cell.swap(0, 2);
-    }
-    Card {
-        corners: [
-            bottom - half,
-            bottom + half,
-            bottom + half + up * size,
-            bottom - half + up * size,
-        ],
-        cell,
-        tint: card_tint(rng),
-        clump: tip,
-    }
-}
-
 /// `treeModel(c, detail)`.
 pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
+    standing_tree_model(c, detail, &|_| true)
+}
+
+/// [`tree_model`] with only the parts of a cover tree that `keep` picks: what still
+/// stands of it once a shell snapped limbs off.
+pub fn standing_tree_model(
+    c: &TreeShape,
+    detail: TreeDetail,
+    keep: &dyn Fn(TreePart) -> bool,
+) -> Node {
     let TreeProportions {
         seed,
-        mut rng,
         family,
         twist,
         height,
@@ -842,6 +812,12 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         cards: Vec::new(),
     };
     let variant = seed % 24;
+    // A full-detail broadleaf grows limb by limb from the skeleton the simulation builds
+    // its parts from; every other tree from its own layout, the same for a cover tree's.
+    let branched = (full && grows(family)).then(|| grown_layout(c.x, c.z, c.w, c.d, c.h));
+    let grown = branched
+        .is_none()
+        .then(|| tree_layout(c.x, c.z, c.w, c.d, c.h, detail.layout()));
     if full {
         let mut stump = Node::group(tree_part::STUMP);
         let scale = DVec3::new(radius, stump_height, radius);
@@ -854,23 +830,18 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         )
         .set_rotation_euler(0.0, twist, 0.0);
         // Buttress roots flare from the stump and dive into the ground.
-        let root_count = 5 + seed % 3;
-        for i in 0..root_count {
-            let angle =
-                twist + (f64::from(i) * PI * 2.0) / f64::from(root_count) + rng.range(-0.2, 0.2);
-            let reach = radius * rng.range(1.5, 2.1);
-            let from = DVec3::new(
-                angle.sin() * radius * 0.55,
-                stump_height * rng.range(0.45, 0.6),
-                angle.cos() * radius * 0.55,
-            );
-            let to = DVec3::new(angle.sin() * reach, -0.08, angle.cos() * reach);
+        let roots = match (&branched, &grown) {
+            (Some(branched), _) => &branched.roots,
+            (_, Some(grown)) => &grown.roots,
+            _ => unreachable!("a grown tree or a laid out one"),
+        };
+        for root in roots {
             limb(
                 &mut stump,
                 bark.clone(),
-                from,
-                to,
-                radius * rng.range(0.38, 0.52),
+                root.from,
+                root.to,
+                root.radius,
                 true,
             );
         }
@@ -888,29 +859,30 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         cut.visible = false;
         group.children.push(stump);
     }
-    let lean_x = rng.range(-0.1, 0.1) * c.w;
-    let lean_z = rng.range(-0.07, 0.07) * c.d;
     let trunk_base = if full { stump_height * 0.88 } else { 0.0 };
-    let trunk = limb(
-        &mut crown.node,
-        bark.clone(),
-        DVec3::new(0.0, trunk_base, 0.0),
-        DVec3::new(lean_x, height * (if conifer { 0.98 } else { 0.78 }), lean_z),
-        radius,
-        false,
-    );
-    if let Some(drawable) = &mut trunk.drawable {
-        drawable.mesh = geometry(if conifer {
-            TreeGeometry::ConiferStem
-        } else {
-            TreeGeometry::BroadleafStem
-        });
-        if let Some((_, bark_tint)) = tints {
-            // The tinted trunk is the tree's own: background trees merge per cell.
-            let mut mesh = (*drawable.mesh).clone();
-            let color = bark_tint.map(|c| c as f32);
-            mesh.colors = vec![color; mesh.positions.len()];
-            drawable.mesh = Arc::new(mesh);
+    // A grown broadleaf grows its own trunk with its limbs.
+    if let Some(grown) = grown.as_ref().filter(|_| keep(TreePart::Trunk)) {
+        let trunk = limb(
+            &mut crown.node,
+            bark.clone(),
+            DVec3::new(0.0, trunk_base, 0.0),
+            grown.trunk_top,
+            radius,
+            false,
+        );
+        if let Some(drawable) = &mut trunk.drawable {
+            drawable.mesh = geometry(if conifer {
+                TreeGeometry::ConiferStem
+            } else {
+                TreeGeometry::BroadleafStem
+            });
+            if let Some((_, bark_tint)) = tints {
+                // The tinted trunk is the tree's own: background trees merge per cell.
+                let mut mesh = (*drawable.mesh).clone();
+                let color = bark_tint.map(|c| c as f32);
+                mesh.colors = vec![color; mesh.positions.len()];
+                drawable.mesh = Arc::new(mesh);
+            }
         }
     }
     if full {
@@ -925,25 +897,20 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         );
         end.rotation = quat_from_euler(PI, twist, 0.0);
     }
-    let shape = if conifer && detail == TreeDetail::Distant {
-        distant_conifer(
+    let shape = match (&branched, &grown) {
+        (Some(branched), _) => grown_crown::add_grown_crown(&mut crown, branched, &bark, keep),
+        (_, Some(grown)) if conifer && detail == TreeDetail::Distant => distant_conifer(
             &mut crown.node,
             c,
-            &mut rng,
+            &mut grown.rest.clone(),
             family,
             twist,
             height,
-            (lean_x, lean_z),
+            grown.lean,
             tints.map_or([1.0; 3], |(leaf, _)| leaf),
-        )
-    } else if conifer {
-        add_conifer_crown(
-            &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
-        )
-    } else {
-        add_broadleaf_crown(
-            &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
-        )
+        ),
+        (_, Some(grown)) => tree_growth::add_tree_crown(&mut crown, grown, &bark, true, 0, keep),
+        _ => unreachable!("a grown tree or a laid out one"),
     };
     crown.grow_foliage(&foliage, &shape, tints.map_or([1.0; 3], |(leaf, _)| leaf));
     let mut crown = crown.node;
@@ -1077,228 +1044,57 @@ fn distant_conifer(
     }
 }
 
+/// A shrub's sprig card in a clump at `tip` with ellipsoid `radii`: the `k`th of `count`
+/// spread over the clump from `phase`, its twig toward the inside and its leaves
+/// reaching out and up, `size` metres across.
 #[allow(clippy::too_many_arguments)]
-fn add_conifer_crown(
-    crown: &mut Crown,
-    c: &TreeShape,
+fn shrub_card(
     rng: &mut Random,
-    bark: &Arc<Material>,
-    family: u32,
-    twist: f64,
-    height: f64,
-    radius: f64,
-    lean_x: f64,
-    lean_z: f64,
-) -> CrownShape {
-    let full = crown.detail == TreeDetail::Full;
-    let tiers = match crown.detail {
-        TreeDetail::Full => 8,
-        TreeDetail::Background => 6,
-        TreeDetail::Distant => 5,
-    };
-    let arms = 6;
-    // Pines carry a looser, higher crown; spruce and fir retain their lower boughs.
-    let base = match family {
-        0 => 0.36,
-        1 => 0.17,
-        _ => 0.23,
-    };
-    // Background forests keep their boughs lower and fuller, so the hills read
-    // as dense woods rather than rows of bare poles.
-    let (base, fullness) = match crown.detail {
-        TreeDetail::Full => (base, 1.0),
-        TreeDetail::Background => (base * 0.6, 1.12),
-        // Far stands show as full, dark cones down to the ground.
-        TreeDetail::Distant => (base * 0.45, 1.22),
-    };
-    let width = c.w * (if family == 2 { 0.44 } else { 0.5 }) * fullness;
-    for i in 0..tiers {
-        let t = f64::from(i) / f64::from(tiers - 1);
-        let y = height * (base + t * (0.87 - base));
-        let span = width * (1.0 - t * 0.76);
-        for j in 0..arms {
-            let angle = twist
-                + f64::from(i) * GOLDEN_ANGLE
-                + (f64::from(j) * PI * 2.0) / f64::from(arms)
-                + rng.range(-0.24, 0.24);
-            let reach = span * rng.range(0.78, 1.16);
-            let start = DVec3::new(
-                lean_x * (base + t * (1.0 - base)),
-                y + rng.range(-0.05, 0.05) * height,
-                lean_z * (base + t * (1.0 - base)),
-            );
-            // An upright inner shoot fills the crown between whorls.
-            if j == arms - 1 {
-                let transform = DMat4::from_scale_rotation_translation(
-                    DVec3::new(span * 0.85, span * 0.85, height * (0.27 - t * 0.1)),
-                    quat_rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), angle),
-                    DVec3::new(start.x, start.y - height * 0.06, start.z),
-                );
-                crown.spray(None, transform, rng);
-                continue;
-            }
-            let stage = match (i, j) {
-                (1, 0) | (2, 3) => 1,
-                (0, 2) | (3, 1) => 2,
-                _ => 0,
-            };
-            let bough = crown.branch_parent(stage);
-            let rise = reach
-                * match family {
-                    0 => 0.24,
-                    1 => -0.16,
-                    _ => 0.06,
-                };
-            if full && i < tiers - 2 {
-                // The limb stays inside its spray.
-                let end = DVec3::new(
-                    start.x + angle.sin() * reach * 0.66,
-                    start.y + rise * 0.7,
-                    start.z + angle.cos() * reach * 0.66,
-                );
-                limb(
-                    crown.parent(bough),
-                    bark.clone(),
-                    start,
-                    end,
-                    radius * (0.13 - t * 0.08),
-                    false,
-                );
-            }
-            let transform = DMat4::from_scale_rotation_translation(
-                DVec3::new(
-                    reach * (if family == 0 { 0.95 } else { 0.85 }),
-                    height * (0.25 - t * 0.12),
-                    reach * 1.1,
-                ),
-                quat_from_euler_yxz(-rise.atan2(reach), angle, rng.range(-0.2, 0.2)),
-                start,
-            );
-            crown.spray(bough, transform, rng);
-        }
-    }
-    let leader = DMat4::from_scale_rotation_translation(
-        DVec3::new(c.w * 0.2, c.w * 0.2, height * 0.2),
-        quat_rotate_z(quat_from_euler(-PI / 2.0, 0.0, 0.0), twist),
-        DVec3::new(lean_x * 0.9, height * 0.82, lean_z * 0.9),
+    tip: DVec3,
+    radii: DVec3,
+    k: u32,
+    count: u32,
+    phase: f64,
+    size: f64,
+    cells: &[[f64; 4]; 2],
+) -> Card {
+    let y = 1.0 - (f64::from(k) + 0.5) / f64::from(count) * 1.7;
+    let ring = (1.0 - y * y).max(0.0).sqrt();
+    let theta = phase + f64::from(k) * GOLDEN_ANGLE;
+    let direction = DVec3::new(theta.cos() * ring, y, theta.sin() * ring);
+    let center = tip + direction * radii * rng.range(0.3, 0.75);
+    let outward = (direction + DVec3::Y * 0.3).normalize();
+    let wander = DVec3::new(
+        rng.range(-1.0, 1.0),
+        rng.range(-1.0, 1.0),
+        rng.range(-1.0, 1.0),
     );
-    crown.spray(None, leader, rng);
-    CrownShape::Cone {
-        lean: DVec3::new(lean_x / height, 0.0, lean_z / height),
-        base: height * (base - 0.08),
-        top: height * 1.02,
-        radius: width * 1.05,
+    // Sprigs face out of the clump like shingles, so the shrub shows leaves rather
+    // than card edges, and grow up and outward from a twig inside it.
+    let face = (outward + wander * 0.4).normalize_or(outward);
+    let rise = outward * 0.6 + DVec3::Y + wander * 0.3;
+    let up = (rise - face * rise.dot(face)).normalize_or(face.any_orthonormal_vector());
+    let across = up.cross(face);
+    let size = size * rng.range(0.88, 1.18);
+    // The leafy mass sits a little below the card's middle.
+    let bottom = center - up * size * 0.42;
+    let half = across * size * 0.5;
+    let mut cell = cells[usize::from(rng.next() < 0.5)];
+    if rng.next() < 0.5 {
+        cell.swap(0, 2);
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn add_broadleaf_crown(
-    crown: &mut Crown,
-    c: &TreeShape,
-    rng: &mut Random,
-    bark: &Arc<Material>,
-    family: u32,
-    twist: f64,
-    height: f64,
-    radius: f64,
-    lean_x: f64,
-    lean_z: f64,
-) -> CrownShape {
-    let full = crown.detail == TreeDetail::Full;
-    let count = 7;
-    let oak = family == 3;
-    // Oaks spread wide from a short bole; birch and aspen carry a taller oval crown
-    // from a third of their height.
-    let (spread_at, low_lobe, crown_rise) = if oak {
-        (0.3, 0.42, 0.42)
-    } else {
-        (0.25, 0.38, 0.47)
-    };
-    // Background woods carry fuller crowns lower on the trunk.
-    let (low_lobe, fullness) = if full {
-        (low_lobe, 1.0)
-    } else {
-        (low_lobe - 0.12, 1.18)
-    };
-    let cells = if oak { &OAK_CELLS } else { &OVATE_CELLS };
-    let (mut low, mut high) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
-    for i in 0..count {
-        let a = twist + f64::from(i) * GOLDEN_ANGLE;
-        let t = f64::from(i) / f64::from(count - 1);
-        let spread = (1.0 - t * 0.6) * spread_at;
-        let center = DVec3::new(
-            lean_x + a.sin() * c.w * spread,
-            height * (low_lobe + t * crown_rise),
-            lean_z + a.cos() * c.d * spread,
-        );
-        if full {
-            let from = DVec3::new(lean_x * 0.5, center.y - height * 0.2, lean_z * 0.5);
-            limb(
-                &mut crown.node,
-                bark.clone(),
-                from,
-                center,
-                radius * (0.32 - t * 0.16),
-                false,
-            );
-        }
-        let size = c.w * (if oak { 0.3 } else { 0.27 }) * rng.range(0.84, 1.09) * fullness;
-        // Overlapping clumps of sprigs give the crown an irregular, branching silhouette.
-        let clumps = match crown.detail {
-            TreeDetail::Full => 4,
-            TreeDetail::Background => 3,
-            TreeDetail::Distant => 2,
-        };
-        for j in 0..clumps {
-            let angle = a + f64::from(j) * GOLDEN_ANGLE;
-            let reach = if j == 0 { 0.0 } else { size * 0.55 };
-            let tip = center
-                + DVec3::new(
-                    angle.sin() * reach,
-                    rng.range(-0.25, 0.35) * size,
-                    angle.cos() * reach,
-                );
-            // Damage sheds small outer twigs, never an entire section of the crown.
-            let bough = if j == clumps - 1 && i < 4 {
-                crown.branch_parent(if i < 2 { 1 } else { 2 })
-            } else {
-                None
-            };
-            if full && j > 0 {
-                limb(
-                    crown.parent(bough),
-                    bark.clone(),
-                    center,
-                    tip,
-                    radius * 0.075,
-                    false,
-                );
-            }
-            let radii = DVec3::new(
-                size * rng.range(0.48, 0.66),
-                size * rng.range(0.55, 0.85),
-                size * rng.range(0.45, 0.65),
-            );
-            let cards = match crown.detail {
-                TreeDetail::Full => 9,
-                TreeDetail::Background => 5,
-                TreeDetail::Distant => 5,
-            };
-            let phase = rng.range(0.0, PI * 2.0);
-            let card_size = size * if oak { 1.35 } else { 1.28 };
-            for k in 0..cards {
-                let card = sprig_card(rng, tip, radii, k, cards, phase, card_size, cells);
-                for corner in card.corners {
-                    low = low.min(corner);
-                    high = high.max(corner);
-                }
-                crown.card(bough, card);
-            }
-        }
-    }
-    CrownShape::Round {
-        center: (low + high) / 2.0,
-        radii: (high - low) / 2.0,
+    let light = rng.range(0.82, 1.12);
+    let warm = rng.range(-0.05, 0.07);
+    Card {
+        corners: [
+            bottom - half,
+            bottom + half,
+            bottom + half + up * size,
+            bottom - half + up * size,
+        ],
+        cell,
+        tint: card_tint_of(light, warm),
+        clump: tip,
     }
 }
 
@@ -1328,7 +1124,7 @@ pub fn leafy_shrub(middle: DVec3, radii: DVec3, color: u32, seed: u32) -> Node {
         let clump = radii * 0.6;
         let phase = rng.range(0.0, PI * 2.0);
         for k in 0..cards_per_clump {
-            cards.push(sprig_card(
+            cards.push(shrub_card(
                 &mut rng,
                 tip,
                 clump,
@@ -1370,35 +1166,4 @@ pub fn branch_drop_stage(node: &Node) -> Option<u32> {
         tree_part::BRANCH_STAGE_2 => Some(2),
         _ => None,
     }
-}
-
-static TRUNK_FRAGMENT: Cache<(), Node> = Cache::new("tree_models::TRUNK_FRAGMENT");
-
-/// `trunkFragment()`: the instanced physical trunk section, a tapered cylinder with
-/// bark on its side and end grain on its caps. Three.js drew it as one geometry with
-/// three material groups; here it is a group of three meshes (side, top cap,
-/// bottom cap) that share the vertex arrays and draw with the same instances.
-pub fn trunk_fragment() -> Arc<Node> {
-    TRUNK_FRAGMENT.get_or_insert((), || {
-        let mesh = crate::geometry::cylinder_geometry(0.36, 0.5, 1.0, 8);
-        let indices = mesh.indices.clone().expect("cylinders are indexed");
-        let radial = 8usize;
-        let torso = radial * 6;
-        let cap = radial * 3;
-        let ranges = [0..torso, torso..torso + cap, torso + cap..torso + 2 * cap];
-        let materials = [
-            surface(TreeSurface::Bark, 0xffffff, false),
-            surface(TreeSurface::Rings, 0xffffff, false),
-            surface(TreeSurface::Rings, 0xffffff, false),
-        ];
-        let mut group = Node::group("trunk-fragment");
-        for (range, material) in ranges.into_iter().zip(materials) {
-            let part = Mesh {
-                indices: Some(indices[range].to_vec()),
-                ..mesh.clone()
-            };
-            group.children.push(Node::mesh(Arc::new(part), material));
-        }
-        group
-    })
 }

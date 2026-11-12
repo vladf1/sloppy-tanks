@@ -16,7 +16,8 @@ struct Hit {
     impacts: usize,
     destroys: usize,
     fragments: usize,
-    tree_parts: usize,
+    /// Bodies of the cover's own fallen parts (a structure's).
+    fallen_parts: usize,
 }
 
 /// Fire one standard shell into the cover's near face.
@@ -50,17 +51,23 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
             .count(),
         destroys: event_count(s, SimEventType::Destroy),
         fragments: s.fragments.len(),
-        tree_parts: s
+        fallen_parts: s
             .fragments
             .iter()
-            .filter(|piece| piece.tree_cover_id == Some(cover.id))
+            .filter(|piece| {
+                piece
+                    .structure
+                    .as_ref()
+                    .is_some_and(|fallen| s.covers[fallen.cover].id == cover.id)
+            })
             .count(),
     }
 }
 
 #[test]
 fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
-    // Timber walls and crates break part by part (`timber_walls`, `cargo_crates`).
+    // Timber walls and crates break part by part (`timber_walls`, `cargo_crates`), and so
+    // does a tree: a strike on it bursts on its butt, and it falls as its parts.
     let mut s = Simulation::with_seed(123.0);
     assert_eq!(s.map_mode, MapId::Village);
     let covers = [s
@@ -88,8 +95,6 @@ fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
             destroyed.fragments > hit.fragments,
             "{kind:?}: destruction creates debris"
         );
-        if kind == CoverKind::Tree {
-            assert!(destroyed.tree_parts > 0);
-        }
+        assert!(destroyed.fallen_parts > 0, "a tree falls as its parts");
     }
 }

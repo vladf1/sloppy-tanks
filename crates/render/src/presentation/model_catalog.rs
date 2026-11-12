@@ -189,14 +189,21 @@ pub struct SceneryModel {
 
 /// An animated scenery subtree, found by its child-index path from the root.
 pub struct SceneryMover {
-    /// The subtree, with its own transform left to the instance.
+    /// The subtree, with its own transform left to the instance. Registered once, it
+    /// is dropped: only the GPU keeps its meshes.
     pub root: Node,
+    pub placement: MoverPlacement,
+}
+
+/// Where a mover sits in the animated scenery: all its instance needs once the
+/// subtree is uploaded.
+pub struct MoverPlacement {
     path: Vec<usize>,
     /// World transform of its (static) parent.
     parent_world: DMat4,
 }
 
-impl SceneryMover {
+impl MoverPlacement {
     /// The subtree's world transform and visibility in the animated scenery.
     pub fn pose(&self, scenery: &Scenery) -> (DMat4, bool) {
         let mut node = scenery.root();
@@ -314,8 +321,7 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
         subtree.visible = true;
         movers.push(SceneryMover {
             root: subtree,
-            path,
-            parent_world,
+            placement: MoverPlacement { path, parent_world },
         });
     }
     let water = find_path(source, &is_water).map(|(path, parent_world)| {
@@ -502,7 +508,7 @@ mod tests {
             for step in 0..40 {
                 model.scenery.update(f64::from(step) * 0.7);
                 for mover in &model.movers {
-                    let (world, _) = mover.pose(&model.scenery);
+                    let (world, _) = mover.placement.pose(&model.scenery);
                     let lowest = lowest_receiver(&mover.root, world);
                     assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
                 }

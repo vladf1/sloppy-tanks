@@ -49,13 +49,16 @@ pub fn tank_body_parts(
     (body, [hull, tank_contact_collider(kind)])
 }
 
+/// A tank's body and colliders at `position`, turned to `heading` as driving turns it.
 fn create_tank_body(
     simulation: &mut Simulation,
     kind: VehicleKind,
     position: Vec2,
+    heading: f64,
 ) -> (RigidBodyHandle, ColliderHandle) {
     let (body, [hull, contact]) = tank_body_parts(kind, position);
     let body = simulation.world.insert_body(body);
+    simulation.world.bodies[body].set_rotation(to_rotation(Quat4::yaw(heading)), true);
     let collider = simulation.world.insert_collider(hull, Some(body));
     simulation.world.insert_collider(contact, Some(body));
     (body, collider)
@@ -135,7 +138,7 @@ impl Simulation {
         } else {
             bot_profile_for(assignment.personality).chassis
         };
-        let (body, collider) = create_tank_body(self, kind, position);
+        let (body, collider) = create_tank_body(self, kind, position, 0.0);
         let player = self.player_at(team, slot).cloned();
         let name = if human {
             player
@@ -208,7 +211,10 @@ impl Simulation {
             .expect("a team always has spawn lanes")
         });
         self.tanks[tank_index].kind = kind;
-        let (body, collider) = create_tank_body(self, kind, p);
+        // The tank keeps its heading, and the tick it respawns on steps it without
+        // driving: a body at identity would face heading 0 for that step.
+        let heading = self.tanks[tank_index].heading;
+        let (body, collider) = create_tank_body(self, kind, p, heading);
         let records = self.records(&self.tanks[tank_index]);
         if records {
             self.combat_record.life_started = self.elapsed;

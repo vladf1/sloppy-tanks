@@ -34,7 +34,7 @@ use super::arena::box_turn;
 use super::navigation::{Footprint, turned_box_footprints};
 use super::physics::{ContactForce, from_vector, interaction_groups, query_filter, vector};
 use super::simulation::Simulation;
-use super::structure::{Breaking, Lie, PartSet, PartShape, Structure};
+use super::structure::{Breaking, Contact, Lie, PartSet, PartShape, Structure};
 use super::types::{Cover, CoverKind, Fragment, SimEvent, SimEventType, Team};
 
 /// A shell fused on striking a structure flies on this far (m) before it bursts, so an
@@ -205,7 +205,15 @@ pub fn rest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHan
 /// Set every collider of `body` to collide as `groups` (a group from [`group`]).
 fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle, groups: u32) {
     for &collider in world.bodies[body].colliders() {
-        world.colliders[collider].set_collision_groups(interaction_groups(groups));
+        set_debris_groups(&mut world.colliders[collider], groups);
+    }
+}
+
+/// Set a fallen part's collider's groups, unless it is a conifer's bough, which only
+/// ever meets the ground ([`group::BOUGH_DEBRIS`]).
+fn set_debris_groups(collider: &mut rapier3d::prelude::Collider, groups: u32) {
+    if collider.collision_groups() != interaction_groups(group::BOUGH_DEBRIS) {
+        collider.set_collision_groups(interaction_groups(groups));
     }
 }
 
@@ -213,7 +221,7 @@ fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyH
 /// ([`group::STRUCTURE_DEBRIS_THROUGH`]): a timber knocked out, a piece dropping off the
 /// remains it was wedged on.
 pub fn passes_through(world: &rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle) -> bool {
-    world.bodies[body].colliders().first().is_some_and(|&collider| {
+    world.bodies[body].colliders().iter().any(|&collider| {
         world.colliders[collider].collision_groups()
             == interaction_groups(group::STRUCTURE_DEBRIS_THROUGH)
     })
@@ -327,8 +335,17 @@ impl StructureState {
         }
     }
 
-    /// The share of the structure's breakable parts still standing.
+    /// The share of the structure's breakable parts still standing; for one whose health
+    /// follows a part ([`Structure::health_part`]), that part's strength left.
     pub fn standing_share(&self) -> f64 {
+        if let Some(index) = self.layout.health_part {
+            let strength = self.layout.parts[index].strength;
+            return if self.standing(index) {
+                (1.0 - self.damage[index] / strength).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+        }
         let parts = &self.layout.parts;
         let standing = (0..parts.len())
             .filter(|&index| !parts[index].footing && self.standing(index))
@@ -514,8 +531,13 @@ pub fn debris_colliders(layout: &Structure, parts: &PartSet) -> Vec<ColliderBuil
 fn debris_collider(layout: &Structure, index: usize) -> ColliderBuilder {
     let part = layout.part(index);
     let surface = debris_material(part.material.surface);
+    let groups = if part.contact == Contact::Nothing {
+        group::BOUGH_DEBRIS
+    } else {
+        group::STRUCTURE_DEBRIS
+    };
     part_collider(layout, index, SHRINK)
-        .collision_groups(interaction_groups(group::STRUCTURE_DEBRIS))
+        .collision_groups(interaction_groups(groups))
         .mass(part.mass.max(0.01) as f32)
         .friction(surface.friction as f32)
         .restitution(0.0)
@@ -551,8 +573,14 @@ fn whole_collider(layout: &Structure) -> ColliderBuilder {
 }
 
 fn standing_collider(layout: &Structure, index: usize) -> ColliderBuilder {
+    let groups = match layout.parts[index].contact {
+        Contact::All => group::COVER,
+        Contact::Tanks => group::STUMP_CONTACT,
+        Contact::Shells => group::SHELL_COVER,
+        Contact::Nothing => 0,
+    };
     part_collider(layout, index, -layout.debris.seam)
-        .collision_groups(interaction_groups(group::COVER))
+        .collision_groups(interaction_groups(groups))
         .friction(0.4)
 }
 
@@ -638,11 +666,13 @@ impl Simulation {
         let c = &self.covers[cover];
         let state = c.structure.as_ref()?;
         let data = self.world.colliders.get(collider)?.user_data;
-        if data == WHOLE {
+        let part = if data == WHOLE {
             let local = state.layout.to_local(DVec3::new(at.x - c.x, at.y, at.z - c.z));
-            return Some((cover, state.layout.part_at(local, &state.gone)?));
-        }
-        Some((cover, data as usize))
+            state.layout.part_at(local, &state.gone)?
+        } else {
+            data as usize
+        };
+        Some((cover, state.layout.parts[part].struck_as.map_or(part, usize::from)))
     }
 
     /// The structure a standing collider belongs to.
@@ -715,6 +745,10 @@ impl Simulation {
             return false;
         }
         state.take(part, amount);
+        self.follow_health(cover);
+        let Some(state) = &self.covers[cover].structure else {
+            return false;
+        };
         if !force && state.damage[part] < strength {
             return false;
         }
@@ -748,9 +782,21 @@ impl Simulation {
     /// to nothing at its edge and shielded by standing parts between, and breaking and
     /// throwing the loose debris round it.
     pub fn structure_blast(&mut self, point: Point3, radius: f64, damage: f64, by: Option<(u32, Team)>) {
+        self.structure_blast_sparing(point, radius, damage, by, None);
+    }
+
+    /// [`Self::structure_blast`], leaving the structure `spared` (if any) alone.
+    pub fn structure_blast_sparing(
+        &mut self,
+        point: Point3,
+        radius: f64,
+        damage: f64,
+        by: Option<(u32, Team)>,
+        spared: Option<usize>,
+    ) {
         blast_loose_debris(self, point.planar(), radius, damage);
         blast_structure_debris(self, point, radius, damage);
-        for cover in 0..self.covers.len() {
+        for cover in (0..self.covers.len()).filter(|&cover| Some(cover) != spared) {
             self.structure_blast_on(cover, point, radius, damage, by);
         }
     }
@@ -839,8 +885,20 @@ impl Simulation {
             }
         }
         self.scratch.structure_hits = hits;
+        self.follow_health(cover);
         if !broken.is_empty() || !loose.is_empty() {
             self.break_structure(cover, broken, loose, Some(point), by);
+        }
+    }
+
+    /// Structure `cover`'s hit points after its parts took damage, when they follow a
+    /// part's ([`Structure::health_part`]): a tree's sinking as its butt is hurt.
+    fn follow_health(&mut self, cover: usize) {
+        let c = &mut self.covers[cover];
+        if let Some(state) = &c.structure
+            && state.layout.health_part.is_some()
+        {
+            c.hp = c.max_hp * state.standing_share();
         }
     }
 
@@ -866,6 +924,7 @@ impl Simulation {
                 }
             }
         }
+        self.follow_health(cover);
         if !broken.is_empty() || !loose.is_empty() {
             self.break_structure(cover, broken, loose, None, by);
         }
@@ -1211,8 +1270,10 @@ impl Simulation {
         // clear of the wall.
         if dislodged {
             for &handle in &colliders {
-                self.world.colliders[handle]
-                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS_THROUGH));
+                set_debris_groups(
+                    &mut self.world.colliders[handle],
+                    group::STRUCTURE_DEBRIS_THROUGH,
+                );
             }
             if let Some(debris) = self.fragments.last_mut().and_then(|fragment| fragment.structure.as_mut()) {
                 debris.clear_at = Some(self.elapsed + DISLODGE_CLEAR);
@@ -1314,10 +1375,12 @@ impl Simulation {
         let center = old.center_of_mass();
         // A body dropping through the remains it lay on keeps doing so in pieces: put back
         // among them, its pieces would be pushed out through the ground.
+        let bough = interaction_groups(group::BOUGH_DEBRIS);
         let groups = old
             .colliders()
-            .first()
-            .map(|&handle| self.world.colliders[handle].collision_groups());
+            .iter()
+            .map(|&handle| self.world.colliders[handle].collision_groups())
+            .find(|&groups| groups != bough);
         self.remove_body(fragment.body);
         for (k, section) in bodies.into_iter().enumerate() {
             let body = self.world.insert_body(
@@ -1331,7 +1394,10 @@ impl Simulation {
             let colliders = self.insert_debris(layout, &section, body);
             if let Some(groups) = groups {
                 for &handle in &colliders {
-                    self.world.colliders[handle].set_collision_groups(groups);
+                    let collider = &mut self.world.colliders[handle];
+                    if collider.collision_groups() != bough {
+                        collider.set_collision_groups(groups);
+                    }
                 }
             }
             let rigid_body = &mut self.world.bodies[body];
@@ -1368,11 +1434,13 @@ impl Simulation {
             // A piece is a body of its own from its landing: it falls flat over the next
             // moments before it is damped to rest, rather than freezing on its edge.
             piece.created_at = Some(self.elapsed);
+            // What stays together of a tree falls on, to land again ([`Structure::snaps_on_ground`]).
+            let landed = !(layout.snaps_on_ground && section.len() > 1);
             piece.structure = Some(StructureDebris {
                 cover: debris.cover,
                 parts: section,
                 velocity: from_vector(self.world.bodies[body].linvel()),
-                landed: true,
+                landed,
                 landed_at: self.elapsed,
                 ..StructureDebris::default()
             });
@@ -1384,17 +1452,27 @@ impl Simulation {
     /// part nearest a burst): that part shatters where it lies, and the rest of the body
     /// breaks into its landing pieces thrown out from the point at `strength`. With no
     /// room for the pieces in the debris budget, all of it shatters. No random draw.
-    pub fn break_loose_body(&mut self, index: usize, struck: usize, point: Point3, strength: f64) {
+    ///
+    /// Returns whether the struck part gave way: wood that is only knocked aside or
+    /// snapped still lies in a shell's path, so a shell that would fly on stops in it
+    /// rather than meeting it again and again.
+    pub fn break_loose_body(
+        &mut self,
+        index: usize,
+        struck: usize,
+        point: Point3,
+        strength: f64,
+    ) -> bool {
         let fragment = &self.fragments[index];
         let Some(debris) = fragment.structure else {
-            return;
+            return false;
         };
         let Some(layout) = self.covers[debris.cover]
             .structure
             .as_ref()
             .map(|state| state.layout.clone())
         else {
-            return;
+            return false;
         };
         let parts = debris.parts;
         let struck = if parts.contains(struck) {
@@ -1402,6 +1480,29 @@ impl Simulation {
         } else {
             parts.iter().next().expect("a fallen body has parts")
         };
+        // What would break it knocks it whole instead (a tree's log, a thick beam), unless
+        // it snaps where it was struck into the pieces it breaks into alone (a limb).
+        if layout.part(struck).material.breaking == Breaking::Dislodges {
+            let snapped: Vec<PartSet> = layout
+                .snaps
+                .iter()
+                .find(|snap| snap.needs == parts)
+                .map(|breakup| {
+                    breakup
+                        .pieces
+                        .iter()
+                        .map(|&piece| PartSet::from_indices([piece as usize]))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let room = self.fragments.len() - 1 + snapped.len() <= self.max_fragments;
+            if snapped.len() > 1 && room {
+                self.split_debris(index, &layout, snapped, Some((point, strength)));
+            } else {
+                self.throw_loose_body(index, point, strength);
+            }
+            return false;
+        }
         let mut rest = parts;
         rest.remove(struck);
         let bodies = if rest.is_empty() {
@@ -1441,10 +1542,61 @@ impl Simulation {
         if bodies.is_empty() || !room {
             let fragment = self.fragments.remove(index);
             self.remove_body(fragment.body);
-            return;
+            return true;
         }
         self.split_debris(index, &layout, bodies, Some((point, strength)));
+        true
     }
+}
+
+impl Simulation {
+    /// Throw fallen body `index` away from `point` by `strength` (spread over its parts),
+    /// out of its rest: it flies and lands again before it settles.
+    pub fn throw_loose_body(&mut self, index: usize, point: Point3, strength: f64) {
+        let fragment = &self.fragments[index];
+        let parts = fragment.structure.map_or(1, |debris| debris.parts.len());
+        let handle = fragment.body;
+        let middle = from_vector(self.world.bodies[handle].center_of_mass());
+        let push = throw_velocity(middle, point, strength, parts);
+        let rigid_body = &mut self.world.bodies[handle];
+        let velocity = rigid_body.linvel() + push;
+        rigid_body.set_linvel(velocity, true);
+        unrest_body(&mut self.world, handle);
+        let elapsed = self.elapsed;
+        let fragment = &mut self.fragments[index];
+        fragment.created_at = Some(elapsed);
+        if let Some(debris) = &mut fragment.structure {
+            debris.velocity = from_vector(velocity);
+            debris.rested = false;
+            debris.damping = Damping::Falling;
+            debris.window = None;
+            debris.still_since = None;
+            debris.landed_at = elapsed;
+        }
+    }
+}
+
+/// A part of a body this low (m) reaches the ground.
+const GROUND_TOUCH: f32 = 0.2;
+
+/// What a falling body of `parts` that landed hard breaks into when only its parts on the
+/// ground snap off ([`Structure::snaps_on_ground`]): each of those alone, and the rest
+/// together.
+fn ground_snaps(simulation: &Simulation, handle: RigidBodyHandle, layout: &Structure, parts: &PartSet) -> Vec<PartSet> {
+    let mut rest = *parts;
+    let mut bodies = Vec::new();
+    for &collider in simulation.world.bodies[handle].colliders() {
+        let collider = &simulation.world.colliders[collider];
+        let part = collider.user_data as usize;
+        if rest.contains(part) && !layout.part(part).load && collider.compute_aabb().mins.y <= GROUND_TOUCH {
+            rest.remove(part);
+            bodies.push(PartSet::from_indices([part]));
+        }
+    }
+    if !rest.is_empty() {
+        bodies.push(rest);
+    }
+    bodies
 }
 
 /// The first [`SHATTER_EVENTS`] of `items` in `order`, in that order (equal ones as they
@@ -1561,30 +1713,11 @@ pub fn throw_structure_debris(simulation: &mut Simulation, point: Point3, radius
             continue;
         }
         if gap < core {
-            simulation.break_loose_body(index, part, point, strength);
+            let _ = simulation.break_loose_body(index, part, point, strength);
             continue;
         }
-        let parts = fragment.structure.map_or(1, |debris| debris.parts.len());
-        let middle = from_vector(body.center_of_mass());
         let falloff = 1.0 - gap / radius;
-        let push = throw_velocity(middle, point, strength * falloff, parts);
-        let handle = fragment.body;
-        let rigid_body = &mut simulation.world.bodies[handle];
-        let velocity = rigid_body.linvel() + push;
-        rigid_body.set_linvel(velocity, true);
-        // Thrown out of its rest, it flies and lands again before it settles.
-        unrest_body(&mut simulation.world, handle);
-        let elapsed = simulation.elapsed;
-        let fragment = &mut simulation.fragments[index];
-        fragment.created_at = Some(elapsed);
-        if let Some(debris) = &mut fragment.structure {
-            debris.velocity = from_vector(velocity);
-            debris.rested = false;
-            debris.damping = Damping::Falling;
-            debris.window = None;
-            debris.still_since = None;
-            debris.landed_at = elapsed;
-        }
+        simulation.throw_loose_body(index, point, strength * falloff);
     }
     simulation.scratch.thrown_debris = listed;
 }
@@ -1641,6 +1774,16 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             simulation.burst_bricks(index);
             continue;
         }
+        // A falling tree's limbs that reach the ground cannot hold it up: they snap off
+        // however gently they meet it, until it lies on its trunk.
+        if layout.snaps_on_ground && !debris.landed && alive && debris.parts.len() > 1 {
+            let bodies = ground_snaps(simulation, handle, &layout, &debris.parts);
+            let room = simulation.fragments.len() + bodies.len() - 1 <= simulation.max_fragments;
+            if bodies.len() > 1 && room {
+                simulation.split_debris(index, &layout, bodies, None);
+                continue;
+            }
+        }
         let stopped = !debris.landed
             && debris.parts.len() > 1
             && debris
@@ -1663,7 +1806,11 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
                 simulation.events.push(crash);
             }
             let room = |count: usize| simulation.fragments.len() + count - 1 <= simulation.max_fragments;
-            let mut bodies = layout.landing(&debris.parts, false);
+            let mut bodies = if layout.snaps_on_ground {
+                ground_snaps(simulation, handle, &layout, &debris.parts)
+            } else {
+                layout.landing(&debris.parts, false)
+            };
             if !room(bodies.len()) {
                 bodies = layout.landing(&debris.parts, true);
             }
@@ -1672,8 +1819,10 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
                 continue;
             }
             // A body that lands whole (a lone part, or one the budget has no room to
-            // break) settles from now, however long it has been falling.
-            if let Some(debris) = &mut simulation.fragments[index].structure {
+            // break) settles from now, however long it has been falling; a tree whose
+            // limbs did not reach the ground falls on, to land again.
+            let falls_on = layout.snaps_on_ground && debris.parts.len() > 1;
+            if !falls_on && let Some(debris) = &mut simulation.fragments[index].structure {
                 debris.landed = true;
                 debris.landed_at = simulation.elapsed;
             }
@@ -2455,10 +2604,10 @@ pub fn part_box(cover: &Cover, index: usize) -> Option<(Point3, Point3)> {
     ))
 }
 
-/// Whether `kind` is built of parts ([`super::structure::structure_of`]).
+/// Whether every cover of `kind` is built of parts ([`super::structure::structure_of`]).
 pub fn structural(kind: CoverKind) -> bool {
     matches!(
         kind,
-        CoverKind::House | CoverKind::Tower | CoverKind::Timber | CoverKind::Cargo
+        CoverKind::House | CoverKind::Tower | CoverKind::Timber | CoverKind::Cargo | CoverKind::Tree
     )
 }

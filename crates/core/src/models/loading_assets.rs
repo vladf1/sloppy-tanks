@@ -54,8 +54,6 @@ const ROUND_TEXTURE_FILES: &[&str] = &[
     "textures/tanks/armor-wear.webp",
     "textures/tanks/armor-scorch.webp",
     "textures/pickups/atlas.webp",
-    "textures/trees/bark.webp",
-    "textures/trees/rings.webp",
     "textures/houses/siding.webp",
 ];
 
@@ -66,23 +64,28 @@ const STANDARD_COVER_TEXTURE_FILES: &[&str] = &[
     "textures/barrels/painted-drum.webp",
 ];
 
-/// The village's birches beside them, the one cover a theme alone has.
+/// The village's trees beside them, the one cover a theme alone has: their bark, birch
+/// bark, and the rings of a felled tree's cut.
 const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &[
     "textures/walls/weathered-concrete.webp",
     "textures/wood/timber.webp",
     "textures/barrels/painted-drum.webp",
+    "textures/trees/bark.webp",
     "textures/trees/birch.webp",
+    "textures/trees/rings.webp",
 ];
 
 /// Senda's cover: the Craftsman wings' and porches' brick, the stacked stone (sandstone)
-/// of the Prairie porches' piers and the buff wings, the parkways' young birches and the lot
-/// walls' split-face block;
-/// its stucco houses, tile roofs and oaks need no file the round's scenery does not
-/// already fetch.
+/// of the Prairie porches' piers and the buff wings, the lot walls' split-face block, and
+/// its oaks and the parkways' young birches: their bark, birch bark, and the rings of a
+/// felled tree's cut. Its stucco houses and tile roofs need no file the round's scenery
+/// does not already fetch.
 const SENDA_COVER_TEXTURE_FILES: &[&str] = &[
     "textures/houses/brick.webp",
     "textures/quarry/sandstone.webp",
+    "textures/trees/bark.webp",
     "textures/trees/birch.webp",
+    "textures/trees/rings.webp",
     "textures/walls/weathered-concrete.webp",
 ];
 

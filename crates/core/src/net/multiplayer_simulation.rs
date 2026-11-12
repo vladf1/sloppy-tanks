@@ -2,6 +2,7 @@
 //! validation, the twelve (or an extra level's thirty) stable team slots, and seat
 //! hand-over between players and fill bots.
 
+use super::player_controls::forget_view;
 use super::protocol::MAX_PLAYER_NAME_LENGTH;
 use super::schema::text_length;
 use crate::sim::difficulty::Difficulty;
@@ -95,12 +96,14 @@ pub fn set_driver(
         tank.kills = 0;
         tank.deaths = 0;
         tank.life += 1;
+        tank.seat_life = tank.life;
     } else if driver != Driver::Bot
         && let Some(name) = tank.away_player.take()
     {
         tank.name = name;
         tank.bot = false;
         tank.life += 1;
+        tank.seat_life = tank.life;
     }
     tank.driver = driver;
     tank.command = VehicleCommand::idle_aiming(tank.aim);
@@ -122,6 +125,7 @@ pub fn reassign_tank(
         let body = simulation.tanks[tank_index].body;
         simulation.remove_body(body);
     }
+    forget_view(simulation, simulation.tanks[tank_index].id);
     // A fill bot that takes over from a stand-in keeps the stand-in's name, which the
     // field already reads as a bot.
     let tank = &mut simulation.tanks[tank_index];
@@ -138,6 +142,7 @@ pub fn reassign_tank(
     let tank = &mut simulation.tanks[tank_index];
     tank.alive = false;
     tank.life += 1;
+    tank.seat_life = tank.life;
     tank.player_id = player.map(|player| player.player_id.clone());
     tank.name = name;
     tank.human = player.is_some();
@@ -182,6 +187,7 @@ pub fn release_player_tank(simulation: &mut Simulation, tank_id: u32) {
         reassign_tank(simulation, index, None);
         return;
     }
+    forget_view(simulation, tank_id);
     let tank = simulation.tanks.remove(index);
     if tank.alive {
         simulation.remove_body(tank.body);

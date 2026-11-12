@@ -14,7 +14,6 @@ use super::physics::{
     from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
 };
 use super::simulation::Simulation;
-use super::tree_proportions::tree_proportions;
 use super::arena::cover_turn;
 use super::house_layout::SENDA_STYLES;
 use super::senda_entries::is_entry;
@@ -41,7 +40,7 @@ struct Breakup<'a> {
 }
 
 impl Breakup<'_> {
-    /// A box-shaped piece (a cylinder for logs).
+    /// A box-shaped piece.
     fn piece(
         &mut self,
         simulation: &mut Simulation,
@@ -52,11 +51,8 @@ impl Breakup<'_> {
         material: DebrisMaterial,
     ) -> usize {
         let [w, h, d] = size;
-        let builder = if shape == FragmentShape::Log {
-            ColliderBuilder::cylinder((h / 2.0) as f32, (w / 2.0) as f32)
-        } else {
-            ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
-        };
+        let builder =
+            ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32);
         self.piece_with(simulation, shape, center, size, color, material, builder)
     }
 
@@ -150,7 +146,6 @@ pub fn break_scenery(
         .flatten();
     let entry = cover.kind == CoverKind::Concrete && is_entry(cover.color);
     let legacy_count = match cover.kind {
-        CoverKind::Tree => 9,
         CoverKind::Drum => 3,
         // As many as the shards a plain cover falls back to.
         CoverKind::Concrete if patio.is_some() || entry => 3,
@@ -166,53 +161,7 @@ pub fn break_scenery(
         rng: Random::new(cover.id as f64 * 73_856_093.0 + simulation.seed),
         pieces: Vec::new(),
     };
-    let wood = DebrisMaterial::Wood;
     match cover.kind {
-        CoverKind::Tree => {
-            let proportions = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h);
-            let (family, height, radius, stump) = (
-                proportions.family,
-                proportions.height,
-                proportions.radius,
-                proportions.stump_height,
-            );
-            let length = height * if family < 3 { 0.98 } else { 0.78 } - stump;
-            let center = stump + length / 2.0;
-            let trunk = breakup.piece(
-                simulation,
-                FragmentShape::Log,
-                [0.0, center, 0.0],
-                [radius * 2.0, length, radius * 2.0],
-                Some(0x98734f),
-                wood,
-            );
-            simulation.fragments[trunk].tree_cover_id = Some(cover.id);
-            simulation.fragments[trunk].tree_center_y = Some(center);
-            let trunk_body = simulation.fragments[trunk].body;
-            // A light crown volume keeps foliage above the ground as the trunk rolls.
-            simulation.world.insert_collider(
-                ColliderBuilder::ball((cover.w.min(cover.d) * 0.34) as f32)
-                    .translation(vector(0.0, height * 0.72 - center, 0.0))
-                    .collision_groups(interaction_groups(group::FRAGMENT))
-                    .mass(0.12)
-                    .friction(0.9)
-                    .restitution(0.05),
-                Some(trunk_body),
-            );
-            // A small sideways lean initiates a gravity-driven fall instead of a launch.
-            let angle = breakup.rng.range(0.0, PI * 2.0);
-            let rigid_body = &mut simulation.world.bodies[trunk_body];
-            rigid_body.set_linvel(vector(angle.sin() * 0.45, 0.0, angle.cos() * 0.45), true);
-            rigid_body.set_angvel(vector(angle.cos() * 0.65, 0.0, -angle.sin() * 0.65), true);
-            breakup.piece(
-                simulation,
-                FragmentShape::Beam,
-                [radius, stump, 0.0],
-                [radius * 0.3, radius * 1.4, radius * 0.25],
-                Some(0xb59a69),
-                wood,
-            );
-        }
         CoverKind::Drum => {
             // Internal pressure tears the thin wall into small curled sheets, not a
             // surviving cylinder. Offset each sheet so the blast spreads them radially.
@@ -308,10 +257,10 @@ fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: P
             let wall = DebrisMaterial::Concrete;
             for end in [-1.0, 1.0] {
                 let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
-                pieces.push((FragmentShape::Beam, at, [column, low, column], style.siding, wall, 0.0));
+                pieces.push((FragmentShape::Panel, at, [column, low, column], style.siding, wall, 0.0));
             }
             let at = place(0.0, low - beam / 2.0, front);
-            pieces.push((FragmentShape::Beam, at, [cover_w, beam, column], style.siding, wall, 0.0));
+            pieces.push((FragmentShape::Panel, at, [cover_w, beam, column], style.siding, wall, 0.0));
             let pitch = (eave - low).atan2(reach);
             let slope = reach.hypot(eave - low) + LOGGIA_EAVE;
             for end in [-1.0, 1.0] {
@@ -326,11 +275,11 @@ fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: P
             let front = d / 2.0 - reach + PATIO_POST / 2.0;
             for end in [-1.0, 1.0] {
                 let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
-                pieces.push((FragmentShape::Beam, at, [PATIO_POST, low, PATIO_POST], PERGOLA_WOOD, wood, 0.0));
+                pieces.push((FragmentShape::Panel, at, [PATIO_POST, low, PATIO_POST], PERGOLA_WOOD, wood, 0.0));
             }
             for z in [front, d / 2.0 - 0.06] {
                 let at = place(0.0, low + 0.06, z);
-                pieces.push((FragmentShape::Beam, at, [cover_w, 0.12, 0.1], PERGOLA_WOOD, wood, 0.0));
+                pieces.push((FragmentShape::Panel, at, [cover_w, 0.12, 0.1], PERGOLA_WOOD, wood, 0.0));
             }
             for x in [-0.3, 0.0, 0.3] {
                 let at = place(x * cover_w, low + 0.15, d / 2.0 - reach / 2.0);

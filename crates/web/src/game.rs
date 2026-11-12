@@ -286,8 +286,6 @@ pub struct Game {
     effect_timers: EffectTimers,
     /// The finished round's recap; personal bests are saved once per result.
     recap: Option<RoundRecap>,
-    /// The last frame's result, which a frame skipped for the GPU hands back.
-    last_result: [f32; frame_slot::LENGTH],
 }
 
 #[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
@@ -422,11 +420,9 @@ impl Game {
             return Ok(self.wait_for_gpu(&input, now));
         };
         let dt = self.times.advance(now);
-        let mut result = [0.0; frame_slot::LENGTH];
-        result[frame_slot::RAN] = 1.0;
         if !self.active {
-            result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
-            self.last_result = result;
+            let mut result = self.state_result();
+            result[frame_slot::RAN] = 1.0;
             return Ok(result);
         }
         if self.sim.match_state.phase == MatchPhase::Results && self.auto_rounds {
@@ -482,10 +478,7 @@ impl Game {
         } else {
             self.steps.reset();
         }
-        let human = self.human_index();
-        let clear_input =
-            self.sim.match_state.phase != MatchPhase::Playing || !self.sim.tanks[human].alive;
-        if clear_input {
+        if self.clear_input() {
             self.commands.clear();
         }
         self.times.sim_ms = now_ms() - sim_start;
@@ -498,6 +491,7 @@ impl Game {
             } else {
                 1.0
             };
+            self.graphics.before_render(&mut self.view.renderer);
             self.view
                 .render(&self.state, alpha, dt, self.overview)
                 .map_err(js_error)?;
@@ -507,34 +501,53 @@ impl Game {
         let playing = self.sim.match_state.phase == MatchPhase::Playing;
         self.graphics
             .frame(&mut self.view.renderer, &self.times, playing);
-        let tank = &self.sim.tanks[human];
-        result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
-        result[frame_slot::HUMAN_ALIVE] = f32::from(u8::from(tank.alive));
-        result[frame_slot::COCKPIT] = f32::from(u8::from(
-            self.sim.match_state.phase != MatchPhase::Ready && self.view.rig.seat_wanted,
-        ));
-        result[frame_slot::HULL_ANGLE] =
-            self.view.rig.first_person.screen_angle(tank.heading) as f32;
-        result[frame_slot::EVENTS] = self.events.len() as f32;
-        result[frame_slot::CLEAR_INPUT] = f32::from(u8::from(clear_input));
+        let mut result = self.state_result();
+        result[frame_slot::RAN] = 1.0;
         result[frame_slot::HUD_DUE] = f32::from(u8::from(
             self.frame_index.is_multiple_of(HUD_UPDATE_EVERY_FRAMES),
         ));
         result[frame_slot::SIM_MS] = self.times.sim_ms as f32;
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
-        result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         result[frame_slot::DT] = dt as f32;
+        self.frame_index += 1;
+        Ok(result)
+    }
+
+    /// Whether the page should drop held input: paused, dead or out of play.
+    fn clear_input(&self) -> bool {
+        self.sim.match_state.phase != MatchPhase::Playing || !self.sim.human().alive
+    }
+
+    /// The slots that describe the match and view as they are now, which a skipped
+    /// frame reports too: after `resume` it must say playing, not the paused phase
+    /// (and cleared input) of the frame that ran last. The frame's own work (`RAN`,
+    /// `HUD_DUE`, the timings and `DT`) stays 0 for the caller to fill.
+    fn state_result(&self) -> [f32; frame_slot::LENGTH] {
+        let mut result = [0.0; frame_slot::LENGTH];
+        let phase = self.sim.match_state.phase;
+        result[frame_slot::PHASE] = phase_code(phase);
+        if !self.active {
+            return result;
+        }
+        let tank = self.sim.human();
+        result[frame_slot::HUMAN_ALIVE] = f32::from(u8::from(tank.alive));
+        result[frame_slot::COCKPIT] = f32::from(u8::from(
+            phase != MatchPhase::Ready && self.view.rig.seat_wanted,
+        ));
+        result[frame_slot::HULL_ANGLE] =
+            self.view.rig.first_person.screen_angle(tank.heading) as f32;
+        result[frame_slot::EVENTS] = self.events.len() as f32;
+        result[frame_slot::CLEAR_INPUT] = f32::from(u8::from(self.clear_input()));
+        result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
         result[frame_slot::VIEWER_X] = viewer_x;
         result[frame_slot::VIEWER_Y] = viewer_y;
-        self.frame_index += 1;
-        self.last_result = result;
-        Ok(result)
+        result
     }
 
     /// An animation frame skipped while the GPU still runs earlier ones: the view and
     /// first-person look take its input at once, its presses wait for the next tick, and
-    /// the page keeps the last frame's result.
+    /// the page sees the match as it is now (`RAN` 0).
     fn wait_for_gpu(&mut self, input: &InputFrame, now: f64) -> [f32; frame_slot::LENGTH] {
         self.view.rig.zoom_by(input.zoom);
         if input.toggle_view {
@@ -546,15 +559,7 @@ impl Game {
         if playing && alive && self.view.rig.first_person.enabled {
             self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
         }
-        let mut result = self.last_result;
-        result[frame_slot::RAN] = 0.0;
-        result[frame_slot::EVENTS] = self.events.len() as f32;
-        result[frame_slot::HUD_DUE] = 0.0;
-        result[frame_slot::SIM_MS] = 0.0;
-        result[frame_slot::RENDER_MS] = 0.0;
-        result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
-        result[frame_slot::DT] = 0.0;
-        result
+        self.state_result()
     }
 
     /// Pending events for audio and HUD, as JSON.
@@ -977,7 +982,6 @@ impl Game {
             hud_tank: RenderTank::default(),
             effect_timers: EffectTimers::default(),
             recap: None,
-            last_result: [0.0; frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
         if config.defer_arena {

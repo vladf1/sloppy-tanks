@@ -3,13 +3,14 @@
 # provider's user data (deploy/server/cloud-init/), so a machine needs no SSH from a
 # developer's Mac: a change here reaches a machine when it is created again. The user data
 # writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production, dev or
-# app-store, and DIRECTORY_URL), which the server's unit and the updater read. This fetches the other
+# app-store, DIRECTORY_URL, and SERVER_IMAGE_TAG where the machine follows another tag than
+# its environment's), which the server's unit and the updater read. This fetches the other
 # files in deploy/server/ from the repository at SLOPPY_REF (main), installs Podman, the
 # server's and Caddy's Quadlet units and the image updater, allows key-only SSH and only
 # SSH, 80 and 443 through ufw, serves the nip.io name of the machine's IPv4 address and
-# starts the image its environment follows (CI's :production, dev's latest publish on :dev
-# or the App Store release on :app-store); the server then appears in the directory under
-# its environment.
+# starts the image it follows (CI's :production, dev's latest publish on :dev, the App
+# Store release on :app-store or the TestFlight builds' on :app-store-candidate); the
+# server then appears in the directory under its environment.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 SOURCE="https://raw.githubusercontent.com/vladf1/sloppy-tanks/${SLOPPY_REF:-main}/deploy/server"

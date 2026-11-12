@@ -18,7 +18,7 @@ use sloppy_core::geometry::{
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint,
-    pickup_board, pickup_pallet, pickup_parcel, put, shadowed, siding_box, trunk_fragment,
+    pickup_board, pickup_pallet, pickup_parcel, put, shadowed, siding_box,
 };
 use sloppy_core::scene::{Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
@@ -622,8 +622,7 @@ pub fn debris_piece(shape: FragmentShape) -> Node {
         FragmentShape::DrumShell => piece(barrel_scrap_geometry(BarrelScrap::Shell)),
         FragmentShape::DrumLid => piece(barrel_scrap_geometry(BarrelScrap::Lid)),
         FragmentShape::Wood => siding_box(1.5, 0.18, 0.45, 0xffffff),
-        FragmentShape::Panel | FragmentShape::Beam => siding_box(1.0, 1.0, 1.0, 0xffffff),
-        FragmentShape::Log => (*trunk_fragment()).clone(),
+        FragmentShape::Panel => siding_box(1.0, 1.0, 1.0, 0xffffff),
     };
     let mut root = Node::group("debris");
     root.children.push(node);

@@ -10,9 +10,9 @@ use sloppy_core::sim::bot_personalities::BotPersonality;
 use sloppy_core::sim::combat_rules::COMBAT;
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::match_state::{award_kill, new_match, tick_match};
-use sloppy_core::sim::math::{Vec2, distance};
+use sloppy_core::sim::math::{Quat4, Vec2, distance};
 use sloppy_core::sim::navigation::Navigation;
-use sloppy_core::sim::physics::vector;
+use sloppy_core::sim::physics::{from_rotation, vector};
 use sloppy_core::sim::projectiles::step_projectiles;
 use sloppy_core::sim::weapons::fire_weapon;
 use sloppy_core::sim::{
@@ -146,6 +146,29 @@ fn respawn_occurs_after_three_seconds_with_protection_and_selected_class() {
     assert!(s.tanks[a].alive);
     assert_eq!(s.tanks[a].hp, 140.0);
     assert!(s.tanks[a].protection > 1.9);
+}
+
+#[test]
+fn a_respawned_hull_faces_its_kept_heading_on_its_first_tick() {
+    let mut s = game();
+    let a = s.human_index().unwrap();
+    let enemy_team = s.tanks[a].team.opponent();
+    s.damage_tank(a, 1000.0, 999, enemy_team, None, None);
+    s.tanks[a].respawn = STEP / 2.0;
+    s.tanks[a].heading = 1.2;
+    idle(&mut s);
+    assert!(s.tanks[a].alive, "respawned this tick");
+    let rotation = from_rotation(*s.world.bodies[s.tanks[a].body].rotation());
+    let expected = Quat4::yaw(s.tanks[a].heading);
+    let dot = rotation.x * expected.x
+        + rotation.y * expected.y
+        + rotation.z * expected.z
+        + rotation.w * expected.w;
+    assert!(
+        dot.abs() > 0.9999,
+        "the hull faces heading {}: {rotation:?}",
+        s.tanks[a].heading
+    );
 }
 
 #[test]

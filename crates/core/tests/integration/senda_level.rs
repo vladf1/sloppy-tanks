@@ -1422,12 +1422,9 @@ fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
     let pieces: Vec<_> = sim.fragments[fragments..].iter().collect();
     // Two columns and the beam, and its roof in two halves, not three anonymous shards.
     assert_eq!(pieces.len(), 5, "{pieces:?}");
-    assert_eq!(
-        pieces
-            .iter()
-            .filter(|f| f.shape == Some(FragmentShape::Panel))
-            .count(),
-        2
+    assert!(
+        pieces.iter().all(|f| f.shape == Some(FragmentShape::Panel)),
+        "{pieces:?}"
     );
 }
 

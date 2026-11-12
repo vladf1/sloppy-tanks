@@ -9,7 +9,7 @@ use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::simulation::packed_groups;
 use sloppy_core::sim::simulation_rules::SIMULATION_RULES;
 use sloppy_core::sim::{
-    CoverKind, DamageSource, Pickup, PickupKind, Shot, SimEventType, Simulation, Tank,
+    CoverKind, DamageSource, Firer, Pickup, PickupKind, Shot, SimEventType, Simulation, Tank,
     VehicleCommand,
 };
 
@@ -150,7 +150,17 @@ pub fn damage_from(
     source: Option<DamageSource>,
 ) {
     let (id, team) = (s.tanks[attacker].id, s.tanks[attacker].team);
-    s.damage_tank(victim, amount, id, team, owner_life, source);
+    let firer = owner_life.and_then(|life| fired(s, id, life));
+    s.damage_tank(victim, amount, id, team, firer, source);
+}
+
+/// Ordnance tank `owner` fired on life `life`, a fill bot's if it is a fill bot now.
+pub fn fired(s: &Simulation, owner: u32, life: u32) -> Option<Firer> {
+    let tank = &s.tanks[s.tank_index(owner)?];
+    Some(Firer {
+        life,
+        fill_bot: !tank.human,
+    })
 }
 
 /// One simulation tick with idle human input.

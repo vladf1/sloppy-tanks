@@ -371,8 +371,9 @@ reason for (`REQUIRED_REASON_APIS`).
 settings section.
 
 The App Store's builds play online in the `app-store` environment, whose machines run
-the released apps' content version rather than main's: release the iOS and Mac versions
-together in App Store Connect, then run `bun run server:release-app`
+the released apps' content version rather than main's, beside a candidate machine that
+runs the latest TestFlight builds' so testers and App Review can play them: release the
+iOS and Mac versions together in App Store Connect, then run `bun run server:release-app`
 ([App Store machines](crates/server/README.md#app-store-machines)). Only the latest
 release plays online; an older app offers UPDATE, which opens its App Store page.
 

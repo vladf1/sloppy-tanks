@@ -22,7 +22,7 @@
 //!   [`branch_drop_stage`] (node names in [`tree_part`]). Detached timber members:
 //!   [`timber_part_model`].
 //! - Props: [`pickup_cube`], [`flags_model`] (cloth node [`FLAG_CLOTH_NODE`]),
-//!   debris meshes [`barrel_scrap_geometry`] and [`trunk_fragment`], burnt wrecks
+//!   debris meshes [`barrel_scrap_geometry`], burnt wrecks
 //!   darkened with [`aged_wreck_material`].
 //! - Custom shading: every `Effect::Custom` name with its parameters and inputs is
 //!   documented in [`effects_props`] and [`effects_scenery`]; the renderer's WGSL
@@ -136,7 +136,7 @@ beyond_geometry! {
 // Cover, trees and props.
 beyond_geometry! {
     pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};
-    pub use cover_model::{CoverShape, cover_model, structure_debris};
+    pub use cover_model::{CoverShape, cover_model, structure_debris, tree_debris};
     pub use house_parts_model::{HouseBuild, HouseDebris, house_debris, structural_house};
     pub use crate_model::crate_piece_model;
     pub use effects_props::{aged_wreck_material, wreck_brightness};
@@ -152,8 +152,8 @@ beyond_geometry! {
     pub use tower_model::tower_debris;
 }
 pub use tree_models::{
-    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,
-    tree_foliage, tree_model, tree_part, trunk_fragment,
+    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, grown_pieces,
+    standing_tree_model, tree_branch_stage, tree_foliage, tree_model, tree_part, tree_pieces,
 };
 
 // Surfaces.

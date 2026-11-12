@@ -264,6 +264,15 @@ pub struct Brain {
     pub alarm: f64,
 }
 
+/// Who fired a shell or laid a mine, as they were then: the owner's life, and whether
+/// a fill bot (rather than a player's seat) fired it. Damage, kills and XP follow this,
+/// not whoever holds the owner's seat when the ordnance strikes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Firer {
+    pub life: u32,
+    pub fill_bot: bool,
+}
+
 /// Persistent entity identity. The body and colliders are recreated for each life.
 #[derive(Clone, Debug, Default)]
 pub struct Tank {
@@ -282,6 +291,10 @@ pub struct Tank {
     pub driver: Driver,
     /// Changes on death or reassignment, independently of the scoreboard.
     pub life: u32,
+    /// The life on which the seat's current occupant took it over (a player joining, a
+    /// fill bot or stand-in taking over, a player returning). Ordnance fired on an
+    /// earlier life than this was an earlier occupant's, and credits nobody.
+    pub seat_life: u32,
     pub kind: VehicleKind,
     pub body: RigidBodyHandle,
     /// The hull collider that touches cover and the ground (the first collider).
@@ -316,6 +329,16 @@ pub struct Tank {
     pub last_combat: f64,
     pub command: VehicleCommand,
     pub brain: Brain,
+}
+
+impl Tank {
+    /// Ordnance this tank fires or lays now.
+    pub fn firer(&self) -> Firer {
+        Firer {
+            life: self.life,
+            fill_bot: !self.human,
+        }
+    }
 }
 
 /// Original dimensions and last navigation footprint for movable cover.
@@ -380,6 +403,8 @@ pub struct Shot {
     pub owner: u32,
     /// Owner's life generation when fired, to keep XP attached to that life.
     pub owner_life: Option<u32>,
+    /// A fill bot fired it (a multiplayer difficulty scales fill bots' damage).
+    pub owner_fill_bot: bool,
     pub team: Team,
     pub vx: f64,
     pub vz: f64,
@@ -402,9 +427,19 @@ pub struct Shot {
     pub loosened: Vec<RigidBodyHandle>,
     /// A defense gets one chance per projectile, even after a miss or bounce.
     pub laser_checked_by: Vec<u32>,
+    /// The trees whose leaves it has flown through ([`SimEventType::Rustle`]).
+    pub rustled: Vec<u32>,
 }
 
 impl Shot {
+    /// Who fired it, as they were then.
+    pub fn firer(&self) -> Option<Firer> {
+        self.owner_life.map(|life| Firer {
+            life,
+            fill_bot: self.owner_fill_bot,
+        })
+    }
+
     /// The combat lane height, one metre when a test or probe leaves it unset.
     pub fn combat_y(&self) -> f64 {
         self.y.unwrap_or(1.0)
@@ -417,6 +452,7 @@ impl Shot {
         Shot {
             loosened: Vec::new(),
             laser_checked_by: Vec::new(),
+            rustled: Vec::new(),
             ..*self
         }
     }
@@ -429,6 +465,9 @@ pub struct Mine {
     pub owner: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_life: Option<u32>,
+    /// A fill bot laid it (a multiplayer difficulty scales fill bots' damage).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub owner_fill_bot: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub damage: Option<f64>,
     pub team: Team,
@@ -436,6 +475,16 @@ pub struct Mine {
     pub z: f64,
     pub arm: f64,
     pub life: f64,
+}
+
+impl Mine {
+    /// Who laid it, as they were then.
+    pub fn firer(&self) -> Option<Firer> {
+        self.owner_life.map(|life| Firer {
+            life,
+            fill_bot: self.owner_fill_bot,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -466,8 +515,6 @@ pub struct Fragment {
     /// The parts of a structure this body is (they fell together), and how it is
     /// landing and settling.
     pub structure: Option<super::structure_physics::StructureDebris>,
-    pub tree_cover_id: Option<u32>,
-    pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
     /// Simulation timestamp for the 2.5-second tank wreck darkening.
     pub created_at: Option<f64>,
@@ -586,6 +633,9 @@ pub enum SimEventType {
     /// flew on: `x`/`z`/`height` where, `size` the piece's longest side, `color` its
     /// paint, `cover_kind` what it came from and `from` a point back along the shell.
     Shatter,
+    /// A shell flew through a tree's leaves: `x`/`z`/`height` where, `id` the tree's
+    /// cover. They spray; nothing breaks.
+    Rustle,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -607,6 +657,8 @@ pub struct SimEvent {
     pub id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<u32>,
+    /// The life the owner fired on. A death with a life and no owner was dealt by an
+    /// earlier occupant of a seat's ordnance: its killer is unknown, not the yard.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_life: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

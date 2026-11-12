@@ -7,6 +7,7 @@ import {
   nipUrl,
   parseAnnouncement,
   parseEnvironment,
+  readBody,
   type ListedServer,
 } from "../directory/listing";
 import type { RoomListing } from "../directory/room-listing";
@@ -122,6 +123,52 @@ test("an announcement keeps its declared /health fields and rooms checked as the
   ]) {
     assert.equal(parseAnnouncement(text), undefined, text);
   }
+});
+
+/** A body of `chunks` chunks of `chunkBytes` bytes each that counts how many the reader
+ * pulled and whether it cancelled; with a high-water mark of zero, a chunk is made only
+ * when read. */
+function countingBody(chunks: number, chunkBytes: number, headers: HeadersInit = {}) {
+  const counts = { pulled: 0, cancelled: false };
+  const body = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (counts.pulled === chunks) {
+          controller.close();
+          return;
+        }
+        controller.enqueue(new Uint8Array(chunkBytes).fill(++counts.pulled));
+      },
+      cancel() {
+        counts.cancelled = true;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { request: { headers: new Headers(headers), body }, counts };
+}
+
+test("a body under the limit is read whole", async () => {
+  const { request, counts } = countingBody(3, 4);
+  const body = await readBody(request, 12);
+  assert.deepEqual([...(body ?? [])], [1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3]);
+  assert.equal(counts.cancelled, false);
+  assert.equal((await readBody({ headers: new Headers(), body: null }, 12))?.byteLength, 0);
+});
+
+test("a body over the limit stops being read one chunk past it", async () => {
+  // Endless, as a sender that declares no length could make it.
+  const { request, counts } = countingBody(Infinity, 4);
+  assert.equal(await readBody(request, 10), undefined);
+  // 8 bytes fit, the third chunk passes 10, and nothing more is pulled.
+  assert.equal(counts.pulled, 3);
+  assert.equal(counts.cancelled, true);
+});
+
+test("a declared Content-Length over the limit is refused unread", async () => {
+  const { request, counts } = countingBody(1, 4, { "Content-Length": "11" });
+  assert.equal(await readBody(request, 10), undefined);
+  assert.equal(counts.pulled, 0);
 });
 
 test("servers are listed fewest rooms first, ties by url", () => {

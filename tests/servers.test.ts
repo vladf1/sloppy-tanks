@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DIRECTORY_URL, SERVER_IMAGE, serverMachine } from "../scripts/servers.mjs";
+import { DIRECTORY_URL, option, SERVER_IMAGE, serverMachine } from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -12,6 +12,18 @@ test("a machine is reached over SSH at its address and checked through its nip.i
   assert.equal(server.checkUrl, "https://45-63-56-58.nip.io");
   assert.equal(server.ssh, "root@45.63.56.58");
   assert.throws(() => serverMachine("dev", "45-63-56-58.nip.io"), /Not an IPv4 address/);
+});
+
+test("a command line names a machine as --ip ADDRESS or --ip=ADDRESS, never as a bare --ip", () => {
+  assert.equal(option(["rollback", "--ip", "1.2.3.4"], "--ip"), "1.2.3.4");
+  assert.equal(option(["rollback", "--ip=1.2.3.4", "--dev"], "--ip"), "1.2.3.4");
+  assert.equal(option(["rollback", "--dev"], "--ip"), undefined);
+  // A flag left without its value would otherwise reach every listed machine.
+  assert.throws(() => option(["rollback", "--ip"], "--ip"), /--ip needs a value/);
+  assert.throws(() => option(["rollback", "--ip", "--dev"], "--ip"), /--ip needs a value/);
+  assert.throws(() => option(["rollback", "--ip="], "--ip"), /--ip needs a value/);
+  // Another flag that starts the same is not this one.
+  assert.equal(option(["update", "--image-tag", "x"], "--image"), undefined);
 });
 
 test("the production build, the traffic bots, the pilots and the startup scripts use one server directory", () => {
@@ -26,7 +38,7 @@ test("the production build, the traffic bots, the pilots and the startup scripts
     read("../crates/pilot/src/command_line.rs").match(/DEFAULT_DIRECTORY: &str = "([^"]+)"/)?.[1],
     DIRECTORY_URL,
   );
-  for (const name of ["production", "dev", "app-store"]) {
+  for (const name of ["production", "dev", "app-store", "app-store-candidate"]) {
     assert.equal(
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/DIRECTORY_URL=(\S+)/)?.[1],
       DIRECTORY_URL,
@@ -43,4 +55,22 @@ test("the machines pull the image CI and the dev publish push", () => {
     read("../.github/workflows/check.yml").match(/SERVER_IMAGE: (\S+)/)?.[1],
     SERVER_IMAGE,
   );
+});
+
+test("the App Store candidate machine lists under app-store and follows the tag the Apps workflow moves", () => {
+  const script = read("../deploy/server/cloud-init/app-store-candidate.yaml");
+  assert.equal(script.match(/SERVER_ENVIRONMENT=(\S+)/)?.[1], "app-store");
+  const tag = script.match(/SERVER_IMAGE_TAG=(\S+)/)?.[1];
+  assert.equal(tag, "app-store-candidate");
+  // The Apps workflow moves it, release-app releases it and the updater follows it.
+  assert.ok(read("../.github/workflows/desktop.yml").includes(`--tag ${SERVER_IMAGE}:${tag} `));
+  assert.ok(read("../scripts/server.mjs").includes("`${SERVER_IMAGE}:" + tag + "`"));
+  assert.match(
+    read("../deploy/server/sloppy-tanks-update"),
+    /^follow=\$REGISTRY:\$\{image_tag:-\$\{environment:-production\}\}$/m,
+  );
+  // Only the candidate names a tag; the others follow their environment's.
+  for (const name of ["production", "dev", "app-store"]) {
+    assert.doesNotMatch(read(`../deploy/server/cloud-init/${name}.yaml`), /SERVER_IMAGE_TAG/);
+  }
 });

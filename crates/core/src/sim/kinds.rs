@@ -201,8 +201,6 @@ pub enum FragmentShape {
     Shard,
     Wood,
     Panel,
-    Beam,
-    Log,
     DrumShell,
     DrumLid,
 }
