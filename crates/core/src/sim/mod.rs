@@ -21,6 +21,7 @@ pub mod quarry_barrier_shapes;
 pub mod quarry_layout;
 pub mod quarry_rock_shape;
 pub mod timber_layout;
+pub mod tree_layout;
 pub mod tree_proportions;
 
 beyond_geometry! {
@@ -44,7 +45,7 @@ beyond_geometry! {
     pub mod game_options;
     pub mod hitboxes;
     pub mod house_structure;
-    pub mod oak_structure;
+    pub mod tree_structure;
     pub mod humvee_tactics;
     pub mod laser_defense;
     pub mod level_rules;

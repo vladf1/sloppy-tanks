@@ -316,6 +316,9 @@ pub mod group {
     /// A structure's fallen part wedged on its remains, dropping through them: it skips
     /// standing cover.
     pub const STRUCTURE_DEBRIS_THROUGH: u32 = 0x0108_0305;
+    /// A conifer's fallen boughs: too thin to bear anything, they rest on the ground alone,
+    /// and shells, tanks and the tree's own trunk pass through them.
+    pub const BOUGH_DEBRIS: u32 = 0x0008_0004;
     /// A cottage garden's poles and plants: met by its fallen parts alone.
     pub const GARDEN_PROPS: u32 = 0x0200_0100;
 }

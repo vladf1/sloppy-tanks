@@ -23,7 +23,7 @@ use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
-use sloppy_core::sim::structure_physics::built_of_parts;
+use sloppy_core::sim::structure_physics::structural;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
 use sloppy_core::sim::tower_structure::{LOWER_LEGS, tower_structure};
 use sloppy_core::sim::tree_proportions::tree_proportions;
@@ -180,15 +180,13 @@ const COVER_REBUILD_MS: f64 = 3.0;
 const CUSTOM_FLOOR_Y: f64 = 0.008;
 const CUSTOM_OUTER_FLOOR_Y: f64 = -0.002;
 
-const DEBRIS_SHAPES: [FragmentShape; 10] = [
+const DEBRIS_SHAPES: [FragmentShape; 8] = [
     FragmentShape::Armor,
     FragmentShape::Wheel,
     FragmentShape::Track,
     FragmentShape::Shard,
     FragmentShape::Wood,
     FragmentShape::Panel,
-    FragmentShape::Beam,
-    FragmentShape::Log,
     FragmentShape::DrumShell,
     FragmentShape::DrumLid,
 ];
@@ -2761,7 +2759,7 @@ impl Presentation {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
             let shown = self.covers.get(&cover.id);
             // A structure changes as its parts break, levelled or not.
-            let structure = built_of_parts(cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
+            let structure = structural(cover.kind);
             let rebuild = shown.is_none_or(|view| structure && view.marks != look_print(cover));
             // A blast that breaks several structures at once rebuilds them over a few
             // frames on a slow device: one step a frame at least, more while this frame's
@@ -3577,24 +3575,6 @@ impl Presentation {
                     .track(fragment.id, structure, source, Some(node), self.time);
                 look
             }
-        } else if let Some(tree) = fragment.tree_cover_id {
-            let view = self.covers.get(&tree)?;
-            let entry = self.cover_models.get(&view.key)?;
-            let shed: Vec<usize> = view.tree.as_ref().map_or_else(Vec::new, |tree| {
-                tree.branches
-                    .iter()
-                    .filter(|branch| !branch.shown)
-                    .map(|branch| branch.crown_child)
-                    .collect()
-            });
-            // Only a tree's model has the crown.
-            let crown = crown_fragment(
-                &entry.source,
-                tree_part::CROWN,
-                fragment.tree_center_y.unwrap_or(0.0),
-                &shed,
-            )?;
-            owned_look(&mut self.renderer, &crown, false)
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
             let part = fragment.part.unwrap_or(WreckPart::Hull);
@@ -3620,7 +3600,7 @@ impl Presentation {
             sink: (fragment.structure_parts.is_some()
                 && fragment.source_kind == Some(CoverKind::Tower))
             .then_some(0.0),
-            fades: fragment.tree_cover_id.is_none() && !leafy,
+            fades: !leafy,
             pose: (vec3(fragment.position), quat(fragment.rotation)),
             emerges_from: (fragment.source_kind == Some(CoverKind::House)
                 && fragment.structure_parts.is_none())
@@ -3739,24 +3719,6 @@ fn owned_look(renderer: &mut Renderer, node: &Node, fades: bool) -> (ModelId, Fr
         renderer.add_model(node, Lifetime::Round)
     };
     (model, FragmentLook::Owned(model, bounds))
-}
-
-/// The falling crown of a felled tree: its trunk-and-crown subtree, lowered so
-/// the fragment body's centre sits `center_y` up the trunk.
-fn crown_fragment(source: &Node, crown: &str, center_y: f64, shed: &[usize]) -> Option<Node> {
-    let mut node = source.find(crown)?.clone();
-    // Boughs already shed stay gone from the falling crown.
-    for &index in shed {
-        if let Some(bough) = node.children.get_mut(index) {
-            bough.visible = false;
-        }
-    }
-    node.name = String::new();
-    node.visible = true;
-    node.position = DVec3::new(0.0, -center_y, 0.0);
-    let mut root = Node::group("crown-fragment");
-    root.children.push(node);
-    Some(root)
 }
 
 fn environment(look: &ThemeLook) -> Environment {

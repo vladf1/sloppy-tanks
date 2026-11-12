@@ -82,13 +82,21 @@ pub(super) fn sprig_card(sprig: &OakSprig) -> Card {
 }
 
 /// Grow a full-detail oak's trunk, limbs, branches and sprigs into `crown` from its
-/// skeleton, each shedding bough a group of its own; returns the volume its foliage
-/// shades as.
+/// skeleton, each shedding bough a group of its own, leaving out the limbs `keep` does
+/// not pick (snapped off it); returns the volume its foliage shades as.
 pub(super) fn add_grown_oak_crown(
     crown: &mut Crown,
     oak: &OakLayout,
     bark: &Arc<Material>,
+    keep: &dyn Fn(TreePart) -> bool,
 ) -> CrownShape {
+    let kept = |branch: usize| {
+        keep(
+            oak.branches[branch]
+                .limb
+                .map_or(TreePart::Trunk, TreePart::Limb),
+        )
+    };
     // Each bough's group among the crown's children, made as its first branch grows.
     let mut boughs: Vec<Option<usize>> = Vec::new();
     let mut parents = Vec::with_capacity(oak.branches.len());
@@ -103,6 +111,9 @@ pub(super) fn add_grown_oak_crown(
             None => None,
         };
         parents.push(parent);
+        if !kept(parents.len() - 1) {
+            continue;
+        }
         let tube = tube_mesh(&branch.sections, branch.sides);
         crown
             .parent(parent)
@@ -115,7 +126,9 @@ pub(super) fn add_grown_oak_crown(
             low = low.min(corner);
             high = high.max(corner);
         }
-        crown.card(parents[sprig.branch], sprig_card(sprig));
+        if kept(sprig.branch) {
+            crown.card(parents[sprig.branch], sprig_card(sprig));
+        }
     }
     CrownShape::Round {
         center: (low + high) / 2.0,

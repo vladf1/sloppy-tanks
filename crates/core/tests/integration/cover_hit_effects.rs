@@ -16,7 +16,6 @@ struct Hit {
     impacts: usize,
     destroys: usize,
     fragments: usize,
-    tree_parts: usize,
     /// Bodies of the cover's own fallen parts (a structure's).
     fallen_parts: usize,
 }
@@ -52,11 +51,6 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
             .count(),
         destroys: event_count(s, SimEventType::Destroy),
         fragments: s.fragments.len(),
-        tree_parts: s
-            .fragments
-            .iter()
-            .filter(|piece| piece.tree_cover_id == Some(cover.id))
-            .count(),
         fallen_parts: s
             .fragments
             .iter()
@@ -73,28 +67,21 @@ fn shoot(s: &mut Simulation, cover: usize, damage: f64) -> Hit {
 #[test]
 fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
     // Timber walls and crates break part by part (`timber_walls`, `cargo_crates`), and so
-    // does an oak: a strike on it bursts on its butt too, and it falls as its parts.
+    // does a tree: a strike on it bursts on its butt, and it falls as its parts.
     let mut s = Simulation::with_seed(123.0);
     assert_eq!(s.map_mode, MapId::Village);
-    let tree = |oak: bool| {
-        s.covers
-            .iter()
-            .position(|c| c.kind == CoverKind::Tree && c.structure.is_some() == oak)
-            .unwrap()
-    };
-    let covers = [tree(false), tree(true)];
+    let covers = [s
+        .covers
+        .iter()
+        .position(|c| c.kind == CoverKind::Tree)
+        .unwrap()];
     s.world.step();
     for cover in covers {
         let kind = s.covers[cover].kind;
-        let oak = s.covers[cover].structure.is_some();
         let hp = s.covers[cover].hp;
         let hit = shoot(&mut s, cover, 20.0);
         assert!(hit.alive, "{kind:?}");
-        if oak {
-            assert!(hit.hp <= hp - 20.0, "{kind:?}: {} left of {hp}", hit.hp);
-        } else {
-            assert_eq!(hit.hp, hp - 20.0, "{kind:?}");
-        }
+        assert!(hit.hp <= hp - 20.0, "{kind:?}: {} left of {hp}", hit.hp);
         assert_eq!(hit.impacts, 1, "{kind:?}");
         assert_eq!(hit.destroys, 0, "{kind:?}");
         let destroyed = shoot(&mut s, cover, 999.0);
@@ -108,10 +95,6 @@ fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
             destroyed.fragments > hit.fragments,
             "{kind:?}: destruction creates debris"
         );
-        if oak {
-            assert!(destroyed.fallen_parts > 0, "an oak falls as its parts");
-        } else {
-            assert!(destroyed.tree_parts > 0);
-        }
+        assert!(destroyed.fallen_parts > 0, "a tree falls as its parts");
     }
 }

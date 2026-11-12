@@ -1,19 +1,17 @@
 //! The damage paths for tanks and cover, and blasts. Every tank or cover hit routes through
 //! these helpers so team immunity, XP attribution and destruction chains stay consistent.
 
-use rapier3d::prelude::{SharedShape, Vector};
 
 use super::ammunition::clear_ammo;
 use super::bot_strategy::notice_hit;
 use super::combat_record::{record_death, record_kill};
 use super::combat_rules::{BlastFalloff, COMBAT, MINE, StructureBlast};
-use super::data::group;
 use super::debris_physics::{blast_debris, blast_loose_debris};
 use super::difficulty::difficulty_tuning;
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
-use super::physics::{from_rotation, from_vector, interaction_groups, vector};
+use super::physics::{from_rotation, from_vector, vector};
 use super::scenery_pieces::{CoverPose, break_scenery};
 use super::simulation::{GameMode, Simulation};
 use super::simulation_rules::{SIMULATION_RULES, SOLO};
@@ -22,20 +20,12 @@ use super::structure_physics::{
     throw_structure_debris,
 };
 use super::tank_destruction::tank_burnout;
-use super::tree_proportions::tree_proportions;
 use super::types::{
     CoverKind, DamageCause, DamageSource, DeathStyle, FragmentShape, Mine, SimEvent,
     SimEventType, Team, VehicleKind,
 };
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
-
-/// The upright footprint a felled tree leaves on its cover body: the stump's shape and
-/// its offset from the body origin (the trunk's mid-height).
-pub struct TreeStump {
-    pub shape: SharedShape,
-    pub offset: Vector,
-}
 
 /// How a blast from outside (a drum, a rocket, a mine) meets a structure's standing parts:
 /// a drum's over its whole radius, the others' over [`STRUCTURE_BLAST_REACH`] of theirs.
@@ -49,14 +39,6 @@ fn outside_structure_blast(cause: DamageCause, radius: f64, damage: f64) -> Stru
         reach: radius * STRUCTURE_BLAST_REACH,
         shatter: BLAST_CORE,
         throw: loose_throw(damage),
-    }
-}
-
-pub fn tree_stump(x: f64, z: f64, w: f64, d: f64, h: f64) -> TreeStump {
-    let stump_radius = tree_proportions(x, z, w, d, h).stump_radius;
-    TreeStump {
-        shape: SharedShape::cylinder(0.8, stump_radius as f32),
-        offset: vector(0.0, 0.8 - h / 2.0, 0.0),
     }
 }
 
@@ -260,18 +242,7 @@ impl Simulation {
         for &collider in self.world.bodies[body].colliders() {
             self.cover_by_collider.remove(&collider);
         }
-        let cover = &self.covers[cover_index];
-        if cover.kind == CoverKind::Tree {
-            // A tank-only upright footprint stops planar hulls climbing or crossing the
-            // stump while shells can still fly through the space left by the crown.
-            let stump = tree_stump(cover.x, cover.z, cover.w, cover.d, cover.h);
-            let collider = &mut self.world.colliders[cover.collider];
-            collider.set_shape(stump.shape);
-            collider.set_translation_wrt_parent(stump.offset);
-            collider.set_collision_groups(interaction_groups(group::STUMP_CONTACT));
-        } else {
-            self.remove_body(body);
-        }
+        self.remove_body(body);
         let region = moved_cover_region(&self.covers[cover_index]);
         self.nav.rebuild(&self.covers, Some(region));
         let cover = &self.covers[cover_index];

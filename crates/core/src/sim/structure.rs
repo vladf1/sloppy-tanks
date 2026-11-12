@@ -32,7 +32,7 @@ use super::debris_physics::DebrisMaterial;
 use super::house_layout::{HouseDesign, Roof};
 use super::house_structure::{HouseRole, shared_house_structure};
 use super::kinds::CoverKind;
-use super::oak_structure::{TreePart, oak_structure};
+use super::tree_structure::{TreePart, tree_structure};
 use super::structure_physics::ShapeCache;
 use super::timber_layout::TimberJoin;
 use super::timber_structure::{TimberRole, timber_structure};
@@ -318,12 +318,14 @@ pub struct Breakup {
 }
 
 /// What meets a standing part: shells and tanks, tanks alone (a tree's rooted stump,
-/// which a shell flies over) or shells alone (a tree's limb, high over a tank's hull).
+/// which a shell flies over), shells alone (a tree's limb, high over a tank's hull) or
+/// nothing (a conifer's thin boughs, which a shell flies through).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Contact {
     All,
     Tanks,
     Shells,
+    Nothing,
 }
 
 /// One part of a structure, or one landing piece.
@@ -590,7 +592,7 @@ pub enum Build {
     Tower,
     Timber,
     Crate,
-    /// A full-detail oak at its cover's place and size (`oak_structure`).
+    /// A cover tree at its cover's place and size (`tree_structure`).
     Tree { x: f64, z: f64, w: f64, d: f64, h: f64 },
 }
 
@@ -706,7 +708,7 @@ pub fn structure_of(
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),
-        CoverKind::Tree => oak_structure(x, z, w, d, h),
+        CoverKind::Tree => Some(tree_structure(x, z, w, d, h)),
         _ => None,
     }
 }

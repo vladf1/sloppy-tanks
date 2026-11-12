@@ -99,15 +99,13 @@ pub const DAMPINGS: [(&str, Damping); 5] = [
     ("rested", Damping::Rested),
 ];
 
-pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 10] = [
+pub const FRAGMENT_SHAPES: [(&str, FragmentShape); 8] = [
     ("armor", FragmentShape::Armor),
     ("wheel", FragmentShape::Wheel),
     ("track", FragmentShape::Track),
     ("shard", FragmentShape::Shard),
     ("wood", FragmentShape::Wood),
     ("panel", FragmentShape::Panel),
-    ("beam", FragmentShape::Beam),
-    ("log", FragmentShape::Log),
     ("drum-shell", FragmentShape::DrumShell),
     ("drum-lid", FragmentShape::DrumLid),
 ];
@@ -139,7 +137,7 @@ pub const GROUNDS: [(&str, GroundKind); 2] = [
     ("dry-grass", GroundKind::DryGrass),
     ("packed-dirt", GroundKind::PackedDirt),
 ];
-pub const EVENT_TYPES: [(&str, SimEventType); 14] = [
+pub const EVENT_TYPES: [(&str, SimEventType); 15] = [
     ("debris-impact", SimEventType::DebrisImpact),
     ("notice", SimEventType::Notice),
     ("shot", SimEventType::Shot),
@@ -154,6 +152,7 @@ pub const EVENT_TYPES: [(&str, SimEventType); 14] = [
     ("laser", SimEventType::Laser),
     ("promotion", SimEventType::Promotion),
     ("shatter", SimEventType::Shatter),
+    ("rustle", SimEventType::Rustle),
 ];
 pub const DAMAGE_CAUSES: [(&str, DamageCause); 10] = [
     ("standard", DamageCause::Standard),
@@ -210,13 +209,13 @@ const COVER_NAMES: [&str; 12] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const DAMPING_NAMES: [&str; 5] = names(&DAMPINGS);
 
-const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
+const SHAPE_NAMES: [&str; 8] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
 const PHASE_NAMES: [&str; 4] = names(&MATCH_PHASES);
 const GROUND_NAMES: [&str; 2] = names(&GROUNDS);
 const MAP_NAMES: [&str; 5] = names(&MAP_MODES);
-const EVENT_NAMES: [&str; 14] = names(&EVENT_TYPES);
+const EVENT_NAMES: [&str; 15] = names(&EVENT_TYPES);
 const CAUSE_NAMES: [&str; 10] = names(&DAMAGE_CAUSES);
 const DEATH_STYLE_NAMES: [&str; 1] = names(&DEATH_STYLES);
 
@@ -318,8 +317,6 @@ wire_fields!(
             "structureParts",
             FieldKind::Blob(PART_SET_BYTES, part_set_json)
         ),
-        TREE_COVER_ID = Field::new("treeCoverId", COUNT),
-        TREE_CENTER_Y = Field::new("treeCenterY", POSITION),
         CREATED_AT = Field::new("createdAt", VALUE),
         EXPIRES_AT = Field::new("expiresAt", VALUE),
         WRECK = Field::new("wreck", FieldKind::Choice(&VEHICLE_NAMES)),
@@ -702,15 +699,6 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     if fragment.structure.is_some() && passes_through(&simulation.world, fragment.body) {
         record.set_flag(PASSES_THROUGH, true);
     }
-    if let Some(tree) = fragment.tree_cover_id {
-        record.set_count(TREE_COVER_ID, u64::from(tree));
-    }
-    set_optional(
-        record,
-        TREE_CENTER_Y,
-        fragment.tree_center_y,
-        POSITION_SCALE,
-    );
     set_optional(record, CREATED_AT, fragment.created_at, VALUE_SCALE);
     set_optional(record, EXPIRES_AT, fragment.expires_at, VALUE_SCALE);
     set_choice(record, WRECK, &VEHICLE_KINDS, fragment.wreck);
@@ -1231,8 +1219,6 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
         rested: fields.opt_choice(DAMPING, &DAMPINGS)? == Some(Damping::Rested),
         damping: fields.opt_choice(DAMPING, &DAMPINGS)?,
         passes_through: fields.opt_flag(PASSES_THROUGH).unwrap_or(false),
-        tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
-        tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,
         expires_at: fields.opt_fixed(EXPIRES_AT)?,
         wreck: fields.opt_choice(WRECK, &VEHICLE_KINDS)?,

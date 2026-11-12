@@ -467,8 +467,6 @@ pub struct Fragment {
     /// The parts of a structure this body is (they fell together), and how it is
     /// landing and settling.
     pub structure: Option<super::structure_physics::StructureDebris>,
-    pub tree_cover_id: Option<u32>,
-    pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,
     /// Simulation timestamp for the 2.5-second tank wreck darkening.
     pub created_at: Option<f64>,

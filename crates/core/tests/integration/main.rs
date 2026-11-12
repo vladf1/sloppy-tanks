@@ -18,7 +18,7 @@ mod destruction_physics;
 mod difficulty;
 mod dodger_first;
 mod driving;
-mod felled_oaks;
+mod felled_trees;
 mod game;
 mod game_options;
 mod hit_registration;

@@ -22,7 +22,7 @@
 //!   [`branch_drop_stage`] (node names in [`tree_part`]). Detached timber members:
 //!   [`timber_part_model`].
 //! - Props: [`pickup_cube`], [`flags_model`] (cloth node [`FLAG_CLOTH_NODE`]),
-//!   debris meshes [`barrel_scrap_geometry`] and [`trunk_fragment`], burnt wrecks
+//!   debris meshes [`barrel_scrap_geometry`], burnt wrecks
 //!   darkened with [`aged_wreck_material`].
 //! - Custom shading: every `Effect::Custom` name with its parameters and inputs is
 //!   documented in [`effects_props`] and [`effects_scenery`]; the renderer's WGSL
@@ -147,7 +147,7 @@ beyond_geometry! {
 }
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, oak_pieces,
-    tree_branch_stage, tree_foliage, tree_model, tree_part, trunk_fragment,
+    standing_tree_model, tree_branch_stage, tree_foliage, tree_model, tree_part, tree_pieces,
 };
 
 // Surfaces.

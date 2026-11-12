@@ -204,7 +204,15 @@ pub fn rest_body(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHan
 /// Set every collider of `body` to collide as `groups` (a group from [`group`]).
 fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle, groups: u32) {
     for &collider in world.bodies[body].colliders() {
-        world.colliders[collider].set_collision_groups(interaction_groups(groups));
+        set_debris_groups(&mut world.colliders[collider], groups);
+    }
+}
+
+/// Set a fallen part's collider's groups, unless it is a conifer's bough, which only
+/// ever meets the ground ([`group::BOUGH_DEBRIS`]).
+fn set_debris_groups(collider: &mut rapier3d::prelude::Collider, groups: u32) {
+    if collider.collision_groups() != interaction_groups(group::BOUGH_DEBRIS) {
+        collider.set_collision_groups(interaction_groups(groups));
     }
 }
 
@@ -212,7 +220,7 @@ fn set_body_groups(world: &mut rapier3d::prelude::PhysicsWorld, body: RigidBodyH
 /// ([`group::STRUCTURE_DEBRIS_THROUGH`]): a timber knocked out, a piece dropping off the
 /// remains it was wedged on.
 pub fn passes_through(world: &rapier3d::prelude::PhysicsWorld, body: RigidBodyHandle) -> bool {
-    world.bodies[body].colliders().first().is_some_and(|&collider| {
+    world.bodies[body].colliders().iter().any(|&collider| {
         world.colliders[collider].collision_groups()
             == interaction_groups(group::STRUCTURE_DEBRIS_THROUGH)
     })
@@ -522,8 +530,13 @@ pub fn debris_colliders(layout: &Structure, parts: &PartSet) -> Vec<ColliderBuil
 fn debris_collider(layout: &Structure, index: usize) -> ColliderBuilder {
     let part = layout.part(index);
     let surface = debris_material(part.material.surface);
+    let groups = if part.contact == Contact::Nothing {
+        group::BOUGH_DEBRIS
+    } else {
+        group::STRUCTURE_DEBRIS
+    };
     part_collider(layout, index, SHRINK)
-        .collision_groups(interaction_groups(group::STRUCTURE_DEBRIS))
+        .collision_groups(interaction_groups(groups))
         .mass(part.mass.max(0.01) as f32)
         .friction(surface.friction as f32)
         .restitution(0.0)
@@ -563,6 +576,7 @@ fn standing_collider(layout: &Structure, index: usize) -> ColliderBuilder {
         Contact::All => group::COVER,
         Contact::Tanks => group::STUMP_CONTACT,
         Contact::Shells => group::SHELL_COVER,
+        Contact::Nothing => 0,
     };
     part_collider(layout, index, -layout.debris.seam)
         .collision_groups(interaction_groups(groups))
@@ -1238,8 +1252,10 @@ impl Simulation {
         // clear of the wall.
         if dislodged {
             for &handle in &colliders {
-                self.world.colliders[handle]
-                    .set_collision_groups(interaction_groups(group::STRUCTURE_DEBRIS_THROUGH));
+                set_debris_groups(
+                    &mut self.world.colliders[handle],
+                    group::STRUCTURE_DEBRIS_THROUGH,
+                );
             }
             if let Some(debris) = self.fragments.last_mut().and_then(|fragment| fragment.structure.as_mut()) {
                 debris.clear_at = Some(self.elapsed + DISLODGE_CLEAR);
@@ -1341,10 +1357,12 @@ impl Simulation {
         let center = old.center_of_mass();
         // A body dropping through the remains it lay on keeps doing so in pieces: put back
         // among them, its pieces would be pushed out through the ground.
+        let bough = interaction_groups(group::BOUGH_DEBRIS);
         let groups = old
             .colliders()
-            .first()
-            .map(|&handle| self.world.colliders[handle].collision_groups());
+            .iter()
+            .map(|&handle| self.world.colliders[handle].collision_groups())
+            .find(|&groups| groups != bough);
         self.remove_body(fragment.body);
         for (k, section) in bodies.into_iter().enumerate() {
             let body = self.world.insert_body(
@@ -1358,7 +1376,10 @@ impl Simulation {
             let colliders = self.insert_debris(layout, &section, body);
             if let Some(groups) = groups {
                 for &handle in &colliders {
-                    self.world.colliders[handle].set_collision_groups(groups);
+                    let collider = &mut self.world.colliders[handle];
+                    if collider.collision_groups() != bough {
+                        collider.set_collision_groups(groups);
+                    }
                 }
             }
             let rigid_body = &mut self.world.bodies[body];
@@ -2569,15 +2590,6 @@ pub fn part_box(cover: &Cover, index: usize) -> Option<(Point3, Point3)> {
 pub fn structural(kind: CoverKind) -> bool {
     matches!(
         kind,
-        CoverKind::House | CoverKind::Tower | CoverKind::Timber | CoverKind::Cargo
+        CoverKind::House | CoverKind::Tower | CoverKind::Timber | CoverKind::Cargo | CoverKind::Tree
     )
-}
-
-/// Whether the cover of `kind` at (x, z) sized w, d, h is built of parts: every cover of
-/// a [`structural`] kind, and a tree of the family that grows as a structure (an oak).
-pub fn built_of_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> bool {
-    structural(kind)
-        || (kind == CoverKind::Tree
-            && super::tree_proportions::tree_proportions(x, z, w, d, h).family
-                == super::oak_layout::OAK)
 }

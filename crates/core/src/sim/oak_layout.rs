@@ -4,7 +4,7 @@
 //! of ring sections that tilts a little at every section, and every branch also carries
 //! on from its parent's tip. Sprig cards grow along the outermost branches.
 //!
-//! The simulation builds the oak's parts from it (`oak_structure`) and the model draws
+//! The simulation builds the oak's parts from it (`tree_structure`) and the model draws
 //! it (`models::tree_models`), so what falls is what is drawn. It draws on the tree's own
 //! stream after [`tree_proportions`] (its roots, lean and growth, in the order the model
 //! drew them), never on the match's.
@@ -99,7 +99,7 @@ pub const OAK: u32 = 3;
 /// The trunk's rings below this one make its butt, where a felled oak breaks.
 pub const BUTT_RINGS: usize = 1;
 
-/// What an oak's part is (`oak_structure`), which its model draws on its own as it falls.
+/// What an oak's part is (`tree_structure`), which its model draws on its own as it falls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreePart {
     Stump,

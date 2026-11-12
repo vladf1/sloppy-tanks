@@ -162,6 +162,47 @@ fn timber_members_and_tree_seeds_are_fixed() {
     assert_eq!(families.len(), TREE_FAMILIES.len());
 }
 
+/// A cover tree a shell snapped a limb off stands without it: the limb lies as a fallen
+/// body of its own (`structure_debris`), never drawn twice.
+#[test]
+fn a_standing_tree_leaves_out_its_snapped_limbs() {
+    use crate::sim::oak_layout::TreePart;
+    use crate::sim::structure::Role;
+    use crate::sim::tree_structure::tree_structure;
+    for family in 0..6 {
+        let (x, z) = (0..400)
+            .map(|step| (-25.0 + f64::from(step) * 0.37, -12.0))
+            .find(|&(x, z)| tree_proportions(x, z, 2.6, 2.6, 5.8).family == family)
+            .unwrap();
+        let shape = CoverShape {
+            x,
+            z,
+            ..cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65)
+        };
+        let layout = tree_structure(x, z, 2.6, 2.6, 5.8);
+        let limb = (0..layout.parts.len())
+            .find(|&index| matches!(layout.parts[index].role, Role::Tree(TreePart::Limb(_))))
+            .unwrap();
+        let whole = drawn_triangles(&cover_model(&shape, TreeDetail::Full));
+        let snapped = CoverShape {
+            broken: PartSet::from_indices([limb]),
+            ..shape
+        };
+        let standing = drawn_triangles(&cover_model(&snapped, TreeDetail::Full));
+        let fallen = drawn_triangles(&structure_debris(&snapped, &PartSet::from_indices([limb])));
+        assert!(
+            standing < whole,
+            "{}: {standing} of {whole} triangles stand",
+            TREE_FAMILIES[family as usize]
+        );
+        assert!(
+            fallen > 0,
+            "{}: the limb is drawn fallen",
+            TREE_FAMILIES[family as usize]
+        );
+    }
+}
+
 #[test]
 fn tree_damage_sheds_boughs_by_stage() {
     let shape = TreeShape {
