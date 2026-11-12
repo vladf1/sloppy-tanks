@@ -16,7 +16,8 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 //   (`house_surfaces.rs`, unflipped): each row's top is a course's butt edge at
 //   the eave side, keyways run up from it and the next course's butt shades the
 //   row's bottom.
-// - stucco: a dash finish of small rounded bumps, near white so the paint tints it.
+// - stucco: a fine dash finish of tiny rounded bumps, near white so the paint tints
+//   it.
 const size = 1024;
 const folder = new URL("../assets/texture-sources/houses/", import.meta.url);
 
@@ -243,11 +244,12 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
   });
 }
 
-// Stucco: a dash finish, one small rounded bump beside the next with no larger
-// pattern, so the tile repeats across a wall unseen. The crevices between bumps
-// are a little darker than their tops.
+// Stucco: a fine dash finish, one tiny rounded bump beside the next (128 across the
+// tile, half a centimetre each at the walls' 0.6 m tile) with no larger pattern, so
+// the tile repeats across a wall unseen. The crevices between bumps are a little
+// darker than their tops.
 {
-  const cells = 30;
+  const cells = 128;
   const rng = new Random(4107);
   const bumps = Array.from({ length: cells * cells }, (_, i) => ({
     x: ((i % cells) + rng.range(0.2, 0.8)) / cells,
@@ -272,7 +274,7 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
         if (t < 1) height = Math.max(height, bump.height * Math.sqrt(1 - t * t));
       }
     }
-    const shade = 0.86 + 0.14 * height + (tileable(grit, u, v, 220, 2) - 0.375) * 0.04;
+    const shade = 0.84 + 0.16 * height + (tileable(grit, u, v, 400, 2) - 0.375) * 0.03;
     return [250, 247, 240].map((c) => c * shade);
   });
 }

@@ -89,9 +89,9 @@ const FLOWERS: [u32; 4] = [0xd9837a, 0xf0cf6a, 0xb59ad0, 0xf2efe6];
 const SATIN: (f64, f64) = (0.0, 0.6);
 /// Painted stucco walls: how deep their bumps' relief reads, their roughness, and how
 /// many times the bump texture repeats across one tile of the walls' coordinates, so
-/// a bump is under 3 cm across.
-const STUCCO: (f32, f32) = (0.02, 0.92);
-const STUCCO_REPEAT: f32 = 3.0;
+/// a bump is half a centimetre across.
+const STUCCO: (f32, f32) = (0.01, 0.92);
+const STUCCO_REPEAT: f32 = 4.0;
 /// Freshly split timber, pale and warm where the light catches its ends.
 const FRESH_SPLIT: u32 = 0xe2bf86;
 /// The plaster inside a cottage's walls, which a fallen panel shows: old lime

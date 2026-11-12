@@ -36,7 +36,7 @@ const STONE_TILE: f64 = 1.6;
 /// the painted wall at the paint's colour on average.
 pub(super) const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
 /// The stucco image's, for the same division.
-pub(super) const STUCCO_AVERAGE: u32 = 0xe8e5df;
+pub(super) const STUCCO_AVERAGE: u32 = 0xe5e3dc;
 /// Kit texture density of untextured finishes (it only shades flat paint).
 const PLAIN_UV_PER_METRE: f64 = 0.45;
 
