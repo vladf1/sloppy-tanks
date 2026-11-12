@@ -93,9 +93,11 @@ jobs:
 
   testflight:
     name: ${{ matrix.name }} (TestFlight)
-    # Only builds whose shell passed its lints and tests reach testers. Uploads are run by
-    # hand (Run workflow on main), so pushes to main do not wait for Apple's processing.
-    needs: [macos-check, ios]
+    # Only builds whose shell passed its lints and tests reach testers. They do not wait
+    # for the simulator app, which builds for five minutes or more and still fails the run
+    # by itself. Uploads are run by hand (Run workflow on main), so pushes to main do not
+    # wait for Apple's processing.
+    needs: macos-check
     if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
     outputs:
