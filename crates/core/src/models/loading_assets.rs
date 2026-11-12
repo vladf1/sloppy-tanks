@@ -51,14 +51,17 @@ const ROUND_TEXTURE_FILES: &[&str] = &[
     "textures/pickups/atlas.webp",
     "textures/wood/timber.webp",
     "textures/barrels/painted-drum.webp",
-    "textures/trees/bark.webp",
-    "textures/trees/rings.webp",
     "textures/houses/siding.webp",
     "textures/walls/weathered-concrete.webp",
 ];
 
-/// The village's birches, the one cover a theme alone has.
-const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &["textures/trees/birch.webp"];
+/// The village's trees, the one cover a theme alone has: their bark, birch bark, and
+/// the rings of a felled tree's cut.
+const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &[
+    "textures/trees/bark.webp",
+    "textures/trees/birch.webp",
+    "textures/trees/rings.webp",
+];
 
 /// Every texture file a round on `theme` loads while its arena builds, each once. The
 /// renderer reports a build that asks for a file this leaves out, or none for one it
