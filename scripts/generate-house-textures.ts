@@ -16,6 +16,8 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 //   (`house_surfaces.rs`, unflipped): each row's top is a course's butt edge at
 //   the eave side, keyways run up from it and the next course's butt shades the
 //   row's bottom.
+// - stucco: a skip-trowel (lace) finish, near white so the paint tints it: smooth
+//   raised patches a hand across over a sandy ground.
 const size = 1024;
 const folder = new URL("../assets/texture-sources/houses/", import.meta.url);
 
@@ -239,5 +241,23 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
     // Pale lichen rosettes on the older tabs.
     const spot = smooth(0.64, 0.72, tileable(lichen, u, v, 24, 3)) * (t > butt ? 1 : 0);
     return base.map((c, i) => mix(c, [196, 204, 150][i] * shade, spot * 0.55));
+  });
+}
+
+// Stucco: soft trowelled patches about 5 cm across at the walls' 2.4 m tile, the sandy
+// ground between them a little lower and rougher, and slow uneven weathering over
+// both. Kept faint: from the street a stucco wall reads as one matte colour.
+{
+  const patches = lattice(41, true);
+  const sand = lattice(42, true);
+  const wear = lattice(43, true);
+  await save("stucco", (u, v) => {
+    const raised = smooth(0.3, 0.58, tileable(patches, u, v, 44, 3));
+    const grain = tileable(sand, u, v, 170, 2) - 0.375;
+    const drift = tileable(wear, u, v, 4, 3) - 0.44;
+    let height = 0.925 + 0.04 * raised;
+    height += grain * mix(0.1, 0.04, raised);
+    height *= 1 + drift * 0.05;
+    return [250, 247, 240].map((c) => c * height);
   });
 }

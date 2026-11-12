@@ -24,6 +24,9 @@ pub const CLAPBOARD_TEXTURE: &str = "textures/houses/clapboard.webp";
 pub const BRICK_TEXTURE: &str = "textures/houses/brick.webp";
 /// Mortared fieldstone of the cottage plinths and steps.
 pub const STONE_TEXTURE: &str = "textures/houses/stone.webp";
+/// Skip-trowel stucco, near white for paint tints, at the clapboard's tile (a model's
+/// walls carry one texture density whatever their finish).
+pub const STUCCO_TEXTURE: &str = "textures/houses/stucco.webp";
 /// Metres per texture tile.
 const CLAPBOARD_TILE: f64 = 2.4;
 const BRICK_TILE: f64 = 1.2;
@@ -31,6 +34,8 @@ const STONE_TILE: f64 = 1.6;
 /// The average sRGB colour of the clapboard image: paint divided by it keeps
 /// the painted wall at the paint's colour on average.
 pub(super) const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
+/// The stucco image's, for the same division.
+pub(super) const STUCCO_AVERAGE: u32 = 0xedeae3;
 /// Kit texture density of untextured finishes (it only shades flat paint).
 const PLAIN_UV_PER_METRE: f64 = 0.45;
 

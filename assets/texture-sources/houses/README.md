@@ -11,7 +11,9 @@ bump map, so joints and shadowed laps are darker (lower) than the faces.
 | `brick.webp`     | 16 courses of running-bond brick in dark joints               | `building_kit.rs`, 1.2 m per tile on chimneys                       |
 | `stone.webp`     | Mortared fieldstone                                           | `building_kit.rs`, 1.6 m per tile on plinths and steps              |
 | `shingles.webp`  | 8 courses of asphalt shingles, legacy unflipped row order     | `house_surfaces.rs`; the cottages map one row per shingle course    |
+| `stucco.webp`   | Skip-trowel stucco, near white for paint tints                 | `house_model.rs`, 2.4 m per tile on the Neighborhood's walls          |
 
-`clapboard.webp`'s average colour is `CLAPBOARD_AVERAGE` in `building_kit.rs`; the
-generator prints it, so update the constant when the image changes. `siding.webp`
+`clapboard.webp`'s average colour is `CLAPBOARD_AVERAGE` in `building_kit.rs`, and
+`stucco.webp`'s is `STUCCO_AVERAGE`; the generator prints them, so update the constant
+when an image changes. `siding.webp`
 (crates, sheds, the watermill's walls) still comes from `generate-textures.ts`.

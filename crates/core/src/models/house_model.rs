@@ -25,8 +25,9 @@ use glam::{DMat4, DVec2, DVec3};
 
 use super::building_kit;
 use super::building_kit::{
-    BRICK_TEXTURE, CASING, Glazing, Opening, Palette, Surface, door, opening_casing, shutter_width,
-    shutters, surface_material, textured, uv_per_metre, window,
+    BRICK_TEXTURE, CASING, Glazing, Opening, Palette, STUCCO_AVERAGE, STUCCO_TEXTURE, Surface,
+    door, opening_casing, shutter_width, shutters, surface_material, textured, tint_over,
+    uv_per_metre, window,
 };
 use super::house_surfaces::{HouseSurface, house_material};
 use super::model_primitives::{Cache, material, put, shadowed};
@@ -86,8 +87,9 @@ const LEAVES_LIGHT: u32 = 0x5a8443;
 const FLOWERS: [u32; 4] = [0xd9837a, 0xf0cf6a, 0xb59ad0, 0xf2efe6];
 /// The shared satin class: every untextured finish but glass draws as one.
 const SATIN: (f64, f64) = (0.0, 0.6);
-/// Painted stucco walls' (metalness, roughness).
-const STUCCO: (f64, f64) = (0.0, 0.9);
+/// Painted stucco walls: how deep the trowelled texture's relief reads, and their
+/// roughness.
+const STUCCO: (f32, f32) = (0.012, 0.92);
 /// Freshly split timber, pale and warm where the light catches its ends.
 const FRESH_SPLIT: u32 = 0xe2bf86;
 /// The plaster inside a cottage's walls, which a fallen panel shows: old lime
@@ -255,10 +257,13 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         Surface::Siding if walls == WallFinish::Brick => {
             textured(BRICK_TEXTURE, palette.siding, 0.035, 0.9)
         }
-        // Smooth painted stucco: flat paint, matte.
-        Surface::Siding if walls == WallFinish::Stucco => {
-            material(palette.siding, STUCCO.0, STUCCO.1)
-        }
+        // Trowelled stucco under flat paint, matte.
+        Surface::Siding if walls == WallFinish::Stucco => textured(
+            STUCCO_TEXTURE,
+            tint_over(palette.siding, STUCCO_AVERAGE),
+            STUCCO.0,
+            STUCCO.1,
+        ),
         // The tract's timber (garage doors, box bays, porch posts, mulch) is stained a
         // dark chocolate, never the village's orange-tan.
         Surface::Wood if walls == WallFinish::Stucco => satin(TRACT_STAIN),
