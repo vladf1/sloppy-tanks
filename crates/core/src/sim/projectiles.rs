@@ -721,7 +721,7 @@ fn resolve_contact(
                 Weapon::Piercing => {
                     remove = !simulation.break_loose_body(fi, part, point, PIERCING_THROW);
                 }
-                _ => burst_at(simulation, &shot, point),
+                _ => burst_at(simulation, &shot, point, None),
             }
         }
         Contact::Debris { fragment: fi, .. } => {
@@ -881,11 +881,13 @@ fn resolve_contact(
 /// round it take the blast; tanks are hit only by what strikes them. A burst inside a
 /// cottage names the hole the shell came in by, which its flash and dust escape through.
 fn burst(simulation: &mut Simulation, shot: &Shot) {
-    burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z));
+    burst_at(simulation, shot, Point3::new(shot.x, shot.combat_y(), shot.z), None);
 }
 
-/// [`burst`] at `point`: on a structure's fallen part, where the shell met it.
-fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
+/// [`burst`] at `point`: on a structure's fallen part, where the shell met it. The
+/// structure `spared` (a tree the shell just struck) takes none of it: the strike was
+/// its damage.
+fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3, spared: Option<usize>) {
     let mut explosion = SimEvent::at(SimEventType::Explosion, point.x, point.z);
     explosion.size = Some(HE_BLAST_RADIUS);
     explosion.height = Some(point.y);
@@ -921,11 +923,12 @@ fn burst_at(simulation: &mut Simulation, shot: &Shot, point: Point3) {
     } else {
         simulation.events.push(explosion);
     }
-    simulation.structure_blast(
+    simulation.structure_blast_sparing(
         point,
         HE_BLAST_RADIUS,
         shot.damage,
         Some((shot.owner, shot.team)),
+        spared,
     );
 }
 
@@ -971,7 +974,11 @@ fn strike_structure_part(simulation: &mut Simulation, si: usize, cover: usize, p
                 if shot.fuse.is_none() {
                     simulation.events.push(impact);
                 }
-                burst(simulation, &shot);
+                // A tree takes a shell's damage once, where it struck: two standard
+                // shells fell it, its burst no third.
+                let tree = simulation.covers[cover].kind == CoverKind::Tree;
+                let at = Point3::new(shot.x, shot.combat_y(), shot.z);
+                burst_at(simulation, &shot, at, tree.then_some(cover));
                 true
             }
         }

@@ -776,9 +776,21 @@ impl Simulation {
     /// to nothing at its edge and shielded by standing parts between, and breaking and
     /// throwing the loose debris round it.
     pub fn structure_blast(&mut self, point: Point3, radius: f64, damage: f64, by: Option<(u32, Team)>) {
+        self.structure_blast_sparing(point, radius, damage, by, None);
+    }
+
+    /// [`Self::structure_blast`], leaving the structure `spared` (if any) alone.
+    pub fn structure_blast_sparing(
+        &mut self,
+        point: Point3,
+        radius: f64,
+        damage: f64,
+        by: Option<(u32, Team)>,
+        spared: Option<usize>,
+    ) {
         blast_loose_debris(self, point.planar(), radius, damage);
         blast_structure_debris(self, point, radius, damage);
-        for cover in 0..self.covers.len() {
+        for cover in (0..self.covers.len()).filter(|&cover| Some(cover) != spared) {
             self.structure_blast_on(cover, point, radius, damage, by);
         }
     }

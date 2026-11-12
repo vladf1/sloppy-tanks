@@ -81,7 +81,7 @@ fn shell_hits_chip_trees_and_a_fatal_hit_bursts_once_and_leaves_debris() {
         let hp = s.covers[cover].hp;
         let hit = shoot(&mut s, cover, 20.0);
         assert!(hit.alive, "{kind:?}");
-        assert!(hit.hp <= hp - 20.0, "{kind:?}: {} left of {hp}", hit.hp);
+        assert_eq!(hit.hp, hp - 20.0, "{kind:?}");
         assert_eq!(hit.impacts, 1, "{kind:?}");
         assert_eq!(hit.destroys, 0, "{kind:?}");
         let destroyed = shoot(&mut s, cover, 999.0);

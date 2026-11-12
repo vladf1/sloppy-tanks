@@ -382,3 +382,31 @@ fn a_conifers_fallen_boughs_meet_only_the_ground() {
         assert!(boughs > 0, "a {name} has boughs");
     }
 }
+
+/// One standard shell on the butt takes half a tree's health: it stands, and the second
+/// fells it. Its burst does not strike the part the shell just struck again.
+#[test]
+fn one_standard_shell_leaves_a_tree_standing_at_half_health() {
+    for family in 0..6 {
+        let name = TREE_FAMILIES[family as usize];
+        let (mut s, tree, (x, z)) = lone_tree(family);
+        let max = s.covers[tree].max_hp;
+        fire_at(
+            &mut s,
+            Vec2::new(x, z - 10.0),
+            Vec2::new(x, z),
+            1.2,
+            Weapon::Standard,
+        );
+        run(&mut s, 0.5);
+        assert!(
+            s.covers[tree].alive,
+            "one standard shell leaves a {name} standing"
+        );
+        assert_eq!(
+            s.covers[tree].hp,
+            max - 40.0,
+            "a {name} takes one shell's damage"
+        );
+    }
+}
