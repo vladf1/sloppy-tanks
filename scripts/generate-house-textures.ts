@@ -16,8 +16,7 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 //   (`house_surfaces.rs`, unflipped): each row's top is a course's butt edge at
 //   the eave side, keyways run up from it and the next course's butt shades the
 //   row's bottom.
-// - stucco: a skip-trowel (lace) finish, near white so the paint tints it: smooth
-//   raised patches a hand across over a sandy ground.
+// - stucco: a dash finish of small rounded bumps, near white so the paint tints it.
 const size = 1024;
 const folder = new URL("../assets/texture-sources/houses/", import.meta.url);
 
@@ -244,20 +243,36 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
   });
 }
 
-// Stucco: soft trowelled patches about 5 cm across at the walls' 2.4 m tile, the sandy
-// ground between them a little lower and rougher, and slow uneven weathering over
-// both. Kept faint: from the street a stucco wall reads as one matte colour.
+// Stucco: a dash finish, one small rounded bump beside the next with no larger
+// pattern, so the tile repeats across a wall unseen. The crevices between bumps
+// are a little darker than their tops.
 {
-  const patches = lattice(41, true);
-  const sand = lattice(42, true);
-  const wear = lattice(43, true);
+  const cells = 30;
+  const rng = new Random(4107);
+  const bumps = Array.from({ length: cells * cells }, (_, i) => ({
+    x: ((i % cells) + rng.range(0.2, 0.8)) / cells,
+    y: (Math.floor(i / cells) + rng.range(0.2, 0.8)) / cells,
+    radius: rng.range(0.45, 0.72) / cells,
+    height: rng.range(0.55, 1),
+  }));
+  const grit = lattice(42, true);
   await save("stucco", (u, v) => {
-    const raised = smooth(0.3, 0.58, tileable(patches, u, v, 44, 3));
-    const grain = tileable(sand, u, v, 170, 2) - 0.375;
-    const drift = tileable(wear, u, v, 4, 3) - 0.44;
-    let height = 0.925 + 0.04 * raised;
-    height += grain * mix(0.1, 0.04, raised);
-    height *= 1 + drift * 0.05;
-    return [250, 247, 240].map((c) => c * height);
+    const cx = Math.floor(u * cells);
+    const cy = Math.floor(v * cells);
+    let height = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const gx = cx + dx;
+        const gy = cy + dy;
+        const bump =
+          bumps[(((gy % cells) + cells) % cells) * cells + (((gx % cells) + cells) % cells)];
+        const t =
+          Math.hypot(u - bump.x - Math.floor(gx / cells), v - bump.y - Math.floor(gy / cells)) /
+          bump.radius;
+        if (t < 1) height = Math.max(height, bump.height * Math.sqrt(1 - t * t));
+      }
+    }
+    const shade = 0.86 + 0.14 * height + (tileable(grit, u, v, 220, 2) - 0.375) * 0.04;
+    return [250, 247, 240].map((c) => c * shade);
   });
 }

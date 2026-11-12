@@ -35,7 +35,7 @@ use super::quarry_surfaces::SANDSTONE_TEXTURE;
 use super::tank_kit::{Kit, KitMeshes, aim, pose, shift};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{Mesh, octahedron_geometry};
-use crate::scene::{Material, Node};
+use crate::scene::{Color, Material, Node, TextureRef};
 use crate::sim::house_layout::{
     BEAN_POLE, BEAN_SPREAD, CHIMNEY, DOOR_HEIGHT, GARAGE_HEIGHT, GARAGE_PAIR, GarageLook,
     GaragePaint, GardenBed, HouseDesign, HousePart, PLINTH, RAFTER_DEPTH, Roof, RoofCover,
@@ -87,9 +87,11 @@ const LEAVES_LIGHT: u32 = 0x5a8443;
 const FLOWERS: [u32; 4] = [0xd9837a, 0xf0cf6a, 0xb59ad0, 0xf2efe6];
 /// The shared satin class: every untextured finish but glass draws as one.
 const SATIN: (f64, f64) = (0.0, 0.6);
-/// Painted stucco walls: how deep the trowelled texture's relief reads, and their
-/// roughness.
-const STUCCO: (f32, f32) = (0.012, 0.92);
+/// Painted stucco walls: how deep their bumps' relief reads, their roughness, and how
+/// many times the bump texture repeats across one tile of the walls' coordinates, so
+/// a bump is under 3 cm across.
+const STUCCO: (f32, f32) = (0.02, 0.92);
+const STUCCO_REPEAT: f32 = 3.0;
 /// Freshly split timber, pale and warm where the light catches its ends.
 const FRESH_SPLIT: u32 = 0xe2bf86;
 /// The plaster inside a cottage's walls, which a fallen panel shows: old lime
@@ -257,13 +259,8 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         Surface::Siding if walls == WallFinish::Brick => {
             textured(BRICK_TEXTURE, palette.siding, 0.035, 0.9)
         }
-        // Trowelled stucco under flat paint, matte.
-        Surface::Siding if walls == WallFinish::Stucco => textured(
-            STUCCO_TEXTURE,
-            tint_over(palette.siding, STUCCO_AVERAGE),
-            STUCCO.0,
-            STUCCO.1,
-        ),
+        // Dash-finish stucco under flat paint, matte.
+        Surface::Siding if walls == WallFinish::Stucco => stucco(palette.siding),
         // The tract's timber (garage doors, box bays, porch posts, mulch) is stained a
         // dark chocolate, never the village's orange-tan.
         Surface::Wood if walls == WallFinish::Stucco => satin(TRACT_STAIN),
@@ -285,6 +282,28 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         Surface::Splinters => satin(FRESH_SPLIT),
         _ => satin(source.color.0),
     }
+}
+
+static STUCCO_WALLS: Cache<u32, Material> = Cache::new("house_model::STUCCO_WALLS");
+
+/// A stucco wall in `paint`: small rounded bumps, the paint's colour on average.
+fn stucco(paint: u32) -> Arc<Material> {
+    STUCCO_WALLS.get_or_insert(paint, || {
+        let map = TextureRef {
+            anisotropy: 8,
+            repeat: [STUCCO_REPEAT; 2],
+            ..TextureRef::file(STUCCO_TEXTURE)
+        };
+        Material {
+            map: Some(map.clone()),
+            bump_map: Some(map),
+            bump_scale: STUCCO.0,
+            color: Color(tint_over(paint, STUCCO_AVERAGE)),
+            roughness: STUCCO.1,
+            metalness: 0.0,
+            ..Material::default()
+        }
+    })
 }
 
 /// The tract's buff stacked-stone veneer: thin courses of split sandstone (at
