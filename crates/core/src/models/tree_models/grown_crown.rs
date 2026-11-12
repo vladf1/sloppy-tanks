@@ -1,5 +1,5 @@
 //! Full-detail oaks drawn from the skeleton the simulation grows
-//! ([`crate::sim::oak_layout`], after the branching of Daniel Greenheck's EZ-Tree
+//! ([`crate::sim::grown_layout`], after the branching of Daniel Greenheck's EZ-Tree
 //! generator, MIT, `LICENSE-EZ-Tree.txt` beside this file): each branch a tube of its
 //! rings, and sprig cards along the outermost branches, whose texture draws the twigs.
 //!
@@ -12,15 +12,15 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use super::{
-    BARK_COLORS, Card, Crown, CrownShape, LEAF_COLORS, OAK_CELLS, RINGS_COLOR, TreeDetail,
-    TreeGeometry, TreeShape, TreeSurface, add_mesh, batch, card_tint_of, geometry, into_atlas,
-    limb, shadowed, surface,
+    BARK_COLORS, BIRCH_COLORS, Card, Crown, CrownShape, LEAF_COLORS, OAK_CELLS, OVATE_CELLS,
+    RINGS_COLOR, TreeDetail, TreeGeometry, TreeShape, TreeSurface, add_mesh, batch, card_tint_of,
+    geometry, into_atlas, limb, shadowed, surface,
 };
 use crate::geometry::math::quat_from_euler;
 use crate::geometry::{Mesh, narrow};
 use crate::scene::{Material, Node};
-use crate::sim::oak_layout::{
-    BUTT_RINGS, LIMB_SNAP_RING, OAK, OakLayout, OakSprig, Section, TreePart, oak_layout,
+use crate::sim::grown_layout::{
+    BUTT_RINGS, GrownLayout, GrownSprig, LIMB_SNAP_RING, OAK, Section, TreePart, grown_layout,
 };
 use crate::sim::tree_proportions::TreeProportions;
 
@@ -67,9 +67,14 @@ pub(super) fn tube_mesh(sections: &[Section], sides: u32) -> Mesh {
     }
 }
 
-/// A sprig's card.
-pub(super) fn sprig_card(sprig: &OakSprig) -> Card {
-    let mut cell = OAK_CELLS[sprig.cell];
+/// A sprig's card, cut from the oak's lobed sprigs or the birch's and aspen's ovate ones.
+pub(super) fn sprig_card(sprig: &GrownSprig, family: u32) -> Card {
+    let cells = if family == OAK {
+        &OAK_CELLS
+    } else {
+        &OVATE_CELLS
+    };
+    let mut cell = cells[sprig.cell];
     if sprig.mirrored {
         cell.swap(0, 2);
     }
@@ -81,26 +86,26 @@ pub(super) fn sprig_card(sprig: &OakSprig) -> Card {
     }
 }
 
-/// Grow a full-detail oak's trunk, limbs, branches and sprigs into `crown` from its
+/// Grow a full-detail tree's trunk, limbs, branches and sprigs into `crown` from its
 /// skeleton, each shedding bough a group of its own, leaving out the limbs `keep` does
 /// not pick (snapped off it); returns the volume its foliage shades as.
-pub(super) fn add_grown_oak_crown(
+pub(super) fn add_grown_crown(
     crown: &mut Crown,
-    oak: &OakLayout,
+    tree: &GrownLayout,
     bark: &Arc<Material>,
     keep: &dyn Fn(TreePart) -> bool,
 ) -> CrownShape {
     let kept = |branch: usize| {
         keep(
-            oak.branches[branch]
+            tree.branches[branch]
                 .limb
                 .map_or(TreePart::Trunk, TreePart::Limb),
         )
     };
     // Each bough's group among the crown's children, made as its first branch grows.
     let mut boughs: Vec<Option<usize>> = Vec::new();
-    let mut parents = Vec::with_capacity(oak.branches.len());
-    for branch in &oak.branches {
+    let mut parents = Vec::with_capacity(tree.branches.len());
+    for branch in &tree.branches {
         let parent = match branch.bough {
             Some((bough, true)) => {
                 let group = crown.branch_parent(shed_stage(bough));
@@ -121,13 +126,16 @@ pub(super) fn add_grown_oak_crown(
             .push(shadowed(Arc::new(tube), bark.clone()));
     }
     let (mut low, mut high) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
-    for sprig in &oak.sprigs {
+    for sprig in &tree.sprigs {
         for corner in sprig.corners {
             low = low.min(corner);
             high = high.max(corner);
         }
         if kept(sprig.branch) {
-            crown.card(parents[sprig.branch], sprig_card(sprig));
+            crown.card(
+                parents[sprig.branch],
+                sprig_card(sprig, tree.proportions.family),
+            );
         }
     }
     CrownShape::Round {
@@ -136,41 +144,46 @@ pub(super) fn add_grown_oak_crown(
     }
 }
 
-/// The parts of the full-detail oak at `c` that `keep` picks, drawn where they stood
+/// The parts of the full-detail tree at `c` that `keep` picks, drawn where they stood
 /// about its ground centre and still (no sway), without the boughs it shed at damage
-/// stages up to `shed`: what a felled oak's bodies look like as they fall and lie
+/// stages up to `shed`: what a felled tree's bodies look like as they fall and lie
 /// (`structure_debris`). Its leaves shade as the whole crown did.
-pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> Node {
-    let oak = oak_layout(c.x, c.z, c.w, c.d, c.h);
+pub fn grown_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> Node {
+    let tree = grown_layout(c.x, c.z, c.w, c.d, c.h);
     let TreeProportions {
         seed,
+        family,
         twist,
         radius,
         stump_height,
         ..
-    } = oak.proportions;
+    } = tree.proportions;
     let variant = seed % 24;
-    let bark = surface(TreeSurface::Bark, BARK_COLORS[OAK as usize], false);
-    let foliage = surface(TreeSurface::LeafSprigs, LEAF_COLORS[OAK as usize], false);
+    let bark = if family == OAK {
+        surface(TreeSurface::Bark, BARK_COLORS[OAK as usize], false)
+    } else {
+        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4], false)
+    };
+    let foliage = surface(TreeSurface::LeafSprigs, LEAF_COLORS[family as usize], false);
     let rings = surface(TreeSurface::Rings, RINGS_COLOR, false);
     let mut crown = Crown {
-        node: Node::group("oak-pieces"),
+        node: Node::group("grown-pieces"),
         detail: TreeDetail::Full,
         cards: Vec::new(),
     };
     // Whether an outer branch (and its leaves) is drawn: with its whole limb, or with
     // the piece of it it grows on once the limb snapped.
     let kept = |branch: usize| {
-        let shed_off = oak.branches[branch]
+        let shed_off = tree.branches[branch]
             .bough
             .is_some_and(|(bough, _)| shed_stage(bough) <= shed);
         !shed_off
-            && match oak.limb_side(branch) {
+            && match tree.limb_side(branch) {
                 Some((limb, outer)) => {
                     keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer })
                 }
                 None => keep(
-                    oak.branches[branch]
+                    tree.branches[branch]
                         .limb
                         .map_or(TreePart::Trunk, TreePart::Limb),
                 ),
@@ -182,7 +195,7 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> 
             .children
             .push(shadowed(Arc::new(tube_mesh(sections, sides)), bark.clone()));
     };
-    for (index, branch) in oak.branches.iter().enumerate() {
+    for (index, branch) in tree.branches.iter().enumerate() {
         if index == 0 {
             // The trunk's tube: its butt below the cut, the trunk above.
             let last = branch.sections.len() - 1;
@@ -215,7 +228,7 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> 
     }
     if keep(TreePart::Trunk) && !keep(TreePart::Butt) {
         // The splintered end the trunk tore from its butt with.
-        let cut = oak.branches[0].sections[BUTT_RINGS];
+        let cut = tree.branches[0].sections[BUTT_RINGS];
         let end = add_mesh(
             &mut crown.node,
             geometry(TreeGeometry::StumpCut((variant + 7) % 24)),
@@ -234,7 +247,7 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> 
             DVec3::new(radius, stump_height, radius),
         )
         .set_rotation_euler(0.0, twist, 0.0);
-        for root in &oak.roots {
+        for root in &tree.roots {
             limb(
                 &mut crown.node,
                 bark.clone(),
@@ -246,13 +259,13 @@ pub fn oak_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> 
         }
     }
     let (mut low, mut high) = (DVec3::splat(f64::MAX), DVec3::splat(f64::MIN));
-    for sprig in &oak.sprigs {
+    for sprig in &tree.sprigs {
         for corner in sprig.corners {
             low = low.min(corner);
             high = high.max(corner);
         }
         if kept(sprig.branch) {
-            crown.card(None, sprig_card(sprig));
+            crown.card(None, sprig_card(sprig, tree.proportions.family));
         }
     }
     let shape = CrownShape::Round {

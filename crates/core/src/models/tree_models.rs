@@ -30,16 +30,16 @@ use crate::geometry::math::{
 };
 use crate::geometry::{CylinderGeometry, Mesh, narrow, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
+use crate::sim::grown_layout::{TreePart, grown_layout, grows};
 use crate::sim::math::Random;
-use crate::sim::oak_layout::{OAK, TreePart, oak_layout};
 use crate::sim::tree_layout::{
     BROADLEAF_STEM_TOP, CONIFER_STEM_TOP, GOLDEN_ANGLE, LayoutDetail, tree_layout,
 };
 
-mod oak_growth;
+mod grown_crown;
 mod tree_growth;
 use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
-pub use oak_growth::oak_pieces;
+pub use grown_crown::grown_pieces;
 pub use tree_growth::tree_pieces;
 
 /// Node names that presentation looks up on a full-detail tree.
@@ -812,10 +812,10 @@ pub fn standing_tree_model(
         cards: Vec::new(),
     };
     let variant = seed % 24;
-    // A full-detail oak grows from the skeleton the simulation builds its parts from;
-    // every other tree from its own layout, the same for a cover tree's parts.
-    let oak = (full && family == OAK).then(|| oak_layout(c.x, c.z, c.w, c.d, c.h));
-    let grown = oak
+    // A full-detail broadleaf grows limb by limb from the skeleton the simulation builds
+    // its parts from; every other tree from its own layout, the same for a cover tree's.
+    let branched = (full && grows(family)).then(|| grown_layout(c.x, c.z, c.w, c.d, c.h));
+    let grown = branched
         .is_none()
         .then(|| tree_layout(c.x, c.z, c.w, c.d, c.h, detail.layout()));
     if full {
@@ -830,10 +830,10 @@ pub fn standing_tree_model(
         )
         .set_rotation_euler(0.0, twist, 0.0);
         // Buttress roots flare from the stump and dive into the ground.
-        let roots = match (&oak, &grown) {
-            (Some(oak), _) => &oak.roots,
+        let roots = match (&branched, &grown) {
+            (Some(branched), _) => &branched.roots,
             (_, Some(grown)) => &grown.roots,
-            _ => unreachable!("an oak or another tree"),
+            _ => unreachable!("a grown tree or a laid out one"),
         };
         for root in roots {
             limb(
@@ -860,7 +860,7 @@ pub fn standing_tree_model(
         group.children.push(stump);
     }
     let trunk_base = if full { stump_height * 0.88 } else { 0.0 };
-    // A full-detail oak grows its own trunk with its limbs.
+    // A grown broadleaf grows its own trunk with its limbs.
     if let Some(grown) = grown.as_ref().filter(|_| keep(TreePart::Trunk)) {
         let trunk = limb(
             &mut crown.node,
@@ -897,8 +897,8 @@ pub fn standing_tree_model(
         );
         end.rotation = quat_from_euler(PI, twist, 0.0);
     }
-    let shape = match (&oak, &grown) {
-        (Some(oak), _) => oak_growth::add_grown_oak_crown(&mut crown, oak, &bark, keep),
+    let shape = match (&branched, &grown) {
+        (Some(branched), _) => grown_crown::add_grown_crown(&mut crown, branched, &bark, keep),
         (_, Some(grown)) if conifer && detail == TreeDetail::Distant => distant_conifer(
             &mut crown.node,
             c,
@@ -910,7 +910,7 @@ pub fn standing_tree_model(
             tints.map_or([1.0; 3], |(leaf, _)| leaf),
         ),
         (_, Some(grown)) => tree_growth::add_tree_crown(&mut crown, grown, &bark, true, 0, keep),
-        _ => unreachable!("an oak or another tree"),
+        _ => unreachable!("a grown tree or a laid out one"),
     };
     crown.grow_foliage(&foliage, &shape, tints.map_or([1.0; 3], |(leaf, _)| leaf));
     let mut crown = crown.node;

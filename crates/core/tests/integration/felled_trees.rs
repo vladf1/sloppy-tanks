@@ -9,8 +9,8 @@ use crate::support::{clear_arena, collider_groups, fire_at, idle, place_tank, ru
 use sloppy_core::models::TREE_FAMILIES;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::group;
+use sloppy_core::sim::grown_layout::TreePart;
 use sloppy_core::sim::math::{Point3, Vec2};
-use sloppy_core::sim::oak_layout::TreePart;
 use sloppy_core::sim::physics::interaction_groups;
 use sloppy_core::sim::structure::{PartSet, Role};
 use sloppy_core::sim::tree_proportions::tree_proportions;

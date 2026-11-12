@@ -1,7 +1,7 @@
 //! A cover tree as a structure (`structure.rs`): its rooted stump, the butt where it
 //! snaps, the trunk and each limb with its branches and leaves, all shaped from the
-//! skeleton its model draws ([`super::oak_layout`] for an oak, [`super::tree_layout`]
-//! for the rest), so what falls is what is drawn.
+//! skeleton its model draws ([`super::grown_layout`] for an oak, a birch or an aspen,
+//! [`super::tree_layout`] for a conifer), so what falls is what is drawn.
 //!
 //! Shells meet its wood alone: a hit on the trunk strains the butt, which breaks to two
 //! standard shells as a tree always has, and a hit on a broadleaf's limb snaps it off
@@ -16,8 +16,8 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 
 use super::debris_physics::DebrisMaterial;
-use super::oak_layout::{BUTT_RINGS, LIMB_SNAP_RING, OAK, OakLayout, oak_layout};
-pub use super::oak_layout::TreePart;
+use super::grown_layout::{BUTT_RINGS, GrownLayout, LIMB_SNAP_RING, grown_layout, grows};
+pub use super::grown_layout::TreePart;
 use super::structure::{
     Breaking, Breakup, Build, Contact, DebrisRules, HeldLayouts, Levelling, Lie, Material, Part,
     PartSet, PartShape, Role, Structure, Tipping,
@@ -105,10 +105,10 @@ static TREES: HeldLayouts<[u64; 5]> = HeldLayouts::new();
 pub fn tree_structure(x: f64, z: f64, w: f64, d: f64, h: f64) -> Arc<Structure> {
     let key = [x, z, w, d, h].map(f64::to_bits);
     TREES.get_or_lay_out(key, || {
-        if tree_proportions(x, z, w, d, h).family == OAK {
-            lay_out_oak(x, z, w, d, h)
+        if grows(tree_proportions(x, z, w, d, h).family) {
+            lay_out_grown(x, z, w, d, h)
         } else {
-            lay_out_tree(x, z, w, d, h)
+            lay_out_conifer(x, z, w, d, h)
         }
     })
 }
@@ -142,15 +142,15 @@ fn rod_points(
         })
 }
 
-/// The points round rings `from..=to` of an oak's branch, `least` (m) from its axis at
+/// The points round rings `from..=to` of a grown tree's branch, `least` (m) from its axis at
 /// least.
 fn ring_points(
-    oak: &OakLayout,
+    tree: &GrownLayout,
     branch: usize,
     rings: std::ops::RangeInclusive<usize>,
     least: f64,
 ) -> Vec<DVec3> {
-    let branch = &oak.branches[branch];
+    let branch = &tree.branches[branch];
     branch.sections[rings]
         .iter()
         .flat_map(|section| {
@@ -277,36 +277,36 @@ fn bounds(points: impl Iterator<Item = DVec3>) -> Option<(DVec3, DVec3)> {
     (low.x <= high.x).then_some((low, high))
 }
 
-/// An oak, from its grown skeleton.
-fn lay_out_oak(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
-    let oak = oak_layout(x, z, w, d, h);
-    let trunk_rings = oak.branches[0].sections.len() - 1;
-    let mut parts = Vec::with_capacity(FIRST_LIMB + oak.limbs);
-    let butt = ring_points(&oak, 0, 0..=BUTT_RINGS, 0.0);
-    parts.extend(stump_and_butt(&oak.proportions, w, d, butt));
-    let sections = &oak.branches[0].sections;
+/// A broadleaf (an oak, a birch or an aspen), from its grown skeleton.
+fn lay_out_grown(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
+    let tree = grown_layout(x, z, w, d, h);
+    let trunk_rings = tree.branches[0].sections.len() - 1;
+    let mut parts = Vec::with_capacity(FIRST_LIMB + tree.limbs);
+    let butt = ring_points(&tree, 0, 0..=BUTT_RINGS, 0.0);
+    parts.extend(stump_and_butt(&tree.proportions, w, d, butt));
+    let sections = &tree.branches[0].sections;
     parts.push(trunk(
-        ring_points(&oak, 0, BUTT_RINGS..=trunk_rings, 0.0),
+        ring_points(&tree, 0, BUTT_RINGS..=trunk_rings, 0.0),
         sections[trunk_rings].origin - sections[BUTT_RINGS].origin,
     ));
-    for index in 0..oak.limbs {
+    for index in 0..tree.limbs {
         // Its main branch bears it: its twigs and leaves give under it and never prop it
         // up off the ground.
-        let points: Vec<DVec3> = oak
+        let points: Vec<DVec3> = tree
             .branches
             .iter()
             .enumerate()
             .filter(|(_, branch)| branch.limb == Some(index) && branch.level == 1)
             .flat_map(|(branch, grown)| {
-                ring_points(&oak, branch, 0..=grown.sections.len() - 1, BRANCH_HULL)
+                ring_points(&tree, branch, 0..=grown.sections.len() - 1, BRANCH_HULL)
             })
             .collect();
         // High over a tank's hull: shells meet it, tanks pass under.
         parts.push(limb(points, LIMB, index, Contact::Shells));
     }
-    let mut structure = standing_tree(x, z, w, d, h, parts, oak.proportions.seed);
-    for index in 0..oak.limbs {
-        let Some((main, branch)) = oak
+    let mut structure = standing_tree(x, z, w, d, h, parts, tree.proportions.seed);
+    for index in 0..tree.limbs {
+        let Some((main, branch)) = tree
             .branches
             .iter()
             .enumerate()
@@ -319,15 +319,15 @@ fn lay_out_oak(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
         snap_in_two(
             &mut structure,
             index,
-            [0..=snap, snap..=last].map(|rings| ring_points(&oak, main, rings, BRANCH_HULL)),
+            [0..=snap, snap..=last].map(|rings| ring_points(&tree, main, rings, BRANCH_HULL)),
         );
     }
     // Each limb's leaves, which a shell flies through.
-    for index in 0..oak.limbs {
-        let corners = oak
+    for index in 0..tree.limbs {
+        let corners = tree
             .sprigs
             .iter()
-            .filter(|sprig| oak.branches[sprig.branch].limb == Some(index))
+            .filter(|sprig| tree.branches[sprig.branch].limb == Some(index))
             .flat_map(|sprig| sprig.corners);
         if let Some((low, high)) = bounds(corners) {
             structure.foliage.push((FIRST_LIMB + index, low, high));
@@ -348,10 +348,9 @@ fn spray_corners(transform: &glam::DMat4) -> impl Iterator<Item = DVec3> + '_ {
     })
 }
 
-/// Any tree but an oak, from its layout: a broadleaf's limbs are the limbs its lobes
-/// grow on, shells meet them and they snap in two where they lie; a conifer's limbs are
-/// its boughs gathered by side and height, too thin for a shell to meet.
-fn lay_out_tree(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
+/// A conifer, from its layout: its limbs are its boughs gathered by side and height,
+/// too thin for a shell to meet.
+fn lay_out_conifer(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
     let tree = tree_layout(x, z, w, d, h, LayoutDetail::Full);
     let TreeLayout {
         proportions,
@@ -361,7 +360,6 @@ fn lay_out_tree(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
         limbs,
         ..
     } = &tree;
-    let conifer = proportions.family < 3;
     let base = DVec3::new(0.0, *trunk_base, 0.0);
     let length = (*trunk_top - base).length();
     let cut = (BUTT_LENGTH / length).min(0.2);
@@ -370,57 +368,51 @@ fn lay_out_tree(x: f64, z: f64, w: f64, d: f64, h: f64) -> Structure {
     let mut parts = Vec::with_capacity(FIRST_LIMB + limbs);
     let butt = rod_points(base, at(cut), (radius_at(0.0), radius_at(cut)), 0.0, RING_POINTS);
     parts.extend(stump_and_butt(proportions, w, d, butt.collect()));
-    let trunk_points = rod_points(at(cut), *trunk_top, (radius_at(cut), radius_at(1.0)), TRUNK_TIP, RING_POINTS);
+    let trunk_points = rod_points(
+        at(cut),
+        *trunk_top,
+        (radius_at(cut), radius_at(1.0)),
+        TRUNK_TIP,
+        RING_POINTS,
+    );
     parts.push(trunk(trunk_points.collect(), *trunk_top - at(cut)));
-    // A broadleaf's limb is borne by the limb its lobe grows on, never its twigs; a
-    // conifer's by all its boughs.
-    let bears = |step: &Growth, index: usize| match *step {
-        Growth::Limb { main, limb, .. } => limb == Some(index) && (main || conifer),
-        _ => false,
-    };
     for index in 0..*limbs {
+        // Every bough on its side and height bears it.
         let points: Vec<DVec3> = growth
             .iter()
-            .filter(|step| bears(step, index))
-            .flat_map(|step| match *step {
+            .filter_map(|step| match *step {
                 Growth::Limb {
-                    from, to, radius, ..
-                } => rod_points(from, to, (radius, radius), BRANCH_HULL, LIMB_RING_POINTS),
-                _ => unreachable!("only limbs bear"),
+                    from,
+                    to,
+                    radius,
+                    limb,
+                    ..
+                } if limb == Some(index) => Some(rod_points(
+                    from,
+                    to,
+                    (radius, radius),
+                    BRANCH_HULL,
+                    LIMB_RING_POINTS,
+                )),
+                _ => None,
             })
+            .flatten()
             .collect();
-        parts.push(if conifer {
-            limb(points, BOUGHS, index, Contact::Nothing)
-        } else {
-            limb(points, LIMB, index, Contact::Shells)
-        });
+        parts.push(limb(points, BOUGHS, index, Contact::Nothing));
     }
     let mut structure = standing_tree(x, z, w, d, h, parts, proportions.seed);
-    if !conifer {
-        for index in 0..*limbs {
-            let Some(&Growth::Limb {
-                from, to, radius, ..
-            }) = growth.iter().find(|step| bears(step, index))
-            else {
-                continue;
-            };
-            let middle = from.lerp(to, 0.5);
-            let half = |a: DVec3, b: DVec3| {
-                rod_points(a, b, (radius, radius), BRANCH_HULL, LIMB_RING_POINTS).collect()
-            };
-            snap_in_two(&mut structure, index, [half(from, middle), half(middle, to)]);
-        }
-    }
-    // The leaves and needles of each limb, and of the trunk, which a shell flies through.
+    // The needles of each limb, and of the trunk, which a shell flies through.
     let foliage = |limb: Option<usize>| {
-        bounds(growth.iter().filter(|step| step.limb() == limb).flat_map(|step| {
-            let corners: Box<dyn Iterator<Item = DVec3>> = match step {
-                Growth::Spray { transform, .. } => Box::new(spray_corners(transform)),
-                Growth::Sprig { sprig, .. } => Box::new(sprig.corners.into_iter()),
-                _ => Box::new(std::iter::empty()),
-            };
-            corners
-        }))
+        bounds(
+            growth
+                .iter()
+                .filter(|step| step.limb() == limb)
+                .flat_map(|step| match step {
+                    Growth::Spray { transform, .. } => Some(spray_corners(transform)),
+                    _ => None,
+                })
+                .flatten(),
+        )
     };
     for (part, limb) in std::iter::once((TREE_TRUNK, None))
         .chain((0..*limbs).map(|index| (FIRST_LIMB + index, Some(index))))

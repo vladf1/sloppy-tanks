@@ -73,7 +73,7 @@ fn every_cover_model_stays_within_its_triangle_budget() {
         ("harbor wall", cover(CoverKind::Boundary, [1.0, 122.0, 1.2], 0x879698), full, 0, 50),
         ("concrete wall", cover(CoverKind::Boundary, [1.0, 122.0, 2.2], 0x8a8a8a), full, 0, 160),
         ("tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), full, 0, 1_500),
-        // An oak's position: full-detail oaks grow their own branching (`oak_growth`).
+        // An oak's position: full-detail oaks grow their own branching (`grown_crown`).
         ("oak", CoverShape { x: -36.0, z: -45.0, ..cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65) }, full, 0, 1_500),
         ("background tree", cover(CoverKind::Tree, [2.6, 2.6, 5.8], 0x169f65), TreeDetail::Background, 0, 340),
         ("cottage", cover(CoverKind::House, [5.0, 6.0, 4.6], 0xb87b4c), full, 0, 10_000),
@@ -166,7 +166,7 @@ fn timber_members_and_tree_seeds_are_fixed() {
 /// body of its own (`structure_debris`), never drawn twice.
 #[test]
 fn a_standing_tree_leaves_out_its_snapped_limbs() {
-    use crate::sim::oak_layout::TreePart;
+    use crate::sim::grown_layout::TreePart;
     use crate::sim::structure::Role;
     use crate::sim::tree_structure::tree_structure;
     for family in 0..6 {
@@ -184,6 +184,11 @@ fn a_standing_tree_leaves_out_its_snapped_limbs() {
             .find(|&index| matches!(layout.parts[index].role, Role::Tree(TreePart::Limb(_))))
             .unwrap();
         let whole = drawn_triangles(&cover_model(&shape, TreeDetail::Full));
+        assert!(
+            whole <= 1_500,
+            "{}: {whole} triangles, over a cover tree's budget",
+            TREE_FAMILIES[family as usize]
+        );
         let snapped = CoverShape {
             broken: PartSet::from_indices([limb]),
             ..shape
@@ -207,7 +212,7 @@ fn a_standing_tree_leaves_out_its_snapped_limbs() {
 /// on their own and are not drawn again on the fallen crown.
 #[test]
 fn a_felled_tree_leaves_out_the_boughs_it_shed() {
-    use crate::sim::oak_layout::TreePart;
+    use crate::sim::grown_layout::TreePart;
     use crate::sim::structure::Role;
     use crate::sim::tree_structure::tree_structure;
     for family in 0..6 {

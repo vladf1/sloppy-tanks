@@ -1,10 +1,13 @@
-//! A full-detail oak's skeleton, grown limb by limb after the branching of Daniel
-//! Greenheck's EZ-Tree generator (MIT, `models/tree_models/LICENSE-EZ-Tree.txt`): a
-//! gnarled, tapering trunk divides into limbs and the limbs into branches, each a tube
-//! of ring sections that tilts a little at every section, and every branch also carries
-//! on from its parent's tip. Sprig cards grow along the outermost branches.
+//! A full-detail broadleaf's skeleton (an oak, a birch or an aspen), grown limb by limb
+//! after the branching of Daniel Greenheck's EZ-Tree generator (MIT,
+//! `models/tree_models/LICENSE-EZ-Tree.txt`): a tapering trunk divides into limbs and
+//! the limbs into branches, each a tube of ring sections that tilts a little at every
+//! section, and every branch also carries on from its parent's tip. Sprig cards grow
+//! along the outermost branches. Each family grows by its own [`Habit`]: the oak a
+//! gnarled, spreading crown on a short bole, the birch ascending limbs with drooping
+//! twigs up a tall pale trunk, the aspen a narrow crown of short limbs.
 //!
-//! The simulation builds the oak's parts from it (`tree_structure`) and the model draws
+//! The simulation builds the tree's parts from it (`tree_structure`) and the model draws
 //! it (`models::tree_models`), so what falls is what is drawn. It draws on the tree's own
 //! stream after [`tree_proportions`] (its roots, lean and growth, in the order the model
 //! drew them), never on the match's.
@@ -16,7 +19,7 @@ use glam::{DQuat, DVec3};
 use super::math::Random;
 use super::tree_proportions::{TreeProportions, tree_proportions};
 
-/// One level of the oak's structure: the trunk, its limbs, their branches.
+/// One level of a tree's structure: the trunk, its limbs, their branches.
 struct Level {
     /// Children each branch of the level above grows, beside the one that carries on
     /// from its tip.
@@ -39,73 +42,191 @@ struct Level {
     rise: f64,
 }
 
-const OAK_LEVELS: [Level; 3] = [
-    Level {
-        children: 0,
-        start: 0.0,
-        angle: 0.0,
-        length: 0.42,
-        radius: 1.0,
-        sections: 5,
-        sides: 6,
-        taper: 0.55,
-        gnarl: 0.06,
-        rise: 0.0,
-    },
-    Level {
-        children: 6,
-        start: 0.55,
-        angle: 1.05,
-        length: 0.36,
-        radius: 0.62,
-        sections: 3,
-        sides: 4,
-        taper: 0.5,
-        gnarl: 0.14,
-        rise: 0.02,
-    },
-    Level {
-        children: 4,
-        start: 0.25,
-        angle: 0.8,
-        length: 0.22,
-        radius: 0.6,
-        sections: 2,
-        sides: 3,
-        taper: 1.0,
-        gnarl: 0.2,
-        rise: 0.0,
-    },
-];
+/// How a family grows: its three levels and its sprigs.
+struct Habit {
+    levels: [Level; 3],
+    /// The length of the branch carrying on from a tip, as a fraction of its level's:
+    /// under 1 the crown rounds off; near 1 the trunk goes on up as a leader.
+    carry_on: f64,
+    /// Sprig cards along each outermost branch, beside the one at its tip.
+    sprigs: u32,
+    /// A sprig card's size as a fraction of the tree's height.
+    sprig_size: f64,
+}
 
-/// The length of the branch carrying on from a tip, as a fraction of its level's:
-/// shorter, so the crown rounds off instead of ending in a thin leader.
-const CARRY_ON_LENGTH: f64 = 0.7;
+/// The oak: a short, gnarled bole spreading into wide, crooked limbs.
+const OAK_HABIT: Habit = Habit {
+    levels: [
+        Level {
+            children: 0,
+            start: 0.0,
+            angle: 0.0,
+            length: 0.42,
+            radius: 1.0,
+            sections: 5,
+            sides: 6,
+            taper: 0.55,
+            gnarl: 0.06,
+            rise: 0.0,
+        },
+        Level {
+            children: 6,
+            start: 0.55,
+            angle: 1.05,
+            length: 0.36,
+            radius: 0.62,
+            sections: 3,
+            sides: 4,
+            taper: 0.5,
+            gnarl: 0.14,
+            rise: 0.02,
+        },
+        Level {
+            children: 4,
+            start: 0.25,
+            angle: 0.8,
+            length: 0.22,
+            radius: 0.6,
+            sections: 2,
+            sides: 3,
+            taper: 1.0,
+            gnarl: 0.2,
+            rise: 0.0,
+        },
+    ],
+    carry_on: 0.7,
+    sprigs: 7,
+    sprig_size: 0.19,
+};
+
+/// The birch: a tall, nearly straight pale trunk going on up as a leader, limbs rising
+/// steeply from its upper half, and their twigs drooping.
+const BIRCH_HABIT: Habit = Habit {
+    levels: [
+        Level {
+            children: 0,
+            start: 0.0,
+            angle: 0.0,
+            length: 0.55,
+            radius: 1.0,
+            sections: 6,
+            sides: 6,
+            taper: 0.6,
+            gnarl: 0.03,
+            rise: 0.0,
+        },
+        Level {
+            children: 7,
+            start: 0.45,
+            angle: 0.7,
+            length: 0.3,
+            radius: 0.55,
+            sections: 3,
+            sides: 4,
+            taper: 0.6,
+            gnarl: 0.12,
+            rise: 0.03,
+        },
+        Level {
+            children: 3,
+            start: 0.3,
+            angle: 0.9,
+            length: 0.2,
+            radius: 0.6,
+            sections: 2,
+            sides: 3,
+            taper: 1.0,
+            gnarl: 0.18,
+            rise: -0.12,
+        },
+    ],
+    carry_on: 0.85,
+    sprigs: 6,
+    sprig_size: 0.14,
+};
+
+/// The aspen: a tall, straight trunk under a narrow crown of short, upturned limbs.
+const ASPEN_HABIT: Habit = Habit {
+    levels: [
+        Level {
+            children: 0,
+            start: 0.0,
+            angle: 0.0,
+            length: 0.6,
+            radius: 1.0,
+            sections: 6,
+            sides: 6,
+            taper: 0.6,
+            gnarl: 0.025,
+            rise: 0.0,
+        },
+        Level {
+            children: 8,
+            start: 0.4,
+            angle: 0.55,
+            length: 0.24,
+            radius: 0.5,
+            sections: 3,
+            sides: 4,
+            taper: 0.6,
+            gnarl: 0.1,
+            rise: 0.04,
+        },
+        Level {
+            children: 3,
+            start: 0.3,
+            angle: 0.75,
+            length: 0.15,
+            radius: 0.6,
+            sections: 2,
+            sides: 3,
+            taper: 1.0,
+            gnarl: 0.16,
+            rise: 0.02,
+        },
+    ],
+    carry_on: 0.9,
+    sprigs: 6,
+    sprig_size: 0.13,
+};
+
 /// The least upward slope of a sprig card, so leaves never hang down from the crown
 /// to a tank's height.
 const SPRIG_LEAST_RISE: f64 = 0.3;
-/// Sprig cards along each outermost branch, beside the one at its tip.
-const SPRIGS_PER_BRANCH: u32 = 7;
 /// How far along an outer branch its sprigs start.
 const SPRIG_START: f64 = 0.2;
 /// Angle between a sprig and its branch.
 const SPRIG_ANGLE: f64 = 0.75;
-/// A sprig card's size as a fraction of the tree's height.
-const SPRIG_SIZE: f64 = 0.19;
 /// Outer branches the model sheds as the tree is hit: two at each damage stage.
 const SHED_BRANCHES: u32 = 4;
-/// The family that grows this way ([`TreeProportions::family`]).
+/// The broadleaf families ([`TreeProportions::family`]); a full-detail one grows this way.
 pub const OAK: u32 = 3;
-/// The trunk's rings below this one make its butt, where a felled oak breaks.
+pub const BIRCH: u32 = 4;
+pub const ASPEN: u32 = 5;
+
+/// Whether a full-detail tree of `family` grows limb by limb (a broadleaf).
+pub fn grows(family: u32) -> bool {
+    matches!(family, OAK | BIRCH | ASPEN)
+}
+
+fn habit(family: u32) -> &'static Habit {
+    match family {
+        BIRCH => &BIRCH_HABIT,
+        ASPEN => &ASPEN_HABIT,
+        _ => &OAK_HABIT,
+    }
+}
+/// The trunk's rings below this one make its butt, where a felled tree breaks.
 pub const BUTT_RINGS: usize = 1;
 
-/// What an oak's part is (`tree_structure`), which its model draws on its own as it falls.
+/// What a cover tree's part is (`tree_structure`), which its model draws on its own as
+/// it falls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TreePart {
     Stump,
     Butt,
     Trunk,
-    /// The trunk's limb by its growth order ([`OakBranch::limb`]).
+    /// The trunk's limb by its growth order ([`GrownBranch::limb`]).
     Limb(usize),
     /// A limb's piece once a shell snapped it where it lay: its main branch up to the
     /// snap ([`LIMB_SNAP_RING`]) with the twigs that grow there, or the rest.
@@ -128,7 +249,7 @@ pub struct Section {
 
 /// A grown branch: its rings, sides, level (0 the trunk) and what it belongs to.
 #[derive(Clone, Debug, PartialEq)]
-pub struct OakBranch {
+pub struct GrownBranch {
     pub level: usize,
     pub sections: Vec<Section>,
     pub sides: u32,
@@ -141,7 +262,7 @@ pub struct OakBranch {
 
 /// A buttress root: a tapered stem from `from` on the stump into the ground at `to`.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OakRoot {
+pub struct TreeRoot {
     pub from: DVec3,
     pub to: DVec3,
     pub radius: f64,
@@ -151,7 +272,7 @@ pub struct OakRoot {
 /// oak sprigs it shows and whether mirrored, its two colour draws (lightness, warmth),
 /// the clump its shading bulges from and the branch it grows on.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OakSprig {
+pub struct GrownSprig {
     pub branch: usize,
     pub corners: [DVec3; 4],
     pub cell: usize,
@@ -162,21 +283,21 @@ pub struct OakSprig {
 
 /// A full-detail oak's skeleton about its ground centre.
 #[derive(Clone, Debug, PartialEq)]
-pub struct OakLayout {
+pub struct GrownLayout {
     pub proportions: TreeProportions,
-    pub roots: Vec<OakRoot>,
+    pub roots: Vec<TreeRoot>,
     /// The trunk's lean at the crown's height.
     pub lean: (f64, f64),
     /// Where the trunk leaves the stump.
     pub trunk_base: f64,
     /// Every branch in growth order, the trunk first.
-    pub branches: Vec<OakBranch>,
-    pub sprigs: Vec<OakSprig>,
+    pub branches: Vec<GrownBranch>,
+    pub sprigs: Vec<GrownSprig>,
     /// How many limbs the trunk grows.
     pub limbs: usize,
 }
 
-impl OakLayout {
+impl GrownLayout {
     /// The limb an outer branch grows on, and whether past the ring its limb's main
     /// branch snaps at; none for the trunk and a limb's main branch, which spans both.
     pub fn limb_side(&self, branch: usize) -> Option<(usize, bool)> {
@@ -225,24 +346,25 @@ struct Bud {
 
 struct Grower<'a> {
     rng: &'a mut Random,
+    habit: &'static Habit,
     height: f64,
-    layout: OakLayout,
+    layout: GrownLayout,
     boughs: usize,
 }
 
 impl Grower<'_> {
     fn grow(&mut self, bud: Bud, starts_bough: bool) {
-        let level = &OAK_LEVELS[bud.level];
+        let level = &self.habit.levels[bud.level];
         let sections = self.sections(&bud, level);
         let index = self.layout.branches.len();
-        self.layout.branches.push(OakBranch {
+        self.layout.branches.push(GrownBranch {
             level: bud.level,
             sections: sections.clone(),
             sides: level.sides,
             limb: bud.limb,
             bough: bud.bough.map(|bough| (bough, starts_bough)),
         });
-        if bud.level + 1 < OAK_LEVELS.len() {
+        if bud.level + 1 < self.habit.levels.len() {
             self.branch_out(&bud, &sections);
         } else {
             self.sprigs(index, &sections);
@@ -279,7 +401,7 @@ impl Grower<'_> {
     /// The next level: one branch carrying on from the tip, and the level's children
     /// spread round the parent from `start` to its tip.
     fn branch_out(&mut self, parent: &Bud, sections: &[Section]) {
-        let child = &OAK_LEVELS[parent.level + 1];
+        let child = &self.habit.levels[parent.level + 1];
         let tip = sections[sections.len() - 1];
         // The trunk's children are its limbs.
         let limb = |grower: &mut Self| match parent.level {
@@ -294,7 +416,7 @@ impl Grower<'_> {
             Bud {
                 origin: tip.origin,
                 orientation: tip.orientation,
-                length: self.height * child.length * CARRY_ON_LENGTH,
+                length: self.height * child.length * self.habit.carry_on,
                 radius: tip.radius,
                 level: parent.level + 1,
                 limb: carry_on,
@@ -310,7 +432,7 @@ impl Grower<'_> {
                 * DQuat::from_rotation_y(radial)
                 * DQuat::from_rotation_x(child.angle);
             // Damage sheds an outer branch of the first limbs, never a whole limb.
-            let outermost = parent.level + 2 == OAK_LEVELS.len();
+            let outermost = parent.level + 2 == self.habit.levels.len();
             let sheds = outermost && i == 0 && self.boughs < SHED_BRANCHES as usize;
             let bough = if sheds {
                 self.boughs += 1;
@@ -342,12 +464,13 @@ impl Grower<'_> {
         let clump = along(sections, 0.6).origin;
         let offset = self.rng.next();
         let tip = sections[sections.len() - 1];
-        for k in 0..=SPRIGS_PER_BRANCH {
-            let (origin, heading) = if k == SPRIGS_PER_BRANCH {
+        let sprigs = self.habit.sprigs;
+        for k in 0..=sprigs {
+            let (origin, heading) = if k == sprigs {
                 (tip.origin, tip.orientation * DVec3::Y)
             } else {
                 let at = along(sections, self.rng.range(SPRIG_START, 1.0));
-                let radial = 2.0 * PI * (offset + f64::from(k) / f64::from(SPRIGS_PER_BRANCH));
+                let radial = 2.0 * PI * (offset + f64::from(k) / f64::from(sprigs));
                 let orientation = at.orientation
                     * DQuat::from_rotation_y(radial)
                     * DQuat::from_rotation_x(SPRIG_ANGLE);
@@ -358,14 +481,14 @@ impl Grower<'_> {
         }
     }
 
-    fn sprig(&mut self, branch: usize, stem: DVec3, heading: DVec3, clump: DVec3) -> OakSprig {
+    fn sprig(&mut self, branch: usize, stem: DVec3, heading: DVec3, clump: DVec3) -> GrownSprig {
         let outward =
             (DVec3::new(stem.x, 0.0, stem.z).normalize_or(DVec3::X) + DVec3::Y * 0.3).normalize();
         // Leaves lean up whatever way the branch points.
         let up = DVec3::new(heading.x, heading.y.max(SPRIG_LEAST_RISE), heading.z)
             .normalize_or(DVec3::Y);
         let across = up.cross(outward).normalize_or(up.any_orthonormal_vector());
-        let size = self.height * SPRIG_SIZE * self.rng.range(0.85, 1.15);
+        let size = self.height * self.habit.sprig_size * self.rng.range(0.85, 1.15);
         // The sprig's drawn twig starts a little behind the branch point.
         let bottom = stem - up * size * 0.08;
         let half = across * size * 0.5;
@@ -373,7 +496,7 @@ impl Grower<'_> {
         let mirrored = self.rng.next() < 0.5;
         let light = self.rng.range(0.82, 1.12);
         let warm = self.rng.range(-0.05, 0.07);
-        OakSprig {
+        GrownSprig {
             branch,
             corners: [
                 bottom - half,
@@ -391,16 +514,18 @@ impl Grower<'_> {
 
 /// The skeleton of the full-detail oak at (x, z) sized w, d, h: its stump's roots, then
 /// its trunk's lean, then its growth, drawn in that order from the tree's own stream.
-pub fn oak_layout(x: f64, z: f64, w: f64, d: f64, h: f64) -> OakLayout {
+pub fn grown_layout(x: f64, z: f64, w: f64, d: f64, h: f64) -> GrownLayout {
     let proportions = tree_proportions(x, z, w, d, h);
     let TreeProportions {
         seed,
+        family,
         twist,
         height,
         radius,
         stump_height,
         ..
     } = proportions;
+    let habit = habit(family);
     let mut rng = proportions.rng.clone();
     // Buttress roots flare from the stump and dive into the ground.
     let root_count = 5 + seed % 3;
@@ -415,7 +540,7 @@ pub fn oak_layout(x: f64, z: f64, w: f64, d: f64, h: f64) -> OakLayout {
                 angle.cos() * radius * 0.55,
             );
             let to = DVec3::new(angle.sin() * reach, -0.08, angle.cos() * reach);
-            OakRoot {
+            TreeRoot {
                 from,
                 to,
                 radius: radius * rng.range(0.38, 0.52),
@@ -428,8 +553,9 @@ pub fn oak_layout(x: f64, z: f64, w: f64, d: f64, h: f64) -> OakLayout {
     let orientation = DQuat::from_rotation_arc(DVec3::Y, toward) * DQuat::from_rotation_y(twist);
     let mut grower = Grower {
         rng: &mut rng,
+        habit,
         height,
-        layout: OakLayout {
+        layout: GrownLayout {
             proportions: proportions.clone(),
             roots,
             lean,
@@ -444,7 +570,7 @@ pub fn oak_layout(x: f64, z: f64, w: f64, d: f64, h: f64) -> OakLayout {
         Bud {
             origin: DVec3::new(0.0, trunk_base, 0.0),
             orientation,
-            length: height * OAK_LEVELS[0].length,
+            length: height * habit.levels[0].length,
             radius,
             level: 0,
             limb: None,

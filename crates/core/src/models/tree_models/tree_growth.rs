@@ -1,6 +1,6 @@
-//! Every tree but a full-detail oak drawn from its layout ([`crate::sim::tree_layout`]):
-//! needle sprays round a conifer's bark boughs, sprig clumps round a broadleaf's limbs,
-//! and a cover tree's fallen parts drawn on their own.
+//! Conifers and background broadleaves drawn from their layout
+//! ([`crate::sim::tree_layout`]): needle sprays round a conifer's bark boughs, sprig
+//! clumps up a broadleaf's crown, and a cover conifer's fallen parts drawn on their own.
 
 use std::f64::consts::PI;
 use std::sync::Arc;
@@ -14,14 +14,14 @@ use super::{
 };
 use crate::geometry::math::quat_from_euler;
 use crate::scene::{Material, Node};
-use crate::sim::oak_layout::{OAK, TreePart};
+use crate::sim::grown_layout::{OAK, TreePart};
 use crate::sim::tree_layout::{Growth, LayoutDetail, TreeLayout, tree_layout};
 use crate::sim::tree_proportions::TreeProportions;
 
 /// Grow `tree`'s crown into `crown` step by step, each shedding bough a group of its
-/// own when `boughs` (a standing tree's), drawing only the parts `keep` picks: a limb
-/// whole, or the half of it its main limb snapped into (the outer half carries its
-/// twigs and leaves). Returns the volume its foliage shades as, the whole crown's.
+/// own when `boughs` (a standing tree's), drawing only the parts `keep` picks and none
+/// of the boughs shed at damage stages up to `shed`. Returns the volume its foliage
+/// shades as, the whole crown's.
 pub(super) fn add_tree_crown(
     crown: &mut Crown,
     tree: &TreeLayout,
@@ -36,12 +36,8 @@ pub(super) fn add_tree_crown(
     } else {
         &OVATE_CELLS
     };
-    // Whether a limb's twigs, sprays or sprigs are drawn: with its whole limb or with
-    // the outer half it snapped into.
-    let kept = |limb: Option<usize>| match limb {
-        None => keep(TreePart::Trunk),
-        Some(limb) => keep(TreePart::Limb(limb)) || keep(TreePart::LimbPiece { limb, outer: true }),
-    };
+    // Whether what grows on a limb (or the trunk) is drawn.
+    let kept = |limb: Option<usize>| keep(limb.map_or(TreePart::Trunk, TreePart::Limb));
     let mut groups: Vec<Option<usize>> = Vec::new();
     // Each shedding bough's damage stage, and whether it already fell on its own.
     let mut stages: Vec<u32> = Vec::new();
@@ -63,28 +59,11 @@ pub(super) fn add_tree_crown(
                 from,
                 to,
                 radius,
-                main,
                 bough,
                 limb: part,
             } => {
-                let parent = bough.and_then(|bough| groups[bough]);
-                let spans: &[(DVec3, DVec3)] = match part {
-                    _ if shed_off(&stages, bough) => &[],
-                    Some(limb) if main && !keep(TreePart::Limb(limb)) => {
-                        let middle = from.lerp(to, 0.5);
-                        let inner = keep(TreePart::LimbPiece { limb, outer: false });
-                        let outer = keep(TreePart::LimbPiece { limb, outer: true });
-                        match (inner, outer) {
-                            (true, true) => &[(from, middle), (middle, to)],
-                            (true, false) => &[(from, middle)],
-                            (false, true) => &[(middle, to)],
-                            (false, false) => &[],
-                        }
-                    }
-                    _ if kept(part) => &[(from, to)],
-                    _ => &[],
-                };
-                for &(from, to) in spans {
+                if kept(part) && !shed_off(&stages, bough) {
+                    let parent = bough.and_then(|bough| groups[bough]);
                     limb(crown.parent(parent), bark.clone(), from, to, radius, false);
                 }
             }
@@ -137,7 +116,7 @@ pub(super) fn add_tree_crown(
     }
 }
 
-/// The parts of the full-detail tree at `c` (not an oak: [`super::oak_pieces`]) that
+/// The parts of the full-detail conifer at `c` (a broadleaf: [`super::grown_pieces`]) that
 /// `keep` picks, drawn where they stood about its ground centre and still (no sway),
 /// without the boughs it shed at damage stages up to `shed`: what a felled tree's bodies
 /// look like as they fall and lie (`structure_debris`).

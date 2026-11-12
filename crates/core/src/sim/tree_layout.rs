@@ -1,19 +1,19 @@
-//! The skeleton of every tree but a full-detail oak ([`super::oak_layout`]): its stump's
-//! roots, its trunk, and its crown grown step by step (shedding boughs, bark limbs,
-//! needle sprays, leaf sprigs) in the order its model draws them.
+//! The skeleton of a conifer, and of a background broadleaf (a full-detail one grows
+//! limb by limb: [`super::grown_layout`]): its stump's roots, its trunk, and its crown
+//! grown step by step (shedding boughs, bark limbs, needle sprays, leaf sprigs) in the
+//! order its model draws them.
 //!
-//! The model draws it (`models::tree_models`) and the simulation builds a cover tree's
-//! parts from it (`tree_structure`), so what falls is what is drawn. A conifer's boughs
-//! group into a few limbs by side and height; a birch's or an aspen's limbs are the
-//! limbs its crown's lobes grow on. It draws on the tree's own stream after
-//! [`tree_proportions`], never on the match's.
+//! The model draws it (`models::tree_models`) and the simulation builds a cover
+//! conifer's parts from it (`tree_structure`), so what falls is what is drawn: its
+//! boughs gather into a few limbs by side and height. It draws on the tree's own stream
+//! after [`tree_proportions`], never on the match's.
 
 use std::f64::consts::PI;
 
 use glam::{DMat4, DVec3};
 
+use super::grown_layout::TreeRoot;
 use super::math::Random;
-use super::oak_layout::OakRoot;
 use super::tree_proportions::{TreeProportions, tree_proportions};
 use crate::geometry::math::{quat_from_euler, quat_from_euler_yxz, quat_rotate_z};
 
@@ -66,13 +66,11 @@ pub struct Sprig {
 pub enum Growth {
     /// A shedding bough begins, dropped at damage `stage`.
     Bough { stage: u32 },
-    /// A bark limb from `from` to `to`; `main` for the limb a broadleaf lobe grows on,
-    /// which snaps in two halves where it lies.
+    /// A bark limb from `from` to `to`.
     Limb {
         from: DVec3,
         to: DVec3,
         radius: f64,
-        main: bool,
         bough: Option<usize>,
         limb: Option<usize>,
     },
@@ -115,7 +113,7 @@ pub struct Cone {
 pub struct TreeLayout {
     pub proportions: TreeProportions,
     /// Full detail only: buttress roots.
-    pub roots: Vec<OakRoot>,
+    pub roots: Vec<TreeRoot>,
     /// The trunk's lean at its top.
     pub lean: (f64, f64),
     /// Where the trunk leaves the stump, and its top.
@@ -160,7 +158,7 @@ pub fn tree_layout(x: f64, z: f64, w: f64, d: f64, h: f64, detail: LayoutDetail)
                 angle.cos() * radius * 0.55,
             );
             let to = DVec3::new(angle.sin() * reach, -0.08, angle.cos() * reach);
-            OakRoot {
+            TreeRoot {
                 from,
                 to,
                 radius: radius * rng.range(0.38, 0.52),
@@ -179,7 +177,7 @@ pub fn tree_layout(x: f64, z: f64, w: f64, d: f64, h: f64, detail: LayoutDetail)
     } else if conifer {
         Some(grower.conifer(w, family, twist, height, radius, lean))
     } else {
-        grower.broadleaf(w, d, family, twist, height, radius, lean);
+        grower.broadleaf(w, d, family, twist, height, lean);
         None
     };
     let mut layout = TreeLayout {
@@ -193,17 +191,8 @@ pub fn tree_layout(x: f64, z: f64, w: f64, d: f64, h: f64, detail: LayoutDetail)
         limbs: 0,
         rest: grower.rng,
     };
-    if full {
-        layout.limbs = if conifer {
-            group_conifer_boughs(&mut layout.growth)
-        } else {
-            layout
-                .growth
-                .iter()
-                .filter_map(Growth::limb)
-                .max()
-                .map_or(0, |last| last + 1)
-        };
+    if full && conifer {
+        layout.limbs = group_conifer_boughs(&mut layout.growth);
     }
     layout
 }
@@ -316,7 +305,6 @@ impl Grower {
                         from: start,
                         to: end,
                         radius: radius * (0.13 - t * 0.08),
-                        main: false,
                         bough,
                         limb: None,
                     });
@@ -342,8 +330,7 @@ impl Grower {
         Cone { base, width }
     }
 
-    /// Lobes of sprig clumps up a broadleaf's crown, each on a bark limb from the
-    /// trunk at full detail, with twigs out to its outer clumps.
+    /// Lobes of sprig clumps up a background broadleaf's crown.
     #[allow(clippy::too_many_arguments)]
     fn broadleaf(
         &mut self,
@@ -352,7 +339,6 @@ impl Grower {
         family: u32,
         twist: f64,
         height: f64,
-        radius: f64,
         (lean_x, lean_z): (f64, f64),
     ) {
         let full = self.detail == LayoutDetail::Full;
@@ -372,7 +358,6 @@ impl Grower {
             (low_lobe - 0.12, 1.18)
         };
         for i in 0..count {
-            let limb = full.then_some(i as usize);
             let a = twist + f64::from(i) * GOLDEN_ANGLE;
             let t = f64::from(i) / f64::from(count - 1);
             let spread = (1.0 - t * 0.6) * spread_at;
@@ -381,17 +366,6 @@ impl Grower {
                 height * (low_lobe + t * crown_rise),
                 lean_z + a.cos() * d * spread,
             );
-            if full {
-                let from = DVec3::new(lean_x * 0.5, center.y - height * 0.2, lean_z * 0.5);
-                self.growth.push(Growth::Limb {
-                    from,
-                    to: center,
-                    radius: radius * (0.32 - t * 0.16),
-                    main: true,
-                    bough: None,
-                    limb,
-                });
-            }
             let size = w * (if oak { 0.3 } else { 0.27 }) * self.rng.range(0.84, 1.09) * fullness;
             // Overlapping clumps of sprigs give the crown an irregular, branching silhouette.
             let clumps = match self.detail {
@@ -414,16 +388,6 @@ impl Grower {
                 } else {
                     None
                 };
-                if full && j > 0 {
-                    self.growth.push(Growth::Limb {
-                        from: center,
-                        to: tip,
-                        radius: radius * 0.075,
-                        main: false,
-                        bough,
-                        limb,
-                    });
-                }
                 let radii = DVec3::new(
                     size * self.rng.range(0.48, 0.66),
                     size * self.rng.range(0.55, 0.85),
@@ -438,7 +402,11 @@ impl Grower {
                 let card_size = size * if oak { 1.35 } else { 1.28 };
                 for k in 0..cards {
                     let sprig = self.sprig(tip, radii, k, cards, phase, card_size);
-                    self.growth.push(Growth::Sprig { sprig, bough, limb });
+                    self.growth.push(Growth::Sprig {
+                        sprig,
+                        bough,
+                        limb: None,
+                    });
                 }
             }
         }

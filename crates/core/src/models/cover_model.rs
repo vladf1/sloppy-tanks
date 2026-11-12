@@ -25,14 +25,14 @@ use super::quarry_surfaces::{
 use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
 use super::tree_models::{
-    TreeDetail, TreeShape, oak_pieces, standing_tree_model, tree_model, tree_pieces,
+    TreeDetail, TreeShape, grown_pieces, standing_tree_model, tree_model, tree_pieces,
 };
 use crate::scene::Node;
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
-use crate::sim::oak_layout::OAK;
+use crate::sim::grown_layout::grows;
 use crate::sim::tree_proportions::tree_proportions;
 use crate::sim::tree_structure::{TreePart, tree_structure};
 use crate::sim::structure::{PartSet, Role};
@@ -323,8 +323,8 @@ pub fn tree_debris(c: &CoverShape, parts: &PartSet, shed: u32) -> Node {
         h: c.h,
     };
     let mut root = Node::group("tree-debris");
-    root.children.push(if tree_proportions(c.x, c.z, c.w, c.d, c.h).family == OAK {
-        oak_pieces(&tree, &keep, shed)
+    root.children.push(if grows(tree_proportions(c.x, c.z, c.w, c.d, c.h).family) {
+        grown_pieces(&tree, &keep, shed)
     } else {
         tree_pieces(&tree, &keep, shed)
     });

@@ -8,6 +8,7 @@
 
 // What the cached model builders read: kinds, layouts and shapes (`sloppy_geometry_only`).
 pub mod arena;
+pub mod grown_layout;
 pub mod harbor_layout;
 pub mod house_fracture;
 pub mod house_layout;
@@ -16,7 +17,6 @@ pub mod map_options;
 pub mod maps;
 pub mod math;
 pub mod model_data;
-pub mod oak_layout;
 pub mod quarry_barrier_shapes;
 pub mod quarry_layout;
 pub mod quarry_rock_shape;
