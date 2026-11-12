@@ -253,7 +253,10 @@ for a, b in ((TWIN[0], twin_mid - 0.02), (twin_mid + 0.02, TWIN[1])):
     window("FrontWall", front, fx(a), UPPER_GLASS[0], fx(b), TWIN_SPRING + TWIN_RISE, mullion=False)
     arch_head("FrontWall", front, fx(a), fx(b), TWIN_SPRING, (b - a) / 2, depth=WALL)
 front.block("FrontWall__Trim", fx(twin_mid - 0.02), UPPER_GLASS[0], fx(twin_mid + 0.02), TWIN_SPRING + 0.04, 0.1, 0.03)
-window("FrontWall", front, fx(OFFICE_WINDOW[0]), OFFICE_WINDOW[1], fx(OFFICE_WINDOW[2]), OFFICE_WINDOW[3])
+# The window behind the office: the house keeps out of the entry's box (it stands whole once
+# the entry is gone), so its sill stands only 0.03 proud.
+window("FrontWall", front, fx(OFFICE_WINDOW[0]), OFFICE_WINDOW[1], fx(OFFICE_WINDOW[2]), OFFICE_WINDOW[3], sill=False)
+front.block("FrontWall__Trim", fx(OFFICE_WINDOW[0]) - 0.03, OFFICE_WINDOW[1] - 0.035, fx(OFFICE_WINDOW[2]) + 0.03, OFFICE_WINDOW[1], 0.02, -0.03)
 
 # The gable's stucco over the wall top, a clay vent in its peak.
 _x0, _x1 = -HALF_W, GABLE_WALL
