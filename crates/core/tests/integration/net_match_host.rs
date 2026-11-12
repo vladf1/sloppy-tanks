@@ -316,6 +316,24 @@ fn ending_the_round_ends_every_shell_in_flight_where_it_stopped() {
     }
 }
 
+#[test]
+fn a_finished_round_falls_back_to_the_plain_host_interval() {
+    let (mut h, _) = alice_fires_alone();
+    h.advance();
+    assert!(
+        h.host.until_next_batch_ms(h.now).is_some(),
+        "a running round asks for its next batch"
+    );
+    h.action("alice", "end", json!({}));
+    assert_eq!(h.host.phase, RoomPhase::Results);
+    h.now += 1_000;
+    assert_eq!(
+        h.host.until_next_batch_ms(h.now),
+        None,
+        "the stopped clock's overdue batch must not re-arm a 1 ms timer"
+    );
+}
+
 /// Applies the snapshot batches `name` received after the first `seen`, asserting each
 /// frame applies, and counts them in `seen`.
 fn apply_new(h: &Harness, name: &str, mirror: &mut StateMirror, seen: &mut usize) {

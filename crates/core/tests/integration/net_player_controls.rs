@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use net_support::set_translation;
 use serde_json::{Value, json};
 use sloppy_core::net::multiplayer_simulation::{
-    MultiplayerOptions, create_multiplayer_simulation, set_driver,
+    MultiplayerOptions, create_multiplayer_simulation, release_player_tank, set_driver,
 };
 use sloppy_core::net::player_controls::{
     Ack, Action, Aim, ControlInput, PlayerControls, encode_input, read_input,
@@ -21,6 +21,7 @@ use sloppy_core::sim::debris_cleanup::cleanup_candidate;
 use sloppy_core::sim::difficulty::{Difficulty, enemy_difficulty};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::mines::place_mine;
+use sloppy_core::sim::shooter_rewind::ShooterRewind;
 use sloppy_core::sim::types::{
     AmmoSelection, CoverKind, Driver, FragmentShape, PlayerAssignment, SimEventType, Team,
     VehicleCommand, VehicleKind, Weapon,
@@ -448,6 +449,66 @@ fn a_click_whose_press_and_release_start_on_one_tick_still_fires_once() {
     );
     assert!(!controls.command(&mut sim, 6, 100.0).unwrap().fire);
     assert_eq!(controls.ack.input_seq, 2, "the release drives from then on");
+}
+
+#[test]
+fn an_action_asked_to_wait_keeps_its_lease_until_its_tick() {
+    let (mut sim, tank) = alice_room();
+    let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();
+    // A mine asked for 20 ticks (333 ms) after its arrival, longer than a lease.
+    let later = input(1, 1, json!({ "tick": 21, "actions": [{ "type": "mine" }] }));
+    assert!(controls.accept_at(&sim, &later, 0, 1, 0.0));
+    assert!(!controls.command(&mut sim, 20, 320.0).unwrap().mine);
+    assert!(
+        controls.command(&mut sim, 21, 340.0).unwrap().mine,
+        "the mine is laid on the tick it asked for"
+    );
+}
+
+#[test]
+fn a_stand_in_bot_or_a_new_occupant_fires_without_the_players_view_delay() {
+    let (mut sim, tank) = alice_room();
+    sim.shooter_rewind = Some(ShooterRewind::default());
+    let index = tank_index(&sim, tank);
+    let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();
+    assert!(controls.accept(&sim, &input(1, 1, json!({ "view": 12 })), 0, 0.0));
+    controls.command(&mut sim, 1, 0.0).unwrap();
+    let rewind = |sim: &Simulation| {
+        sim.shooter_rewind
+            .as_ref()
+            .unwrap()
+            .view_ticks
+            .get(&tank)
+            .copied()
+    };
+    assert_eq!(rewind(&sim), Some(12));
+    // Her shell is fixed at her view delay and keeps it once she leaves.
+    fire_weapon(&mut sim, index);
+    let hers = sim.shots.last().unwrap().id;
+    ShooterRewind::record(&mut sim);
+    controls.suspend(&mut sim);
+    assert_eq!(rewind(&sim), None, "the stand-in bot sees the present");
+    sim.tanks[index].cooldown = 0.0;
+    fire_weapon(&mut sim, index);
+    let bots = sim.shots.last().unwrap().id;
+    assert_ne!(bots, hers);
+    ShooterRewind::record(&mut sim);
+    let shells = sim.shooter_rewind.as_ref().unwrap();
+    assert_eq!(shells.shell_ticks(hers), 12);
+    assert_eq!(
+        shells.shell_ticks(bots),
+        0,
+        "the bot's shell rewinds nothing"
+    );
+
+    // A departing player's seat forgets the view too.
+    sim.shooter_rewind
+        .as_mut()
+        .unwrap()
+        .view_ticks
+        .insert(tank, 12);
+    release_player_tank(&mut sim, tank);
+    assert_eq!(rewind(&sim), None);
 }
 
 // ---- Room rosters -------------------------------------------------------------------
