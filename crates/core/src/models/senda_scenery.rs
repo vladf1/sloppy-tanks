@@ -23,7 +23,7 @@
 use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use glam::{DQuat, DVec2};
+use glam::{DQuat, DVec2, DVec3};
 
 use crate::geometry::{
     Mesh, RingGeometry, box_geometry, cylinder_geometry, icosahedron_geometry, octahedron_geometry,
@@ -218,6 +218,14 @@ const BANK_WALK: f64 = 1.2;
 const BANK_WALK_EDGE: (f64, u32) = (0.08, 0xd8d3c6);
 const BANK_SPURS: [f64; 3] = [-14.0, 8.0, 27.0];
 const BANK_SPUR: f64 = 0.9;
+/// The terrace walk's top and its spurs' (m), the spurs a few millimetres lower as they
+/// start under the terrace walk's edge, this far (m) in; and how far over each walk its
+/// paler edges lie.
+const BANK_WALK_TOP: f64 = 0.03;
+const BANK_SPUR_TOP: f64 = 0.024;
+const BANK_SPUR_UNDER: f64 = 0.1;
+const BANK_WALK_EDGE_LIFT: f64 = 0.003;
+const BANK_SPUR_WALL_ROOM: f64 = 0.05;
 /// How far (m) to either side a spur across the meadow swings in its switchbacks.
 const BANK_SWITCHBACK: f64 = 4.0;
 /// The trails on the hillside east of the cul-de-sacs: each keeps this far (m) out from
@@ -1028,46 +1036,996 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
 /// `y`, leaving out the stretches `skip` says lie on something else (another street's
 /// asphalt, a turning circle).
 fn ribbon(line: &[DVec2], from: f64, to: f64, y: f64, skip: &dyn Fn(DVec2) -> bool) -> Mesh {
+    ribbon_cut(line, from, to, y, skip, &|_| 1.0)
+}
+
+/// A [`ribbon`] cut where `keep` turns negative, exactly along the line where it is
+/// nought, so it ends flush against what it meets rather than at a piece's end.
+fn ribbon_cut(
+    line: &[DVec2],
+    from: f64,
+    to: f64,
+    y: f64,
+    skip: &dyn Fn(DVec2) -> bool,
+    keep: &dyn Fn(DVec2) -> f64,
+) -> Mesh {
+    let mut surface = Surface::default();
+    ribbon_quads(line, from, to, |quad| {
+        if !skip((quad[0] + quad[2]) / 2.0) {
+            surface.polygon(&clip(&quad, keep), y);
+        }
+    });
+    surface.mesh()
+}
+
+/// The left normal at each of `line`'s joints, between its spans either side.
+fn joint_normal(line: &[DVec2], i: usize) -> DVec2 {
     let n = line.len();
-    let normal = |i: usize| {
-        let along = (line[(i + 1).min(n - 1)] - line[i.saturating_sub(1)]).normalize();
-        left(along)
-    };
-    let mut positions: Vec<f64> = Vec::new();
-    let mut normals: Vec<f64> = Vec::new();
-    // World-aligned, like every other part it is batched with: a merge of parts whose
-    // attributes differ draws nothing.
-    let mut uvs: Vec<f64> = Vec::new();
-    for i in 0..n - 1 {
+    left((line[(i + 1).min(n - 1)] - line[i.saturating_sub(1)]).normalize())
+}
+
+/// The pieces a ribbon along `line` from `from` to `to` metres to its left is laid in,
+/// each a quad about a metre long (long spans split so the skipped stretches end near
+/// what they meet), its normal turning smoothly from joint to joint.
+fn ribbon_quads(line: &[DVec2], from: f64, to: f64, mut each: impl FnMut([DVec2; 4])) {
+    for i in 0..line.len() - 1 {
         let (a, b) = (line[i], line[i + 1]);
-        let (na, nb) = (normal(i), normal(i + 1));
-        // Split long spans so the skipped stretches end near what they meet.
+        let (na, nb) = (joint_normal(line, i), joint_normal(line, i + 1));
         let pieces = (a.distance(b) / 1.0).ceil().max(1.0) as usize;
         for k in 0..pieces {
             let (t0, t1) = (k as f64 / pieces as f64, (k + 1) as f64 / pieces as f64);
-            let at = |t: f64, offset: f64| {
-                let point = a.lerp(b, t);
-                point + na.lerp(nb, t).normalize() * offset
-            };
-            let quad = [at(t0, from), at(t1, from), at(t1, to), at(t0, to)];
-            let middle = (quad[0] + quad[2]) / 2.0;
-            if skip(middle) {
-                continue;
-            }
-            // Wound so its face points up whichever side of the line it lies.
-            let order = if to > from {
-                [0, 1, 2, 0, 2, 3]
+            let at = |t: f64, offset: f64| a.lerp(b, t) + na.lerp(nb, t).normalize() * offset;
+            each([at(t0, from), at(t1, from), at(t1, to), at(t0, to)]);
+        }
+    }
+}
+
+/// The edge `offset` metres to the left of `line` that [`ribbon`]'s pieces follow, joint
+/// for joint, so a cut found along it lands where the ribbon's own cut does.
+fn ribbon_edge(line: &[DVec2], offset: f64) -> Line {
+    let mut points = Vec::new();
+    for i in 0..line.len() - 1 {
+        let (a, b) = (line[i], line[i + 1]);
+        let (na, nb) = (joint_normal(line, i), joint_normal(line, i + 1));
+        let pieces = (a.distance(b) / 1.0).ceil().max(1.0) as usize;
+        let first = if i == 0 { 0 } else { 1 };
+        for k in first..=pieces {
+            let t = k as f64 / pieces as f64;
+            points.push(a.lerp(b, t) + na.lerp(nb, t).normalize() * offset);
+        }
+    }
+    Line(points)
+}
+
+/// The point `s` metres along `line` and its left normal there, turning from joint to
+/// joint as [`ribbon`]'s does: the point `offset` metres along the normal lies on the
+/// edge of a ribbon that far to the line's left.
+fn line_frame(line: &[DVec2], s: f64) -> (DVec2, DVec2) {
+    let n = line.len();
+    let mut rest = s.max(0.0);
+    for i in 0..n - 1 {
+        let span = line[i].distance(line[i + 1]);
+        if rest <= span || i + 2 == n {
+            let t = (rest / span).min(1.0);
+            let normal = joint_normal(line, i).lerp(joint_normal(line, i + 1), t);
+            return (line[i].lerp(line[i + 1], t), normal.normalize());
+        }
+        rest -= span;
+    }
+    (line[0], joint_normal(line, 0))
+}
+
+/// The part of the convex `polygon` where `keep` is not negative, its cut edges where
+/// `keep`, taken as linear between corners, is nought.
+fn clip(polygon: &[DVec2], keep: &dyn Fn(DVec2) -> f64) -> Vec<DVec2> {
+    let values: Vec<f64> = polygon.iter().map(|&p| keep(p)).collect();
+    if values.iter().all(|&value| value >= 0.0) {
+        return polygon.to_vec();
+    }
+    let n = polygon.len();
+    let mut kept = Vec::with_capacity(n + 2);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let (p, q, fp, fq) = (polygon[i], polygon[j], values[i], values[j]);
+        if fp >= 0.0 {
+            kept.push(p);
+        }
+        if (fp >= 0.0) != (fq >= 0.0) {
+            kept.push(p + (q - p) * (fp / (fp - fq)));
+        }
+    }
+    kept
+}
+
+/// Where `field` first changes sign along `points`, taken as linear between them as
+/// [`clip`] takes it, among the stretches within `reach` (m) of `near`.
+fn crossing(
+    points: &[DVec2],
+    field: &dyn Fn(DVec2) -> f64,
+    near: DVec2,
+    reach: f64,
+) -> Option<DVec2> {
+    points
+        .windows(2)
+        .filter(|pair| pair.iter().all(|p| p.distance(near) < reach))
+        .find_map(|pair| {
+            let (p, q) = (pair[0], pair[1]);
+            let (fp, fq) = (field(p), field(q));
+            ((fp >= 0.0) != (fq >= 0.0)).then(|| p + (q - p) * (fp / (fp - fq)))
+        })
+}
+
+/// Triangles gathered into one flat-shaded mesh, each wound to face the way it is told,
+/// with world-aligned uvs like the paving's: flat ones by their plan, upright ones like a
+/// [`Wall`]'s.
+#[derive(Default)]
+struct Surface {
+    positions: Vec<f64>,
+    normals: Vec<f64>,
+    uvs: Vec<f64>,
+}
+
+impl Surface {
+    fn triangle(&mut self, [a, b, c]: [DVec3; 3], facing: DVec3) {
+        let normal = (b - a).cross(c - a);
+        if normal.length_squared() < 1e-12 {
+            return;
+        }
+        let (corners, normal) = if normal.dot(facing) < 0.0 {
+            ([a, c, b], -normal.normalize())
+        } else {
+            ([a, b, c], normal.normalize())
+        };
+        for p in corners {
+            self.positions.extend([p.x, p.y, p.z]);
+            self.normals.extend([normal.x, normal.y, normal.z]);
+            if normal.y.abs() > 0.5 {
+                self.uvs.extend([p.x / 4.0, p.z / 4.0]);
             } else {
-                [0, 2, 1, 0, 3, 2]
-            };
-            for index in order {
-                positions.extend([quad[index].x, y, quad[index].y]);
-                normals.extend([0.0, 1.0, 0.0]);
-                uvs.extend([quad[index].x / 4.0, quad[index].y / 4.0]);
+                self.uvs.extend([(p.x + p.z) / 4.0, p.y / 4.0]);
             }
         }
     }
-    Mesh::from_f64(&positions, &normals, &uvs, None)
+
+    fn quad(&mut self, [a, b, c, d]: [DVec3; 4], facing: DVec3) {
+        self.triangle([a, b, c], facing);
+        self.triangle([a, c, d], facing);
+    }
+
+    /// A flat convex polygon on the plan at height `y`, face up.
+    fn polygon(&mut self, points: &[DVec2], y: f64) {
+        let at = |p: DVec2| DVec3::new(p.x, y, p.y);
+        for k in 1..points.len().saturating_sub(1) {
+            self.triangle([at(points[0]), at(points[k]), at(points[k + 1])], DVec3::Y);
+        }
+    }
+
+    fn mesh(self) -> Mesh {
+        Mesh::from_f64(&self.positions, &self.normals, &self.uvs, None)
+    }
+}
+
+/// A kerb lowered across a driveway: its top's height (m) there and how long (m) it
+/// takes to slope back up to [`KERB_HEIGHT`] either side.
+const DROPPED_KERB: f64 = 0.07;
+const DROPPED_KERB_SLOPE: f64 = 0.35;
+
+/// A point along a kerb: on the foot of its face, the way back across its top (toward
+/// the walk), and its top's height there.
+#[derive(Clone, Copy)]
+struct KerbPoint {
+    at: DVec2,
+    back: DVec2,
+    top: f64,
+}
+
+/// A kerb along `points`: its top, its face down to the asphalt, and the gutter pan
+/// along its foot.
+fn kerb_run(points: &[KerbPoint], kerb: &mut Surface, pan: &mut Surface) {
+    let at = |p: DVec2, y: f64| DVec3::new(p.x, y, p.y);
+    let gutter = GUTTER.0;
+    let pan_top = STREET_TOP + GUTTER_LIFT;
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let (a_back, b_back) = (a.at + a.back * KERB_WIDTH, b.at + b.back * KERB_WIDTH);
+        kerb.quad(
+            [
+                at(a.at, a.top),
+                at(b.at, b.top),
+                at(b_back, b.top),
+                at(a_back, a.top),
+            ],
+            DVec3::Y,
+        );
+        let out = -(a.back + b.back).normalize();
+        kerb.quad(
+            [
+                at(a.at, STREET_TOP),
+                at(b.at, STREET_TOP),
+                at(b.at, b.top),
+                at(a.at, a.top),
+            ],
+            DVec3::new(out.x, 0.0, out.y),
+        );
+        pan.quad(
+            [
+                at(a.at - a.back * gutter, pan_top),
+                at(b.at - b.back * gutter, pan_top),
+                at(b.at, pan_top),
+                at(a.at, pan_top),
+            ],
+            DVec3::Y,
+        );
+    }
+}
+
+/// The places along a kerb from `from` to `to` (metres along its street, or radians round
+/// its turning circle) its pieces end, no further apart than `step` and at each of
+/// `bends` (where a straight kerb's street turns), with its top's height at each:
+/// lowered across each of the `drops` (a driveway's edges), sloping back up over `slope`
+/// either side; where the kerb runs `straight`, with no other place across a drop.
+fn kerb_profile(
+    (from, to): (f64, f64),
+    (step, bends, straight): (f64, &[f64], bool),
+    drops: &[(f64, f64)],
+    slope: f64,
+) -> Vec<(f64, f64)> {
+    let pieces = ((to - from) / step).ceil().max(1.0) as usize;
+    let inside = |s: f64| s > from + 1e-3 && s < to - 1e-3;
+    let mut places: Vec<f64> = (0..=pieces)
+        .map(|k| from + (to - from) * k as f64 / pieces as f64)
+        .chain(bends.iter().copied().filter(|&s| inside(s)))
+        .filter(|&s| {
+            !straight
+                || drops
+                    .iter()
+                    .all(|&(a, b)| s <= a - slope || s >= b + slope || !inside(s))
+        })
+        .collect();
+    for &(a, b) in drops {
+        places.extend(
+            [a - slope, a, b, b + slope]
+                .into_iter()
+                .filter(|&s| inside(s)),
+        );
+    }
+    places.sort_by(f64::total_cmp);
+    places.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+    places
+        .into_iter()
+        .map(|s| {
+            let top = drops
+                .iter()
+                .map(|&(a, b)| {
+                    let past = (a - s).max(s - b).max(0.0);
+                    DROPPED_KERB + (KERB_HEIGHT - DROPPED_KERB) * (past / slope).min(1.0)
+                })
+                .fold(KERB_HEIGHT, f64::min);
+            (s, top)
+        })
+        .collect()
+}
+
+/// The course a stretch of kerb's foot follows: along a street on its left (1) or right
+/// (-1), metres along it; round a kerb return or a flare about its middle from one
+/// straight kerb's end to the next, a share of the way; round a turning circle, radians.
+enum KerbCourse {
+    Street {
+        line: Line,
+        half: f64,
+        side: f64,
+    },
+    Corner {
+        centre: DVec2,
+        from: (DVec2, DVec2),
+        to: (DVec2, DVec2),
+    },
+    Ring {
+        middle: DVec2,
+    },
+}
+
+/// One smooth stretch of kerb, from `from` to `to` along its course, laid in pieces no
+/// longer than `step` and, along a street, at each of its joints (`bends`); how far
+/// along it a metre is; and its back edge traced finely, for the driveways to find.
+struct KerbRun {
+    course: KerbCourse,
+    from: f64,
+    to: f64,
+    step: f64,
+    bends: Vec<f64>,
+    metre: f64,
+    back_edge: Vec<(f64, DVec2)>,
+}
+
+impl KerbRun {
+    fn new(course: KerbCourse, (from, to): (f64, f64), step: f64) -> Self {
+        let bends = match &course {
+            KerbCourse::Street { line, .. } => line
+                .0
+                .windows(2)
+                .scan(0.0, |along, pair| {
+                    *along += pair[0].distance(pair[1]);
+                    Some(*along)
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let mut run = KerbRun {
+            course,
+            from,
+            to,
+            step,
+            bends,
+            metre: 1.0,
+            back_edge: Vec::new(),
+        };
+        let pieces = ((to - from) / (step / 8.0)).ceil().max(1.0) as usize;
+        run.back_edge = (0..=pieces)
+            .map(|k| {
+                let s = from + (to - from) * k as f64 / pieces as f64;
+                let (at, back) = run.frame(s);
+                (s, at + back * KERB_WIDTH)
+            })
+            .collect();
+        let length: f64 = run
+            .back_edge
+            .windows(2)
+            .map(|pair| pair[0].1.distance(pair[1].1))
+            .sum();
+        run.metre = (to - from) / length.max(1e-6);
+        run
+    }
+
+    /// The kerb's foot at `s` along its course and the way back across its top.
+    fn frame(&self, s: f64) -> (DVec2, DVec2) {
+        match &self.course {
+            KerbCourse::Street { line, half, side } => {
+                let (point, normal) = line_frame(&line.0, s);
+                (point + normal * *side * *half, normal * *side)
+            }
+            KerbCourse::Corner { centre, from, to } => {
+                let at = round_corner(*centre, from.0, to.0, s);
+                let back = round_corner(DVec2::ZERO, from.1, to.1, s).normalize();
+                (at, back)
+            }
+            KerbCourse::Ring { middle } => {
+                let out = DVec2::from_angle(s);
+                (*middle + out * CUL_DE_SAC_RADIUS, out)
+            }
+        }
+    }
+
+    /// The kerb's points, its top lowered across `drops` (places along its course).
+    fn points(&self, drops: &[(f64, f64)]) -> Vec<KerbPoint> {
+        let straight = matches!(self.course, KerbCourse::Street { .. });
+        kerb_profile(
+            (self.from, self.to),
+            (self.step, &self.bends, straight),
+            drops,
+            DROPPED_KERB_SLOPE * self.metre,
+        )
+        .into_iter()
+        .map(|(s, top)| {
+            let (at, back) = self.frame(s);
+            KerbPoint { at, back, top }
+        })
+        .collect()
+    }
+
+    /// Where a ray from `from` along `toward` first crosses the kerb's back, within
+    /// `reach` (m): how far along the ray, the place along the kerb's course and the point.
+    fn hit(&self, from: DVec2, toward: DVec2, reach: f64) -> Option<(f64, f64, DVec2)> {
+        let cross = |u: DVec2, v: DVec2| u.x * v.y - u.y * v.x;
+        self.back_edge
+            .windows(2)
+            .filter_map(|pair| {
+                let ((sa, a), (sb, b)) = (pair[0], pair[1]);
+                let span = b - a;
+                let turn = cross(toward, span);
+                if turn.abs() < 1e-9 {
+                    return None;
+                }
+                let along = cross(a - from, span) / turn;
+                let share = cross(a - from, toward) / turn;
+                ((0.0..=reach).contains(&along) && (0.0..=1.0).contains(&share))
+                    .then(|| (along, sa + (sb - sa) * share, a + span * share))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+    }
+}
+
+/// The longest pieces a kerb lies in along a street (m), besides one at each of its
+/// joints, and round a corner (a share of the way); round a turning circle as its walk.
+const KERB_STEP: f64 = 2.5;
+const CORNER_STEP: f64 = 0.125;
+
+/// Every kerb in the level as smooth runs: each street's on each side between its
+/// corners, side streets' mouths and flares, the kerb returns, the flares and the turning
+/// circles round from one flare to the other.
+fn kerb_runs(corners: &[Corner], flares: &[Flare]) -> Vec<KerbRun> {
+    let mut runs = Vec::new();
+    for street in Street::ALL {
+        let line = street.line();
+        for side in [-1.0, 1.0] {
+            for span in kerb_spans(street, side, line.length(), corners, flares) {
+                let course = KerbCourse::Street {
+                    line: line.clone(),
+                    half: street.half(),
+                    side,
+                };
+                runs.push(KerbRun::new(course, span, KERB_STEP));
+            }
+        }
+    }
+    for corner in corners {
+        let course = KerbCourse::Corner {
+            centre: corner.centre,
+            from: street_kerb_foot(corner.main, corner.main_side, corner.main_at),
+            to: street_kerb_foot(corner.side_street, corner.side, corner.side_at),
+        };
+        runs.push(KerbRun::new(course, (0.0, 1.0), CORNER_STEP));
+    }
+    for flare in flares {
+        let Some(middle) = flare.street.cul_de_sac() else {
+            continue;
+        };
+        let out = DVec2::from_angle(flare.angle);
+        let course = KerbCourse::Corner {
+            centre: flare.centre,
+            from: street_kerb_foot(flare.street, flare.side, flare.at),
+            to: (middle + out * CUL_DE_SAC_RADIUS, out),
+        };
+        runs.push(KerbRun::new(course, (0.0, 1.0), CORNER_STEP));
+    }
+    for street in Street::ALL {
+        if let (Some(middle), Some(span)) = (street.cul_de_sac(), ring_span(street, flares)) {
+            let step = std::f64::consts::TAU / RING_SEGMENTS as f64;
+            runs.push(KerbRun::new(KerbCourse::Ring { middle }, span, step));
+        }
+    }
+    runs
+}
+
+/// The foot of `street`'s kerb on `side`, `s` metres along it, and the way back across
+/// its top.
+fn street_kerb_foot(street: Street, side: f64, s: f64) -> (DVec2, DVec2) {
+    let (point, normal) = line_frame(&street.line().0, s);
+    (point + normal * side * street.half(), normal * side)
+}
+
+/// The turning circle's kerb and walk at `street`'s end, round its far side from one of
+/// the street's flares to the other (radians, from and to).
+fn ring_span(street: Street, flares: &[Flare]) -> Option<(f64, f64)> {
+    let line = street.line();
+    let (_, inward) = line.at(line.length());
+    let ends: Vec<f64> = flares
+        .iter()
+        .filter(|flare| flare.street == street)
+        .map(|flare| flare.angle)
+        .collect();
+    let [first, second] = ends[..] else {
+        return None;
+    };
+    let tau = std::f64::consts::TAU;
+    let sweep = (second - first).rem_euclid(tau);
+    Some(
+        if DVec2::from_angle(first + sweep / 2.0).dot(inward) > 0.0 {
+            (first, first + sweep)
+        } else {
+            (second, second + tau - sweep)
+        },
+    )
+}
+
+/// How far (m) on from the middle of its sidewalk a driveway looks for its kerb, and how
+/// far under the kerb's top its apron runs, so no sliver of ground shows between them.
+const DRIVEWAY_KERB_REACH: f64 = 3.0;
+const APRON_UNDER_KERB: f64 = 0.05;
+
+/// Where lot `k`'s driveway meets its kerb: for each of [`APRON_PIECES`]` + 1` rays from
+/// the middle of the sidewalk on across the parkway, its `-u` edge's first, the run it
+/// meets, the place along it and the point on the kerb's back. None where any misses.
+fn driveway_kerb(
+    lot: &Lot,
+    yard: &FrontYard,
+    runs: &[KerbRun],
+) -> Option<Vec<(usize, f64, DVec2)>> {
+    let walk = yard.sidewalk + SIDEWALK / 2.0;
+    (0..=APRON_PIECES)
+        .map(|k| {
+            let u = yard.garage + yard.driveway * (k as f64 / APRON_PIECES as f64 - 0.5);
+            let from = lot.at(u, walk);
+            runs.iter()
+                .enumerate()
+                .filter_map(|(index, run)| {
+                    let (along, s, point) = run.hit(from, lot.front, DRIVEWAY_KERB_REACH)?;
+                    Some((along, (index, s, point)))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, hit)| hit)
+        })
+        .collect()
+}
+
+/// The stretches of each of `runs` lowered for a driveway, from its edges' places: on
+/// one run, between them; across the joint of two that meet, from each to the joint.
+fn kerb_drops(runs: &[KerbRun], edges: [(usize, f64, DVec2); 2]) -> Vec<(usize, (f64, f64))> {
+    let [(i, a, _), (j, b, _)] = edges;
+    if i == j {
+        return vec![(i, (a.min(b), a.max(b)))];
+    }
+    // Each run lowered from its edge on past whichever of its ends meets the other run.
+    let toward = |own: &KerbRun, other: &KerbRun, s: f64| {
+        let end = own.frame(own.to).0;
+        let meets = [other.from, other.to]
+            .iter()
+            .any(|&t| other.frame(t).0.distance(end) < 0.01);
+        let past = (own.to - own.from).abs();
+        if meets {
+            (s, own.to + past)
+        } else {
+            (own.from - past, s)
+        }
+    };
+    vec![
+        (i, toward(&runs[i], &runs[j], a)),
+        (j, toward(&runs[j], &runs[i], b)),
+    ]
+}
+
+/// Within this far (m) of a junction or a flare's corner, the walks give way to it.
+const CORNER_REACH: f64 = 12.0;
+/// The kerb returns' radius (m) at the street corners, the largest of these that keeps
+/// the kerb clear of the corner's sidewalk slab; and the flare's radius where a street's
+/// kerb, parkway and walk open out into a turning circle's.
+const KERB_RETURNS: [f64; 6] = [2.0, 1.7, 1.4, 1.1, 0.8, 0.5];
+const BULB_FLARE: f64 = 3.0;
+
+/// The walk along `street` on its left (1) or right (-1): its near and far edges' distance
+/// (m) from the street's line; on Senda Parkway's south side its wide path's.
+fn walk_band(street: Street, side: f64) -> (f64, f64) {
+    let half = street.half();
+    if street == Street::SendaParkway && side < 0.0 {
+        (half + WAY_PARKWAY, half + WAY_PARKWAY + WAY_PATH)
+    } else {
+        (half + PARKWAY, half + PARKWAY + SIDEWALK)
+    }
+}
+
+/// A street corner where a side street leaves the street it starts from: the kerbs turn
+/// it round a kerb return, the main street's walk runs on through one square corner slab
+/// to meet the side street's walk, which starts at it.
+struct Corner {
+    main: Street,
+    side_street: Street,
+    /// The main street's side the side street leaves on, and the side street's side the
+    /// corner lies on (1 left, -1 right).
+    main_side: f64,
+    side: f64,
+    /// Where the side street's line starts, on the main street's asphalt.
+    junction: DVec2,
+    /// The kerb return's middle, and where along each street it meets its straight kerb.
+    centre: DVec2,
+    main_at: f64,
+    side_at: f64,
+    main_line: Line,
+    /// The edges of the walks the corner slab lies between, as the walks' ribbons run.
+    main_inner: Line,
+    main_outer: Line,
+    side_inner: Line,
+    side_outer: Line,
+}
+
+/// Every street corner in the level.
+fn corners() -> Vec<Corner> {
+    corner_plans().iter().map(CornerPlan::corner).collect()
+}
+
+/// A corner's placing, found once: the rest follows from it.
+#[derive(Clone, Copy)]
+struct CornerPlan {
+    main: Street,
+    side_street: Street,
+    main_side: f64,
+    side: f64,
+    centre: DVec2,
+    radius: f64,
+}
+
+impl CornerPlan {
+    fn corner(&self) -> Corner {
+        let (main_line, side_line) = (self.main.line(), self.side_street.line());
+        let (main_near, main_far) = walk_band(self.main, self.main_side);
+        let (side_near, side_far) = walk_band(self.side_street, self.side);
+        Corner {
+            main: self.main,
+            side_street: self.side_street,
+            main_side: self.main_side,
+            side: self.side,
+            junction: side_line.0[0],
+            centre: self.centre,
+            main_at: main_line.along(self.centre),
+            side_at: side_line.along(self.centre),
+            main_inner: ribbon_edge(&main_line.0, self.main_side * main_near),
+            main_outer: ribbon_edge(&main_line.0, self.main_side * main_far),
+            side_inner: ribbon_edge(&side_line.0, self.side * side_near),
+            side_outer: ribbon_edge(&side_line.0, self.side * side_far),
+            main_line,
+        }
+    }
+}
+
+fn corner_plans() -> Vec<CornerPlan> {
+    let mut plans = Vec::new();
+    for side_street in Street::ALL {
+        for main in Street::ALL {
+            let (a, b) = (main.line(), side_street.line());
+            if main == side_street || a.distance(b.0[0]) > main.half() {
+                continue;
+            }
+            let main_side = a.signed_distance(b.at(main.half() + 2.0).0).signum();
+            for side in [1.0, -1.0] {
+                let plan = KERB_RETURNS
+                    .iter()
+                    .map(|&radius| CornerPlan {
+                        main,
+                        side_street,
+                        main_side,
+                        side,
+                        centre: kerb_return_centre(main, side_street, (main_side, side), radius),
+                        radius,
+                    })
+                    .find(CornerPlan::clear_of_walks);
+                plans.extend(plan);
+            }
+        }
+    }
+    plans
+}
+
+/// The middle of a kerb return of `radius` between the kerbs of `main` on its
+/// `main_side` and of `side_street` on its `side`: that far out from both, found on the
+/// streets' spans there.
+fn kerb_return_centre(
+    main: Street,
+    side_street: Street,
+    (main_side, side): (f64, f64),
+    radius: f64,
+) -> DVec2 {
+    let (a, b) = (main.line(), side_street.line());
+    let (mut sa, mut sb) = (a.along(b.0[0]), main.half() + radius);
+    let mut centre = b.0[0];
+    for _ in 0..4 {
+        let ((pa, ta), (pb, tb)) = (a.at(sa), b.at(sb));
+        let pa = pa + left(ta) * main_side * (main.half() + radius);
+        let pb = pb + left(tb) * side * (side_street.half() + radius);
+        let cross = |u: DVec2, v: DVec2| u.x * v.y - u.y * v.x;
+        centre = pa + ta * (cross(pb - pa, tb) / cross(ta, tb));
+        (sa, sb) = (a.along(centre), b.along(centre));
+    }
+    centre
+}
+
+impl CornerPlan {
+    /// Whether the kerb return's top keeps off both walks.
+    fn clear_of_walks(&self) -> bool {
+        let (a, b) = (self.main.line(), self.side_street.line());
+        let (main_near, main_far) = walk_band(self.main, self.main_side);
+        let (side_near, side_far) = walk_band(self.side_street, self.side);
+        let on_walk = |p: DVec2| {
+            let (da, db) = (
+                self.main_side * a.signed_distance(p),
+                self.side * b.signed_distance(p),
+            );
+            (da > main_near - 0.05 && da < main_far && db > side_near - 0.05)
+                || (db > side_near - 0.05 && db < side_far && da > main_far - 0.05)
+        };
+        let toward_a = -left(a.at(a.along(self.centre)).1) * self.main_side;
+        let toward_b = -left(b.at(b.along(self.centre)).1) * self.side;
+        let reach = self.radius - KERB_WIDTH - 0.03;
+        (0..=8).all(|k| {
+            let toward = toward_a.lerp(toward_b, f64::from(k) / 8.0).normalize();
+            !on_walk(self.centre + toward * reach)
+        })
+    }
+}
+
+/// Where a street's kerb, parkway and walk open out into its turning circle's on one
+/// side: round a flare of [`BULB_FLARE`] about `centre` that meets the street's kerb `at`
+/// metres along it and the circle's at `angle` (radians) round it.
+struct Flare {
+    street: Street,
+    side: f64,
+    centre: DVec2,
+    at: f64,
+    angle: f64,
+    /// The street's heading where the flare leaves it.
+    toward: DVec2,
+}
+
+/// Every turning circle's flares, its street's left one first.
+fn flares() -> Vec<Flare> {
+    let mut flares = Vec::new();
+    for street in Street::ALL {
+        let Some(middle) = street.cul_de_sac() else {
+            continue;
+        };
+        let line = street.line();
+        let reach = CUL_DE_SAC_RADIUS + BULB_FLARE;
+        for side in [1.0, -1.0] {
+            let mut at = line.along(middle) - reach;
+            let mut centre = middle;
+            for _ in 0..4 {
+                let (point, along) = line.at(at);
+                let edge = point + left(along) * side * (street.half() + BULB_FLARE);
+                // Along the street's kerb line that far out, to where it lies the circle's
+                // radius and the flare's from the circle's middle, short of it.
+                let q = edge - middle;
+                let b = q.dot(along);
+                let x = -b - (b * b - q.length_squared() + reach * reach).max(0.0).sqrt();
+                centre = edge + along * x;
+                at = line.along(centre);
+            }
+            let out = centre - middle;
+            flares.push(Flare {
+                street,
+                side,
+                centre,
+                at,
+                angle: out.y.atan2(out.x),
+                toward: line.at(at).1,
+            });
+        }
+    }
+    flares
+}
+
+/// How far `p` lies inside the stretch of `street`'s walk on `side` that is drawn
+/// (negative where it gives way): to the corner slab of a side street leaving it there,
+/// to the walk of the street a side street leaves, and to a turning circle's flare.
+fn walk_keep(street: Street, side: f64, corners: &[Corner], flares: &[Flare], p: DVec2) -> f64 {
+    // Far from where it gives way, by more than any one ribbon piece.
+    let mut keep: f64 = 1e3;
+    let mut slab: f64 = f64::NEG_INFINITY;
+    for corner in corners {
+        if corner.junction.distance(p) > CORNER_REACH {
+            continue;
+        }
+        if corner.main == street && corner.main_side == side {
+            slab = slab.max(corner.side * corner.side_inner.signed_distance(p));
+        }
+        if corner.side_street == street {
+            keep = keep.min(corner.main_side * corner.main_outer.signed_distance(p));
+        }
+    }
+    for flare in flares {
+        if flare.street == street && flare.side == side && flare.centre.distance(p) < CORNER_REACH {
+            keep = keep.min((flare.centre - p).dot(flare.toward));
+        }
+    }
+    if slab.is_finite() {
+        keep = keep.min(slab);
+    }
+    keep
+}
+
+/// Whether `p` on `street`'s walk on `side` lies on a corner slab (or past it, where the
+/// walk gives way), where the walk's own score lines would cross the slab.
+fn on_corner_slab(street: Street, side: f64, corners: &[Corner], p: DVec2) -> bool {
+    corners
+        .iter()
+        .filter(|corner| {
+            corner.main == street
+                && corner.main_side == side
+                && corner.junction.distance(p) < CORNER_REACH
+        })
+        .map(|corner| {
+            let (near, far) = walk_band(corner.side_street, corner.side);
+            corner.side * corner.side_inner.signed_distance(p) - (far - near)
+        })
+        .reduce(f64::max)
+        .is_some_and(|past| past < 0.05)
+}
+
+/// No asphalt patch nearer (m) a junction or a turning circle's rim than this.
+const PATCH_CORNER_ROOM: f64 = 9.0;
+/// The pieces a kerb return, a flare and a driveway's apron are laid in.
+const CORNER_PIECES: usize = 8;
+const APRON_PIECES: usize = 4;
+
+/// The stretches (metres along it) of `street`'s straight kerb on `side`: from where a
+/// side street's leaves its kerb return to where a turning circle's flare takes over,
+/// broken across the mouths of the side streets that leave it.
+fn kerb_spans(
+    street: Street,
+    side: f64,
+    length: f64,
+    corners: &[Corner],
+    flares: &[Flare],
+) -> Vec<(f64, f64)> {
+    let mut from: f64 = 0.0;
+    let mut to = length;
+    for corner in corners {
+        if corner.side_street == street && corner.side == side {
+            from = from.max(corner.side_at);
+        }
+    }
+    for flare in flares {
+        if flare.street == street && flare.side == side {
+            to = to.min(flare.at);
+        }
+    }
+    // A side street's mouth: from its one kerb return to the other.
+    let mut mouths: Vec<(f64, f64)> = Vec::new();
+    for side_street in Street::ALL {
+        let ends = corners
+            .iter()
+            .filter(|corner| {
+                corner.main == street
+                    && corner.main_side == side
+                    && corner.side_street == side_street
+            })
+            .map(|corner| corner.main_at);
+        if let Some((a, b)) = ends.fold(None, |span: Option<(f64, f64)>, s| {
+            Some(span.map_or((s, s), |(a, b)| (a.min(s), b.max(s))))
+        }) {
+            mouths.push((a, b));
+        }
+    }
+    mouths.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut spans = Vec::new();
+    let mut start = from;
+    for (a, b) in mouths {
+        if a.min(to) > start {
+            spans.push((start, a.min(to)));
+        }
+        start = start.max(b);
+    }
+    if to > start {
+        spans.push((start, to));
+    }
+    spans.retain(|(a, b)| b - a > 1e-3);
+    spans
+}
+
+/// The points round a corner about `centre` from `from` to `to`: turned and stretched
+/// smoothly between them, so the curve meets both exactly.
+fn round_corner(centre: DVec2, from: DVec2, to: DVec2, share: f64) -> DVec2 {
+    let angle = |v: DVec2| v.y.atan2(v.x);
+    let start = angle(from - centre);
+    let sweep = (angle(to - centre) - start + std::f64::consts::PI)
+        .rem_euclid(std::f64::consts::TAU)
+        - std::f64::consts::PI;
+    let (radius, reach) = (
+        from.distance(centre),
+        to.distance(centre) - from.distance(centre),
+    );
+    centre + DVec2::from_angle(start + sweep * share) * (radius + reach * share)
+}
+
+/// [`round_corner`]'s points in `pieces` even steps, both ends included.
+fn round_corner_points(centre: DVec2, from: DVec2, to: DVec2, pieces: usize) -> Vec<DVec2> {
+    (0..=pieces)
+        .map(|k| round_corner(centre, from, to, k as f64 / pieces as f64))
+        .collect()
+}
+
+/// Where two lines, through `a` along `ta` and through `b` along `tb`, cross.
+fn meet(a: DVec2, ta: DVec2, b: DVec2, tb: DVec2) -> Option<DVec2> {
+    let cross = |u: DVec2, v: DVec2| u.x * v.y - u.y * v.x;
+    let turn = cross(ta, tb);
+    (turn.abs() > 1e-6).then(|| a + ta * (cross(b - a, tb) / turn))
+}
+
+/// A thin score line across a walk from `a` to `b`, at the joints' height.
+fn joint_between(surface: &mut Surface, a: DVec2, b: DVec2) {
+    let half = left((b - a).normalize()) * (CONCRETE_JOINT_WIDTH / 2.0);
+    surface.polygon(
+        &[a - half, b - half, b + half, a + half],
+        WALK_TOP + JOINT_LIFT,
+    );
+}
+
+/// A street corner: the kerb return with its gutter pan, the asphalt filling the corner
+/// out to it from where the two kerbs' lines would meet, and the score lines that make
+/// the main street's walk there one square slab, across it where the side street's walk
+/// would run on and where that walk starts.
+fn street_corner(group: &mut Node, corner: &Corner) {
+    let from = street_kerb_foot(corner.main, corner.main_side, corner.main_at).0;
+    let to = street_kerb_foot(corner.side_street, corner.side, corner.side_at).0;
+    let side_line = corner.side_street.line();
+    let corner_point = meet(
+        from,
+        corner.main_line.at(corner.main_at).1,
+        to,
+        side_line.at(corner.side_at).1,
+    );
+    if let Some(corner_point) = corner_point {
+        let arc = round_corner_points(corner.centre, from, to, CORNER_PIECES);
+        let mut fill = Surface::default();
+        for pair in arc.windows(2) {
+            fill.polygon(&[corner_point, pair[0], pair[1]], STREET_TOP);
+        }
+        group.children.push(flat(fill.mesh(), ASPHALT));
+    }
+    let (main_side, side) = (corner.main_side, corner.side);
+    // Across the main street's walk where the side street's walk would run on, and
+    // along its outer edge where that walk starts.
+    let across_main = [&corner.main_inner, &corner.main_outer].map(|main| {
+        crossing(
+            &corner.side_outer.0,
+            &|p: DVec2| main_side * main.signed_distance(p),
+            corner.junction,
+            CORNER_REACH,
+        )
+    });
+    let mut joints = Surface::default();
+    if let [Some(a), Some(b)] = across_main {
+        joint_between(&mut joints, a, b);
+    }
+    let along_main = [&corner.side_inner, &corner.side_outer].map(|edge| {
+        crossing(
+            &corner.main_outer.0,
+            &|p: DVec2| side * edge.signed_distance(p),
+            corner.junction,
+            CORNER_REACH,
+        )
+    });
+    if let [Some(a), Some(b)] = along_main {
+        joint_between(&mut joints, a, b);
+    }
+    group.children.push(flat(joints.mesh(), CONCRETE_JOINT));
+}
+
+/// A turning circle's flare on one side of its street: the kerb and gutter opening out
+/// round it from the street's to the circle's, the asphalt filling it out to them, and
+/// the walk turning with them from the street's onto the circle's.
+fn circle_flare(group: &mut Node, flare: &Flare, (corners, flares): (&[Corner], &[Flare])) {
+    let (street, side) = (flare.street, flare.side);
+    let Some(middle) = street.cul_de_sac() else {
+        return;
+    };
+    let from = street_kerb_foot(street, side, flare.at).0;
+    let out = DVec2::from_angle(flare.angle);
+    let to = middle + out * CUL_DE_SAC_RADIUS;
+    // The asphalt from where the street's kerb line runs into the circle.
+    let q = from - middle;
+    let b = q.dot(flare.toward);
+    let x = -b
+        - (b * b - q.length_squared() + CUL_DE_SAC_RADIUS * CUL_DE_SAC_RADIUS)
+            .max(0.0)
+            .sqrt();
+    let corner_point = from + flare.toward * x;
+    let arc = round_corner_points(flare.centre, from, to, CORNER_PIECES);
+    let mut fill = Surface::default();
+    for pair in arc.windows(2) {
+        fill.polygon(&[corner_point, pair[0], pair[1]], STREET_TOP);
+    }
+    group.children.push(flat(fill.mesh(), ASPHALT));
+    // The walk, from where the street's ends to the circle's.
+    let line = street.line();
+    let (near, far) = walk_band(street, side);
+    let keep = |p: DVec2| walk_keep(street, side, corners, flares, p);
+    let ends = [near, far].map(|offset| {
+        crossing(
+            &ribbon_edge(&line.0, side * offset).0,
+            &keep,
+            flare.centre,
+            CORNER_REACH,
+        )
+    });
+    let [Some(near_end), Some(far_end)] = ends else {
+        return;
+    };
+    let ring = |offset: f64| middle + out * (CUL_DE_SAC_RADIUS + offset - street.half());
+    let inner = round_corner_points(flare.centre, near_end, ring(near), CORNER_PIECES);
+    let outer = round_corner_points(flare.centre, far_end, ring(far), CORNER_PIECES);
+    let mut walk = Surface::default();
+    for k in 0..CORNER_PIECES {
+        walk.polygon(&[inner[k], inner[k + 1], outer[k + 1], outer[k]], WALK_TOP);
+    }
+    group.children.push(flat(walk.mesh(), SIDEWALK_CONCRETE));
 }
 
 /// A kerb's face: an upright strip along `line` at `at` metres to its left, from the
@@ -1178,13 +2136,15 @@ fn score_lines(
 /// A residential street's wear: the paving joint a little off its middle, where the two
 /// passes of the paver met (sealed a shade darker), and a few long, narrow patches of
 /// newer asphalt over old utility trenches beside one gutter or the other, one every so
-/// far along it, but where `crossing` says it meets another street. Senda Parkway,
-/// striped, keeps neither.
+/// far along it, but none where `by_a_corner` says it would lie by a junction or a
+/// turning circle; the seam stops where `seam_keep` turns negative, at the kerb line of
+/// the street it leaves. Senda Parkway, striped, keeps neither.
 fn asphalt_wear(
     group: &mut Node,
     street: Street,
     line: &[DVec2],
-    crossing: &dyn Fn(DVec2) -> bool,
+    by_a_corner: &dyn Fn(DVec2) -> bool,
+    seam_keep: &dyn Fn(DVec2) -> f64,
 ) {
     if street == Street::SendaParkway {
         return;
@@ -1192,12 +2152,13 @@ fn asphalt_wear(
     let nothing = |_: DVec2| false;
     let (offset, width) = ASPHALT_SEAM;
     group.children.push(flat(
-        ribbon(
+        ribbon_cut(
             line,
             offset - width / 2.0,
             offset + width / 2.0,
             STREET_TOP + SEAM_LIFT,
             &nothing,
+            seam_keep,
         ),
         ASPHALT_SEALED,
     ));
@@ -1214,16 +2175,22 @@ fn asphalt_wear(
         let patch = cut_line(&trace, s, (s + length).min(trace.length()));
         let side = if hash(seed + 0.9) < 0.5 { -1.0 } else { 1.0 };
         let middle = side * (street.half() - GUTTER.0 - 0.1 - width / 2.0);
-        group.children.push(flat(
-            ribbon(
-                &patch,
-                middle - width / 2.0,
-                middle + width / 2.0,
-                STREET_TOP + PATCH_LIFT,
-                crossing,
-            ),
-            ASPHALT_PATCH_TONE,
-        ));
+        let near_corner = (0..=8).any(|k| {
+            let (point, along) = trace.at(s + length * f64::from(k) / 8.0);
+            by_a_corner(point + left(along) * middle)
+        });
+        if !near_corner {
+            group.children.push(flat(
+                ribbon(
+                    &patch,
+                    middle - width / 2.0,
+                    middle + width / 2.0,
+                    STREET_TOP + PATCH_LIFT,
+                    &nothing,
+                ),
+                ASPHALT_PATCH_TONE,
+            ));
+        }
         s += ASPHALT_PATCH_STEP * (0.7 + 0.6 * hash(seed + 1.7));
         k += 1;
     }
@@ -1283,14 +2250,26 @@ fn paseo_grounds() -> Node {
         let n = way.0.len();
         let inner: Vec<DVec2> = way.0[n - 2..].to_vec();
         if n > 2 {
-            let link: Vec<DVec2> = way.0[..n - 1].to_vec();
+            // The walk from the park runs on under the paseo's walk, cut where it would
+            // show past that walk's sides, so the two join along the paseo's end; it
+            // starts under the park's walk.
+            let (field, sidewalk) = (inner[0], inner[1]);
+            let into = (sidewalk - field).normalize();
+            let mut link: Vec<DVec2> = way.0[..n - 1].to_vec();
+            let toward = (field - link[link.len() - 2]).normalize();
+            link.push(field + toward * (walk + WEST_PARK_WALK));
+            let joined = |p: DVec2| {
+                let offset = p - field;
+                (-offset.dot(into)).max(walk - offset.dot(left(into)).abs())
+            };
             group.children.push(flat(
-                ribbon(
+                ribbon_cut(
                     &link,
                     -WEST_PARK_WALK / 2.0,
                     WEST_PARK_WALK / 2.0,
-                    0.04,
+                    PASEO_LINK_TOP,
                     &off,
+                    &joined,
                 ),
                 SIDEWALK_CONCRETE,
             ));
@@ -1361,83 +2340,99 @@ fn paseo_grounds() -> Node {
 /// Every paved surface, batched into one draw per material.
 fn paving() -> Node {
     let mut group = Node::group("senda-paving");
-    let streets: Vec<(Street, Vec<DVec2>)> = Street::ALL
-        .into_iter()
-        .map(|street| (street, street.line().0))
-        .collect();
-    let lines: Vec<(Street, crate::sim::senda_layout::Line)> = Street::ALL
-        .into_iter()
-        .map(|street| (street, street.line()))
-        .collect();
+    let lines = Lines::new();
+    let (corners, flares) = (corners(), flares());
+    // Every kerb with its gutter pan, the corners' and circles' too, in one piece each,
+    // lowered where a driveway crosses it.
+    let runs = kerb_runs(&corners, &flares);
+    let mut drops: Vec<Vec<(f64, f64)>> = runs.iter().map(|_| Vec::new()).collect();
+    for (k, lot) in lines.lots.iter().enumerate() {
+        let Some(hits) = front_yard(lot, k).and_then(|yard| driveway_kerb(lot, &yard, &runs))
+        else {
+            continue;
+        };
+        for (run, drop) in kerb_drops(&runs, [hits[0], hits[APRON_PIECES]]) {
+            drops[run].push(drop);
+        }
+    }
+    let (mut kerbs, mut pans) = (Surface::default(), Surface::default());
+    for (run, dropped) in runs.iter().zip(&drops) {
+        kerb_run(&run.points(dropped), &mut kerbs, &mut pans);
+    }
+    group.children.push(flat(kerbs.mesh(), KERB));
+    group.children.push(flat(pans.mesh(), GUTTER.1));
     let bulbs: Vec<DVec2> = Street::ALL
         .into_iter()
         .filter_map(Street::cul_de_sac)
         .collect();
-    for (street, line) in &streets {
-        let half = street.half();
-        // The asphalt runs on into the junctions; kerbs and sidewalks stop at the
-        // asphalt of the street they meet and round the turning circles.
-        let crossing = |p: DVec2| {
-            lines
-                .iter()
-                .any(|(other, line)| other != street && line.distance(p) < other.half() + 0.1)
-                || bulbs
-                    .iter()
-                    .any(|b| b.distance(p) < CUL_DE_SAC_RADIUS + 0.1)
-        };
-        let nothing = |_: DVec2| false;
+    let nothing = |_: DVec2| false;
+    for street in Street::ALL {
+        let trace = street.line();
+        let (line, half) = (&trace.0, street.half());
+        // The asphalt runs on into the junctions and the turning circles; the kerbs turn
+        // their corners and flare into the circles, and the walks give way to each other
+        // at a corner slab.
         group.children.push(flat(
             ribbon(line, -half, half, STREET_TOP, &nothing),
             ASPHALT,
         ));
         for side in [-1.0, 1.0] {
-            let (inner, outer) = (side * half, side * (half + KERB_WIDTH));
-            let kerb = ribbon(line, inner, outer, KERB_HEIGHT, &crossing);
-            group.children.push(flat(kerb, KERB));
-            let face = kerb_face(line, inner, (inner, outer), -side, &crossing);
-            group.children.push(flat(face, KERB));
-            let gutter = ribbon(
-                line,
-                side * (half - GUTTER.0),
-                inner,
-                STREET_TOP + GUTTER_LIFT,
-                &crossing,
-            );
-            group.children.push(flat(gutter, GUTTER.1));
-            // Senda Parkway's south side has the wide path past its groundcover.
-            let (near, far) = if *street == Street::SendaParkway && side < 0.0 {
-                (half + WAY_PARKWAY, half + WAY_PARKWAY + WAY_PATH)
-            } else {
-                (half + PARKWAY, half + PARKWAY + SIDEWALK)
-            };
-            let walk = ribbon(line, side * near, side * far, WALK_TOP, &crossing);
+            let (near, far) = walk_band(street, side);
+            let keep = |p: DVec2| walk_keep(street, side, &corners, &flares, p);
+            let walk = ribbon_cut(line, side * near, side * far, WALK_TOP, &nothing, &keep);
             group.children.push(flat(walk, SIDEWALK_CONCRETE));
             let joints = score_lines(
                 line,
                 (side * near, side * far),
                 WALK_TOP + JOINT_LIFT,
-                &crossing,
+                &|p: DVec2| keep(p) < 0.05 || on_corner_slab(street, side, &corners, p),
             );
             group.children.push(flat(joints, CONCRETE_JOINT));
         }
-        asphalt_wear(&mut group, *street, line, &crossing);
-        if *street == Street::SendaParkway {
+        // No patch by a corner or a circle, where a short one read as a hole; a side
+        // street's seam stops at the kerb line of the street it leaves.
+        let by_a_corner = |p: DVec2| {
+            corners
+                .iter()
+                .any(|corner| corner.junction.distance(p) < PATCH_CORNER_ROOM)
+                || bulbs
+                    .iter()
+                    .any(|middle| middle.distance(p) < CUL_DE_SAC_RADIUS + PATCH_CORNER_ROOM)
+        };
+        let seam_keep = |p: DVec2| {
+            corners
+                .iter()
+                .filter(|corner| {
+                    corner.side_street == street && corner.junction.distance(p) < CORNER_REACH
+                })
+                .map(|corner| {
+                    corner.main_side * corner.main_line.signed_distance(p) - corner.main.half()
+                })
+                .fold(1e3, f64::min)
+        };
+        asphalt_wear(&mut group, street, line, &by_a_corner, &seam_keep);
+        if street == Street::SendaParkway {
             senda_parkway(&mut group, line);
         }
+    }
+    for corner in &corners {
+        street_corner(&mut group, corner);
+    }
+    for flare in &flares {
+        circle_flare(&mut group, flare, (&corners, &flares));
     }
     let lawn = lawn_material();
     for street in Street::ALL {
         if let Some(middle) = street.cul_de_sac() {
-            cul_de_sac(&mut group, street, middle, &lawn);
+            cul_de_sac(&mut group, street, middle, &lawn, &flares);
         }
     }
-    let lines = Lines::new();
     neblina_centre_line(&mut group);
     splitter_island(&mut group);
     greenbelt_path(&mut group, &lines);
     trails(&mut group, &lines);
     yard_grounds(&mut group, &lines.lots);
-    front_lawns(&mut group, &lines.lots, &lawn);
+    front_lawns(&mut group, &lines.lots, &lawn, &runs);
     bend_park_grounds(&mut group, &lines, &lawn);
     west_park_grounds(&mut group, &lines);
     crest_basins(&mut group, &lines);
@@ -2626,27 +3621,51 @@ fn trails(group: &mut Node, lines: &Lines) {
         };
         wall.distance(p) < room
     };
-    let off_pads = |p: DVec2| {
-        pads.iter().any(|pad| pad.distance(p) < TRAIL_SPAWN_ROOM)
-            || way.distance(p) < way_reach
-            || at_wall(p)
+    let off_way = |p: DVec2| {
+        pads.iter().any(|pad| pad.distance(p) < TRAIL_SPAWN_ROOM) || way.distance(p) < way_reach
     };
+    let off_pads = |p: DVec2| off_way(p) || at_wall(p);
     let (terrace, spurs) = bank_trails(lines);
+    let terrace_line = Line(terrace.clone());
+    // A spur runs up to the level's wall, which stands just outside its boundary line.
+    let wall_room = |p: DVec2| {
+        let room = if inside_boundary(&boundary, p) {
+            BANK_SPUR_WALL_ROOM
+        } else {
+            BOUNDARY_THICKNESS + BANK_SPUR_WALL_ROOM
+        };
+        wall.distance(p) - room
+    };
+    // A spur starts under the terrace walk's upper edge, a few millimetres below it, and
+    // ends square at the foot of the level's wall.
+    let spur_keep = |p: DVec2, up: f64| {
+        let past_terrace =
+            up * terrace_line.signed_distance(p) - (BANK_WALK / 2.0 - BANK_SPUR_UNDER);
+        past_terrace.min(wall_room(p))
+    };
     let walks = spurs
         .into_iter()
-        .map(|line| (line, BANK_SPUR))
-        .chain((terrace.len() > 1).then_some((terrace, BANK_WALK)));
-    for (line, width) in walks {
+        .map(|line| (line, BANK_SPUR, BANK_SPUR_TOP))
+        .chain((terrace.len() > 1).then_some((terrace, BANK_WALK, BANK_WALK_TOP)));
+    for (line, width, top) in walks {
         let half = width / 2.0;
+        let up = if terrace_line.0.len() > 1 && width < BANK_WALK {
+            terrace_line.signed_distance(line[line.len() - 1]).signum()
+        } else {
+            0.0
+        };
+        let keep = |p: DVec2| if up == 0.0 { 1.0 } else { spur_keep(p, up) };
+        let skip: &dyn Fn(DVec2) -> bool = if up == 0.0 { &off_pads } else { &off_way };
         group.children.push(flat(
-            ribbon(&line, -half, half, 0.03, &off_pads),
+            ribbon_cut(&line, -half, half, top, skip, &keep),
             SIDEWALK_CONCRETE,
         ));
         let (edge, paler) = BANK_WALK_EDGE;
         for side in [-1.0, 1.0] {
             let (a, b) = (side * half, side * (half - edge));
+            let lift = top + BANK_WALK_EDGE_LIFT;
             group.children.push(flat(
-                ribbon(&line, a.min(b), a.max(b), 0.033, &off_pads),
+                ribbon_cut(&line, a.min(b), a.max(b), lift, skip, &keep),
                 paler,
             ));
         }
@@ -2790,16 +3809,11 @@ fn bank_trails(lines: &Lines) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
             if let Some(&last) = terrace.last()
                 && BANK_SPURS.iter().any(|&x| (last.x < x) != (at.x < x))
             {
-                // Across the meadow the spur climbs in switchbacks, as the trail there does.
+                // Across the meadow the spur climbs slantwise, as the trail there does: one
+                // leg, since the level's wall cuts it before a switchback could turn.
                 if at.x > BANK_MEADOW.0 {
-                    let (up, across) = (path - at, left((path - at).normalize()));
-                    let swing = across * BANK_SWITCHBACK;
-                    drains.push(vec![
-                        at,
-                        at + up / 3.0 + swing,
-                        at + up * 2.0 / 3.0 - swing,
-                        path,
-                    ]);
+                    let across = left((path - at).normalize());
+                    drains.push(vec![at, path + across * BANK_SWITCHBACK]);
                 } else {
                     drains.push(vec![at, path]);
                 }
@@ -2832,18 +3846,16 @@ fn cul_de_sac_ends() -> Vec<(DVec2, DVec2)> {
 /// close to the street they open onto.
 const RING_SEGMENTS: usize = 96;
 
-/// A cul-de-sac's turning circle round `middle`, at the end of `street`: its asphalt,
-/// gutter pan, kerb and sidewalk rings, open where the street comes in, and the planted
-/// island in its middle, kerbed and guttered round.
-fn cul_de_sac(group: &mut Node, street: Street, middle: DVec2, lawn: &Arc<crate::scene::Material>) {
-    let (line, half) = (street.line(), street.half());
-    let (_, inward) = line.at(line.length());
-    // Within `width` (m) of the street's centre line on its side of the circle: the
-    // mouth the rings stay out of.
-    let mouth = |width: f64| {
-        let line = &line;
-        move |p: DVec2| (p - middle).dot(inward) < 0.0 && line.distance(p) < width
-    };
+/// A cul-de-sac's turning circle round `middle`, at the end of `street`: its asphalt and
+/// its sidewalk, round from one of the street's flares to the other (its kerb is one of
+/// [`kerb_runs`]), and the planted island in its middle, kerbed and guttered round.
+fn cul_de_sac(
+    group: &mut Node,
+    street: Street,
+    middle: DVec2,
+    lawn: &Arc<crate::scene::Material>,
+    flares: &[Flare],
+) {
     let mut asphalt = RingGeometry {
         inner_radius: 0.0,
         outer_radius: CUL_DE_SAC_RADIUS,
@@ -2855,39 +3867,30 @@ fn cul_de_sac(group: &mut Node, street: Street, middle: DVec2, lawn: &Arc<crate:
     let mut node = flat(asphalt, ASPHALT);
     node.position = glam::DVec3::new(middle.x, STREET_TOP + CIRCLE_LIFT, middle.y);
     group.children.push(node);
-    let (gutter, width) = (CUL_DE_SAC_RADIUS - GUTTER.0, half - GUTTER.0);
-    let rings = [
-        (
-            gutter,
-            CUL_DE_SAC_RADIUS,
-            STREET_TOP + GUTTER_LIFT,
-            GUTTER.1,
-            width,
-        ),
-        (
-            CUL_DE_SAC_RADIUS,
-            CUL_DE_SAC_RADIUS + KERB_WIDTH,
-            KERB_HEIGHT,
-            KERB,
-            half,
-        ),
-        (
+    if let Some((start, end)) = ring_span(street, flares) {
+        let (sweep, step) = (end - start, std::f64::consts::TAU / RING_SEGMENTS as f64);
+        let walk = (
             CUL_DE_SAC_RADIUS + PARKWAY,
             CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK,
-            WALK_TOP,
-            SIDEWALK_CONCRETE,
-            half + PARKWAY,
-        ),
-    ];
-    for (inner, outer, y, color, width) in rings {
-        group
-            .children
-            .push(flat(ring(middle, (inner, outer), y, &mouth(width)), color));
+        );
+        let mut surface = Surface::default();
+        let pieces = (sweep / step).ceil().max(1.0) as usize;
+        let at = |k: usize, radius: f64| {
+            middle + DVec2::from_angle(start + sweep * k as f64 / pieces as f64) * radius
+        };
+        for k in 0..pieces {
+            surface.polygon(
+                &[
+                    at(k, walk.0),
+                    at(k + 1, walk.0),
+                    at(k + 1, walk.1),
+                    at(k, walk.1),
+                ],
+                WALK_TOP,
+            );
+        }
+        group.children.push(flat(surface.mesh(), SIDEWALK_CONCRETE));
     }
-    group.children.push(flat(
-        ring_face(middle, CUL_DE_SAC_RADIUS, -1.0, &mouth(half)),
-        KERB,
-    ));
     let island = CUL_DE_SAC_ISLAND + KERB_WIDTH;
     let nothing = |_: DVec2| false;
     group.children.push(flat(
@@ -3045,12 +4048,25 @@ fn front_yard(lot: &Lot, k: usize) -> Option<FrontYard> {
 /// to the steps, the bed of bark mulch along the office's front, a small lawn panel (on a
 /// third of the lots gravel) between the driveway, the bed, the walk and the sidewalk, on
 /// round the walk to the lot line, and outside the driveway to the other one.
-fn front_yard_ground(group: &mut Node, lot: &Lot, k: usize, lawn: &Arc<crate::scene::Material>) {
+fn front_yard_ground(
+    group: &mut Node,
+    lot: &Lot,
+    k: usize,
+    lawn: &Arc<crate::scene::Material>,
+    runs: &[KerbRun],
+) {
     let Some(yard) = front_yard(lot, k) else {
         return;
     };
     let span = |a: f64, b: f64| ((a + b) / 2.0, (a - b).abs());
-    let kerb = yard.sidewalk + SIDEWALK + PARKWAY;
+    let apron = driveway_kerb(lot, &yard, runs);
+    // Where it finds its kerb (lowered for it), the driveway runs on under the sidewalk's
+    // middle and its apron from there to the kerb's back, following the kerb's curve.
+    let kerb = if apron.is_some() {
+        yard.sidewalk + SIDEWALK / 2.0
+    } else {
+        yard.sidewalk + SIDEWALK + PARKWAY
+    };
     lot_slab(
         group,
         lot,
@@ -3059,6 +4075,28 @@ fn front_yard_ground(group: &mut Node, lot: &Lot, k: usize, lawn: &Arc<crate::sc
         0.055,
         DRIVEWAY,
     );
+    if let Some(hits) = apron {
+        let mut surface = Surface::default();
+        let at = |k: usize| {
+            let u = yard.garage + yard.driveway * (k as f64 / APRON_PIECES as f64 - 0.5);
+            (lot.at(u, kerb), hits[k].2 + lot.front * APRON_UNDER_KERB)
+        };
+        // Along a street the kerb runs straight enough for one piece; round a circle or a
+        // flare the apron follows its curve.
+        let straight = hits
+            .iter()
+            .all(|hit| matches!(runs[hit.0].course, KerbCourse::Street { .. }));
+        let pieces: Vec<usize> = if straight {
+            vec![0, APRON_PIECES]
+        } else {
+            (0..=APRON_PIECES).collect()
+        };
+        for pair in pieces.windows(2) {
+            let ((p0, q0), (p1, q1)) = (at(pair[0]), at(pair[1]));
+            surface.polygon(&[p0, p1, q1, q0], 0.055);
+        }
+        group.children.push(flat(surface.mesh(), DRIVEWAY));
+    }
     // Its control joints: one down the middle, two across, and the apron's at the walk.
     let joint = CONCRETE_JOINT_WIDTH;
     lot_slab(
@@ -3326,7 +4364,12 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
 /// The front yards: the parkway's strip of clipped lawn between the kerb and the sidewalk
 /// across each lot (its driveway apron and entry walk laid over it), and each lot's front
 /// yard ([`front_yard_ground`]), their lawns in `lawn`.
-fn front_lawns(group: &mut Node, lots: &[Lot], lawn: &Arc<crate::scene::Material>) {
+fn front_lawns(
+    group: &mut Node,
+    lots: &[Lot],
+    lawn: &Arc<crate::scene::Material>,
+    kerbs: &[KerbRun],
+) {
     for (k, lot) in lots.iter().enumerate() {
         let (u0, u1) = (lot.line_u(0), lot.line_u(1));
         let walk = lot.half_depth + lot.house.setback + SIDEWALK;
@@ -3340,7 +4383,7 @@ fn front_lawns(group: &mut Node, lots: &[Lot], lawn: &Arc<crate::scene::Material
         group
             .children
             .push(shadow_receiver(Arc::new(mesh), lawn.clone()));
-        front_yard_ground(group, lot, k, lawn);
+        front_yard_ground(group, lot, k, lawn, kerbs);
     }
 }
 
@@ -3624,6 +4667,13 @@ struct WestPark {
 /// the wall they stand; the beds' radius (m).
 const PARK_OVAL: (DVec2, DVec2) = (DVec2::new(14.0, 10.5), DVec2::new(7.0, 4.5));
 const WEST_PARK_WALK: f64 = 1.0;
+/// The tops (m) of the park's oval walk, of the walks that branch off it (and the walks
+/// out to the paseos) and of its plazas.
+const PARK_OVAL_TOP: f64 = 0.04;
+const PARK_BRANCH_TOP: f64 = 0.036;
+const PARK_PLAZA_TOP: f64 = 0.044;
+/// The walk from the park's walk to a paseo's, under both and over the paseo's granite.
+const PASEO_LINK_TOP: f64 = 0.033;
 const PARK_PLAZA: f64 = 1.8;
 const PARK_WALK_EAST: f64 = 7.5;
 const PARK_TREE_CROWN: (f64, f64) = (2.6, 3.4);
@@ -3646,16 +4696,22 @@ impl WestPark {
     /// Whether a piece reaching `room` (m) round `p` stays on the field: off the lots and
     /// their walls' mulch, inside the level's wall and clear of the pads and the pickups.
     fn fits(p: DVec2, room: f64, lines: &Lines, outer: &Outer) -> bool {
+        Self::walk_fits(p, room, lines, outer)
+            && outer
+                .pickups
+                .iter()
+                .all(|pickup| pickup.distance(p) > OUTER_PICKUP_ROOM + room)
+    }
+
+    /// Whether a walk reaching `room` (m) round `p` stays on the field: as
+    /// [`WestPark::fits`], but a walk runs on under the pickups, which stand on it.
+    fn walk_fits(p: DVec2, room: f64, lines: &Lines, outer: &Outer) -> bool {
         lines.lot(p).0 < -(WALL_FOOT + room)
             && outer.inside(p) > room + 0.5
             && outer
                 .pads
                 .iter()
                 .all(|pad| pad.distance(p) > OUTER_PAD_ROOM + 0.5 + room)
-            && outer
-                .pickups
-                .iter()
-                .all(|pickup| pickup.distance(p) > OUTER_PICKUP_ROOM + room)
             && !is_senda_paved(p.x, p.y)
     }
 }
@@ -3758,11 +4814,17 @@ fn west_park_grounds(group: &mut Node, lines: &Lines) {
         return;
     };
     let outer = Outer::new(lines);
-    let off = |p: DVec2| !WestPark::fits(p, WEST_PARK_WALK / 2.0, lines, &outer);
+    let off = |p: DVec2| !WestPark::walk_fits(p, WEST_PARK_WALK / 2.0, lines, &outer);
     let half = WEST_PARK_WALK / 2.0;
-    for line in std::iter::once(park.oval_line()).chain(park.walks.iter().cloned()) {
+    // The oval over the walks that leave it, which run on under it and under the
+    // plazas (each a few millimetres apart, or they flicker where they overlap).
+    group.children.push(flat(
+        ribbon(&park.oval_line(), -half, half, PARK_OVAL_TOP, &off),
+        SIDEWALK_CONCRETE,
+    ));
+    for line in &park.walks {
         group.children.push(flat(
-            ribbon(&line, -half, half, 0.04, &off),
+            ribbon(line, -half, half, PARK_BRANCH_TOP, &off),
             SIDEWALK_CONCRETE,
         ));
     }
@@ -3783,7 +4845,7 @@ fn west_park_grounds(group: &mut Node, lines: &Lines) {
         if WestPark::fits(plaza, PARK_PLAZA, lines, &outer) {
             group
                 .children
-                .push(disc(PARK_PLAZA, SIDEWALK_CONCRETE, 0.042, plaza));
+                .push(disc(PARK_PLAZA, SIDEWALK_CONCRETE, PARK_PLAZA_TOP, plaza));
         }
     }
     for &bed in &park.beds {
