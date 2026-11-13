@@ -103,11 +103,16 @@ const DRIP_STRIP: f64 = 0.035;
 /// The dark chocolate stain of a stucco house's timber.
 const TRACT_STAIN: u32 = 0x4a3326;
 /// A tract house's garage door, stained a lighter milk chocolate than its timber (the
-/// tract's taupe-brown sectional doors), the white plantation shutters behind its windows'
-/// white vinyl frames, its board-and-batten cladding's grey sage and the tint of its stacked stone over the
+/// tract's taupe-brown sectional doors), the plantation shutters behind some of its
+/// windows' white vinyl frames (an off-white held below the walls, as blinds sit in the
+/// shade of their reveal), its board-and-batten cladding's grey sage and the tint of its stacked stone over the
 /// sandstone texture (a cooler buff than the quarry's raw rock).
 const TRACT_GARAGE_STAIN: u32 = 0x7a604e;
-const PLANTATION_BLINDS: u32 = 0xe2e0d8;
+/// The garage doors of the tract's paler houses: a cream house's a lighter tan stain, a
+/// white house's painted off-white, as the street's doors range from taupe-brown to white.
+const CREAM_GARAGE_STAIN: u32 = 0x957a60;
+const WHITE_GARAGE_PAINT: u32 = 0xd4ccbc;
+const PLANTATION_BLINDS: u32 = 0xb8b4aa;
 const TRACT_CLADDING: u32 = 0x8a937f;
 const TRACT_STONE: u32 = 0xe4e6ec;
 /// How much wall (m) one tile of the sandstone texture covers as a tract house's stacked
@@ -272,7 +277,7 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         Surface::Stone if walls == WallFinish::Stucco => ledgestone(),
         // White vinyl frames over white plantation shutters.
         Surface::Curtain if walls == WallFinish::Stucco => satin(PLANTATION_BLINDS),
-        Surface::GarageDoor => satin(TRACT_GARAGE_STAIN),
+        Surface::GarageDoor => satin(garage_door_paint(palette.siding)),
         Surface::Cladding => satin(TRACT_CLADDING),
         Surface::Siding | Surface::Brick | Surface::Stone | Surface::Glass | Surface::Lamp => {
             source
@@ -281,6 +286,21 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         // from the battlefield's height.
         Surface::Splinters => satin(FRESH_SPLIT),
         _ => satin(source.color.0),
+    }
+}
+
+/// A stucco house's garage door by its wall paint ([`CREAM_GARAGE_STAIN`]): the
+/// taupe-brown stain on its sands and tans (the reference house's), a lighter one on its
+/// creams and paint on its whites.
+fn garage_door_paint(siding: u32) -> u32 {
+    let [r, g, b] = [16, 8, 0].map(|shift| (siding >> shift) & 0xff);
+    let (high, low) = (r.max(g).max(b), r.min(g).min(b));
+    // Chroma against brightness, as HSV saturation in 1/256ths.
+    let saturation = (high - low) * 256 / high.max(1);
+    match saturation {
+        0..16 => WHITE_GARAGE_PAINT,
+        16..44 => CREAM_GARAGE_STAIN,
+        _ => TRACT_GARAGE_STAIN,
     }
 }
 
@@ -4670,7 +4690,7 @@ const LOT_MIX: u32 = 2_654_435_761;
 /// opposite slope. A block lies flush on the slope that takes the most (of two alike, the
 /// one facing its street more, or beside a front gable the one away from it; never the
 /// hip end a front gable takes), up to three rows where the slope is long enough. 5
-/// Rumbo's covers three slopes. Each panel is dark, satin glass in a dark frame and goes
+/// Rumbo's covers three slopes. Each panel is dark, satin glass in a silver frame and goes
 /// with the slope it sits on.
 fn solar_arrays(parts: &mut Parts, design: &HouseDesign, roof: &Roof) {
     let street = if design.door_wall == 0 {
@@ -4840,9 +4860,10 @@ fn solar_block(parts: &mut Parts, slope: &Slope, block: SolarBlock, lift: f64) {
                 slope.up.extend(0.0),
                 slope.at(s, a, lift).extend(1.0),
             );
-            // A dark frame under the glass, which lies on it rather than in it.
+            // A thin silver aluminium frame under the glass, which lies on it rather
+            // than in it.
             kit.block(
-                Surface::Iron,
+                Surface::Metal,
                 DVec3::new(PANEL.0, PANEL_DEPTH, PANEL.1),
                 basis,
             );

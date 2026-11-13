@@ -54,9 +54,10 @@ const STAINED_WOOD: u32 = 0x76512f;
 /// lying upturned in the sun shows as boards (darker, it read as a black hole).
 const SHEATHING: u32 = 0x7a6650;
 const LAMP_GLASS: u32 = 0xf1d18f;
-/// Solar cells under their glass: near black with a little blue, satin rather than
+/// Solar cells under their glass: a dark navy blue-grey, as the tract's arrays read from
+/// the air under a midday sun (darker, they read as holes in the roofs), satin rather than
 /// glossy (from overhead a glossy array mirrored the sky in streaks).
-const SOLAR_GLASS: u32 = 0x1c2433;
+const SOLAR_GLASS: u32 = 0x24304a;
 /// Timber freshly split where a building broke apart, paler than its stain.
 const SPLIT_TIMBER: u32 = 0xb48d5c;
 
