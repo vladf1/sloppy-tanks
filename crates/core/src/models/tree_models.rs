@@ -501,6 +501,60 @@ fn seed_unit(seed: u32, salt: u32) -> f64 {
 const TURNING_GOLD: u32 = 0xf0c85a;
 const TURNING_RUSSET: u32 = 0xd8955a;
 
+/// How a tree is coloured.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TreeLook {
+    /// Its family's leaves and bark.
+    #[default]
+    Family,
+    /// The Neighborhood's parkway trees: sycamores in autumn leaf on pale mottled
+    /// trunks, whatever family shaped them.
+    StreetSycamore,
+}
+
+/// The parkway sycamores' leaves, linear tints over the sprig texture's green (they may
+/// pass 1: the product stays a leaf's colour): tan gold and olive at either end of a
+/// tree's mix, and the green of the few that have not turned (this share of them); each
+/// tree this much lighter or darker either way. Their bark, birch's pale bark darker.
+const SYCAMORE_GOLD: [f64; 3] = [1.55, 0.84, 1.75];
+const SYCAMORE_OLIVE: [f64; 3] = [1.08, 0.76, 1.25];
+const SYCAMORE_GREEN: [f64; 3] = [0.6, 0.66, 0.42];
+const SYCAMORE_STILL_GREEN: f64 = 0.12;
+const SYCAMORE_VALUE: f64 = 0.1;
+const SYCAMORE_BARK: u32 = 0xcdc3ad;
+
+/// A tree's bark surface, its bark's sRGB colour, its foliage material's colour and its
+/// leaves' linear tint, for its `look`, `family` and `seed`.
+fn look_colors(look: TreeLook, family: u32, seed: u32) -> (TreeSurface, u32, u32, [f64; 3]) {
+    match look {
+        TreeLook::Family if family == 4 || family == 5 => (
+            TreeSurface::Birch,
+            BIRCH_COLORS[family as usize - 4],
+            LEAF_COLORS[family as usize],
+            [1.0; 3],
+        ),
+        TreeLook::Family => (
+            TreeSurface::Bark,
+            BARK_COLORS[family as usize],
+            LEAF_COLORS[family as usize],
+            [1.0; 3],
+        ),
+        TreeLook::StreetSycamore => {
+            let mut leaf = lerp_color(SYCAMORE_OLIVE, SYCAMORE_GOLD, seed_unit(seed, 11));
+            if seed_unit(seed, 12) < SYCAMORE_STILL_GREEN {
+                leaf = SYCAMORE_GREEN;
+            }
+            let value = 1.0 + (seed_unit(seed, 13) - 0.5) * 2.0 * SYCAMORE_VALUE;
+            (
+                TreeSurface::Birch,
+                SYCAMORE_BARK,
+                0xffffff,
+                leaf.map(|c| c * value),
+            )
+        }
+    }
+}
+
 /// A background tree's linear foliage and bark tints: its family's colours, each
 /// tree a little lighter or darker, warmer or cooler than its neighbours, spruce
 /// bluer, and a few broadleaves already turning, so a wood reads as many trees.
@@ -751,7 +805,7 @@ impl Crown {
 
 /// `treeModel(c, detail)`.
 pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
-    standing_tree_model(c, detail, &|_| true)
+    standing_tree_model(c, detail, TreeLook::Family, &|_| true)
 }
 
 /// [`tree_model`] with only the parts of a cover tree that `keep` picks: what still
@@ -759,6 +813,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
 pub fn standing_tree_model(
     c: &TreeShape,
     detail: TreeDetail,
+    look: TreeLook,
     keep: &dyn Fn(TreePart) -> bool,
 ) -> Node {
     let TreeProportions {
@@ -772,33 +827,27 @@ pub fn standing_tree_model(
     } = tree_proportions(c.x, c.z, c.w, c.d, c.h);
     let full = detail == TreeDetail::Full;
     let conifer = family < 3;
-    let pale = family == 4 || family == 5;
-    let bark_surface = if pale {
-        TreeSurface::Birch
-    } else {
-        TreeSurface::Bark
-    };
+    let (bark_surface, bark_color, leaf_color, leaf_tint) = look_colors(look, family, seed);
     let foliage_surface = if conifer {
         TreeSurface::ConiferSpray
     } else {
         TreeSurface::LeafSprigs
     };
     let (bark, foliage, tints) = if full {
-        let bark_color = if pale {
-            BIRCH_COLORS[family as usize - 4]
-        } else {
-            BARK_COLORS[family as usize]
-        };
         (
             surface(bark_surface, bark_color, false),
-            surface(foliage_surface, LEAF_COLORS[family as usize], true),
+            surface(foliage_surface, leaf_color, true),
             None,
         )
     } else {
+        let tints = match look {
+            TreeLook::Family => background_tints(seed, family),
+            TreeLook::StreetSycamore => (leaf_tint, hex_to_linear(bark_color)),
+        };
         (
             tinted_surface(bark_surface),
             tinted_surface(foliage_surface),
-            Some(background_tints(seed, family)),
+            Some(tints),
         )
     };
     let rings = surface(TreeSurface::Rings, RINGS_COLOR, false);
@@ -821,10 +870,19 @@ pub fn standing_tree_model(
     if full {
         let mut stump = Node::group(tree_part::STUMP);
         let scale = DVec3::new(radius, stump_height, radius);
+        // The stump keeps its family's bark, so it draws with every other stump of it:
+        // a sycamore's foot is the darker, rougher part of its trunk anyway.
+        let stump_bark = match look {
+            TreeLook::Family => bark.clone(),
+            TreeLook::StreetSycamore => {
+                let (surface_kind, color, _, _) = look_colors(TreeLook::Family, family, seed);
+                surface(surface_kind, color, false)
+            }
+        };
         add_mesh(
             &mut stump,
             geometry(TreeGeometry::StumpBark(variant)),
-            bark.clone(),
+            stump_bark.clone(),
             DVec3::ZERO,
             scale,
         )
@@ -838,7 +896,7 @@ pub fn standing_tree_model(
         for root in roots {
             limb(
                 &mut stump,
-                bark.clone(),
+                stump_bark.clone(),
                 root.from,
                 root.to,
                 root.radius,
@@ -912,7 +970,7 @@ pub fn standing_tree_model(
         (_, Some(grown)) => tree_growth::add_tree_crown(&mut crown, grown, &bark, true, 0, keep),
         _ => unreachable!("a grown tree or a laid out one"),
     };
-    crown.grow_foliage(&foliage, &shape, tints.map_or([1.0; 3], |(leaf, _)| leaf));
+    crown.grow_foliage(&foliage, &shape, tints.map_or(leaf_tint, |(leaf, _)| leaf));
     let mut crown = crown.node;
     if full {
         let offset = group.position;

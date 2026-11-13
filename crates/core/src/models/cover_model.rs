@@ -27,7 +27,7 @@ use super::quarry_surfaces::{
 use super::timber_model::{add_timber_parts, timber_part_model};
 use super::tower_model::{tower, tower_debris};
 use super::tree_models::{
-    TreeDetail, TreeShape, grown_pieces, standing_tree_model, tree_model, tree_pieces,
+    TreeDetail, TreeLook, TreeShape, grown_pieces, standing_tree_model, tree_pieces,
 };
 use super::wheelie_bin::wheelie_bin;
 use crate::scene::Node;
@@ -38,7 +38,7 @@ use crate::sim::senda_entries::is_entry;
 use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
-    is_senda_paved, is_trash_bin, street_lamp_look,
+    is_senda_paved, is_street_tree, is_trash_bin, street_lamp_look,
     SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
 };
 use crate::sim::senda_yards::{PatioCover, YARD_VIEW_COLOR, YARD_WALL_COLOR};
@@ -99,6 +99,16 @@ impl From<&RenderCover> for CoverShape {
     }
 }
 
+/// How a tree cover of `color` is coloured: the Neighborhood's parkway trees as its
+/// sycamores, every other as its family.
+fn tree_look(color: u32) -> TreeLook {
+    if is_street_tree(color) {
+        TreeLook::StreetSycamore
+    } else {
+        TreeLook::Family
+    }
+}
+
 /// `coverModel(c, detail)`: rebuild it when a structure's broken parts change.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
     if c.kind == CoverKind::Tree {
@@ -109,8 +119,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
             d: c.d,
             h: c.h,
         };
+        let look = tree_look(c.color);
         if c.broken.is_empty() || detail != TreeDetail::Full {
-            return tree_model(&tree, detail);
+            return standing_tree_model(&tree, detail, look, &|_| true);
         }
         // Limbs a shell snapped off fell away, both halves of them.
         let layout = tree_structure(c.x, c.z, c.w, c.d, c.h);
@@ -123,7 +134,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
                 .iter()
                 .any(|index| layout.part(index).role == Role::Tree(whole))
         };
-        return standing_tree_model(&tree, detail, &|part| !gone(part));
+        return standing_tree_model(&tree, detail, look, &|part| !gone(part));
     }
     let mut node = Node::default();
     let group = &mut node;
@@ -497,7 +508,7 @@ pub fn tree_debris(c: &CoverShape, parts: &PartSet, shed: u32) -> Node {
     };
     let mut root = Node::group("tree-debris");
     root.children.push(if grows(tree_proportions(c.x, c.z, c.w, c.d, c.h).family) {
-        grown_pieces(&tree, &keep, shed)
+        grown_pieces(&tree, tree_look(c.color), &keep, shed)
     } else {
         tree_pieces(&tree, &keep, shed)
     });

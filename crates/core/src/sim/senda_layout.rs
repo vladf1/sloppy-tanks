@@ -241,6 +241,9 @@ const CUL_DE_SAC_ROW_END: f64 = 40.0;
 /// block, which its model knows it by.
 pub const SENDA_WALL_COLOR: u32 = 0xc8b28c;
 const TREE_COLOR: u32 = 0x3f7a3a;
+/// The parkway trees' colour, by which their model knows them as the tract's sycamores in
+/// autumn leaf ([`is_street_tree`]); a hit throws chips of it.
+pub const STREET_TREE_COLOR: u32 = 0x9c8b5a;
 /// The parkway trees, one before most lots: their footprint and height, the least room
 /// (m) between two of them and between one and a driveway, and how often a lot keeps
 /// none (every this many lots, one). The trunk stands in the parkway strip; the box,
@@ -1124,7 +1127,7 @@ fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
                 STREET_TREE,
                 STREET_TREE_HEIGHT,
                 80.0,
-                TREE_COLOR,
+                STREET_TREE_COLOR,
             ));
         }
     }
@@ -1153,6 +1156,11 @@ const TRASH_BINS_APART: f64 = 7.0;
 /// Whether a drum is one of Senda's wheelie bins.
 pub fn is_trash_bin(color: u32) -> bool {
     TRASH_BIN_COLORS.contains(&color)
+}
+
+/// Whether a tree cover of `color` is one of the parkway trees.
+pub fn is_street_tree(color: u32) -> bool {
+    color == STREET_TREE_COLOR
 }
 
 /// The bins of every [`TRASH_BIN_HOUSES`]th house, a trash and a recycling bin side by
