@@ -53,7 +53,7 @@ use crate::sim::tree_proportions::tree_proportions;
 use super::batching::{batch, batch_in_cells, paint_mesh};
 use super::building_kit::{textured, tint_over};
 use super::concrete_surfaces::CONCRETE_TEXTURE;
-use super::ground_surfaces::{GroundKind, ground_material, ground_uvs};
+use super::ground_surfaces::{GroundKind, ground_material, ground_uvs, repeated_ground_material};
 use super::model_primitives::{
     box_part, cylinder_part, paint, put, rotated, shadow_receiver, shadowed,
 };
@@ -135,8 +135,10 @@ const LAWN: [f32; 3] = [0.36, 0.5, 0.85];
 /// green.
 const GREENBELT_TONES: [[f32; 3]; 3] = [[0.26, 0.38, 0.5], [0.3, 0.45, 0.8], [0.17, 0.26, 0.38]];
 const GROUNDCOVER: [f32; 3] = [0.36, 0.44, 0.95];
-/// The park's mown lawn on the west field, a little fresher than the yards'.
-const WEST_PARK_LAWN: [f32; 3] = [0.36, 0.5, 0.92];
+/// The park's mown lawn on the west field, over the packed-dirt tile as the front lawns
+/// are (the planted ground draws it): calmer and greener than the natural ground round
+/// it, a little drier than the front lawns' [`FRONT_LAWN_TINT`].
+const WEST_PARK_LAWN: [f32; 3] = [0.22, 0.56, 0.84];
 const MULCH: [f32; 3] = [0.46, 0.44, 0.9];
 /// The front yards' beds along the houses: dark bark mulch.
 const BED_TINT: [f32; 3] = [0.36, 0.33, 0.8];
@@ -161,15 +163,15 @@ const DIRT_MULCH: [f32; 3] = [0.3, 0.34, 0.85];
 const DIRT_COVER: [f32; 3] = [0.26, 0.56, 1.1];
 const DIRT_SHADE: [f32; 3] = [0.2, 0.44, 0.9];
 const DIRT_BED: [f32; 3] = [0.22, 0.25, 0.7];
-/// The groundcover on the greenbelt's mouth, blue-grey senecio.
-const MOUTH_COVER: [f32; 3] = [0.3, 0.85, 2.4];
+/// The groundcover on the greenbelt's mouth, grey-green senecio.
+const MOUTH_COVER: [f32; 3] = [0.3, 0.8, 1.9];
 /// The bank's bark mulch, grey-brown rather than the slopes' warmer brown.
 const DIRT_BANK_MULCH: [f32; 3] = [0.4, 0.68, 2.1];
 /// How much of the ground behind the outer rows is groundcover rather than shade, at
 /// least and how much more it drifts.
 const UNDER_TREES_COVER: (f64, f64) = (0.55, 0.35);
 const PLANTED_REACH: f64 = 12.0;
-const PLANTED_STEP: f64 = 1.0;
+const PLANTED_STEP: f64 = 1.5;
 /// The foothills' ground over the dry-grass tile: tan dry grass, gold where it faces the
 /// low sun, olive scrub and dark chaparral.
 const FOOTHILL_TAN: [f32; 3] = [0.92, 1.0, 2.5];
@@ -249,13 +251,18 @@ const TRAIL_SHRUBS: (f64, f64) = (1.0, 2.4);
 const YARD_GRAVEL: u32 = 0x9d907a;
 const PATIO_CONCRETE: u32 = 0xd2cbbd;
 const PATIO_PAVERS: u32 = 0xb59f86;
-/// The back yards' planting: low shrubs along the planter strip, about one every this many
-/// metres with a gap now and then (this share of the spots bare), their size range (radius,
-/// m) and leaves, dark glossy greens with a flowering one.
+/// The back yards' planting: low plants along the planter strip, about one every this many
+/// metres with a gap now and then (this share of the spots bare), their spread (radius,
+/// m); and the leaves of the potted plant on a patio, dark glossy greens or a red-leaved
+/// one.
 const YARD_SHRUB_STEP: f64 = 0.8;
 const YARD_SHRUB_GAPS: f64 = 0.2;
-const YARD_SHRUB: (f64, f64) = (0.18, 0.26);
+const YARD_SHRUB: (f64, f64) = (0.17, 0.21);
 const YARD_SHRUB_LEAVES: [u32; 4] = [0x3f5a35, 0x4a6238, 0x55603f, 0x7a4a52];
+/// The planter strip's plants: this tall for their spread, low and leafy, in these greens
+/// (a red-leaved one read as a red ball against the mulch).
+const YARD_BED_SQUASH: f64 = 0.7;
+const YARD_BED_LEAVES: [u32; 3] = [0x3f5a35, 0x4a6238, 0x55603f];
 /// The bark mulch along the outside of every back wall, at the foot of the bank and the
 /// slopes (its width, m).
 const WALL_FOOT: f64 = 1.0;
@@ -327,13 +334,13 @@ const PARK_MULCH_TINT: [f32; 3] = [0.25, 0.32, 0.68];
 const BENCH: (f64, f64) = (1.3, 0.45);
 const BENCH_WOOD: u32 = 0x5a4632;
 /// The planted bed outside a row's end lot's view fence toward the street or the
-/// hillside, as the corner lots' are: tall ornamental grass (lomandra) over a blue-grey
-/// groundcover (senecio). The bed's width and how far (m) its pieces run, the
-/// groundcover's paint, and the grass: a tuft every this far (m) along each of its two
-/// staggered lines, each tuft's blades' width, its height range (m), its blades and their
-/// leaves.
+/// hillside, as the corner lots' are: tall ornamental grass (lomandra) over a grey-green
+/// groundcover. The bed's width and how far (m) its pieces run, the groundcover's paint
+/// (a bluer grey read as teal under the sky's cool fill), and the grass: a tuft every this
+/// far (m) along each of its two staggered lines, each tuft's blades' width, its height
+/// range (m), its blades and their leaves.
 const SIDE_BED: (f64, f64) = (1.3, 1.0);
-const SIDE_BED_COVER: u32 = 0x76847f;
+const SIDE_BED_COVER: u32 = 0x666c52;
 const SIDE_BED_TUFT: f64 = 0.55;
 const TALL_GRASS: (f64, f64, f64) = (0.06, 0.8, 1.0);
 const TALL_GRASS_BLADES: usize = 9;
@@ -491,6 +498,12 @@ const CONTOUR_LEAVES: [u32; 3] = [0x58603f, 0x4e5638, 0x5f6845];
 const WEST_MAT: (f64, f64) = (0.3, 0.75);
 const WEST_MAT_RISE: f64 = 0.3;
 const OUTER_MAT_STEP: f64 = 0.5;
+/// How far (m) a planted mat's surface sits below its mounds' height, so where it thins
+/// out it sinks under the ground; and over how much height above the ground it takes on
+/// its leaves' colour from the ground's.
+const MAT_SINK: (f64, f64) = (0.08, 0.12);
+/// Over how many metres the outer slopes' mat slopes down to a street or a paseo.
+const OUTER_MAT_TAPER: f64 = 2.6;
 /// The slopes' shrubs' spacing (m): rosemary and salvia mounds on the west slope, broader
 /// scrub on the south one.
 const WEST_DOME: f64 = 1.1;
@@ -616,7 +629,9 @@ pub fn senda_scenery() -> Node {
 /// The ground: dry-grass ground watered green over the lawns, parkways and the
 /// greenbelt, planted beds in the front yards, groundcover along Senda Parkway, left as
 /// sage scrub on the slopes, rising past the arena east and south into the green
-/// rolling hills every street of the neighbourhood looks out on.
+/// rolling hills every street of the neighbourhood looks out on. Its tile repeats
+/// ([`repeated_ground_material`]) and turns off the streets' grid, so a large stretch of
+/// it shows no mirror lines; the park's mown lawn is the planted ground's.
 fn grass(hills: &Hills) -> Node {
     let segments = (GROUND_EXTENT / GROUND_STEP).round() as u32;
     let mut geometry = plane_geometry_segments(GROUND_EXTENT, GROUND_EXTENT, segments, segments);
@@ -626,6 +641,11 @@ fn grass(hills: &Hills) -> Node {
     }
     geometry.compute_vertex_normals();
     ground_uvs(&mut geometry, 0.0, 0.0);
+    let (sin, cos) = GRASS_TILE_TURN.sin_cos();
+    for uv in &mut geometry.uvs {
+        let [u, v] = uv.map(f64::from);
+        *uv = [(u * cos - v * sin) as f32, (u * sin + v * cos) as f32];
+    }
     let lines = Lines::new();
     geometry.colors = geometry
         .positions
@@ -633,32 +653,126 @@ fn grass(hills: &Hills) -> Node {
         .zip(&geometry.normals)
         .map(|(p, normal)| {
             let at = DVec2::new(f64::from(p[0]), f64::from(p[2]));
-            let tint = grass_tint(at, &lines);
-            let share = hills.share(at.x, at.y) as f32;
-            if share <= 0.0 {
-                return tint;
-            }
-            let foothill = foothill_tint(at, *normal);
-            std::array::from_fn(|i| tint[i] + (foothill[i] - tint[i]) * share)
+            ground_tint(at, *normal, hills, &lines)
         })
         .collect();
-    let mut surface = ground_material(GroundKind::DryGrass);
+    let mut surface = repeated_ground_material(GroundKind::DryGrass);
     surface.vertex_colors = true;
     surface.color = crate::scene::Color(0xffffff);
     let mut floor = shadow_receiver(Arc::new(geometry), Arc::new(surface));
-    floor.position.y = 0.008;
+    floor.position.y = GRASS_LIFT;
     floor
+}
+
+/// How far (rad) the ground's tile turns off the world's axes, so its repeats do not run
+/// along the streets and walls.
+const GRASS_TILE_TURN: f64 = 0.41;
+/// How far (m) the ground and the planted ground over it stand off the arena's floor.
+const GRASS_LIFT: f64 = 0.008;
+const PLANTED_LIFT: f64 = 0.014;
+/// The dry-grass tile's mean colour over the packed-dirt tile's (linear, each channel):
+/// a tint over the dry grass times this is the same colour, on the whole, over the dirt.
+const DRY_GRASS_OVER_DIRT: [f32; 3] = [0.527, 0.747, 0.601];
+
+/// The ground's vertex colour at `at`, where its surface faces `normal`: [`grass_tint`],
+/// turning to the hills' [`foothill_tint`] as they rise, mottled gently over a few metres
+/// as a meadow is, its thicker and thinner patches.
+fn ground_tint(at: DVec2, normal: [f32; 3], hills: &Hills, lines: &Lines) -> [f32; 3] {
+    let tint = grass_tint(at, lines);
+    let share = hills.share(at.x, at.y) as f32;
+    let tint: [f32; 3] = if share <= 0.0 {
+        tint
+    } else {
+        let foothill = foothill_tint(at, normal);
+        std::array::from_fn(|i| tint[i] + (foothill[i] - tint[i]) * share)
+    };
+    // Smooth in `at`, not hashed, so the planted ground's edge, which works out the
+    // ground's colour between its vertices ([`grass_drawn`]), finds the same values.
+    let (swell, grain) = GROUND_MOTTLE;
+    let mottle = 1.0
+        + swell * (at.x * 0.37 + at.y * 0.23).sin() * (at.y * 0.31 - at.x * 0.17 + 0.8).cos()
+        + grain * (at.x * 2.31 + at.y * 1.73).sin() * (at.y * 2.93 - at.x * 1.07 + 0.4).cos();
+    tint.map(|c| c * mottle as f32)
+}
+
+/// The ground's mottle: how much its brightness swells and falls over ten metres or so,
+/// and from vertex to vertex.
+const GROUND_MOTTLE: (f64, f64) = (0.06, 0.05);
+
+/// The colour the ground ([`grass`]) is drawn in at `p` on the level's floor, as a tint
+/// over the packed-dirt tile: its vertices' [`ground_tint`] as its triangles blend them.
+fn grass_drawn(p: DVec2, hills: &Hills, lines: &Lines) -> [f32; 3] {
+    let segments = (GROUND_EXTENT / GROUND_STEP).round();
+    let step = GROUND_EXTENT / segments;
+    let half = GROUND_EXTENT / 2.0;
+    let (gx, gz) = ((p.x + half) / step, (p.y + half) / step);
+    let (ix, iz) = (gx.floor(), gz.floor());
+    let (u, v) = (gx - ix, gz - iz);
+    // The vertex as the plane stores it (f32), so the colour is the vertex's own.
+    let corner = |i: f64, j: f64| {
+        let at = DVec2::new(
+            f64::from((i * step - half) as f32),
+            f64::from((j * step - half) as f32),
+        );
+        ground_tint(at, [0.0, 1.0, 0.0], hills, lines)
+    };
+    // Each cell splits along the diagonal from its (x0, z1) corner to its (x1, z0) one.
+    let (a, b, d) = (corner(ix, iz), corner(ix, iz + 1.0), corner(ix + 1.0, iz));
+    let drawn: [f32; 3] = if u + v <= 1.0 {
+        std::array::from_fn(|i| a[i] + (d[i] - a[i]) * u as f32 + (b[i] - a[i]) * v as f32)
+    } else {
+        let c = corner(ix + 1.0, iz + 1.0);
+        std::array::from_fn(|i| {
+            c[i] + (b[i] - c[i]) * (1.0 - u) as f32 + (d[i] - c[i]) * (1.0 - v) as f32
+        })
+    };
+    std::array::from_fn(|i| drawn[i] * DRY_GRASS_OVER_DIRT[i])
+}
+
+/// How much of the planted ground's colour lies at `p`, from 0 to 1: all of it inside
+/// the planted zones, none past them, fading over the zones' own metre of edge along a
+/// line that wanders a little.
+fn planted_weight(p: DVec2, lines: &Lines) -> f64 {
+    let zone = zones(p, lines);
+    // Outside the level's wall only the bank under Senda Parkway is planted: the natural
+    // grass runs up to the wall everywhere else.
+    let open = (1.0 - zone.lawn).max(zone.front)
+        * (1.0 - (zone.greenbelt - zone.mouth).max(0.0))
+        * (1.0 - zone.hillside)
+        * (1.0 - zone.beyond_wall)
+        * (1.0 - zone.meadow);
+    let (middle, wander) = PLANTED_EDGE;
+    let uneven = 0.6 * (p.x * 1.37 + p.y * 0.91).sin() * (p.y * 1.21 - p.x * 0.53 + 0.3).cos()
+        + 0.4 * (p.x * 2.9 - p.y * 2.3 + 1.1).sin();
+    rise((open - middle) / middle + 0.5 + wander * uneven)
+}
+
+/// What the ground looks like at `p` from above, as a tint over the packed-dirt tile:
+/// the planted ground where it lies, fading into the ground's own colour at its edges.
+fn ground_seen(p: DVec2, hills: &Hills, lines: &Lines) -> [f32; 3] {
+    let w = planted_weight(p, lines) as f32;
+    let planted = planted_tint(p, lines);
+    if w >= 1.0 {
+        return planted;
+    }
+    let ground = grass_drawn(p, hills, lines);
+    std::array::from_fn(|c| ground[c] + (planted[c] - ground[c]) * w)
 }
 
 /// The planted ground laid over the grass: bark mulch with groundcover drifting through
 /// it on the bank below Senda Parkway and across it, in the field behind Neblina's west
-/// row, the slope behind Gaviota's south row and the greenbelt's mouth, and dark mulch in
-/// the front yards' beds; everywhere but the lots' yards, the greenbelt's scrub, the
-/// hillside's natural grass, the hills and the paving. Square cells of a fine grid where
-/// it lies, the packed-dirt tile under vertex tints, so the planted slopes read as mulch
-/// and groundcover rather than as mown grass; their ragged edges fall under the walls,
-/// the slabs and the scrub.
+/// row, the slope behind Gaviota's south row and the greenbelt's mouth, dark mulch in the
+/// front yards' beds and the park's mown lawn; everywhere but the lots' yards, the
+/// greenbelt's scrub, the hillside's natural grass, the hills and the paving. Square cells
+/// of a grid where it lies, in the ground material the lawns share ([`lawn_material`]),
+/// so the planted slopes read as mulch and groundcover and the park as close-mown turf.
+/// Its edge on open ground fades over a cell into the colour the ground below is drawn in
+/// ([`grass_drawn`]), along a line that wanders a little, so it shows as a soft, uneven
+/// drift rather than as the cells' staircase; at the paving it keeps its colour to the
+/// cell that reaches under the slabs, so its edge never shows there, and it never lies
+/// over them.
 fn planted_ground(lines: &Lines) -> Node {
+    let hills = Hills::new();
     let reach = ARENA + PLANTED_REACH;
     let cells = (2.0 * reach / PLANTED_STEP).round() as usize;
     let corner = |i: usize, j: usize| {
@@ -667,34 +781,33 @@ fn planted_ground(lines: &Lines) -> Node {
             -reach + j as f64 * PLANTED_STEP,
         )
     };
-    let planted = |p: DVec2| {
-        let zone = zones(p, lines);
-        // Outside the level's wall only the bank under Senda Parkway is planted: the
-        // natural grass runs up to the wall everywhere else.
-        let open = (1.0 - zone.lawn).max(zone.front)
-            * (1.0 - (zone.greenbelt - zone.mouth).max(0.0))
-            * (1.0 - zone.hillside)
-            * (1.0 - zone.beyond_wall)
-            * (1.0 - zone.park)
-            * (1.0 - zone.meadow);
-        open > 0.5 && !is_senda_paved(p.x, p.y)
-    };
+    let weights: Vec<f64> = (0..(cells + 1) * (cells + 1))
+        .map(|k| planted_weight(corner(k % (cells + 1), k / (cells + 1)), lines))
+        .collect();
+    // A cell lies where it is planted off the paving; one that reaches under a slab keeps
+    // its colour there, so its edge falls under the slab.
+    let planted: Vec<bool> = (0..(cells + 1) * (cells + 1))
+        .map(|k| {
+            let p = corner(k % (cells + 1), k / (cells + 1));
+            weights[k] > 0.0 && !is_senda_paved(p.x, p.y)
+        })
+        .collect();
     let mut index = vec![u32::MAX; (cells + 1) * (cells + 1)];
     let mut positions: Vec<f64> = Vec::new();
     let mut colors: Vec<[f32; 3]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     for j in 0..cells {
         for i in 0..cells {
-            let middle = corner(i, j) + DVec2::splat(PLANTED_STEP / 2.0);
-            if !planted(middle) {
+            let corners = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)];
+            if !corners.iter().any(|&(i, j)| planted[j * (cells + 1) + i]) {
                 continue;
             }
-            let quad = [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)].map(|(i, j)| {
+            let quad = corners.map(|(i, j)| {
                 let k = j * (cells + 1) + i;
                 if index[k] == u32::MAX {
                     let p = corner(i, j);
                     positions.extend([p.x, 0.0, p.y]);
-                    colors.push(planted_tint(p, lines));
+                    colors.push(ground_seen(p, &hills, lines));
                     index[k] = (positions.len() / 3 - 1) as u32;
                 }
                 index[k]
@@ -709,20 +822,24 @@ fn planted_ground(lines: &Lines) -> Node {
     let mut mesh = Mesh::from_f64(&positions, &normals, &uvs, Some(indices));
     ground_uvs(&mut mesh, 0.0, 0.0);
     mesh.colors = colors;
-    let mut surface = ground_material(GroundKind::PackedDirt);
-    surface.vertex_colors = true;
-    surface.color = crate::scene::Color(0xffffff);
-    let mut node = shadow_receiver(Arc::new(mesh), Arc::new(surface));
-    node.position.y = 0.014;
+    let mut node = shadow_receiver(Arc::new(mesh), lawn_material());
+    node.position.y = PLANTED_LIFT;
     node
 }
+
+/// Where the planted ground's edge lies: at this share of open ground (between the
+/// lots, the greenbelt, the hillside and the meadow), its colour fading in over the
+/// zones' own metre of edge, the line wandering by up to this much of that metre either
+/// way.
+const PLANTED_EDGE: (f64, f64) = (0.5, 0.45);
 
 /// The planted ground's tint at `p` over the packed-dirt tile, linear: bark mulch with
 /// groundcover drifting through it (more of it down the bank and round the tract), the
 /// shaded groundcover of the slope behind Gaviota's south row and of the bank's foot,
-/// and the front beds' dark mulch.
+/// the front beds' dark mulch and the park's mown lawn.
 fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
     let zone = zones(p, lines);
+    let park = lawn_tone(p, WEST_PARK_LAWN);
     let noise = 0.5
         + 0.18 * (p.x * 0.53 + p.y * 0.71).sin()
         + 0.16 * (p.x * 0.67 - p.y * 0.37).cos()
@@ -772,7 +889,9 @@ fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
         let mulch = DIRT_BANK_MULCH[i] * (0.92 + 0.16 * noise) as f32;
         let bank = mix(mulch, BANK_MAT_SHADE[i], carpet);
         let planted = mix(planted, bank, zone.bank_land);
-        mix(planted, DIRT_BED[i], zone.front)
+        let planted = mix(planted, DIRT_BED[i], zone.front);
+        // The park's mown lawn, mottled as the front lawns are.
+        mix(planted, park[i], zone.park)
     })
 }
 
@@ -979,6 +1098,7 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
     let tan = (0.5 + 0.5 * (p.x * 0.61 + p.y * 0.47).sin() * (p.y * 0.53 - p.x * 0.29).cos())
         .clamp(0.0, 1.0);
     let scrub = hill_patch(p);
+    let parkway = under_parkway(p, lines);
     let mix = |a: f32, b: f32, t: f64| a + (b - a) * t as f32;
     std::array::from_fn(|i| {
         let (least, most) = (
@@ -1019,7 +1139,7 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
         let tint = mix(tint, LAWN[i], zone.lawn);
         let tint = mix(
             tint,
-            WEST_PARK_LAWN[i] * (0.92 + 0.16 * noise as f32),
+            WEST_PARK_LAWN[i] / DRY_GRASS_OVER_DIRT[i] * (0.92 + 0.16 * noise as f32),
             zone.park,
         );
         let beds = mix(
@@ -1028,8 +1148,25 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
             FRONT_BEDS_COVER * (0.6 + 0.8 * patch),
         );
         let tint = mix(tint, beds, zone.front);
+        // Under the residential streets' parkways and sidewalks, the clipped lawn the
+        // lots' parkway strips are, so the wedges the slabs leave read as parkway.
+        let tint = mix(tint, FRONT_LAWN_TINT[i] / DRY_GRASS_OVER_DIRT[i], parkway);
         tint * (0.94 + 0.06 * patch as f32)
     })
+}
+
+/// How far `p` lies under a residential street's parkway and sidewalk or its turning
+/// circle, from 0 just past the back of the sidewalk to 1 a little inside it.
+fn under_parkway(p: DVec2, lines: &Lines) -> f64 {
+    let walk = |distance: f64| rise((STREET_HALF_WALK + 0.2 - distance) / 0.4);
+    let circles = [Street::Rumbo, Street::NeblinaGaviota]
+        .into_iter()
+        .filter_map(Street::cul_de_sac)
+        .map(|middle| rise((CUL_DE_SAC_RADIUS + 0.2 - middle.distance(p)) / 0.4))
+        .fold(0.0, f64::max);
+    walk(lines.rumbo.distance(p))
+        .max(walk(lines.gaviota.distance(p)))
+        .max(circles)
 }
 
 /// A flat ribbon along `line` between `from` and `to` metres to its left, its top at
@@ -3031,7 +3168,7 @@ fn greenbelt_mat(lines: &Lines, thicket: &Thicket) -> Option<Node> {
     let tall = MAT_HEIGHT.1 + MAT_SLOPE.1;
     scrub_surface(
         bounds,
-        (MAT_STEP, 4.0, GroundKind::PackedDirt),
+        (MAT_STEP, 4.0),
         &|p| {
             let (w, slope) = mat_weight(p, lines, thicket);
             (w, w * mat_height(p, slope))
@@ -3060,12 +3197,12 @@ fn mat_tone(p: DVec2, light: f64, tones: &[[f32; 3]; 3], shade: [f32; 3]) -> [f3
 
 /// A planted mat as one surface over a grid `step` metres fine across `bounds`: `field`
 /// gives each vertex its weight (0 where the mat is not, so cells wholly without it are
-/// left out) and its height (m), `tone` its colour from its spot and height, over the
-/// dry-grass tile at `grain` times its density, the leaves' fine grain. It shades itself: its
-/// mounds are low and close.
+/// left out) and its height (m), `tone` its colour from its spot and height, in the
+/// ground's material ([`lawn_material`]) at `grain` times its density, the leaves' fine
+/// grain. It shades itself: its mounds are low and close.
 fn scrub_surface(
     (low, high): (DVec2, DVec2),
-    (step, grain, ground): (f64, f32, GroundKind),
+    (step, grain): (f64, f32),
     field: &dyn Fn(DVec2) -> (f64, f64),
     tone: &dyn Fn(DVec2, f64) -> [f32; 3],
 ) -> Option<Node> {
@@ -3075,6 +3212,22 @@ fn scrub_surface(
     );
     let spot = |k: usize| low + DVec2::new((k % columns) as f64, (k / columns) as f64) * step;
     let fields: Vec<(f64, f64)> = (0..rows * columns).map(|k| field(spot(k))).collect();
+    // Where the mat thins to nothing it sinks into the ground: there it takes the colour
+    // of the ground it sinks into, so its edge shows as the mounds tapering away rather
+    // than as flat islands with straight sides.
+    let (hills, lines) = (Hills::new(), Lines::new());
+    let (sink, fade) = MAT_SINK;
+    let color = |p: DVec2, (weight, height): (f64, f64)| {
+        let leaves = tone(p, height);
+        // Inside the mat (its weight full) its hollows keep their own shade.
+        let shown =
+            rise((height - sink - PLANTED_LIFT) / fade).max(rise(2.0 * weight - 1.0)) as f32;
+        if shown >= 1.0 {
+            return leaves;
+        }
+        let ground = ground_seen(p, &hills, &lines);
+        std::array::from_fn(|i| ground[i] + (leaves[i] - ground[i]) * shown)
+    };
     let mut index = vec![u32::MAX; rows * columns];
     let mut positions: Vec<f64> = Vec::new();
     let mut colors: Vec<[f32; 3]> = Vec::new();
@@ -3094,8 +3247,8 @@ fn scrub_surface(
                 if index[k] == u32::MAX {
                     let p = spot(k);
                     let height = fields[k].1;
-                    positions.extend([p.x, height - 0.08, p.y]);
-                    colors.push(tone(p, height));
+                    positions.extend([p.x, height - sink, p.y]);
+                    colors.push(color(p, fields[k]));
                     index[k] = (positions.len() / 3 - 1) as u32;
                 }
                 index[k]
@@ -3120,10 +3273,7 @@ fn scrub_surface(
         *uv = [uv[0] * grain, uv[1] * grain];
     }
     mesh.colors = colors;
-    let mut surface = ground_material(ground);
-    surface.vertex_colors = true;
-    surface.color = crate::scene::Color(0xffffff);
-    let mut node = shadowed(Arc::new(mesh), Arc::new(surface));
+    let mut node = shadowed(Arc::new(mesh), lawn_material());
     if let Some(drawable) = &mut node.drawable {
         drawable.cast_shadow = false;
     }
@@ -3204,8 +3354,10 @@ impl Outer {
         let mut w = outer
             * rise((-lines.lot(p).0 - WALL_FOOT - 0.2) / MAT_RISE)
             * rise((self.inside(p) - 0.4) / MAT_RISE);
+        // Where a walk cuts across it, the mat slopes down to the paving over a couple of
+        // metres, as a planted bank ends, rather than standing cut off at its full height.
         for (reach, line) in &self.streets {
-            w *= rise((line.distance(p) - reach - 0.3) / MAT_RISE);
+            w *= rise((line.distance(p) - reach - 0.3) / OUTER_MAT_TAPER);
         }
         for &pad in &self.pads {
             w *= rise((pad.distance(p) - OUTER_PAD_ROOM) / MAT_RISE);
@@ -3214,7 +3366,7 @@ impl Outer {
             w *= rise((pickup.distance(p) - OUTER_PICKUP_ROOM) / MAT_RISE);
         }
         for way in &self.paseos {
-            w *= rise((way.distance(p) - PASEO_WIDTH / 2.0) / MAT_RISE);
+            w *= rise((way.distance(p) - PASEO_WIDTH / 2.0) / OUTER_MAT_TAPER);
         }
         // The south slope's scrub stops short of the lane along the level's wall, which
         // follows the row's back walls rather than one line of z.
@@ -3261,6 +3413,9 @@ const TERRACE_SHRUB: (f64, f64) = (0.42, 0.52);
 /// The bank's east end is dry meadow: tan grass from this far east (arena x, m), over
 /// this many metres, with a shrub left at this share of its contour rows' spots.
 const BANK_MEADOW: (f64, f64) = (16.0, 10.0);
+/// Where on the way into the meadow the bank's groundcover carpet ends, and how far that
+/// line wanders either way (shares of the meadow's blend).
+const BANK_MEADOW_EDGE: (f64, f64) = (0.4, 0.12);
 const MEADOW_SHRUBS: f64 = 0.22;
 const BANK_MAT_STEP: f64 = 0.45;
 const BANK_MAT: (f64, f64) = (0.1, 0.34);
@@ -3289,18 +3444,26 @@ fn bank_planting() -> Node {
         .chain((terrace.len() > 1).then_some((Line(terrace), BANK_WALK)))
         .collect();
     let basins = crest_basin_sites(&lines);
-    let top = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH;
     let field = |p: DVec2| {
         let zone = zones(p, &lines);
         if zone.bank_land <= 0.0 || zone.hillside >= 1.0 {
             return (0.0, 0.0);
         }
+        // It ends toward the dry meadow along a wandering line, tapering to the ground
+        // within a metre or so rather than thinning over ten into ragged islands.
+        let (edge, wander) = BANK_MEADOW_EDGE;
+        let uneven = 0.6 * (p.x * 1.13 - p.y * 0.71).sin() * (p.y * 1.37 + p.x * 0.41 + 0.6).cos()
+            + 0.4 * (p.y * 2.7 + p.x * 1.9 + 2.3).sin();
         let mut w = zone.bank_land
             * (1.0 - zone.hillside)
-            * (1.0 - zone.meadow)
+            * rise((edge + wander * uneven - zone.meadow) / 0.12)
             * rise((BANK_COVER_DOWN - zone.bank_fall) / 0.05)
-            * rise((lines.way.distance(p) - top - 0.1) / BANK_MAT_EDGE)
             * rise((outer.inside(p) + 0.2) / BANK_MAT_EDGE);
+        // Clear of every street's paving: Senda Parkway's path at the bank's top, and
+        // Neblina where the bank comes down to it at the junction.
+        for (reach, line) in &outer.streets {
+            w *= rise((line.distance(p) - reach - 0.1) / BANK_MAT_EDGE);
+        }
         for (line, width) in &walks {
             w *= rise((line.distance(p) - width / 2.0 - 0.1) / BANK_MAT_EDGE);
         }
@@ -3320,12 +3483,7 @@ fn bank_planting() -> Node {
     let tone =
         |p: DVec2, height: f64| mat_tone(p, height / BANK_MAT.1, &BANK_MAT_TONES, BANK_MAT_SHADE);
     let bounds = (DVec2::new(-ARENA, -ARENA - 2.0), DVec2::new(ARENA, -10.0));
-    if let Some(mat) = scrub_surface(
-        bounds,
-        (BANK_MAT_STEP, 4.0, GroundKind::PackedDirt),
-        &field,
-        &tone,
-    ) {
+    if let Some(mat) = scrub_surface(bounds, (BANK_MAT_STEP, 4.0), &field, &tone) {
         group.children.push(mat);
     }
     // The clipped hedge along the bank's foot.
@@ -3408,12 +3566,7 @@ fn outer_slopes() -> Node {
         (DVec2::new(-edge, -edge), DVec2::new(split.x, edge)),
         (DVec2::new(split.x, split.y), DVec2::new(edge, edge)),
     ] {
-        if let Some(mat) = scrub_surface(
-            bounds,
-            (OUTER_MAT_STEP, 4.0, GroundKind::PackedDirt),
-            &field,
-            &tone,
-        ) {
+        if let Some(mat) = scrub_surface(bounds, (OUTER_MAT_STEP, 4.0), &field, &tone) {
             group.children.push(mat);
         }
     }
@@ -4141,14 +4294,18 @@ fn front_yard_ground(
     // The bed along the office's front, from the driveway to the walk.
     let (inner, inner_width) = span(yard.driveway_edge(1.0), yard.walk_edge(1.0));
     let bed = yard.bed_front();
-    lot_slab(
-        group,
-        lot,
-        (inner, (yard.office + bed) / 2.0),
-        (inner_width, bed - yard.office),
-        0.045,
-        BED_MULCH,
-    );
+    if inner_width > 0.05 && bed - yard.office > 0.05 {
+        let mesh = ground_patch(
+            lot,
+            (inner, (yard.office + bed) / 2.0),
+            (inner_width, bed - yard.office),
+            0.045,
+            (BED_CELL, BED_MULCH_TINT),
+        );
+        group
+            .children
+            .push(shadow_receiver(Arc::new(mesh), lawn.clone()));
+    }
     // The panel before the bed, and round the walk's far side to the lot line.
     let line = if yard.side > 0.0 {
         lot.line_u(1)
@@ -4349,17 +4506,40 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
                 paving,
             );
         }
+        // The planter strip: bark mulch at the ground, behind a low concrete header along
+        // the patio, so it reads as a bed at the wall's foot rather than as the top of a
+        // brown block with the wall's face below it.
         let planter = lot.rear_v() + 0.1 + YARD_PLANTER / 2.0;
+        let (header, header_top) = BED_HEADER;
+        let bed = ((u0 + u1) / 2.0, planter - header / 2.0);
+        let size = (u1 - u0 - 0.2, YARD_PLANTER - header);
+        group.children.push(shadow_receiver(
+            Arc::new(ground_patch(
+                lot,
+                bed,
+                size,
+                0.042,
+                (BED_CELL, BED_MULCH_TINT),
+            )),
+            lawn_material(),
+        ));
         lot_slab(
             group,
             lot,
-            ((u0 + u1) / 2.0, planter),
-            (u1 - u0 - 0.2, YARD_PLANTER),
-            0.042,
-            BED_MULCH,
+            ((u0 + u1) / 2.0, planter + YARD_PLANTER / 2.0 - header / 2.0),
+            (u1 - u0 - 0.2, header),
+            header_top,
+            PATIO_CONCRETE,
         );
     }
 }
+
+/// The beds' bark mulch over the packed-dirt tile (linear), darker than the walls' block,
+/// mottled over cells this long (m); and the low concrete header along a back yard's
+/// planter strip, its width and its top (m).
+const BED_MULCH_TINT: [f32; 3] = [0.17, 0.21, 0.46];
+const BED_CELL: f64 = 1.5;
+const BED_HEADER: (f64, f64) = (0.1, 0.075);
 
 /// The front yards: the parkway's strip of clipped lawn between the kerb and the sidewalk
 /// across each lot (its driveway apron and entry walk laid over it), and each lot's front
@@ -4387,12 +4567,20 @@ fn front_lawns(
     }
 }
 
-/// The mown lawns' and planted islands' ground: the packed-dirt tile under vertex tints.
+/// The ground's material, one for all of it (the ground, the planted ground, the mown
+/// lawns, the planted islands and beds and the groundcover mats): the packed-dirt tile
+/// under vertex tints.
 fn lawn_material() -> Arc<crate::scene::Material> {
-    let mut surface = ground_material(GroundKind::PackedDirt);
-    surface.vertex_colors = true;
-    surface.color = crate::scene::Color(0xffffff);
-    Arc::new(surface)
+    static MATERIAL: crate::models::shared_values::SharedOnce<crate::scene::Material> =
+        crate::models::shared_values::SharedOnce::new("senda_scenery::GROUND");
+    MATERIAL
+        .get_or_init(|| {
+            let mut surface = ground_material(GroundKind::PackedDirt);
+            surface.vertex_colors = true;
+            surface.color = crate::scene::Color(0xffffff);
+            Arc::new(surface)
+        })
+        .clone()
 }
 
 /// A lawn's tone at `at`: `tint`, its brightness swelling and falling gently over a few
@@ -4449,10 +4637,22 @@ fn lawn_fan(centre: DVec2, rim: &dyn Fn(f64) -> DVec2, y: f64, tint: [f32; 3]) -
 /// [`FRONT_LAWN_TINT`] mottled from cell to cell (a grid this fine, m) by [`lawn_tone`].
 const LAWN_CELL: f64 = 0.6;
 
-fn lawn_patch(lot: &Lot, (u, v): (f64, f64), (w, d): (f64, f64), top: f64) -> Mesh {
+fn lawn_patch(lot: &Lot, middle: (f64, f64), size: (f64, f64), top: f64) -> Mesh {
+    ground_patch(lot, middle, size, top, (LAWN_CELL, FRONT_LAWN_TINT))
+}
+
+/// A patch of ground on `lot` round `(u, v)` of `(w, d)` (m) with its top `top` up, in
+/// `tint` over the ground's tile, mottled ([`lawn_tone`]) over a grid of `cell` (m).
+fn ground_patch(
+    lot: &Lot,
+    (u, v): (f64, f64),
+    (w, d): (f64, f64),
+    top: f64,
+    (cell, tint): (f64, [f32; 3]),
+) -> Mesh {
     let (columns, rows) = (
-        (w / LAWN_CELL).ceil().max(1.0) as usize,
-        (d / LAWN_CELL).ceil().max(1.0) as usize,
+        (w / cell).ceil().max(1.0) as usize,
+        (d / cell).ceil().max(1.0) as usize,
     );
     let mut positions: Vec<f64> = Vec::new();
     let mut colors: Vec<[f32; 3]> = Vec::new();
@@ -4463,7 +4663,7 @@ fn lawn_patch(lot: &Lot, (u, v): (f64, f64), (w, d): (f64, f64), top: f64) -> Me
                 v - d / 2.0 + d * j as f64 / rows as f64,
             );
             positions.extend([at.x, top, at.y]);
-            colors.push(lawn_tone(at, FRONT_LAWN_TINT));
+            colors.push(lawn_tone(at, tint));
         }
     }
     let mut indices: Vec<u32> = Vec::new();
@@ -5139,22 +5339,25 @@ fn yard_props() -> Node {
             );
             taken = Some((at, radius));
         }
-        // Small shrubs along the planter strip at the back wall, clear of the prop.
+        // Small, low leafy plants along the planter strip at the back wall, clear of the
+        // prop and of its header.
         let mut u = u0 + 0.45;
         let mut n = 0usize;
+        let bed = YARD_PLANTER - BED_HEADER.0;
         while u < u1 - 0.35 {
             let seed = (k * 41 + n) as f64 * 1.3;
             let (least, most) = YARD_SHRUB;
             let size = least + (most - least) * hash(seed + 0.4);
-            let v = lot.rear_v() + 0.1 + YARD_PLANTER * (0.45 + 0.15 * hash(seed));
+            let v = lot.rear_v() + 0.1 + bed * (0.45 + 0.1 * hash(seed));
             let free = taken.is_none_or(|((pu, pv), r)| (u - pu).hypot(v - pv) > r + size + 0.05);
             if free && hash(seed + 0.7) > YARD_SHRUB_GAPS {
-                let tone = YARD_SHRUB_LEAVES[(hash(seed + 1.9) * 4.0) as usize % 4];
+                let count = YARD_BED_LEAVES.len();
+                let tone = YARD_BED_LEAVES[(hash(seed + 1.9) * count as f64) as usize % count];
                 leafy(
                     &mut group,
                     &bush,
                     (lot.at(u, v), 0.0),
-                    (size, 0.85),
+                    (size, YARD_BED_SQUASH),
                     tone,
                     seed,
                 );
@@ -6918,4 +7121,71 @@ fn gate_return(run: &mut Node, length: f64, h: f64) {
         0.0,
         0.05 + tall / 2.0,
     );
+}
+
+#[cfg(test)]
+mod ground_tests {
+    use super::*;
+
+    /// Every vertex of `node`'s meshes in `material`, in world space.
+    fn vertices_in(node: &Node, material: &Arc<crate::scene::Material>) -> Vec<glam::DVec3> {
+        let mut found = Vec::new();
+        node.traverse(glam::DMat4::IDENTITY, &mut |node, world| {
+            let Some(drawable) = &node.drawable else {
+                return;
+            };
+            if !Arc::ptr_eq(&drawable.material, material) {
+                return;
+            }
+            for p in &drawable.mesh.positions {
+                let at = glam::DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                found.push(world.transform_point3(at));
+            }
+        });
+        found
+    }
+
+    /// The groundcover mats stand nowhere on a street's asphalt: the bank's carpet once
+    /// spilled over Neblina where it leaves Senda Parkway.
+    #[test]
+    fn ground_mats_keep_off_the_streets() {
+        let ground = lawn_material();
+        for (name, node) in [
+            ("bank", bank_planting()),
+            ("outer slopes", outer_slopes()),
+            ("greenbelt", greenbelt_scrub()),
+        ] {
+            let vertices = vertices_in(&node, &ground);
+            assert!(!vertices.is_empty(), "{name}");
+            for p in vertices.into_iter().filter(|p| p.y > 0.0) {
+                let at = DVec2::new(p.x, p.z);
+                for street in Street::ALL {
+                    assert!(
+                        street.line().distance(at) > street.half(),
+                        "{name}'s mat stands on {street:?} at {at}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The planted ground lies over no paving: a cell reaches under a slab only from open
+    /// ground beside it.
+    #[test]
+    fn planted_ground_keeps_off_the_paving() {
+        let node = planted_ground(&Lines::new());
+        let drawable = node.drawable.as_ref().expect("planted ground");
+        let indices = drawable.mesh.indices.as_ref().expect("indexed");
+        let paved = |k: u32| {
+            let p = drawable.mesh.positions[k as usize];
+            is_senda_paved(f64::from(p[0]), f64::from(p[2]))
+        };
+        // Each cell is two triangles over its four corners.
+        for cell in indices.chunks(6) {
+            assert!(
+                !cell.iter().all(|&k| paved(k)),
+                "a planted cell lies wholly on the paving"
+            );
+        }
+    }
 }
