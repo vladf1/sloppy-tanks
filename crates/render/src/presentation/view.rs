@@ -20,6 +20,7 @@ use sloppy_core::sim::crate_structure::crate_structure;
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
+use sloppy_core::sim::senda_layout::is_street_tree;
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
@@ -3732,7 +3733,14 @@ fn tree_view(
         leaves: LeafCrown {
             x: cover.x,
             z: cover.z,
-            foliage: tree_foliage(&shape),
+            foliage: {
+                let mut foliage = tree_foliage(&shape);
+                // The Neighborhood's parkway sycamores shed the tan leaves they wear.
+                if is_street_tree(cover.color) {
+                    foliage.color = cover.color;
+                }
+                foliage
+            },
         },
         shudder: None,
     }
