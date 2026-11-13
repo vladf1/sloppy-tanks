@@ -53,8 +53,8 @@ impl ReflectionBounds {
         self.min = self.min.min(min);
         self.max = self.max.max(max);
         let columns = columns(cell(min.x), cell(max.x));
-        for row in cell(min.y)..=cell(max.y) {
-            self.cells[row] |= columns;
+        for row in &mut self.cells[cell(min.y)..=cell(max.y)] {
+            *row |= columns;
         }
     }
 
