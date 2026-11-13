@@ -17,9 +17,12 @@ export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-t
 /** SLOPPY_WEBGL=1 opens the game on its WebGL2 build (`?webgl`, `openShell`). */
 const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
 
-/** Headless Chrome whose pages keep their timers and frames while another page is in front. */
-export function launchChrome() {
-  return chromium.launch({
+/**
+ * Headless Chrome whose pages keep their timers and frames while another page is in
+ * front, and whose pages never take the real pointer (`keepPointerFree`).
+ */
+export async function launchChrome() {
+  const browser = await chromium.launch({
     channel: "chrome",
     headless,
     args: [
@@ -28,6 +31,56 @@ export function launchChrome() {
       "--disable-backgrounding-occluded-windows",
     ],
   });
+  if (headless) keepPointerFree(browser);
+  return browser;
+}
+
+/**
+ * A page that asks for pointer lock (first person does) takes the machine's real pointer
+ * on macOS even from headless Chrome, which shows no window: the pointer jumps under the
+ * hand of whoever is using the Mac while a check runs. So every context of a headless
+ * browser gets a pointer lock of the page's own that never reaches the system: it
+ * answers `pointerLockElement` and sends `pointerlockchange`, after the call returns as
+ * the browser's does. Playwright's keys and mouse reach the page as before (its Esc was
+ * always the page's to act on, and its mouse still reports `movementX` and `movementY`).
+ * A visible window (SLOPPY_HEADED=1) keeps the browser's own lock.
+ * @param {import("playwright").Browser} browser
+ */
+function keepPointerFree(browser) {
+  const withPageLock = async (context) => {
+    await context.addInitScript(() => {
+      let locked = null;
+      // Like the browser's, the lock changes after the call returns.
+      const lock = (element) =>
+        new Promise((resolve) => {
+          setTimeout(() => {
+            const changed = locked !== element;
+            locked = element;
+            if (changed) document.dispatchEvent(new Event("pointerlockchange"));
+            resolve();
+          }, 0);
+        });
+      Element.prototype.requestPointerLock = function () {
+        return lock(this);
+      };
+      Document.prototype.exitPointerLock = function () {
+        lock(null);
+      };
+      Object.defineProperty(Document.prototype, "pointerLockElement", {
+        get: () => locked,
+        configurable: true,
+      });
+    });
+    return context;
+  };
+  const newContext = browser.newContext.bind(browser);
+  browser.newContext = async (options) => withPageLock(await newContext(options));
+  const newPage = browser.newPage.bind(browser);
+  browser.newPage = async (options) => {
+    const page = await newPage(options);
+    await withPageLock(page.context());
+    return page;
+  };
 }
 
 /** Chrome's touch emulation warns of its own touch events, which cannot be cancelled. */
