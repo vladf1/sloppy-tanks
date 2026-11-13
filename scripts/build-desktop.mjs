@@ -187,11 +187,11 @@ function build(target, env = {}) {
       target,
       "-p",
       "sloppy-desktop",
-      ...(appStore ? ["--features", "app-store"] : []),
+      ...(storeEdition ? ["--features", "app-store"] : []),
     ],
     // The App Store apps list the app-store environment's servers, which run the released
     // apps' content version (crates/server/README.md); SLOPPY_SERVER_ENVIRONMENT overrides it.
-    { env: { ...(appStore ? APP_STORE_SERVERS : {}), ...process.env, ...stamps, ...env } },
+    { env: { ...(storeEdition ? APP_STORE_SERVERS : {}), ...process.env, ...stamps, ...env } },
   );
   const extension = target.includes("windows") ? ".exe" : "";
   return join(root, "target", target, PROFILE, BINARY + extension);
@@ -925,6 +925,9 @@ const windows = process.argv.includes("--windows");
 const ios = process.argv.includes("--ios");
 const iosSimulator = process.argv.includes("--ios-simulator");
 const appStore = process.argv.includes("--app-store");
+// What the App Store's players see (the `app-store` feature and their servers) in a build
+// signed to run here: the simulator and Mac apps the store's screenshots are taken from.
+const storeEdition = appStore || process.argv.includes("--store-edition");
 if (appStore && !(ios || mac)) {
   console.error("--app-store builds the iOS app (--ios) or the Mac app (--mac) for the App Store.");
   process.exit(1);

@@ -368,7 +368,9 @@ required-reason API its executable uses, and the build stops at one the script h
 reason for (`REQUIRED_REASON_APIS`).
 
 `--app-store` also enables the shell’s `app-store` feature, which hides the Developer
-settings section.
+settings section. `--store-edition` gives a build signed to run here (the simulator app
+or a local Mac app) that feature and the App Store's servers, so the store's screenshots
+show what its players see: `bun scripts/build-desktop.mjs --ios-simulator --store-edition`.
 
 The App Store's builds play online in the `app-store` environment, whose machines run
 the released apps' content version rather than main's, beside a candidate machine that
