@@ -140,7 +140,8 @@ tiled("FrontWall", Slope([(low_x0, OFFICE_ROOF_TOP, back_z), (gable_left, OFFICE
 face("FrontWall__Siding", [(gable_left, 0, upper_z), (gable_left, 0, HALF_D), (gable_left, WALL_TOP, HALF_D), (gable_left, WALL_TOP, upper_z)], (-1, 0, 0))
 face("FrontWall__Lining", [(gable_left + WALL, 0, upper_z), (gable_left + WALL, 0, HALF_D), (gable_left + WALL, WALL_TOP, HALF_D), (gable_left + WALL, WALL_TOP, upper_z)], (1, 0, 0))
 office_entry(wall_z=back_z, office_roof="shed", window_style="header", popout=True, slits=2,
-             inner_slit=True, steps_piers=True, planter=True, top=OFFICE_ROOF_TOP, bay=True)
+             inner_slit=True, steps_piers=True, planter=True, top=OFFICE_ROOF_TOP, bay=True,
+             inner_slit_width=0.46)  # the reference house's office has a full side window
 # "The home entrance is off the side": past the bay, round the front corner, a door in the
 # side wall under its own little shed, in the full-height wall behind the low roof's end.
 SIDE_DOOR = 2.6

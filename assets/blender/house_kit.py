@@ -1089,13 +1089,15 @@ def passage_door(wall_z):
 
 def _office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="posts", flat=False,
                   finish="Siding", window_style="header", popout=True, slits=2, inner_slit=True,
-                  steps_piers=False, planter=False, top=OFFICE_TOP, vent=False, bay=False):
+                  steps_piers=False, planter=False, top=OFFICE_TOP, vent=False, bay=False,
+                  inner_slit_width=0.16):
     """The office and the entry beside it, out from the wall at `wall_z`: the office's roof
     a "shed" (one plane leaning on the wall, exposed rafter tails and a dark fascia at its
     eave), a small front "gable" or a "hip"; its street window under a dark "header", with
     board "shutters" or "arched", over a brick rowlock sill on a battered stucco apron
     (`popout`); `slits` narrow windows in its outer side wall over the passage and one in
-    its inner side wall (`inner_slit`); the entry's `cover` a "shed" or a small street
+    its inner side wall (`inner_slit`, `inner_slit_width` across: a slit unless a design
+    gives its office a proper side window); the entry's `cover` a "shed" or a small street
     "gable" (a pediment), carried by dark square "posts" on short bases, Craftsman
     "tapered" posts on stone piers or stucco "arches"; the front door in the wall at the
     passage's end, steps up to it, stacked-stone piers by them (`steps_piers`) and a low
@@ -1163,9 +1165,10 @@ def _office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="pos
     for x, outward, count in ((ox0, -1, slits), (ox1, 1, 1 if inner_slit else 0)):
         frame = Frame((x, 0, wall_z), (0, 0, 1), (-1, 0, 0)) if outward < 0 else Frame((x, 0, zf), (0, 0, -1), (1, 0, 0))
         holes = []
+        half = (inner_slit_width if outward > 0 else 0.16) / 2
         for k in range(count):
             mid = OFFICE_DEPTH * (k + 1) / (count + 1)
-            holes.append((mid - 0.08, GROUND_GLASS[0], mid + 0.08, head))
+            holes.append((mid - half, GROUND_GLASS[0], mid + half, head))
         slab(frame, OFFICE_DEPTH, wall_top, holes)
         for hole in holes:
             window("FrontWall", frame, *hole, mullion=False)
