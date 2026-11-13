@@ -130,24 +130,25 @@ const MULCH: [f32; 3] = [0.46, 0.44, 0.9];
 /// The front yards' beds along the houses: dark bark mulch.
 const BED_TINT: [f32; 3] = [0.36, 0.33, 0.8];
 /// The slope south of Gaviota's south row down toward Gardenia, and the bank's lower
-/// third: dark groundcover over mulch under the trees.
-const SHADED_COVER: [f32; 3] = [0.3, 0.38, 0.9];
-const BANK_FOOT: [f32; 3] = [0.28, 0.36, 0.9];
+/// third: green groundcover under the trees, a little darker than the lawns.
+const SHADED_COVER: [f32; 3] = [0.4, 0.72, 1.7];
+const BANK_FOOT: [f32; 3] = [0.38, 0.66, 1.6];
 const SAGE: [f32; 3] = [0.35, 0.5, 1.5];
 /// The bank under Senda Parkway: grey-green groundcover drifting over bark mulch, and how
 /// much of it is groundcover at least and at most.
 const BANK_COVER: [f32; 3] = [0.38, 0.43, 1.0];
-const BANK_PLANTED: (f64, f64) = (0.25, 0.55);
+const BANK_PLANTED: (f64, f64) = (0.8, 0.95);
 /// How much of the other planted slopes (round the tract) is groundcover, at least and
 /// at most.
-const SLOPE_PLANTED: (f64, f64) = (0.35, 0.7);
+const SLOPE_PLANTED: (f64, f64) = (0.7, 0.9);
 /// The planted ground's tints over the packed-dirt tile, linear (it is an orange tan, so
-/// they draw its red down and its blue up): bark mulch, the groundcover drifting through
-/// it, the shaded groundcover under the slopes' trees and the front beds' darker mulch;
-/// it reaches this far (m) past the arena's edge, in cells this fine (m).
+/// they draw its red down and its blue up): bark mulch, the sage grey-green groundcover
+/// drifting through it, the shaded groundcover under the slopes' trees and the front
+/// beds' darker mulch; it reaches this far (m) past the arena's edge, in cells this fine
+/// (m).
 const DIRT_MULCH: [f32; 3] = [0.3, 0.34, 0.85];
-const DIRT_COVER: [f32; 3] = [0.24, 0.4, 0.85];
-const DIRT_SHADE: [f32; 3] = [0.15, 0.27, 0.75];
+const DIRT_COVER: [f32; 3] = [0.26, 0.56, 1.1];
+const DIRT_SHADE: [f32; 3] = [0.2, 0.44, 0.9];
 const DIRT_BED: [f32; 3] = [0.22, 0.25, 0.7];
 /// The groundcover on the greenbelt's mouth, blue-grey senecio.
 const MOUTH_COVER: [f32; 3] = [0.3, 0.85, 2.4];
@@ -155,7 +156,7 @@ const MOUTH_COVER: [f32; 3] = [0.3, 0.85, 2.4];
 const DIRT_BANK_MULCH: [f32; 3] = [0.4, 0.68, 2.1];
 /// How much of the ground behind the outer rows is groundcover rather than shade, at
 /// least and how much more it drifts.
-const UNDER_TREES_COVER: (f64, f64) = (0.25, 0.35);
+const UNDER_TREES_COVER: (f64, f64) = (0.55, 0.35);
 const PLANTED_REACH: f64 = 12.0;
 const PLANTED_STEP: f64 = 1.0;
 /// The foothills' ground over the dry-grass tile: tan dry grass, gold where it faces the
@@ -213,7 +214,7 @@ const BANK_SWITCHBACK: f64 = 4.0;
 /// turning circles), so it curves round the ends of Rumbo and Gaviota as the real
 /// ones do, smoothed over this many metres, from and to these arena z; and how far a
 /// trail keeps from a spawn pad's middle.
-const HILLSIDE_TRAIL_REACH: [f64; 3] = [6.0, 14.0, 25.0];
+const HILLSIDE_TRAIL_REACH: [f64; 2] = [6.0, 25.0];
 const HILLSIDE_TRAIL_SMOOTH: f64 = 6.0;
 const HILLSIDE_TRAIL_SPAN: (f64, f64) = (-70.0, 72.0);
 const TRAIL_SPAWN_ROOM: f64 = 4.5;
@@ -343,6 +344,9 @@ const PASEO_SHRUB: (f64, f64) = (0.22, 0.32);
 /// Nothing planted or grown stands within this far (m) of the greenbelt lane's middle:
 /// it is a tank's way between the back walls.
 const LANE_CLEAR: f64 = 2.25;
+/// The greenbelt's groundcover and its low shrubs, drawn only (a tank drives through
+/// them), grow to this far (m) from its walk's middle: just off the walk's mulch.
+const MAT_LANE_CLEAR: f64 = PATH_WIDTH / 2.0 + 0.4;
 /// Senda Parkway's lane lines: thin white paint, one solid line each way along its bike
 /// lane, this far in from the kerb; at Neblina the Way has one travel lane each way.
 const LANE_PAINT: u32 = 0xe4e2da;
@@ -366,13 +370,17 @@ const WAY_LAMP_GLOBE: f64 = 0.22;
 /// Senda Parkway, and the hillside's few oaks among its sage.
 const SLOPE_TREE_SPACING: f64 = 11.0;
 const HILLSIDE_OAK_SPACING: f64 = 26.0;
-/// The belt of oaks past the level's south and west walls: its rows stand this far (m)
-/// outside the wall, an oak every [`BELT_SPACING`] along it in each (the outermost row
-/// on every other place), set off its place by up to [`BELT_WANDER`] (m) either way and
-/// no nearer another than [`BELT_ROOM`]; their crowns' and heights' ranges (m).
+/// The belt of oaks past the level's south and west walls, in loose groves with open
+/// grass between rather than an orchard's rows: its rows stand this far (m) outside the
+/// wall, an oak every [`BELT_SPACING`] along it in each where the hillside's patch noise
+/// passes that row's [`BELT_GROVES`] level (the outermost row on one place in
+/// [`BELT_OUTER_EVERY`] only), set off its place by up to [`BELT_WANDER`] (m) either way
+/// and no nearer another than [`BELT_ROOM`]; their crowns' and heights' ranges (m).
 const BELT_ROWS: [f64; 3] = [4.5, 10.0, 16.0];
-const BELT_SPACING: f64 = 7.5;
-const BELT_WANDER: f64 = 1.5;
+const BELT_GROVES: [f64; 3] = [0.6, 0.35, 0.2];
+const BELT_OUTER_EVERY: usize = 3;
+const BELT_SPACING: f64 = 10.0;
+const BELT_WANDER: f64 = 3.0;
 const BELT_ROOM: f64 = 3.4;
 const BELT_CROWN: (f64, f64) = (3.0, 4.2);
 const BELT_HEIGHT: (f64, f64) = (4.4, 6.0);
@@ -414,12 +422,12 @@ const MAT_SHADE: [f32; 3] = [0.05, 0.13, 0.15];
 /// against Rumbo's back fences.
 const MAT_SLOPE: (f64, f64) = (0.8, 0.12);
 const MAT_RISE: f64 = 0.7;
-const MAT_WALL_ROOM: f64 = 0.3;
+const MAT_WALL_ROOM: f64 = 0.1;
 /// The shrubs standing out of the groundcover in drifts (where a slow noise passes
 /// [`MAT_BUSH_DRIFT`]): one every this many metres or so there, their radius range (m) and
 /// leaves, dark toyon green, a yellow green, coyote brush's grey green.
 const MAT_BUSH_SPACING: f64 = 1.25;
-const MAT_BUSH_DRIFT: f64 = 0.48;
+const MAT_BUSH_DRIFT: f64 = 0.25;
 const MAT_BUSH: (f64, f64) = (0.3, 0.55);
 const MAT_BUSH_LEAVES: [u32; 5] = [0x46523a, 0x8a9150, 0x6f7a5c, 0x3e4a34, 0x5b6a3e];
 /// A few small trees down the greenbelt's middle (scenery a tank pushes through): one
@@ -477,12 +485,18 @@ const WEST_MAT_SHADE: [f32; 3] = [0.05, 0.09, 0.11];
 /// it the field is the tract's park, mown lawn ([`west_park`]).
 const WEST_BAND: f64 = 2.5;
 const WEST_COVER: (f64, f64) = (0.14, 0.34);
-/// The scrub down the slope behind Gaviota's south row toward Gardenia, under its trees:
-/// darker olive and green, a little taller, kept off the lane along the level's south
-/// wall ([`SOUTH_LANE`], as the band of oaks is).
-const SOUTH_MAT: (f64, f64) = (0.4, 1.0);
-const SOUTH_MAT_TONES: [[f32; 3]; 3] = [[0.12, 0.31, 0.33], [0.15, 0.36, 0.4], [0.1, 0.25, 0.26]];
-const SOUTH_MAT_SHADE: [f32; 3] = [0.04, 0.09, 0.07];
+/// The groundcover down the slope behind Gaviota's south row toward Gardenia, under its
+/// trees: a fresh green, a little taller than the west slope's low cover, kept off the
+/// lane along the level's south wall ([`SOUTH_LANE`], as the band of oaks is) and sinking
+/// into the ground over this many metres before it, so its edge does not stand up as a
+/// sunlit bank.
+const SOUTH_MAT: (f64, f64) = (0.25, 0.6);
+const SOUTH_MAT_TONES: [[f32; 3]; 3] = [[0.17, 0.44, 0.44], [0.2, 0.5, 0.52], [0.14, 0.37, 0.36]];
+const SOUTH_MAT_SHADE: [f32; 3] = [0.06, 0.14, 0.1];
+const SOUTH_MAT_EDGE: f64 = 2.0;
+/// The ground under it and along the lane: its tones this much darker, as its own leaves
+/// shade it.
+const SOUTH_GROUND_SHADE: f32 = 0.72;
 /// The bigger shrubs standing out of the west slope's mat: one every so many metres on a
 /// jittered grid (some sites left bare), their size range (m) and leaves: grey-green
 /// rosemary and sage.
@@ -500,10 +514,19 @@ const OLIVE_LEAVES: [u32; 3] = [0x5c6450, 0x535b48, 0x646b56];
 const OLIVE_BARK: u32 = 0x4a4036;
 /// The hillside's scrub gathers in patches where a slow noise passes this level.
 const HILL_PATCH: f64 = 0.35;
-/// The hillside's coastal sage inside the arena: a clump every this many metres.
+/// The hillside's coastal sage inside the arena: a clump every this many metres, its
+/// middle this far (m) from the view fence's line, so its lumps leave the fence's foot
+/// clear by about a metre and a half.
 const HILL_SAGE_SPACING: f64 = 2.0;
-/// Past the arena's edge, where it only closes the view, a little sparser.
-const OUTER_SAGE_SPACING: f64 = 2.6;
+const FENCE_SAGE_ROOM: f64 = 3.4;
+/// Past the arena's edge, where it only closes the view, open grass with a shrub every
+/// several metres in the patches: a clump every this many metres where the patch noise
+/// passes this level, leafy within this far (m) of the arena's edge and painted past it.
+const OUTER_SAGE_SPACING: f64 = 6.0;
+const OUTER_SAGE_PATCH: f64 = 0.7;
+const OUTER_SAGE_LEAFY: f64 = 15.0;
+/// How dark the far sage's painted lumps are beside its leaves.
+const PAINTED_SHADE: f64 = 0.82;
 const GRASS_SPACING: f64 = 1.2;
 const GRASS_LEAVES: [u32; 2] = [0x86825a, 0x787a50];
 const GRASS_LUMP: (f64, f64) = (0.3, 0.5);
@@ -712,7 +735,14 @@ fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
             0.3 * noise,
         );
         let west = mix(field, under_trees, west_band(p, lines));
-        let planted = mix(planted, under_trees, zone.south);
+        // The slope behind Gaviota's south row: the green of its groundcover, which sinks
+        // into it short of the lane along the wall, so its edge does not show.
+        let south = mix(
+            SOUTH_MAT_TONES[2][i],
+            SOUTH_MAT_TONES[1][i],
+            0.3 + 0.5 * noise,
+        ) * SOUTH_GROUND_SHADE;
+        let planted = mix(planted, south, zone.south);
         let planted = mix(planted, west, zone.west);
         // The greenbelt's mouth: blue-grey and green groundcover under its grasses.
         let mouth = mix(MOUTH_COVER[i], DIRT_COVER[i], 0.3 + 0.4 * noise);
@@ -1613,7 +1643,7 @@ fn mat_weight(p: DVec2, lines: &Lines, thicket: &Thicket) -> (f64, f64) {
         * rise((off_walls - MAT_WALL_ROOM) / MAT_RISE)
         * rise((HILLSIDE_FROM + 4.0 - p.x) / 6.0);
     if thicket.path.0.len() > 1 {
-        w *= rise((thicket.path.distance(p) - LANE_CLEAR) / MAT_RISE);
+        w *= rise((thicket.path.distance(p) - MAT_LANE_CLEAR) / MAT_RISE);
     }
     for &(spot, room) in &thicket.clear {
         w *= rise((spot.distance(p) - room) / MAT_RISE);
@@ -1738,7 +1768,7 @@ fn greenbelt_scrub() -> Node {
                 let (least, most) = MAT_BUSH;
                 let size = least + (most - least) * hash(seed + 1.1) * (0.5 + 0.5 * middle);
                 let off_lane =
-                    thicket.path.0.len() < 2 || thicket.path.distance(at) > LANE_CLEAR + size;
+                    thicket.path.0.len() < 2 || thicket.path.distance(at) > MAT_LANE_CLEAR + size;
                 if w > 0.85 && drift > MAT_BUSH_DRIFT && hash(seed + 0.8) < 0.75 && off_lane {
                     let base = w * mat_height(at, middle) - size * 0.55;
                     let count = MAT_BUSH_LEAVES.len();
@@ -2173,7 +2203,7 @@ impl Outer {
         }
         // The south slope's scrub stops short of the lane along the level's wall, which
         // follows the row's back walls rather than one line of z.
-        let lane = rise((self.inside(p) - SOUTH_LANE) / 1.0);
+        let lane = rise((self.inside(p) - SOUTH_LANE) / SOUTH_MAT_EDGE);
         w *= 1.0 - south * (1.0 - lane);
         // Past the west band the park's lawn.
         w *= south + (1.0 - south) * west_band(p, lines);
@@ -2202,11 +2232,17 @@ impl Outer {
 /// Way's path down past the terrace walk to this share of the way to the back walls, one
 /// low carpet of grey-green groundcover (myoporum and prostrate rosemary) over a grid this
 /// fine (m), its mounds this high at least and at most (m), each about this wide (m),
-/// rising over this many metres from the walks, the crest basins and the Way's path;
-/// below it bark mulch with contour rows of round shrubs; and along the foot, this far
-/// (m) out from Rumbo's north row's rear fences, a clipped hedge of shrubs this far
-/// apart (m), each this big (radius and how tall for its breadth), in dark grey-greens.
-const BANK_COVER_DOWN: f64 = 0.46;
+/// rising over this many metres from the walks, the crest basins and the Way's path, with
+/// a round shrub standing out of it at this share of the contour rows' spots; below it a
+/// strip of bark mulch with the rows' shrubs; and along the foot, this far (m) out from
+/// Rumbo's north row's rear fences, a clipped hedge of shrubs this far apart (m), each
+/// this big (radius and how tall for its breadth), in dark grey-greens.
+const BANK_COVER_DOWN: f64 = 0.86;
+const BANK_CARPET_SHRUBS: f64 = 0.25;
+/// The row of clipped round shrubs along the downhill side of the bank's terrace walk:
+/// one every this many metres, their radius range (m).
+const TERRACE_SHRUB_STEP: f64 = 1.6;
+const TERRACE_SHRUB: (f64, f64) = (0.42, 0.52);
 /// The bank's east end is dry meadow: tan grass from this far east (arena x, m), over
 /// this many metres, with a shrub left at this share of its contour rows' spots.
 const BANK_MEADOW: (f64, f64) = (16.0, 10.0);
@@ -2217,8 +2253,8 @@ const BANK_MAT_DOME: f64 = 0.7;
 const BANK_MAT_EDGE: f64 = 0.35;
 /// The carpet's tints over the packed-dirt tile, linear (its orange tan drawn to a
 /// grey green): three tones in drifts, darker toward this in its hollows.
-const BANK_MAT_TONES: [[f32; 3]; 3] = [[0.27, 0.6, 1.9], [0.23, 0.52, 1.6], [0.31, 0.68, 2.2]];
-const BANK_MAT_SHADE: [f32; 3] = [0.11, 0.24, 0.62];
+const BANK_MAT_TONES: [[f32; 3]; 3] = [[0.31, 0.72, 2.2], [0.27, 0.63, 1.9], [0.35, 0.8, 2.5]];
+const BANK_MAT_SHADE: [f32; 3] = [0.14, 0.3, 0.8];
 const BANK_HEDGE_OUT: f64 = 1.0;
 const BANK_HEDGE_STEP: f64 = 0.7;
 const BANK_HEDGE: (f64, f64) = (0.5, 0.9);
@@ -4225,11 +4261,12 @@ impl Belt {
                     let at = point + *out * (depth + wander(0.4));
                     next += BELT_SPACING;
                     k += 1;
-                    if outermost && k.is_multiple_of(2) {
+                    if outermost && !k.is_multiple_of(BELT_OUTER_EVERY) {
                         continue;
                     }
                     // Clear of every wall, the ones round a corner too.
-                    let clear = self.depth(at).is_some_and(|d| d > BELT_ROWS[0] * 0.6)
+                    let clear = hill_patch(at) > BELT_GROVES[row]
+                        && self.depth(at).is_some_and(|d| d > BELT_ROWS[0] * 0.6)
                         && sites.iter().all(|site| site.distance(at) > BELT_ROOM);
                     if clear {
                         sites.push(at);
@@ -4360,8 +4397,19 @@ struct Clumps {
     leaves: &'static [u32],
     lump: (f64, f64),
     squash: f64,
-    /// Leafy shrubs rather than painted lumps (the grasses' tufts).
-    leafy: bool,
+    form: LumpForm,
+}
+
+/// What a clump's lumps are drawn as.
+#[derive(Clone, Copy, PartialEq)]
+enum LumpForm {
+    /// Leafy shrubs: sprig cards round a dark heart.
+    Leafy,
+    /// The heart alone, painted in the leaves' colour: far scenery, a fifth of the
+    /// triangles.
+    Painted,
+    /// The grasses' tufts.
+    Tuft,
 }
 
 const SAGE_CLUMPS: Clumps = Clumps {
@@ -4369,21 +4417,21 @@ const SAGE_CLUMPS: Clumps = Clumps {
     leaves: &SAGE_LEAVES,
     lump: SAGE_LUMP,
     squash: 0.75,
-    leafy: true,
+    form: LumpForm::Leafy,
 };
 const PLANTED_CLUMPS: Clumps = Clumps {
     spacing: PLANTED_SPACING,
     leaves: &PLANTED_LEAVES,
     lump: PLANTED_LUMP,
     squash: 0.6,
-    leafy: true,
+    form: LumpForm::Leafy,
 };
 const GRASS_CLUMPS: Clumps = Clumps {
     spacing: GRASS_SPACING,
     leaves: &GRASS_LEAVES,
     lump: GRASS_LUMP,
     squash: 1.1,
-    leafy: false,
+    form: LumpForm::Tuft,
 };
 
 /// Clumps of two or three lumps scattered off a grid over the rectangle from `low` to
@@ -4411,22 +4459,35 @@ fn clumps(
                     let size = least + (most - least) * jitter(cx + n as f64).fract().abs();
                     let leaves = kind.leaves[(k + n) % kind.leaves.len()];
                     let offset = n as f64 * size * 0.65;
-                    if kind.leafy {
-                        let spot = DVec2::new(cx + offset, cz - offset * 0.6);
-                        let seed = cx * 3.1 + cz * 1.7 + n as f64;
-                        leafy(
-                            group,
-                            lump,
-                            (spot, base(spot)),
-                            (size, kind.squash),
-                            leaves,
-                            seed,
-                        );
-                        continue;
-                    }
                     let spot = DVec2::new(cx + offset, cz - offset * 0.6);
-                    let seed = cx * 2.3 + cz * 4.1 + n as f64;
-                    tuft(group, spot, size, kind.squash, &[leaves], seed);
+                    match kind.form {
+                        LumpForm::Leafy => {
+                            let seed = cx * 3.1 + cz * 1.7 + n as f64;
+                            leafy(
+                                group,
+                                lump,
+                                (spot, base(spot)),
+                                (size, kind.squash),
+                                leaves,
+                                seed,
+                            );
+                        }
+                        LumpForm::Painted => {
+                            // Darker than the leaves, as a leafy shrub reads beside its
+                            // sunlit cards, and lower, a mound rather than a ball.
+                            let mut heart =
+                                shadowed(lump.clone(), paint(darker(leaves, PAINTED_SHADE)));
+                            heart.scale =
+                                glam::DVec3::new(size, size * kind.squash * 0.75, size) * 0.85;
+                            heart.set_rotation_euler(0.0, hash(cx * 3.1 + cz * 1.7) * 3.0, 0.0);
+                            let rise = size * kind.squash * 0.55;
+                            put(group, heart, spot.x, base(spot) + rise, spot.y);
+                        }
+                        LumpForm::Tuft => {
+                            let seed = cx * 2.3 + cz * 4.1 + n as f64;
+                            tuft(group, spot, size, kind.squash, &[leaves], seed);
+                        }
+                    }
                 }
             }
             k += 1;
@@ -4440,20 +4501,27 @@ fn clumps(
 /// oaks with natural grass between.
 fn sage_clumps(group: &mut Node, hills: &Hills) {
     let lump = Arc::new(heart_geometry());
-    let low = DVec2::new(ARENA + 3.0, -ARENA - 20.0);
-    let high = DVec2::new(ARENA + 40.0, ARENA + 20.0);
-    let dense = Clumps {
+    let (near, far) = (ARENA + 3.0, ARENA + OUTER_SAGE_LEAFY);
+    let (south, north) = (-ARENA - 20.0, ARENA + 20.0);
+    let sparse = Clumps {
         spacing: OUTER_SAGE_SPACING,
         ..SAGE_CLUMPS
     };
-    clumps(
-        group,
-        &lump,
-        &dense,
-        (low, high),
-        &|p| hills.height(p.x, p.y),
-        &|p| hill_patch(p) > 0.5,
-    );
+    // Near the fence, where the play camera looks down on them, leafy shrubs; further
+    // out, seen only from afar, their painted hearts.
+    for (low, high, form) in [
+        (near, far, LumpForm::Leafy),
+        (far, ARENA + 40.0, LumpForm::Painted),
+    ] {
+        clumps(
+            group,
+            &lump,
+            &Clumps { form, ..sparse },
+            (DVec2::new(low, south), DVec2::new(high, north)),
+            &|p| hills.height(p.x, p.y),
+            &|p| hill_patch(p) > OUTER_SAGE_PATCH,
+        );
+    }
 }
 
 /// Sage under the belt's oaks past the south and west walls, in the hillside's patches.
@@ -4738,6 +4806,12 @@ fn shrubs() -> Node {
     // The bank below Senda Parkway, in rows down from its crest basins to the mulch along
     // the back walls; and the slope across the Way, inside the arena.
     let top = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH;
+    let (terrace, spurs) = bank_trails(&lines);
+    let bank_walks: Vec<(Line, f64)> = spurs
+        .into_iter()
+        .map(|line| (Line(line), BANK_SPUR))
+        .chain((terrace.len() > 1).then_some((Line(terrace), BANK_WALK)))
+        .collect();
     contour_rows(
         &mut group,
         &bush,
@@ -4747,9 +4821,14 @@ fn shrubs() -> Node {
         &CONTOUR_LEAVES,
         &|p| {
             let zone = zones(p, &lines);
+            // On the carpet, a shrub here and there, clear of its walks.
+            let on_carpet = hash(p.x * 5.3 + p.y * 2.9) < BANK_CARPET_SHRUBS
+                && bank_walks
+                    .iter()
+                    .all(|(walk, width)| walk.distance(p) > width / 2.0 + CONTOUR_SIZE.1 + 0.2);
             zone.bank_land > 0.5
                 && (zone.meadow < 0.5 || hash(p.x * 3.7 + p.y * 1.9) < MEADOW_SHRUBS)
-                && zone.bank_fall > BANK_COVER_DOWN + 0.04
+                && (zone.bank_fall > BANK_COVER_DOWN + 0.04 || on_carpet)
                 && zone.hillside < 0.5
                 && off_lots(p, BANK_HEDGE_OUT + BANK_HEDGE.0 + 0.45)
                 && in_arena(p)
@@ -4766,6 +4845,41 @@ fn shrubs() -> Node {
         &CONTOUR_LEAVES,
         &|p| in_arena(p) && open(p) && zones(p, &lines).park < 0.2,
     );
+    // The clipped shrubs along the downhill side of the bank's terrace walk.
+    if let Some((walk, _)) = bank_walks.iter().find(|(_, width)| *width == BANK_WALK) {
+        let mut s = TERRACE_SHRUB_STEP / 2.0;
+        let mut n = 0usize;
+        while s < walk.length() {
+            let (point, along) = walk.at(s);
+            s += TERRACE_SHRUB_STEP;
+            n += 1;
+            let out = left(along) * (BANK_WALK / 2.0 + TERRACE_SHRUB.1 + 0.15);
+            // The side further down the bank.
+            let at = [point + out, point - out]
+                .into_iter()
+                .max_by(|a, b| {
+                    zones(*a, &lines)
+                        .bank_fall
+                        .total_cmp(&zones(*b, &lines).bank_fall)
+                })
+                .unwrap_or(point);
+            let zone = zones(at, &lines);
+            if zone.bank_land < 0.5 || zone.meadow > 0.5 || !in_arena(at) || !open(at) {
+                continue;
+            }
+            let seed = n as f64 * 2.31;
+            let (least, most) = TERRACE_SHRUB;
+            let tone = CONTOUR_LEAVES[n % CONTOUR_LEAVES.len()];
+            leafy(
+                &mut group,
+                &bush,
+                (at, 0.0),
+                (least + (most - least) * hash(seed), 0.8),
+                tone,
+                seed,
+            );
+        }
+    }
     // A shrub in each of the bank's crest basins.
     for (k, (middle, down)) in crest_basin_sites(&lines).into_iter().enumerate() {
         let at = middle + down * (CREST_BASIN.0 * 0.4);
@@ -4831,8 +4945,20 @@ fn shrubs() -> Node {
         spacing: HILL_SAGE_SPACING,
         ..SAGE_CLUMPS
     };
+    // Clear of the view fence along the arena's east edge, inside it only, so the fence
+    // and the mow strip at its foot read as the level's end.
+    let fence = Line(
+        lines
+            .boundary
+            .iter()
+            .chain(lines.boundary.first())
+            .copied()
+            .collect(),
+    );
     clumps(&mut group, &bush, &sage, hillside, &|_| 0.0, &|p| {
         zones(p, &lines).hillside >= 0.5
+            && inside_boundary(&lines.boundary, p)
+            && fence.distance(p) > FENCE_SAGE_ROOM
             && hill_patch(p) > 0.5
             && trail(p) > 1.2
             && off_lots(p, 0.8)
