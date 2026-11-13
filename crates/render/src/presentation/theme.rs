@@ -8,6 +8,7 @@
 use glam::Vec3;
 use sloppy_core::sim::data::ARENA;
 use sloppy_core::sim::maps::MapTheme;
+use sloppy_core::sim::senda_layout::SENDA_SCALE;
 
 use crate::camera::ShadowCamera;
 
@@ -410,10 +411,15 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
             SHADOW_DEPTH,
         )
     } else {
+        // Senda stands SENDA_SCALE times its design, its wall's margin too: the box grows
+        // with it, and stands as much further toward the sun so its corner toward the sun
+        // stays inside the box's near face. Its texels grow with it (about 8.5 cm across
+        // a 2048 map rather than 6.8), as fine against its houses as before.
+        let grow = if senda { SENDA_SCALE as f32 } else { 1.0 };
         ShadowCamera::square(
-            sun_position,
+            sun_position * grow,
             Vec3::ZERO,
-            ARENA as f32 + 10.0,
+            (ARENA as f32 + 10.0) * grow,
             0.5,
             SHADOW_DEPTH,
         )
@@ -694,6 +700,9 @@ fn senda_atmosphere(village: Atmosphere) -> Atmosphere {
             density: 0.0018,
             far_density: 0.007,
             sun_scatter: 0.4,
+            // Clear over the level and its wall as it stands, SENDA_SCALE times its design.
+            clear_half_size: village.haze.clear_half_size * SENDA_SCALE as f32,
+            clear_fade: village.haze.clear_fade * SENDA_SCALE as f32,
             ..village.haze
         },
         ridges: Ridges {

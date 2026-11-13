@@ -4,7 +4,7 @@
 //! grit and in the quarry pale sand.
 
 use sloppy_core::models::is_village_dirt;
-use sloppy_core::sim::senda_layout::is_senda_paved;
+use sloppy_core::sim::senda_layout::{is_senda_paved, senda_design_point};
 
 use crate::color::hex_to_linear;
 
@@ -41,6 +41,12 @@ const SAND: Soil = Soil {
     clods: [0xa3845a, 0xc2a273, 0x7d6444],
 };
 
+/// Whether the world point `(x, z)` lies on Senda's paving.
+fn senda_paved(x: f64, z: f64) -> bool {
+    let at = senda_design_point(x, z);
+    is_senda_paved(at.x, at.y)
+}
+
 impl Ground {
     pub fn from_theme(theme: &str) -> Self {
         match theme {
@@ -58,7 +64,8 @@ impl Ground {
             Self::Village => MEADOW,
             Self::Harbor => CONCRETE,
             Self::Quarry => SAND,
-            Self::Senda if is_senda_paved(x, z) => CONCRETE,
+            // The level answers in its design metres.
+            Self::Senda if senda_paved(x, z) => CONCRETE,
             Self::Senda => MEADOW,
         }
     }
