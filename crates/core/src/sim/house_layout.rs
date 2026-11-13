@@ -527,27 +527,30 @@ const DESIGNS: [HouseStyle; 9] = {
     ]
 };
 
-/// Each design's three paint schemes: siding, trim, door and shutters, roof.
+/// Each design's three paint schemes: siding, trim, door and shutters, roof. The walls
+/// share ten stucco paints (each its own material, and the renderer batches covers by
+/// material): white, two creams, pale yellow, peach, sand, honey, apricot, a warm tan and
+/// the reference house's tan.
 #[rustfmt::skip]
 const DESIGN_PAINTS: [[[u32; 4]; 3]; 9] = [
-    // Small Spanish: Rumbo north lot 1's cream, pale peach, white.
-    [[0xebe2cc, 0xeee8d8, 0x5a4636, 0xa48a80], [0xe6d2b8, 0xece0cc, 0x6f8a96, 0xa48a80], [0xf1eee6, 0xeae6dc, 0x5a4636, 0xaa8f82]],
-    // Small Craftsman: Rumbo north lot 9's sand with sage shutters, cream with burgundy, warm tan with slate.
-    [[0xe2d4b6, 0x66523f, 0x7f8c74, 0x8a7f70], [0xe8dac4, 0xf0e8da, 0x6e3a36, 0x6e6458], [0xd8c096, 0x6e5644, 0x6f8a96, 0x7d7266]],
+    // Small Spanish: Rumbo north lot 1's cream, peach, white.
+    [[0xebe2cc, 0xeee8d8, 0x5a4636, 0xa48a80], [0xe6d4bc, 0xece0cc, 0x6f8a96, 0xa48a80], [0xf1eee6, 0xeae6dc, 0x5a4636, 0xaa8f82]],
+    // Small Craftsman: Rumbo north lot 9's sand with sage shutters, peach with burgundy, warm tan with slate.
+    [[0xe4d6b6, 0x66523f, 0x7f8c74, 0x8a7f70], [0xe6d4bc, 0xf0e8da, 0x6e3a36, 0x6e6458], [0xd8c29a, 0x6e5644, 0x6f8a96, 0x7d7266]],
     // Small Monterey: the reference house's tan under the tract's clay, Rumbo north lot 8's cream, sand.
-    [[0xc9a57a, 0xd2b48c, 0x5f7884, 0xa48a80], [0xece3cc, 0xf0eadc, 0x5f7884, 0x93887f], [0xe4d6ba, 0xece4d2, 0x6e3a36, 0xa48a80]],
-    // Medium Spanish: pale apricot, white, pale yellow.
-    [[0xe0caa8, 0xeadac0, 0x6f8a96, 0xa48a80], [0xf0ede4, 0xeae6dc, 0x5a4636, 0xaa8f82], [0xeadfbc, 0xf0e8cc, 0x5f7884, 0x9c857c]],
-    // Medium Craftsman: Rumbo north lot 2's sand, warm tan with slate, cream with brown.
-    [[0xe4d6b4, 0xece2c8, 0x5f7884, 0x7a7874], [0xd8c29e, 0xe4d4b6, 0x5f7884, 0x7d7266], [0xece4d0, 0xf2ecde, 0x5a4636, 0x8a7f70]],
-    // Medium Monterey: Neblina's corner house's tan under grey, cream, honey.
-    [[0xdcc8a6, 0xeeeae2, 0x4a3a30, 0x7a7670], [0xebe3cf, 0xf0eadc, 0x5f7884, 0x7d7266], [0xe2cfa6, 0xeadcbc, 0x7f8c74, 0x8a7f70]],
+    [[0xc9a57a, 0xd2b48c, 0x5f7884, 0xa48a80], [0xebe2cc, 0xf0eadc, 0x5f7884, 0x93887f], [0xe4d6b6, 0xece4d2, 0x6e3a36, 0xa48a80]],
+    // Medium Spanish: apricot, pale cream, pale yellow.
+    [[0xe0caa8, 0xeadac0, 0x6f8a96, 0xa48a80], [0xede6d2, 0xf2ecde, 0x5a4636, 0xaa8f82], [0xeee5c8, 0xf0e8cc, 0x5f7884, 0x9c857c]],
+    // Medium Craftsman: Rumbo north lot 2's sand, warm tan with slate, pale cream with brown.
+    [[0xe4d6b6, 0xece2c8, 0x5f7884, 0x7a7874], [0xd8c29a, 0xe4d4b6, 0x5f7884, 0x7d7266], [0xede6d2, 0xf2ecde, 0x5a4636, 0x8a7f70]],
+    // Medium Monterey: Neblina's corner house's apricot under grey, cream, peach.
+    [[0xe0caa8, 0xeeeae2, 0x4a3a30, 0x7a7670], [0xebe2cc, 0xf0eadc, 0x5f7884, 0x7d7266], [0xe6d4bc, 0xece0cc, 0x7f8c74, 0x8a7f70]],
     // Large Spanish: Rumbo north lot 5's pale yellow, warm tan, Rumbo north lot 10's white.
-    [[0xeee5c8, 0xf2ebd4, 0x6f8a96, 0xa48a80], [0xdac29a, 0xe6d6b8, 0x5a4636, 0xaa8f82], [0xf3f0e8, 0xeae6dc, 0x5f7884, 0x9c857c]],
-    // Large Craftsman: Rumbo north lot 3's pale cream, Rumbo north lot 7's white, tan with sage.
-    [[0xe8e0c8, 0xf0eada, 0x7f8c74, 0x8a8278], [0xf1efe9, 0xeae6dc, 0x5a4636, 0x6e6458], [0xdcc8a2, 0xe6d6b8, 0x7f8c74, 0x8a7f70]],
-    // Large Monterey: Rumbo north lot 6's honey cream under the reddest clay, sand, cream.
-    [[0xe8d9b4, 0xf0e4c8, 0x7f8c74, 0xa47a72], [0xe4d0b4, 0xece0cc, 0x6e3a36, 0xa48a80], [0xeee6d2, 0xf2ecde, 0x5a4636, 0xa48a80]],
+    [[0xeee5c8, 0xf2ebd4, 0x6f8a96, 0xa48a80], [0xd8c29a, 0xe6d6b8, 0x5a4636, 0xaa8f82], [0xf1eee6, 0xeae6dc, 0x5f7884, 0x9c857c]],
+    // Large Craftsman: Rumbo north lot 3's pale yellow, Rumbo north lot 7's white, apricot with sage.
+    [[0xeee5c8, 0xf0eada, 0x7f8c74, 0x8a8278], [0xf1eee6, 0xeae6dc, 0x5a4636, 0x6e6458], [0xe0caa8, 0xe6d6b8, 0x7f8c74, 0x8a7f70]],
+    // Large Monterey: Rumbo north lot 6's honey under the reddest clay, sand, pale cream.
+    [[0xe8d9b4, 0xf0e4c8, 0x7f8c74, 0xa47a72], [0xe4d6b6, 0xece0cc, 0x6e3a36, 0xa48a80], [0xede6d2, 0xf2ecde, 0x5a4636, 0xa48a80]],
 ];
 
 /// A design of the tract: its floor plan and exterior style.
