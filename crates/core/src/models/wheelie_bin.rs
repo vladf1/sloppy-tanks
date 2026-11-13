@@ -19,9 +19,13 @@ const WHEEL_RADIUS: f64 = 0.11;
 const BODY_LIFT: f64 = 0.07;
 const LID_THICKNESS: f64 = 0.05;
 
-/// A wheelie bin in `color`, `TRASH_BIN` across, deep and tall.
+/// A real bin's size across, deep and tall (m), which the model is built at.
+const FULL_SIZE: (f64, f64, f64) = (0.66, 0.74, 1.08);
+
+/// A wheelie bin in `color`, `TRASH_BIN` across, deep and tall: the full-size cart
+/// brought down to the Neighborhood's scale.
 pub fn wheelie_bin(color: u32) -> Node {
-    let (w, d, h) = TRASH_BIN;
+    let (w, d, h) = FULL_SIZE;
     let mut bin = Node::group("wheelie-bin");
     // The tub, a little inside the footprint so the lid overhangs it.
     let (body_w, body_d) = (w - 0.06, d - 0.08);
@@ -114,5 +118,6 @@ pub fn wheelie_bin(color: u32) -> Node {
         BODY_LIFT / 2.0,
         body_d / 2.0 - 0.08,
     );
+    bin.scale = glam::DVec3::new(TRASH_BIN.0 / w, TRASH_BIN.2 / h, TRASH_BIN.1 / d);
     bin
 }

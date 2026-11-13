@@ -246,9 +246,10 @@ const TREE_COLOR: u32 = 0x3f7a3a;
 /// none (every this many lots, one). The trunk stands in the parkway strip; the box,
 /// which the tree's model takes its crown's width from, reaches a quarter metre over the
 /// kerb and the sidewalk, since a box as narrow as the strip grows a crown under a metre
-/// wide where the tract's are three to five (1.6 to 2.7 at the tank's scale).
+/// wide where the tract's are three to five (1.6 to 2.7 at the tank's scale). They stand
+/// about as tall as the houses' ridges, as the tract's twenty-year-old trees do.
 pub const STREET_TREE: f64 = PARKWAY + 0.5;
-const STREET_TREE_HEIGHT: f64 = 3.6;
+const STREET_TREE_HEIGHT: f64 = 4.5;
 const STREET_TREE_ROOM: f64 = 2.5;
 const STREET_TREE_DRIVEWAY_ROOM: f64 = 0.2;
 const STREET_TREE_SKIP: usize = 4;
@@ -1132,17 +1133,19 @@ fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
 
 /// Senda's wheelie bins out for collection: explosive drums drawn as a dark green
 /// trash bin and a blue recycling bin ([`is_trash_bin`] picks the look by colour), their
-/// footprint across and front to back and their height (m), and their health.
+/// footprint across and front to back and their height (m), and their health. A real
+/// bin stands 1.1 m tall; these are that at the houses' scale, a little over so the
+/// drum still reads from the play camera.
 pub const TRASH_BIN_COLORS: [u32; 2] = [0x3e4b3c, 0x2d5c8a];
-pub const TRASH_BIN: (f64, f64, f64) = (0.66, 0.74, 1.08);
+pub const TRASH_BIN: (f64, f64, f64) = (0.42, 0.47, 0.68);
 const TRASH_BIN_HEALTH: f64 = 20.0;
 /// One house in this many puts its bins out, starting with the first.
 const TRASH_BIN_HOUSES: usize = 3;
 /// Where (m) the bins stand: past the kerb into the street, and from the driveway's
 /// edge on its side away from the front door, and apart from each other.
-const TRASH_BIN_KERB_ROOM: f64 = 0.5;
-const TRASH_BIN_DRIVEWAY_ROOM: f64 = 0.6;
-const TRASH_BIN_GAP: f64 = 0.85;
+const TRASH_BIN_KERB_ROOM: f64 = 0.35;
+const TRASH_BIN_DRIVEWAY_ROOM: f64 = 0.5;
+const TRASH_BIN_GAP: f64 = 0.62;
 /// The least distance (m) between two houses' bins, across the street too, so a tank
 /// never has to weave between them.
 const TRASH_BINS_APART: f64 = 7.0;
@@ -1351,7 +1354,7 @@ fn street_lamp_covers(boundary: &[DVec2]) -> Vec<CoverDef> {
 /// a trunk may stand off the median's middle or its parkway's.
 pub const MEDIAN_TREE_SPACING: f64 = 9.0;
 const MEDIAN_TREE: f64 = 1.4;
-const MEDIAN_TREE_HEIGHT: f64 = 4.8;
+const MEDIAN_TREE_HEIGHT: f64 = 5.6;
 const MEDIAN_TRUNK_ROOM: f64 = 0.4;
 /// The groundcover strip between Senda Parkway's south kerb and its wide path, which
 /// carries that side's trees and lamps, and the path's width (m).
@@ -1538,10 +1541,10 @@ pub fn greenbelt_line(room: f64) -> Vec<DVec2> {
 const GREENBELT_TREE_SPACING: f64 = 24.0;
 const GREENBELT_TREE_OFFSETS: [f64; 3] = [4.2, 5.0, 6.0];
 /// The neighbourhood's bigger trees (the greenbelt's, the bank's, the slope band's and
-/// the cul-de-sac islands'), as the tract's: crowns 5-8 m across and 6-9 m tall at the
-/// tank's scale, none over a house's ridge. Their heights in turn, and their footprints
-/// (an oak's crown spreads to about 1.2-1.45 times it).
-const BIG_TREE_HEIGHTS: [f64; 3] = [3.5, 3.2, 3.6];
+/// the cul-de-sac islands'), as the tract's: crowns 5-8 m across and 9-11 m tall at the
+/// tank's scale, a little over a house's ridge. Their heights in turn, and their
+/// footprints (an oak's crown spreads to about 1.2-1.45 times it).
+const BIG_TREE_HEIGHTS: [f64; 3] = [5.2, 4.8, 5.5];
 const BIG_TREE: f64 = 2.4;
 const BANK_TREES: [f64; 3] = [2.3, 2.6, 2.4];
 /// The bank behind Rumbo's north row: a clump of small trees behind every
