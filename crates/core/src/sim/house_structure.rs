@@ -1917,6 +1917,22 @@ pub fn shared_house_structure(design: &HouseDesign) -> Arc<Structure> {
     COTTAGES.get_or_lay_out(*design, || house_structure(design))
 }
 
+/// The houses standing larger than their designs that something still holds, by design.
+static SCALED_COTTAGES: HeldLayouts<HouseDesign> = HeldLayouts::new();
+
+/// The structure a house stands as in the world: a village cottage's layout
+/// ([`shared_house_structure`]), or a Senda house's scaled to stand
+/// [`HouseDesign::scale`] times its design ([`Structure::scaled`]). Its model is built to
+/// the design and scaled alike (`models::house_parts_model`), so a fallen piece's model
+/// matches its body.
+pub fn standing_house_structure(design: &HouseDesign) -> Arc<Structure> {
+    let scale = design.scale();
+    if scale == 1.0 {
+        return shared_house_structure(design);
+    }
+    SCALED_COTTAGES.get_or_lay_out(*design, || shared_house_structure(design).scaled(scale))
+}
+
 /// Where a touching part lies from the one it supports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Relation {

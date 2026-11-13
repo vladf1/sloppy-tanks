@@ -8,6 +8,14 @@
 //!
 //! A cottage whose parts all stand is drawn uncut. Everything is batched, one draw per
 //! material.
+//!
+//! A house standing larger than its design (Senda's: [`HouseDesign::scale`]) is built
+//! to its design, from its design's layout and at its place in design metres (its paint
+//! follows from where it stands), and drawn scaled about its ground centre, as its
+//! structure stands scaled
+//! ([`standing_house_structure`](crate::sim::house_structure::standing_house_structure)):
+//! its fallen bodies' models match their colliders. The scale goes on the turned node
+//! under the model's root, which keeps the root's own placement.
 
 use std::sync::Arc;
 
@@ -20,7 +28,7 @@ use super::house_model::{footing, standing_house, CottagePiece, CottagePieces, c
 use super::tank_kit::Kit;
 use crate::scene::Node;
 use crate::sim::house_fracture::{EdgeKind, ShardRegion, Side};
-use crate::sim::house_layout::{HouseDesign, HousePlan, WALL_DEPTH};
+use crate::sim::house_layout::{HouseDesign, HousePlan, WALL_DEPTH, design_place};
 use crate::sim::house_structure::{
     PartCell, PartKind, part_outline, part_plane, shared_house_structure,
 };
@@ -47,7 +55,8 @@ const PLINTH_LIP: f64 = 0.05;
 const ON_FACE: f64 = 0.01;
 
 /// The standing cottage for a cottage cover box, drawn from its parts not in
-/// `broken`, with its plinth and yard.
+/// `broken`, with its plinth and yard (the layout is the design's: see the module's
+/// notes).
 #[allow(clippy::too_many_arguments)]
 pub fn structural_house(
     group: &mut Node,
@@ -71,6 +80,9 @@ pub fn structural_house(
 pub struct HouseBuild {
     x: f64,
     z: f64,
+    /// Where it stands in its design's metres, and how many times its design it stands.
+    at: (f64, f64),
+    scale: f64,
     layout: Arc<Structure>,
     standing: PartSet,
     /// Whether a gap shows its rooms.
@@ -83,16 +95,19 @@ pub struct HouseBuild {
 }
 
 impl HouseBuild {
-    /// The build of the cottage at `(x, z)` laid out as `layout` (its
+    /// The build of the cottage at `(x, z)` laid out as `layout` (its design's
     /// [`shared_house_structure`], which the caller keeps for the cottage rather than laying
     /// it out again for every rebuild), with its parts in `broken` gone.
     pub fn new(layout: Arc<Structure>, x: f64, z: f64, broken: &PartSet) -> Self {
         let standing = PartSet::from_indices(
             (0..layout.parts.len()).filter(|&index| !broken.contains(index)),
         );
+        let scale = layout.design().expect("a cottage").scale();
         Self {
             x,
             z,
+            at: (design_place(x, scale), design_place(z, scale)),
+            scale,
             layout,
             standing,
             // A whole cottage shows nothing of its rooms: they are drawn once a gap
@@ -129,8 +144,9 @@ impl HouseBuild {
             // A whole cottage is the standing model, built in one step.
             if self.next == 0 {
                 let design = self.layout.design().expect("a cottage");
-                self.group = super::imported_house::standing_imported(design, self.x, self.z)
-                    .unwrap_or_else(|| standing_house(design, self.x, self.z));
+                let (x, z) = self.at;
+                self.group = super::imported_house::standing_imported(design, x, z)
+                    .unwrap_or_else(|| standing_house(design, x, z));
                 self.next = 1;
             }
             return true;
@@ -156,10 +172,14 @@ impl HouseBuild {
         true
     }
 
-    /// The built cottage, turned into the world about its ground centre.
+    /// The built cottage, turned into the world about its ground centre and as many
+    /// times its design as it stands.
     fn finish_cottage(self) -> Node {
+        let scale = DVec3::splat(self.scale);
         if !self.open {
-            return self.group;
+            let mut group = self.group;
+            group.scale = scale;
+            return group;
         }
         let Self {
             layout,
@@ -195,6 +215,7 @@ impl HouseBuild {
         // One draw per finish for the whole cottage, its plinth and yard with it.
         batch(&mut group);
         group.set_rotation_euler(0.0, design.yaw(), 0.0);
+        group.scale = scale;
         group
     }
 
@@ -236,8 +257,9 @@ fn footings(kit: &mut Kit<Surface>, layout: &Structure, standing: &PartSet) {
 }
 
 /// The parts `parts` of the cottage for a cover box, fallen together: drawn about the
-/// cottage's ground centre, turned into the world as the cottage stood. A page drawing
-/// several of a cottage's bodies at once builds one [`HouseDebris`] for them all.
+/// cottage's ground centre, turned into the world as the cottage stood and as large. A
+/// page drawing several of a cottage's bodies at once builds one [`HouseDebris`] for them
+/// all.
 #[allow(clippy::too_many_arguments)]
 pub fn house_debris(
     x: f64,
@@ -263,16 +285,23 @@ pub struct HouseDebris {
 }
 
 impl HouseDebris {
-    /// The pieces of the cottage at `(x, z)` laid out as `layout` (its
+    /// The pieces of the cottage at `(x, z)` laid out as `layout` (its design's
     /// [`shared_house_structure`]).
     pub fn new(layout: Arc<Structure>, x: f64, z: f64) -> Self {
-        let pieces = super::imported_house::house_pieces(layout.design().expect("a cottage"), x, z, false);
-        Self { layout, pieces }
+        Self::built(layout, x, z, false)
     }
 
     /// [`HouseDebris::new`] with the plinth and yard too, for [`HouseBuild::use_pieces`].
     pub fn with_ground(layout: Arc<Structure>, x: f64, z: f64) -> Self {
-        let pieces = super::imported_house::house_pieces(layout.design().expect("a cottage"), x, z, true);
+        Self::built(layout, x, z, true)
+    }
+
+    /// The pieces, finished at the cottage's place in its design's metres.
+    fn built(layout: Arc<Structure>, x: f64, z: f64, ground: bool) -> Self {
+        let design = layout.design().expect("a cottage");
+        let scale = design.scale();
+        let (x, z) = (design_place(x, scale), design_place(z, scale));
+        let pieces = super::imported_house::house_pieces(design, x, z, ground);
         Self { layout, pieces }
     }
 
@@ -280,6 +309,7 @@ impl HouseDebris {
     pub fn body(&self, parts: &PartSet) -> Node {
         let layout = &*self.layout;
         let design = layout.design().expect("a cottage");
+        let scale = design.scale();
         let mut node = parts_node(layout, &self.pieces, parts, true);
         batch(&mut node);
         // A small piece casts no shadow: a collapse brings down dozens, each a shadow draw
@@ -288,10 +318,11 @@ impl HouseDebris {
             (DVec3::INFINITY, DVec3::NEG_INFINITY),
             |(low, high), index| (low.min(layout.part(index).min), high.max(layout.part(index).max)),
         );
-        if (high - low).max_element() < SHADOWLESS_UNDER {
+        if (high - low).max_element() * scale < SHADOWLESS_UNDER {
             uncast(&mut node);
         }
         node.set_rotation_euler(0.0, design.yaw(), 0.0);
+        node.scale = DVec3::splat(scale);
         let mut root = Node::group("house-debris");
         root.children.push(node);
         root

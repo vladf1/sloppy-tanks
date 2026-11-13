@@ -13,6 +13,7 @@ use glam::{DVec2, DVec3};
 use serde::{Deserialize, Serialize};
 
 use super::math::{Random, js_round};
+use super::senda_layout::SENDA_SCALE;
 
 /// A cottage's full health. It stands as long as its frame carries it
 /// (`house_structure`); its health only reports the share of its parts still standing.
@@ -73,6 +74,18 @@ pub fn cottage_turns(x: f64, z: f64) -> i32 {
 pub fn door_direction(turns: i32) -> DVec2 {
     let yaw = f64::from(turns) * PI / 2.0;
     DVec2::new(yaw.sin(), yaw.cos())
+}
+
+/// A world coordinate of a house standing `scale` times its design, in design metres:
+/// to the centimetre a design places its houses (`senda_layout`), so a room's client,
+/// whose cover arrives to the millimetre, finds the host's design (its variation and
+/// paint follow from where it stands).
+pub fn design_place(world: f64, scale: f64) -> f64 {
+    if scale == 1.0 {
+        world
+    } else {
+        (world / scale * 100.0).round() / 100.0
+    }
 }
 
 /// Stable per-cottage variation from its position.
@@ -1007,11 +1020,30 @@ impl HouseDesign {
     }
 
     /// The house a cover box stands for: its map's plan where it has one, otherwise
-    /// the village cottage for where it stands ([`HouseDesign::of`]).
+    /// the village cottage for where it stands ([`HouseDesign::of`]). A planned house is
+    /// Senda's, laid out in its design metres and standing [`HouseDesign::scale`] times
+    /// larger: its design is the one for the cover's box and place in design metres
+    /// ([`design_place`]), which its structure and model are built to and then scaled.
     pub fn for_cover(x: f64, z: f64, w: f64, d: f64, h: f64, plan: Option<HousePlan>) -> Self {
         match plan {
-            Some(plan) => Self::planned(x, z, w, d, h, plan),
+            Some(plan) => {
+                let scale = SENDA_SCALE;
+                let (x, z) = (design_place(x, scale), design_place(z, scale));
+                Self::planned(x, z, w / scale, d / scale, h / scale, plan)
+            }
             None => Self::of(x, z, w, d, h),
+        }
+    }
+
+    /// How many times its design the house stands in the world: a planned house (one
+    /// with a garage, Senda's) is laid out in the level's design metres and stands
+    /// [`SENDA_SCALE`] times larger, its structure and model built to the design and
+    /// then scaled about its ground centre; a village cottage stands as built.
+    pub fn scale(&self) -> f64 {
+        if self.garage.is_some() {
+            SENDA_SCALE
+        } else {
+            1.0
         }
     }
 
