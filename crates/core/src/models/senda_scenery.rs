@@ -234,8 +234,10 @@ const BANK_SWITCHBACK: f64 = 4.0;
 /// the neighbourhood's east edge (the back fences round the cul-de-sacs and the
 /// turning circles), so it curves round the ends of Rumbo and Gaviota as the real
 /// ones do, smoothed over this many metres, from and to these arena z; and how far a
-/// trail keeps from a spawn pad's middle.
-const HILLSIDE_TRAIL_REACH: [f64; 2] = [6.0, 25.0];
+/// trail keeps from a spawn pad's middle. Only the far one, past the wall: one nearer
+/// the houses ran down the spawn lane, where the pads and the wall cut it into short
+/// stubs of concrete lying on the slope.
+const HILLSIDE_TRAIL_REACH: [f64; 1] = [25.0];
 const HILLSIDE_TRAIL_SMOOTH: f64 = 6.0;
 const HILLSIDE_TRAIL_SPAN: (f64, f64) = (-70.0, 72.0);
 const TRAIL_SPAWN_ROOM: f64 = 4.5;
