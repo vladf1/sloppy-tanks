@@ -371,11 +371,11 @@ pub struct ThemeLook {
 
 /// Senda's ground bounce ([`ThemeLook::fill_ground`]).
 const SENDA_FILL_GROUND: u32 = 0xa08e74;
-/// Senda's late-afternoon sun, about 27 degrees up in the west-south-west and warmer
-/// than the village's, and its sky fill, a little bluer and stronger so the longer
-/// shadows stay cool and open rather than dark.
-const SENDA_SUN: (Vec3, u32, f32) = (Vec3::new(-50.0, 31.0, 32.0), 0xffdab2, 4.1);
-const SENDA_FILL: (u32, f32) = (0x94b0e0, 1.9);
+/// Senda's early-afternoon autumn sun, about 43 degrees up in the south-west and a touch
+/// warmer than the village's, so shadows stay about as long as what casts them is high
+/// and leave the streets open, and its sky fill, the village's.
+const SENDA_SUN: (Vec3, u32, f32) = (Vec3::new(-42.0, 52.0, 36.0), 0xffe8cc, 4.1);
+const SENDA_FILL: (u32, f32) = (0x9eb6da, 1.8);
 
 pub fn theme_look(theme: Theme) -> ThemeLook {
     /// The theme's value; extra levels take the village look.
@@ -673,10 +673,10 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
     }
 }
 
-/// Senda's late afternoon in the foothills: the village's sky and light warmed and
-/// lowered, a clear sky with a few fair-weather clouds over a warm haze along the
-/// horizon, and behind the scenery's hills three ranges stepping back from olive-brown
-/// to a pale blue-violet, a twin-summited massif over the far one to the east-north-east.
+/// Senda's early afternoon in the foothills: the village's sky and light, a clear sky
+/// with a few fair-weather clouds over a warm haze along the horizon, and behind the
+/// scenery's hills three ranges stepping back from olive-brown to a pale blue-violet, a
+/// broad, rounded twin-summited massif over the far one to the east-north-east.
 fn senda_atmosphere(village: Atmosphere) -> Atmosphere {
     Atmosphere {
         zenith: 0x3270c4,
@@ -705,18 +705,13 @@ fn senda_atmosphere(village: Atmosphere) -> Atmosphere {
             near: Some(0x6c6448),
             summit: Some(Summit {
                 toward: [0.924, -0.383],
-                height: 0.125,
-                separation: 0.11,
+                height: 0.07,
+                separation: 0.22,
             }),
         },
         ground: Ground {
             dry_bleach: 0.2,
             ..village.ground
-        },
-        grade: Grade {
-            highlight_tint: 0xffecd2,
-            highlight_toning: 0.11,
-            ..village.grade
         },
         ..village
     }

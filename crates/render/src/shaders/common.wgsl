@@ -441,22 +441,23 @@ const MIDDLE_RIDGE_TINT: f32 = 0.45;
 // broad base and of each summit's cone, the base's share of the summits' height, the
 // lower summit's share of the higher, and the share of the range's own crest line
 // that roughens the massif's.
-const SUMMIT_BASE: f32 = 0.42;
-const SUMMIT_PEAK: f32 = 0.11;
+const SUMMIT_BASE: f32 = 0.6;
+const SUMMIT_PEAK: f32 = 0.2;
 const SUMMIT_MASS: f32 = 0.6;
 const SUMMIT_SECOND: f32 = 0.9;
 const SUMMIT_RIDGE_SHARE: f32 = 0.3;
 
 // The massif's crest along `heading`, in ray slope: a broad base swelling into two
-// summits either side of its saddle, their flanks concave as a weathered range's are.
+// rounded summits either side of its saddle, their shoulders convex and their feet
+// spreading concave into the range, as a weathered massif's are.
 fn summit_top(heading: vec2f) -> f32 {
     let toward = frame.ridge_summit.xy;
     let angle = atan2(heading.x * toward.y - heading.y * toward.x, dot(heading, toward));
-    let base = max(1.0 - abs(angle) / SUMMIT_BASE, 0.0);
-    let first = max(1.0 - abs(angle - frame.ridge_summit.w) / SUMMIT_PEAK, 0.0);
-    let second = max(1.0 - abs(angle + frame.ridge_summit.w) / SUMMIT_PEAK, 0.0);
-    let peaks = max(first * first, second * second * SUMMIT_SECOND);
-    return frame.ridge_summit.z * (SUMMIT_MASS * base * base + (1.0 - SUMMIT_MASS) * peaks);
+    let base = smoothstep(0.0, 1.0, 1.0 - abs(angle) / SUMMIT_BASE);
+    let first = smoothstep(0.0, 1.0, 1.0 - abs(angle - frame.ridge_summit.w) / SUMMIT_PEAK);
+    let second = smoothstep(0.0, 1.0, 1.0 - abs(angle + frame.ridge_summit.w) / SUMMIT_PEAK);
+    let peaks = max(first, second * SUMMIT_SECOND);
+    return frame.ridge_summit.z * (SUMMIT_MASS * base + (1.0 - SUMMIT_MASS) * peaks);
 }
 
 // The colour haze takes on along `ray`: thin haze shifts surfaces toward the cool

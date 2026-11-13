@@ -4585,9 +4585,9 @@ fn foothill_tint(p: DVec2, normal: [f32; 3]) -> [f32; 3] {
         f64::from(normal[2]),
     );
     let steep = (1.0 - n.y).clamp(0.0, 1.0);
-    // Facing north (-z) or toward the sun (west-south-west).
+    // Facing north (-z) or toward the sun (south-west).
     let shaded = (-n.z).clamp(0.0, 1.0);
-    let sunny = (n.dot(glam::DVec3::new(-0.8, 0.0, 0.5)) / (1.0 - n.y * n.y).max(1e-3).sqrt()
+    let sunny = (n.dot(glam::DVec3::new(-0.76, 0.0, 0.65)) / (1.0 - n.y * n.y).max(1e-3).sqrt()
         * steep
         * 3.0)
         .clamp(0.0, 1.0);
