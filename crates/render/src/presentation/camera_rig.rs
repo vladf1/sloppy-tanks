@@ -37,6 +37,14 @@ const SHAKE_CHANNEL_SPACING: f64 = 37.1;
 const FOLLOW_HEIGHT: f64 = 0.7;
 /// The overview frames the whole arena from this far.
 const OVERVIEW_ZOOM: f64 = ARENA * 1.8;
+/// The overhead camera's near plane: this share of its zoom, within these limits (m).
+/// It stands about its zoom's distance from the ground and well over the tallest tree,
+/// so nothing comes this near it, and depth precision goes with the near plane: at the
+/// seat's 0.1 m the depth buffer told surfaces apart only to a millimetre or two from
+/// the play camera, and ground layers that close (a gutter pan on asphalt, a joint
+/// scored in a driveway, a painted line) flickered as it moved. First person keeps
+/// [`CAMERA`]'s near plane, for the turret under its eye.
+const OVERHEAD_NEAR: (f64, f64, f64) = (0.08, 1.0, 8.0);
 /// NDC probes of the visible ground that wrecks land inside.
 const WRECK_PROBES: [(f32, f32); 4] = [(-0.8, -0.7), (0.8, -0.7), (-0.8, 0.65), (0.8, 0.65)];
 
@@ -332,6 +340,11 @@ impl CameraRig {
         };
         let seated_fov = FIRST_PERSON.field_of_view + speed_fov;
         self.camera.fov_y_degrees = lerp(CAMERA.field_of_view, seated_fov, flight) as f32;
+        self.camera.near = if self.seat_blend > 0.0 {
+            CAMERA.near
+        } else {
+            (self.view_zoom * OVERHEAD_NEAR.0).clamp(OVERHEAD_NEAR.1, OVERHEAD_NEAR.2)
+        } as f32;
         if self.seat_blend > 0.0 {
             // In flight the camera keeps the overhead gaze on the tank, then turns
             // to the turret. Its position arrives in `place_eye`.
