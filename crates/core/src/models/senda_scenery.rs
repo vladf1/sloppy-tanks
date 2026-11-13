@@ -2253,8 +2253,8 @@ const BANK_MAT_DOME: f64 = 0.7;
 const BANK_MAT_EDGE: f64 = 0.35;
 /// The carpet's tints over the packed-dirt tile, linear (its orange tan drawn to a
 /// grey green): three tones in drifts, darker toward this in its hollows.
-const BANK_MAT_TONES: [[f32; 3]; 3] = [[0.31, 0.72, 2.2], [0.27, 0.63, 1.9], [0.35, 0.8, 2.5]];
-const BANK_MAT_SHADE: [f32; 3] = [0.14, 0.3, 0.8];
+const BANK_MAT_TONES: [[f32; 3]; 3] = [[0.31, 0.59, 1.63], [0.27, 0.52, 1.41], [0.35, 0.66, 1.85]];
+const BANK_MAT_SHADE: [f32; 3] = [0.14, 0.26, 0.6];
 const BANK_HEDGE_OUT: f64 = 1.0;
 const BANK_HEDGE_STEP: f64 = 0.7;
 const BANK_HEDGE: (f64, f64) = (0.5, 0.9);
