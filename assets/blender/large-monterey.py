@@ -107,13 +107,9 @@ pane = (b1 - b0 - 0.1) / lights
 gy0, gy1 = BAY_LO + 0.07, BAY_HI - 0.04
 for k in range(lights):
     wu0, wu1 = b0 + 0.05 + pane * k, b0 + 0.05 + pane * (k + 1)
-    front.quad("FrontWall__Curtain", wu0, gy0, wu1, gy1, -BAY_DEPTH + 0.03)
-    slats = max(2, round((gy1 - gy0) / LOUVRE))
-    for j in range(1, slats):
-        y = gy0 + (gy1 - gy0) * j / slats
-        front.quad("FrontWall__Glass", wu0 + FRAME, y - 0.004, wu1 - FRAME, y + 0.004, -BAY_DEPTH + 0.025)
-    for a, c, b, d in ((wu0, gy0, wu1, gy0 + FRAME), (wu0, gy1 - FRAME, wu1, gy1), (wu0, gy0, wu0 + FRAME, gy1), (wu1 - FRAME, gy0, wu1, gy1)):
-        front.block("FrontWall__Trim", a, c, b, d, -BAY_DEPTH + 0.03, -BAY_DEPTH + 0.005)
+    glazing("FrontWall", front, wu0, gy0, wu1, gy1, -BAY_DEPTH + 0.03)
+    for a, c, b, d, inner in ((wu0, gy0, wu1, gy0 + FRAME, "+y"), (wu0, gy1 - FRAME, wu1, gy1, "-y"), (wu0, gy0 + FRAME, wu0 + FRAME, gy1 - FRAME, "+u"), (wu1 - FRAME, gy0 + FRAME, wu1, gy1 - FRAME, "-u")):
+        front.block("FrontWall__Trim", a, c, b, d, -BAY_DEPTH + 0.03, -BAY_DEPTH + 0.005, faces=("front", inner))
     if k:
         front.block("FrontWall__Wood", wu0 - 0.018, gy0, wu0 + 0.018, gy1, -BAY_DEPTH + 0.02, -BAY_DEPTH - 0.008)
 hood = HALF_D + BAY_DEPTH + 0.08
@@ -278,7 +274,8 @@ def office_and_porch(wall_z=HALF_D):
 office_and_porch()
 
 # ---------------------------------------------------------------- the flanks and back
-plain_wall("back", PLAN, half_width={-2.0: 0.4, 0.0: 0.4, 2.0: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-2.0: 0.4, 0.0: 0.4, 2.0: 0.3})
 plain_wall("right", PLAN, half_width=0.27)
 plain_wall("left", PLAN, half_width=0.27)
 

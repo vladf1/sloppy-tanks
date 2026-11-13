@@ -114,6 +114,8 @@ def tiled_on(part, points, ref, outer=(), ends=True, cut_below=False, cut_above=
     vs = [p[1] for p in slope.uv]
     spacing, height = FLAT_RIB if flat else RIB
     course = FLAT_COURSE if flat else COURSE
+    # a level eave's barrels closed by the kit's strip instead of their open ends
+    eave_v = closed_eave(slope, flat) if ends else None
     u = u_ref + spacing / 2 + math.ceil((min(us) - u_ref) / spacing) * spacing
     while u < max(us) - spacing / 2:
         left, right = slope.span(0, u - spacing / 2), slope.span(0, u + spacing / 2)
@@ -123,9 +125,11 @@ def tiled_on(part, points, ref, outer=(), ends=True, cut_below=False, cut_above=
                 a, m, b = u - spacing / 2, u, u + spacing / 2
                 face(roof, [slope.at(a, lo), slope.at(m, lo, height), slope.at(m, hi, height), slope.at(a, hi)], slope.N - slope.U)
                 face(roof, [slope.at(m, lo, height), slope.at(b, lo), slope.at(b, hi), slope.at(m, hi, height)], slope.N + slope.U)
-                if ends:
+                if ends and (eave_v is None or lo - eave_v > 1e-4):
                     face(roof, [slope.at(a, lo), slope.at(b, lo), slope.at(m, lo, height)], -slope.V)
         u += spacing
+    if eave_v is not None:
+        eave_closure(roof, slope, eave_v, height)
     # courses run on across a cut (`cut_below`, `cut_above`), kept off a real eave and ridge
     v = v_ref + math.ceil((min(vs) + (0.0 if cut_below else 0.05) - v_ref) / course) * course
     while v < max(vs) - (1e-4 if cut_above else 0.1):
@@ -256,7 +260,7 @@ front.block("FrontWall__Trim", fx(twin_mid - 0.02), UPPER_GLASS[0], fx(twin_mid 
 # The window behind the office: the house keeps out of the entry's box (it stands whole once
 # the entry is gone), so its sill stands only 0.03 proud.
 window("FrontWall", front, fx(OFFICE_WINDOW[0]), OFFICE_WINDOW[1], fx(OFFICE_WINDOW[2]), OFFICE_WINDOW[3], sill=False)
-front.block("FrontWall__Trim", fx(OFFICE_WINDOW[0]) - 0.03, OFFICE_WINDOW[1] - 0.035, fx(OFFICE_WINDOW[2]) + 0.03, OFFICE_WINDOW[1], 0.02, -0.03)
+front.block("FrontWall__Trim", fx(OFFICE_WINDOW[0]) - 0.03, OFFICE_WINDOW[1] - 0.035, fx(OFFICE_WINDOW[2]) + 0.03, OFFICE_WINDOW[1], 0.0, -0.03, faces=("front", "+y", "-y", "+u", "-u"))
 
 # The gable's stucco over the wall top, a clay vent in its peak.
 _x0, _x1 = -HALF_W, GABLE_WALL
@@ -314,7 +318,7 @@ def wing():
     face_frame = Frame((x0, 0, zf), (1, 0, 0), (0, 0, 1))
     w0, w1 = width / 2 - 0.31, width / 2 + 0.31
     wall("Entry", face_frame, 0, width, 0, wall_top, [(w0, GROUND_GLASS[0], w1, head)])
-    window("Entry", face_frame, w0, GROUND_GLASS[0], w1, head, mullion=False)
+    window("Entry", face_frame, w0, GROUND_GLASS[0], w1, head, mullion=False, sill=False)
     face_frame.block("Entry__Trim", w0, (GROUND_GLASS[0] + head) / 2 - 0.015, w1, (GROUND_GLASS[0] + head) / 2 + 0.015, 0.1, 0.07)
     arch_head("Entry", face_frame, w0, w1, head - 0.18, 0.18, depth=WALL)
     face_frame.block("Entry__Brick", w0 - 0.14, GROUND_GLASS[0] - 0.07, w1 + 0.14, GROUND_GLASS[0], 0.0, -0.13)
@@ -336,8 +340,9 @@ def wing():
     wall("Entry", drive, 0, OFFICE_DEPTH, 0, wall_top, [(0.3, PASSAGE_FLOOR, OFFICE_DEPTH, spring + 0.2)])
     arch_head("Entry", drive, 0.3, OFFICE_DEPTH, spring, 0.2, depth=WALL)
     face("Entry__Siding", [(WING_SPLIT, wall_top, zw), (x1, wall_top, zw), (x1, wall_top, zf), (WING_SPLIT, wall_top, zf)], (0, -1, 0))
-    # its floor and the steps up to it
-    box("Entry__Concrete", (WING_SPLIT, 0.0, zw), (x1, PASSAGE_FLOOR, zf))
+    # its floor, run to the arches' walls' inner faces (its top meeting their openings'
+    # sills rather than lying on them), and the steps up to it
+    box("Entry__Concrete", (WING_SPLIT, 0.0, zw), (x1 - WALL, PASSAGE_FLOOR, zf - WALL))
     risers = round(PASSAGE_FLOOR / 0.1)
     for k in range(risers):
         box("Entry__Concrete", (WING_SPLIT + 0.16, 0.0, zf), (x1 - 0.16, PASSAGE_FLOOR - PASSAGE_FLOOR / risers * k, zf + 0.2 * (k + 1)))
@@ -381,7 +386,8 @@ def flank_vent(side, y):
         frame.block(f"{part}__Dark", du - 0.012, y + dy - 0.012, du + 0.012, y + dy + 0.012, -0.03, -0.032)
 
 
-plain_wall("back", PLAN, half_width={-1.6: 0.42, 0.4: 0.42, 2.1: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-1.6: 0.42, 0.4: 0.42, 2.1: 0.3})
 plain_wall("left", PLAN, half_width=0.3)
 flank_gable("left", -HALF_D, HALF_D)
 flank_vent("left", RIDGE_Y - DECK * 1.1 - 0.3)

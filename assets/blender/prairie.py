@@ -274,7 +274,8 @@ def landscape_array(slope, z_mid, up, cols=3, rows=2):
 landscape_array(Slope(ROOF["west"]), ARRAY_Z, ARRAY_UP)
 
 # ---------------------------------------------------------------- the flanks and back
-plain_wall("back", PLAN, half_width={-1.7: 0.42, 0.2: 0.42, 1.9: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-1.7: 0.42, 0.2: 0.42, 1.9: 0.3})
 plain_wall("right", PLAN, half_width=0.27)
 plain_wall("left", PLAN, half_width=0.27)
 

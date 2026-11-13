@@ -84,7 +84,8 @@ office_entry(office_roof="hip", window_style="arched", cover="shed", supports="a
 
 # ---------------------------------------------------------------- the roof, flanks and back
 along_hip_roof(flat=False)
-plain_wall("back", PLAN, half_width={-1.9: 0.4, 0.0: 0.3, 1.9: 0.4}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-1.9: 0.4, 0.0: 0.3, 1.9: 0.4})
 for side in ("right", "left"):
     plain_wall(side, PLAN, half_width=0.27)
 for side in ("back", "right", "left"):

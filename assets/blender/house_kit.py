@@ -47,9 +47,11 @@ def face(key, points, want=None):
     vertices, faces = geometry[key]
     points = [Vector(p) for p in points]
     if want is not None:
-        normal = (points[1] - points[0]).cross(points[2] - points[0])
-        if normal.length < 1e-12 and len(points) > 3:
-            normal = (points[2] - points[1]).cross(points[3] - points[1])
+        # Newell's normal: a repeated corner (an outline whose edge has no height) leaves
+        # it sound, where its first corners' cross product would be nothing
+        normal = Vector()
+        for a, b in zip(points, points[1:] + points[:1]):
+            normal += a.cross(b)
         if normal.dot(Vector(want)) < 0:
             points.reverse()
     start = len(vertices)
@@ -91,12 +93,19 @@ class Frame:
             self.out * facing,
         )
 
-    def block(self, key, u0, y0, u1, y1, d0, d1):
-        """A box in the wall's frame from depth d0 to d1 (negative stands proud)."""
+    def block(self, key, u0, y0, u1, y1, d0, d1, faces=None):
+        """A box in the wall's frame from depth d0 to d1 (negative stands proud); only its
+        `faces` if given, named in the wall's frame: "front" (facing out), "back", "+u",
+        "-u", "+y", "-y" (a face buried in the wall or against a reveal is never seen)."""
         corners = [self.p(u, y, d) for u in (u0, u1) for y in (y0, y1) for d in (d0, d1)]
         lo = Vector([min(c[i] for c in corners) for i in range(3)])
         hi = Vector([max(c[i] for c in corners) for i in range(3)])
-        box(key, lo, hi)
+        skip = ()
+        if faces is not None:
+            axes = {"+x": (1, 0, 0), "-x": (-1, 0, 0), "+y": (0, 1, 0), "-y": (0, -1, 0), "+z": (0, 0, 1), "-z": (0, 0, -1)}
+            named = {"front": self.out, "back": -self.out, "+u": self.along, "-u": -self.along, "+y": Vector((0, 1, 0)), "-y": Vector((0, -1, 0))}
+            skip = [side for side, normal in axes.items() if not any(named[f].dot(Vector(normal)) > 0.5 for f in faces)]
+        box(key, lo, hi, skip=skip)
 
 
 def wall(part, frame, u0, u1, y0, y1, openings):
@@ -120,42 +129,58 @@ def wall(part, frame, u0, u1, y0, y1, openings):
         face(f"{part}__Siding", [frame.p(ou0, oy0, 0), frame.p(ou0, oy0, WALL), frame.p(ou1, oy0, WALL), frame.p(ou1, oy0, 0)], (0, 1, 0))
 
 
-# A window's vinyl frame (m across), the plantation shutters' louvre spacing behind it,
-# and its sill's lip: real 9 cm frames, 12 cm louvres, a 5 cm sill.
+# A window's vinyl frame (m across) and its sill's lip: real 9 cm frames, a 5 cm sill.
 FRAME = 0.06 * SCALE * 1.2
-LOUVRE = 0.12 * SCALE
 SILL_LIP = 0.05
+# The street's windows are dark glass; about one in four has its pale plantation shutters
+# drawn this share of the way down. Counted across a model, so each house has a few.
+BLINDS_EVERY = 4
+BLIND_DROP = 0.45
+_panes = [0]
 
 
-def window(part, frame, u0, y0, u1, y1, mullion=True, sill=True):
-    """White vinyl frames over white plantation shutters, set into an opening."""
-    frame.quad(f"{part}__Curtain", u0, y0, u1, y1, 0.11)
-    # louvres: slat lines, a face each
-    slats = max(2, round((y1 - y0) / LOUVRE))
-    for k in range(1, slats):
-        y = y0 + (y1 - y0) * k / slats
-        frame.quad(f"{part}__Glass", u0 + FRAME, y - 0.004, u1 - FRAME, y + 0.004, 0.105)
+def glazing(key, frame, u0, y0, u1, y1, depth, blinds=None):
+    """A window's pane at `depth`: dark glass, its upper share a drawn blind when `blinds`
+    (by default every [`BLINDS_EVERY`]th pane drawn). `key` is the part's name."""
+    if blinds is None:
+        blinds = _panes[0] % BLINDS_EVERY == 1
+        _panes[0] += 1
+    drop = y1 - (y1 - y0) * BLIND_DROP if blinds else y1
+    frame.quad(f"{key}__Glass", u0, y0, u1, drop, depth)
+    if blinds:
+        frame.quad(f"{key}__Curtain", u0, drop, u1, y1, depth)
+
+
+def window(part, frame, u0, y0, u1, y1, mullion=True, sill=True, blinds=None):
+    """White vinyl frames round dark glass ([`glazing`]), set into an opening. Only the
+    faces a passer-by can see are drawn: the frame's front and its edges to the glass."""
+    glazing(part, frame, u0, y0, u1, y1, 0.11, blinds)
     t = FRAME
-    frame.block(f"{part}__Trim", u0, y0, u1, y0 + t, 0.1, 0.07)
-    frame.block(f"{part}__Trim", u0, y1 - t, u1, y1, 0.1, 0.07)
-    frame.block(f"{part}__Trim", u0, y0, u0 + t, y1, 0.1, 0.07)
-    frame.block(f"{part}__Trim", u1 - t, y0, u1, y1, 0.1, 0.07)
+    frame.block(f"{part}__Trim", u0, y0, u1, y0 + t, 0.1, 0.07, faces=("front", "+y"))
+    frame.block(f"{part}__Trim", u0, y1 - t, u1, y1, 0.1, 0.07, faces=("front", "-y"))
+    frame.block(f"{part}__Trim", u0, y0 + t, u0 + t, y1 - t, 0.1, 0.07, faces=("front", "+u"))
+    frame.block(f"{part}__Trim", u1 - t, y0 + t, u1, y1 - t, 0.1, 0.07, faces=("front", "-u"))
     if mullion:
         m = (u0 + u1) / 2
-        frame.block(f"{part}__Trim", m - t / 2, y0, m + t / 2, y1, 0.1, 0.075)
+        frame.block(f"{part}__Trim", m - t / 2, y0 + t, m + t / 2, y1 - t, 0.1, 0.075, faces=("front", "+u", "-u"))
     if sill:
-        frame.block(f"{part}__Trim", u0 - 0.03, y0 - 0.035, u1 + 0.03, y0, 0.02, -SILL_LIP)
+        # proud of the wall only: run into it, its top lay in the reveal's floor
+        frame.block(f"{part}__Trim", u0 - 0.03, y0 - 0.035, u1 + 0.03, y0, 0.0, -SILL_LIP, faces=("front", "+y", "-y", "+u", "-u"))
 
 
 # A board shutter (real 0.45 m wide, 4 cm proud) and its battens.
 SHUTTER_WIDTH = 0.45 * SCALE
 
 
+# What shows of a board or batten standing on a wall: all but its back.
+PROUD = ("front", "+u", "-u", "+y", "-y")
+
+
 def shutter(part, frame, u0, y0, u1, y1):
-    frame.block(f"{part}__Accent", u0, y0, u1, y1, 0.0, -0.025)
+    frame.block(f"{part}__Accent", u0, y0, u1, y1, 0.0, -0.025, faces=PROUD)
     for k in range(1, 3):
         y = y0 + (y1 - y0) * k / 3
-        frame.block(f"{part}__Accent", u0 + 0.015, y - 0.012, u1 - 0.015, y + 0.012, -0.025, -0.035)
+        frame.block(f"{part}__Accent", u0 + 0.015, y - 0.012, u1 - 0.015, y + 0.012, -0.025, -0.035, faces=PROUD)
 
 
 # ---------------------------------------------------------------- roofs
@@ -234,10 +259,37 @@ FLAT_RIB = (0.3 * SCALE, 0.025 * SCALE)
 FLAT_COURSE = 0.34 * SCALE
 
 
+# How far up the slope a clay eave's closure (the mortar or bird-stop strip filling the
+# barrels' mouths) stands behind their ends.
+EAVE_CLOSURE = 0.025
+
+
+def closed_eave(slope, flat=False):
+    """The v of `slope`'s level eave (two corners at its lowest v), where a clay slope's
+    barrels are closed ([`eave_closure`]); None for flat tile or no level eave."""
+    vs = [v for _, v in slope.uv]
+    low = min(vs)
+    return low if not flat and sum(abs(v - low) < 1e-6 for v in vs) >= 2 else None
+
+
+def eave_closure(key, slope, eave_v, height=RIB[1]):
+    """The strip closing a clay eave's barrels, set back behind their open ends (whose end
+    triangles the caller leaves out): it reads as a level edge rather than a row of lit
+    and shaded teeth."""
+    v = eave_v + EAVE_CLOSURE
+    span = slope.span(1, v)
+    if span:
+        lo, hi = span
+        face(key, [slope.at(lo, v), slope.at(hi, v), slope.at(hi, v, height), slope.at(lo, v, height)], -slope.V)
+
+
 def tiled(part, slope, eave_edges=(0,), fascia=True, flat=False):
     """A clay barrel-tile slope (or flat concrete tile, `flat`): the deck, its underside,
-    ribs down the slope and a lip at each course, clipped to the polygon."""
+    ribs down the slope and a lip at each course, clipped to the polygon. A clay slope's
+    barrels are closed at a level eave by one strip set back behind their open ends, which
+    reads as a level edge rather than a row of lit and shaded teeth ([`eave_closure`])."""
     roof, under = f"{part}__Roof", f"{part}__Siding"
+    eave_v = closed_eave(slope, flat)
     face(roof, [slope.at(u, v, 0) for u, v in slope.uv], slope.N)
     face(under, [slope.at(u, v, -DECK) for u, v in slope.uv], -slope.N)
     n = len(slope.uv)
@@ -263,9 +315,12 @@ def tiled(part, slope, eave_edges=(0,), fascia=True, flat=False):
                 a, m, b = u - spacing / 2, u, u + spacing / 2
                 face(roof, [slope.at(a, lo), slope.at(m, lo, height), slope.at(m, hi, height), slope.at(a, hi)], slope.N - slope.U)
                 face(roof, [slope.at(m, lo, height), slope.at(b, lo), slope.at(b, hi), slope.at(m, hi, height)], slope.N + slope.U)
-                # the barrel's open end at the eave
-                face(roof, [slope.at(a, lo), slope.at(b, lo), slope.at(m, lo, height)], -slope.V)
+                # the barrel's open end, unless the eave's closure fills it
+                if eave_v is None or lo - eave_v > 1e-4:
+                    face(roof, [slope.at(a, lo), slope.at(b, lo), slope.at(m, lo, height)], -slope.V)
         u += spacing
+    if eave_v is not None:
+        eave_closure(roof, slope, eave_v, height)
     vs = [p[1] for p in slope.uv]
     v = min(vs) + course
     while v < max(vs) - 0.1:
@@ -278,14 +333,139 @@ def tiled(part, slope, eave_edges=(0,), fascia=True, flat=False):
         v += course
 
 
-def ridge_cap(part, a, b, half=0.25 * SCALE / 2, lift=0.1 * SCALE):
+# The small pale things on every roof of the street: low tile vents (real 0.45 m square,
+# 0.15 m over the tile) and plumbing stacks (real 10 cm, 0.3 m tall), how many of each a
+# house has, how far in from its deck's edges and from each other they keep, and the
+# shares up a deck and across it they are tried at, the back slopes first.
+ROOF_VENT = (0.45 * SCALE, 0.15 * SCALE)
+VENT_STACK = (0.1 * SCALE, 0.3 * SCALE)
+VENTS, STACKS = 4, 2
+VENT_MARGIN, VENT_SPACING = 0.3, 0.9
+VENT_PLACES = [(v, u) for v in (0.55, 0.3, 0.75) for u in (0.3, 0.7, 0.5)]
+VENT_ORDER = ("BackRoof", "LeftRoof", "RightRoof", "FrontRoof")
+# A face of a roof part at least this large (m²) is a deck, not a rib, lip or cap.
+DECK_AREA = 1.0
+
+
+class Deck(Slope):
+    """A roof deck's planar polygon, u level across it and v up it (its edges need not
+    be level, as a deck cut along the coded hip lines' are not)."""
+
+    def __init__(self, points):
+        self.points = [Vector(p) for p in points]
+        normal = Vector()
+        for a, b in zip(self.points, self.points[1:] + self.points[:1]):
+            normal += a.cross(b)
+        if normal.y < 0:
+            normal = -normal
+        self.N = normal.normalized()
+        self.U = Vector((0, 1, 0)).cross(self.N).normalized()
+        self.V = self.N.cross(self.U)
+        self.origin = self.points[0]
+        self.uv = [((p - self.origin).dot(self.U), (p - self.origin).dot(self.V)) for p in self.points]
+
+
+def roof_vent(part, deck, u, v):
+    """A low tile vent on `deck` at (u, v): a pale box, its top and four sides."""
+    w, h = ROOF_VENT[0] / 2, ROOF_VENT[1]
+    corners = ((-w, -w), (w, -w), (w, w), (-w, w))
+    lo = [deck.at(u + du, v + dv, 0) for du, dv in corners]
+    hi = [deck.at(u + du, v + dv, h) for du, dv in corners]
+    key = f"{part}__Concrete"
+    face(key, hi, deck.N)
+    for k, out in ((0, -deck.V), (1, deck.U), (2, deck.V), (3, -deck.U)):
+        face(key, [lo[k], lo[(k + 1) % 4], hi[(k + 1) % 4], hi[k]], out)
+
+
+def vent_stack(part, deck, u, v):
+    """A plumbing stack standing plumb out of `deck` at (u, v): its top and four sides,
+    its foot sunk below the deck's uphill side."""
+    foot = deck.at(u, v)
+    r = VENT_STACK[0] / 2
+    box(f"{part}__Concrete", (foot.x - r, foot.y - r * 2, foot.z - r), (foot.x + r, foot.y + VENT_STACK[1], foot.z + r), skip=("-y",))
+
+
+def roof_vents():
+    """[`VENTS`] vents and [`STACKS`] stacks on the main roof's decks (each a part's, so a
+    vent falls with the slope under it), the back slopes first, two a deck at first so
+    they spread, each inside its deck clear of the solar panels and the others."""
+    solar = [vertices[i] for key, (vertices, faces) in geometry.items() if key.endswith("__Solar") for f in faces for i in f]
+    decks = []
+    for name in VENT_ORDER:
+        vertices, faces = geometry.get(f"{name}__Roof", ([], []))
+        found = []
+        for f in faces:
+            points = [vertices[i] for i in f]
+            if len(points) < 3:
+                continue
+            deck = Deck(points)
+            area = sum((a - points[0]).cross(b - points[0]).length for a, b in zip(points[1:], points[2:])) / 2
+            if area >= DECK_AREA and deck.N.y > 0.5:
+                found.append((area, deck))
+        decks += [(name, deck) for _, deck in sorted(found, key=lambda item: -item[0])]
+    placed = []
+    wanted = VENTS + STACKS
+    on = [0] * len(decks)
+    for most in (2, wanted):
+        for index, (part, deck) in enumerate(decks):
+            vs = [v for _, v in deck.uv]
+            for v_share, u_share in VENT_PLACES:
+                if len(placed) == wanted:
+                    return
+                if on[index] == most:
+                    break
+                v = min(vs) + (max(vs) - min(vs)) * v_share
+                span = deck.span(1, v)
+                if span is None:
+                    continue
+                u = span[0] + (span[1] - span[0]) * u_share
+                corners = [(u + du, v + dv) for du in (-VENT_MARGIN, VENT_MARGIN) for dv in (-VENT_MARGIN, VENT_MARGIN)]
+                if not all((s := deck.span(1, cv)) and s[0] <= cu <= s[1] for cu, cv in corners):
+                    continue
+                at = deck.at(u, v)
+                if any((at - other).length < VENT_SPACING for other in placed):
+                    continue
+                if any(abs((p - at).dot(deck.N)) < 0.2 and abs((p - at).dot(deck.U)) < 0.6 and abs((p - at).dot(deck.V)) < 0.6 for p in solar):
+                    continue
+                if len(placed) < VENTS:
+                    roof_vent(part, deck, u, v)
+                else:
+                    vent_stack(part, deck, u, v)
+                placed.append(at)
+                on[index] += 1
+
+
+# The main roof's ridge and hip caps (real 0.3 m wide, 0.11 m high) and the share of their
+# half width that is flat on top, where they catch the sun as a pale line along the hip;
+# the smaller roofs' (a porch's, an entry's: real 0.25 m, 0.1 m high), which keep their
+# plain ridged caps and so the entry's height, which sizes its cover.
+MAIN_CAP = (0.3 * SCALE / 2, 0.11 * SCALE)
+SMALL_CAP = (0.25 * SCALE / 2, 0.1 * SCALE)
+CAP_CROWN = 0.4
+
+
+def ridge_cap(part, a, b, half=None, lift=None):
+    """A row of cap tiles from a to b: on the main roof (any part but a wall's or the
+    entry's) two flanks and a flat crown at [`MAIN_CAP`]'s size, elsewhere two flanks at
+    [`SMALL_CAP`]'s; `half` and `lift` give a valley's flashing or a rake's barge tiles
+    their own."""
+    main = not (part.endswith("Wall") or part == "Entry")
+    sized = half is not None
+    half = half if sized else (MAIN_CAP if main else SMALL_CAP)[0]
+    lift = lift if lift is not None else (MAIN_CAP if main else SMALL_CAP)[1]
     a, b = Vector(a), Vector(b)
     along = (b - a).normalized()
     side = along.cross(Vector((0, 1, 0))).normalized() * half
     up = Vector((0, lift, 0))
     key = f"{part}__Roof"
-    face(key, [a + side, b + side, b + up, a + up], side + up)
-    face(key, [a - side, a + up, b + up, b - side], -side + up)
+    if not main or sized:
+        face(key, [a + side, b + side, b + up, a + up], side + up)
+        face(key, [a - side, a + up, b + up, b - side], -side + up)
+        return
+    crown = side * CAP_CROWN
+    face(key, [a + side, b + side, b + crown + up, a + crown + up], side + up * 2)
+    face(key, [a - side, a - crown + up, b - crown + up, b - side], -side + up * 2)
+    face(key, [a + crown + up, b + crown + up, b - crown + up, a - crown + up], (0, 1, 0))
 
 
 def hip_slopes(x0, x1, z0, z1, eave_y, pitch, along_x):
@@ -450,6 +630,7 @@ def export(plan, frame=None):
     argv = sys.argv[sys.argv.index("--") + 1 :]
     blend_path, glb_path = argv[0], argv[1]
     plan_path = argv[2] if len(argv) > 2 else None
+    roof_vents()
     shapes = geometry
     if frame == "along":
         shapes, plan = turned_along(geometry, plan)
@@ -717,13 +898,9 @@ def box_bay(front, x0, x1, flat=True, out=BAY_OUT, lo=BAY_LO, hi=BAY_HI):
         u += 0.11
     mid = (b0 + b1) / 2
     for wu0, wu1 in ((b0 + 0.06, mid - 0.025), (mid + 0.025, b1 - 0.06)):
-        front.quad("FrontWall__Curtain", wu0, g0, wu1, g1, -out + 0.03)
-        slats = max(2, round((g1 - g0) / LOUVRE))
-        for k in range(1, slats):
-            y = g0 + (g1 - g0) * k / slats
-            front.quad("FrontWall__Glass", wu0 + FRAME, y - 0.004, wu1 - FRAME, y + 0.004, -out + 0.025)
-        for a, c, b, d in ((wu0, g0, wu1, g0 + FRAME), (wu0, g1 - FRAME, wu1, g1), (wu0, g0, wu0 + FRAME, g1), (wu1 - FRAME, g0, wu1, g1)):
-            front.block("FrontWall__Trim", a, c, b, d, -out + 0.03, -out + 0.005)
+        glazing("FrontWall", front, wu0, g0, wu1, g1, -out + 0.03)
+        for a, c, b, d, inner in ((wu0, g0, wu1, g0 + FRAME, "+y"), (wu0, g1 - FRAME, wu1, g1, "-y"), (wu0, g0 + FRAME, wu0 + FRAME, g1 - FRAME, "+u"), (wu1 - FRAME, g0 + FRAME, wu1, g1 - FRAME, "-u")):
+            front.block("FrontWall__Trim", a, c, b, d, -out + 0.03, -out + 0.005, faces=("front", inner))
     front.block("FrontWall__Wood", mid - 0.025, g0 - 0.02, mid + 0.025, hi, -out + 0.02, -out - 0.01)
     for su, sign in ((b0, -1), (b1, 1)):
         face("FrontWall__Wood", [front.p(su, lo, 0), front.p(su, hi, 0), front.p(su, hi, -out), front.p(su, lo, -out)], front.along * sign)
@@ -738,10 +915,10 @@ def board_shutters(front, u0, u1, y0, y1, width=None):
     """A board shutter each side of a window from u0 to u1."""
     width = SHUTTER_WIDTH if width is None else width
     for a, b in ((u0 - width - 0.02, u0 - 0.02), (u1 + 0.02, u1 + width + 0.02)):
-        front.block("FrontWall__Accent", a, y0, b, y1, 0.0, -0.025)
+        front.block("FrontWall__Accent", a, y0, b, y1, 0.0, -0.025, faces=PROUD)
         for k in range(1, 3):
             y = y0 + (y1 - y0) * k / 3
-            front.block("FrontWall__Accent", a + 0.015, y - 0.012, b - 0.015, y + 0.012, -0.025, -0.035)
+            front.block("FrontWall__Accent", a + 0.015, y - 0.012, b - 0.015, y + 0.012, -0.025, -0.035, faces=PROUD)
 
 
 def porch_post(x, z, top, pier=0.48, stone=True):
@@ -842,6 +1019,9 @@ PASSAGE_FLOOR = 0.24  # two risers up from the walk
 BAY_FLOOR = 0.36  # a porch bay's: four risers up from the walk (real 18 cm)
 PIER, PIER_HEIGHT = 0.26, 0.48  # the stone piers' square plan and height, under their caps
 PLANTER_HEIGHT = 0.28  # the planter's low wall
+# How far one face stands back of another it would otherwise lie on (a porch slab's edge
+# behind its piers' faces), so the two never flicker as the view moves.
+ENTRY_INSET = 0.02
 OFFICE_PITCH = 0.3  # a small gable's or hip's
 
 
@@ -960,7 +1140,8 @@ def _office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="pos
     w0, w1 = width / 2 - 0.31, width / 2 + 0.31
     head = DOOR_TOP + 0.05
     slab(front, width, wall_top, [(w0, GROUND_GLASS[0], w1, head)])
-    window("FrontWall", front, w0, GROUND_GLASS[0], w1, head, mullion=False)
+    # the pop-out's brick sill stands for the window's own, whose top would lie in its top
+    window("FrontWall", front, w0, GROUND_GLASS[0], w1, head, mullion=False, sill=not popout)
     # double-hung: the sashes' meeting rail
     front.block("FrontWall__Trim", w0, (GROUND_GLASS[0] + head) / 2 - 0.015, w1, (GROUND_GLASS[0] + head) / 2 + 0.015, 0.1, 0.07)
     if window_style == "header":
@@ -1023,8 +1204,11 @@ def _office_entry(wall_z=HALF_D, office_roof="shed", cover="shed", supports="pos
         ridge_cap("FrontWall", (xb, OFFICE_EAVE, ze), ((xa + xb) / 2, hip_top, ridge_z))
         ridge_cap("FrontWall", ((xa + xb) / 2, hip_top, ridge_z), ((xa + xb) / 2, hip_top, wall_z))
 
-    # the entry: its floor and the steps up to it (the front door at its end is the wall's)
-    box("FrontWall__Concrete", (px0, 0.0, wall_z), (px1, floor, zf))
+    # the entry: its floor and the steps up to it (the front door at its end is the wall's);
+    # within arches, the floor runs to their walls' inner faces, its top meeting their
+    # openings' sills rather than lying on them
+    inset = WALL if supports == "arches" else 0.0
+    box("FrontWall__Concrete", (px0 + inset, 0.0, wall_z), (px1, floor, zf - inset))
     risers = round(floor / 0.1)
     for k in range(risers):
         box("FrontWall__Concrete", (px0 + PIER + 0.02, 0.0, zf), (px1 - PIER / 2 - 0.04, floor - floor / risers * k, zf + 0.2 * (k + 1)))

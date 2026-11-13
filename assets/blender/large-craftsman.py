@@ -103,7 +103,7 @@ box("FrontWall__Siding", (BAL[1] - CHEEK[1], BAL_FLOOR[1], HALF_D), (BAL[1], BAL
 box("FrontWall__Siding", (BAL[0], BAL_HEAD[0], HALF_D), (BAL[1], BAL_HEAD[1], zb), skip=("-z",))
 # a dark stained frame inside the opening and a trim band under the floor
 box("FrontWall__Wood", (BAL[0] + CHEEK[0], BAL_HEAD[0] - 0.06, zb - 0.08), (BAL[1] - CHEEK[1], BAL_HEAD[0], zb), skip=("+y", "-z"))
-box("FrontWall__Trim", (BAL[0] - 0.02, BAL_FLOOR[0] - 0.04, zb - 0.02), (BAL[1], BAL_FLOOR[0] + 0.02, zb + 0.02), skip=("-z", "+y"))
+box("FrontWall__Trim", (BAL[0] - 0.02, BAL_FLOOR[0] - 0.04, zb - 0.02), (BAL[1] + 0.02, BAL_FLOOR[0] + 0.02, zb + 0.02), skip=("-z", "+y"))
 # the railing, a real metre high
 r0, r1 = BAL[0] + CHEEK[0], BAL[1] - CHEEK[1]
 rz0, rz1 = zb - 0.06, zb - 0.04
@@ -117,7 +117,7 @@ while x < r1 - 0.03:
 # the French doors behind
 b0, b1 = fx(BALCONY_DOOR[0]), fx(BALCONY_DOOR[2])
 by0, by1 = BALCONY_DOOR[1], BALCONY_DOOR[3]
-front.quad("FrontWall__Curtain", b0, by0, b1, by1, 0.12)
+front.quad("FrontWall__Glass", b0, by0, b1, by1, 0.12)
 bm = (b0 + b1) / 2
 t = 0.04
 for a, c, b, d in ((b0, by0, b1, by0 + 0.09), (b0, by1 - t, b1, by1), (b0, by0, b0 + t, by1), (b1 - t, by0, b1, by1), (bm - t, by0, bm + t, by1)):
@@ -174,14 +174,18 @@ def porch_wing(wall_z=HALF_D):
     # the porch: its floor, steps straight out to the walk, a brick pier at each front corner
     # under a header beam to the office, a beam back to the wall over the open side
     px0, px1 = PORCH_X
-    box("FrontWall__Concrete", (px0, 0.0, wall_z), (px1, PORCH_FLOOR, zf))
+    # (its side to the office lies in the office's wall)
+    box("FrontWall__Concrete", (px0, 0.0, wall_z), (px1, PORCH_FLOOR, zf), skip=("-x",))
     for k in range(2):
         box("FrontWall__Concrete", (px0 + 0.3, 0.0, zf), (px1 - 0.35, PORCH_FLOOR - PORCH_FLOOR / 2 * k, zf + 0.2 * (k + 1)))
     beam_top = under(zf) - 0.01
     beam = (beam_top - 0.14, beam_top)
-    for x0 in (px0, px1 - BRICK_PIER):
-        box("FrontWall__Brick", (x0, 0.0, zf - BRICK_PIER), (x0 + BRICK_PIER, beam[0] - 0.04, zf))
-        box("FrontWall__Concrete", (x0 - 0.02, beam[0] - 0.04, zf - BRICK_PIER - 0.02), (x0 + BRICK_PIER + 0.02, beam[0], zf + 0.02))
+    # each pier stands proud of the floor's front (and the right one of its side), whose
+    # faces would otherwise lie on the pier's
+    for x0 in (px0, px1 - BRICK_PIER + ENTRY_INSET):
+        z1 = zf + ENTRY_INSET
+        box("FrontWall__Brick", (x0, 0.0, z1 - BRICK_PIER), (x0 + BRICK_PIER, beam[0] - 0.04, z1))
+        box("FrontWall__Concrete", (x0 - 0.02, beam[0] - 0.04, z1 - BRICK_PIER - 0.02), (x0 + BRICK_PIER + 0.02, beam[0], z1 + 0.02))
     box("FrontWall__Wood", (px0, beam[0], zf - 0.16), (px1, beam[1], zf), skip=("+y",))
     box("FrontWall__Wood", (px1 - 0.16, beam[0], wall_z), (px1, beam[1], zf - 0.16), skip=("+y",))
 
@@ -234,7 +238,8 @@ def gable_end(side):
 
 
 # ---------------------------------------------------------------- flanks and back
-plain_wall("back", PLAN, half_width={-2.0: 0.4, 0.0: 0.4, 2.0: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-2.0: 0.4, 0.0: 0.4, 2.0: 0.3})
 plain_wall("right", PLAN, half_width=0.27)
 # the west flank's upper floor: a pair of windows and a wider one towards the front
 plain_wall("left", PLAN, half_width=0.27, upper_half={-1.8: 0.4, 1.9: 0.45})

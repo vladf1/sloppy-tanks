@@ -231,6 +231,9 @@ def tiles(full, piece):
     uv = [((p - full.origin).dot(full.U), (p - full.origin).dot(full.V)) for p in piece]
     us, vs = [u for u, _ in full.uv], [v for _, v in full.uv]
     spacing, rib = RIB
+    # a level eave's barrels closed by a strip (the kit's eave_closure) instead of their ends
+    low = min(v for _, v in uv)
+    eave_v = low if sum(abs(v - low) < 1e-6 for _, v in uv) >= 2 else None
     u = min(us) + spacing / 2
     while u < max(us) - spacing / 2:
         left, right = span(uv, 0, u - spacing / 2), span(uv, 0, u + spacing / 2)
@@ -240,8 +243,15 @@ def tiles(full, piece):
                 a, m, b = u - spacing / 2, u, u + spacing / 2
                 tile([full.at(a, lo), full.at(m, lo, rib), full.at(m, hi, rib), full.at(a, hi)], full.N - full.U)
                 tile([full.at(m, lo, rib), full.at(b, lo), full.at(b, hi), full.at(m, hi, rib)], full.N + full.U)
-                tile([full.at(a, lo), full.at(b, lo), full.at(m, lo, rib)], -full.V)
+                if eave_v is None or lo - eave_v > 1e-4:
+                    tile([full.at(a, lo), full.at(b, lo), full.at(m, lo, rib)], -full.V)
         u += spacing
+    if eave_v is not None:
+        across = span(uv, 1, eave_v + EAVE_CLOSURE)
+        if across:
+            lo, hi = across
+            v = eave_v + EAVE_CLOSURE
+            tile([full.at(lo, v), full.at(hi, v), full.at(hi, v, rib), full.at(lo, v, rib)], -full.V)
     v = min(vs) + COURSE
     while v < max(vs) - 0.1:
         across = span(uv, 1, v)

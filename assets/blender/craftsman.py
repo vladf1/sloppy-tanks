@@ -64,7 +64,7 @@ sectional_garage_door(front, garage_u, decor="handles", boards=False, header=Tru
 front_door(front, door_u, glass=True)
 # The window behind the porch: its sill barely proud, as the porch stands right before it.
 window("FrontWall", front, fx(GROUND_WINDOW[0]), GROUND_WINDOW[1], fx(GROUND_WINDOW[2]), GROUND_WINDOW[3], sill=False)
-front.block("FrontWall__Trim", fx(GROUND_WINDOW[0]) - 0.03, GROUND_WINDOW[1] - 0.035, fx(GROUND_WINDOW[2]) + 0.03, GROUND_WINDOW[1], 0.02, -0.025)
+front.block("FrontWall__Trim", fx(GROUND_WINDOW[0]) - 0.03, GROUND_WINDOW[1] - 0.035, fx(GROUND_WINDOW[2]) + 0.03, GROUND_WINDOW[1], 0.0, -0.025, faces=("front", "+y", "-y", "+u", "-u"))
 for a, y0, b, y1 in uppers:
     window("FrontWall", front, fx(a), y0, fx(b), y1, mullion=False)
 board_shutters(front, fx(UPPER_PAIR[0][0]), fx(UPPER_PAIR[1][1]), UPPER_GLASS[0] - 0.01, UPPER_GLASS[1] + 0.01)
@@ -310,7 +310,8 @@ PORCH_OVER = 0.2
 PORCH_END = 0.7  # how far in from each end its hips meet the wall
 post_z = PORCH_FRONT - 0.14
 beam_y = PORCH_EAVE - 0.06
-box("Entry__Concrete", (PORCH_X[0], 0.0, HALF_D), (PORCH_X[1], SLAB, PORCH_FRONT))
+# the slab stops short of the piers' outer faces, which would otherwise lie on its edges
+box("Entry__Concrete", (PORCH_X[0] + ENTRY_INSET, 0.0, HALF_D), (PORCH_X[1] - ENTRY_INSET, SLAB, PORCH_FRONT - ENTRY_INSET))
 box("Entry__Concrete", (PORCH_X[0] + 0.9, 0.0, PORCH_FRONT), (PORCH_X[1] - 0.2, SLAB / 2, PORCH_FRONT + 0.2))
 
 
@@ -344,7 +345,8 @@ porch_top = max(v[1] for key, (vertices, _) in geometry.items() if key.startswit
 ENTRY_BOX.update(x=(PORCH_X[0] + PORCH_X[1]) / 2, z=(HALF_D + PORCH_FRONT) / 2, w=PORCH_X[1] - PORCH_X[0], d=PORCH_FRONT - HALF_D, h=round(porch_top, 3))
 
 # ---------------------------------------------------------------- the flanks and back
-plain_wall("back", PLAN, half_width={-1.6: 0.4, 0.3: 0.4, 2.0: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-1.6: 0.4, 0.3: 0.4, 2.0: 0.3})
 plain_wall("right", PLAN, half_width=0.27)
 plain_wall("left", PLAN, half_width=0.27)
 

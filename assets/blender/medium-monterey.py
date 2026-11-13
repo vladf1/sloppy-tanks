@@ -177,13 +177,15 @@ SIDE_HALF = 0.27
 LEFT_GROUND_HALF = {-3.2: 0.24, 1.6: SIDE_HALF}
 LEFT_UPPER_HALF = {-3.2: 0.45, -0.6: 0.55, 1.3: 0.27, 3.3: 0.24}
 LEFT_DRAWN_UPPER = PLAN["walls"]["left"]["upper"] + [-0.6, 3.3]
+# the back's upper windows: twin windows over the two wider ground ones
+BACK_UPPER_HALF = {-1.6: 0.42, 0.3: 0.42, 2.0: SIDE_HALF}
 for side in ("front", "back", "right", "left"):
     frame, part, half = WALL_FRAMES[side], WALL_PARTS[side], WALL_HALF[side]
     if side == "front":
         # the dressed windows' spans, in WALL_FRAMES' u from the middle
         cuts = [(a - fx(0), DRESSED[0], b - fx(0), DRESSED[1]) for a, b in spans]
     else:
-        halves = LEFT_UPPER_HALF if side == "left" else {}
+        halves = {"left": LEFT_UPPER_HALF, "back": BACK_UPPER_HALF}.get(side, {})
         cuts = [(u - halves.get(u, SIDE_HALF) - 0.01, UPPER_GLASS[0] - 0.01, u + halves.get(u, SIDE_HALF) + 0.01, UPPER_GLASS[1] + 0.01) for u in (LEFT_DRAWN_UPPER if side == "left" else PLAN["walls"][side]["upper"])]
     clad_upper(part, frame, -half, half, cuts)
     slab(f"{part}__Trim", frame, -half - BELT_OUT, BELT[0], half + BELT_OUT, BELT[1], BELT_OUT)
@@ -312,13 +314,15 @@ def tiled_on_coded(points, eave_edges=(0,)):
     return slope
 
 
-def cap_on_coded(a, b, half=0.25 * SCALE / 2, lift=0.1 * SCALE):
-    """The kit's ridge cap, cut to the coded slopes."""
+def cap_on_coded(a, b, half=MAIN_CAP[0], lift=MAIN_CAP[1]):
+    """The kit's main ridge cap (two flanks and a flat crown), cut to the coded slopes."""
     a, b = Vector(a), Vector(b)
     side = (b - a).normalized().cross(Vector((0, 1, 0))).normalized() * half
     up = Vector((0, lift, 0))
-    on_coded_slopes("Roof", [a + side, b + side, b + up, a + up], side + up)
-    on_coded_slopes("Roof", [a - side, a + up, b + up, b - side], -side + up)
+    crown = side * CAP_CROWN
+    on_coded_slopes("Roof", [a + side, b + side, b + crown + up, a + crown + up], side + up * 2)
+    on_coded_slopes("Roof", [a - side, a - crown + up, b - crown + up, b - side], -side + up * 2)
+    on_coded_slopes("Roof", [a + crown + up, b + crown + up, b - crown + up, a - crown + up], Vector((0, 1, 0)))
 
 
 EX, EZ, R = EAVE_X, EAVE_Z, DRAWN_RIDGE_HALF
@@ -371,7 +375,7 @@ def left_wall():
         window(part, frame, *hole, mullion=hole[2] - hole[0] > 0.6)
 
 
-plain_wall("back", PLAN, half_width=0.3, upper_half=SIDE_HALF)
+plain_wall("back", PLAN, half_width=0.3, upper_half=BACK_UPPER_HALF)
 plain_wall("right", PLAN, half_width=SIDE_HALF)
 left_wall()
 

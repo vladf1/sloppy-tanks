@@ -302,7 +302,8 @@ box("FrontWall__Siding", (CHIMNEY[0] - 0.03, CHIMNEY_TOP - 0.06, CHIMNEY[2]), (C
 face("FrontWall__Dark", [(CHIMNEY[0] + 0.08, CHIMNEY_TOP + 0.002, CHIMNEY[2] + 0.1), (CHIMNEY[1] - 0.08, CHIMNEY_TOP + 0.002, CHIMNEY[2] + 0.1), (CHIMNEY[1] - 0.08, CHIMNEY_TOP + 0.002, CHIMNEY[3] - 0.08), (CHIMNEY[0] + 0.08, CHIMNEY_TOP + 0.002, CHIMNEY[3] - 0.08)], (0, 1, 0))
 
 # ---------------------------------------------------------------- the flanks and back
-plain_wall("back", PLAN, half_width={-1.6: 0.42, 0.4: 0.35, 2.0: 0.3}, upper_half=0.3)
+# the upper floor's back windows as wide as the ground floor's: twin windows over twins
+plain_wall("back", PLAN, half_width={-1.6: 0.42, 0.4: 0.35, 2.0: 0.3})
 # the upper window under the back gable hung with plain board shutters
 _back = WALL_FRAMES["back"]
 for a in (-1.6 - 0.3 - SHUTTER_WIDTH - 0.02, -1.6 + 0.3 + 0.02):
