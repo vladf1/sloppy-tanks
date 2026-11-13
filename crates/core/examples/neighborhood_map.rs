@@ -9,6 +9,8 @@
 //!
 //! North is up (+x east, +z south). `neighborhood_plan` draws the detailed plan with
 //! every wall, lamp and pickup; this one is for finding a house and saying which it is.
+//! It is drawn in the level's design metres; the level stands `SENDA_SCALE` times larger
+//! in the game, as its scale bar says.
 
 use std::fmt::Write as _;
 
@@ -16,8 +18,8 @@ use glam::DVec2;
 use sloppy_core::sim::arena::spawn_positions;
 use sloppy_core::sim::house_layout::{Exterior, Plan, REFERENCE_HOUSE, SENDA_STYLES, style_design};
 use sloppy_core::sim::senda_layout::{
-    CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, Line, MEDIAN_HALF, PARKWAY, Row, SENDA_MAP, SIDEWALK,
-    SendaHouse, Street, bend_park, neblina_bend, senda_boundary, senda_houses,
+    CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, Line, MEDIAN_HALF, PARKWAY, Row, SENDA_SCALE, SIDEWALK,
+    SendaHouse, Street, bend_park, neblina_bend, senda_boundary, senda_design_layout, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{greenbelt_lane, senda_lots};
 use sloppy_core::sim::{CoverKind, Team};
@@ -179,7 +181,7 @@ fn main() {
     .unwrap();
     writeln!(
         svg,
-        "<!-- The Neighborhood's streets, rows and lots. Written by crates/core/examples/neighborhood_map.rs from the level's layout: do not edit by hand. {PX} px per metre, north up. -->"
+        "<!-- The Neighborhood's streets, rows and lots. Written by crates/core/examples/neighborhood_map.rs from the level's layout: do not edit by hand. {PX} px per design metre (the level stands {SENDA_SCALE} times larger in the game), north up. -->"
     )
     .unwrap();
     writeln!(
@@ -261,7 +263,7 @@ fn main() {
         )
         .unwrap();
     }
-    for cover in (SENDA_MAP.layout)() {
+    for cover in senda_design_layout() {
         if cover.kind == CoverKind::Tree {
             disc(
                 &mut svg,
@@ -462,7 +464,10 @@ fn main() {
         &mut svg,
         (sx + metres * PX / 2.0, sy - 14.0),
         14.0,
-        &format!("{metres:.0} m"),
+        &format!(
+            "{metres:.0} m as designed, {:.0} m in the game",
+            metres * SENDA_SCALE
+        ),
         false,
         "",
     );

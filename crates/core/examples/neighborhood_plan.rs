@@ -14,10 +14,10 @@ use sloppy_core::sim::house_layout::{Plan, style_design, wall_frames};
 use sloppy_core::sim::model_data::ARENA;
 use sloppy_core::sim::senda_layout::{
     CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, LAMP_HEIGHT, Line, MEDIAN_HALF, PARKWAY, Row,
-    SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SIDEWALK, STREET_LAMP_COLORS,
-    SendaHouse, Street, TRASH_BIN_COLORS, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, bend_park,
-    greenbelt_line, in_median_opening, inside_boundary, lamp_sites, left, outer_way_tree_sites,
-    past_sidewalk, senda_boundary, senda_houses, splitter_island,
+    SENDA_FENCE_COLOR, SENDA_PICKUPS, SENDA_WALL_COLOR, SIDEWALK, STREET_LAMP_COLORS, SendaHouse,
+    Street, TRASH_BIN_COLORS, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, bend_park, greenbelt_line,
+    in_median_opening, inside_boundary, lamp_sites, left, outer_way_tree_sites, past_sidewalk,
+    senda_boundary, senda_design_layout, senda_houses, splitter_island,
 };
 use sloppy_core::sim::senda_yards::{
     LOGGIA_COLOR, PERGOLA_WOOD, YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR,
@@ -248,7 +248,7 @@ fn main() {
     );
     std::fs::create_dir_all(&out).unwrap();
 
-    let covers = (SENDA_MAP.layout)();
+    let covers = senda_design_layout();
     let houses = senda_houses();
     let lots = senda_lots(&houses);
     let boundary = senda_boundary();
@@ -855,7 +855,7 @@ fn main() {
     writeln!(w, "# Neighborhood (Senda) — dimensions as built\n").unwrap();
     writeln!(
         w,
-        "Measured by `crates/core/examples/neighborhood_plan.rs` from `SENDA_MAP.layout()`, `senda_houses()`, `senda_lots()`, `senda_boundary()` and the street lines. Game metres throughout; +x east, +z south; origin the arena's centre.\n"
+        "Measured by `crates/core/examples/neighborhood_plan.rs` from `senda_design_layout()`, `senda_houses()`, `senda_lots()`, `senda_boundary()` and the street lines. The level's design metres throughout (it stands `SENDA_SCALE` times larger in the game); +x east, +z south; origin the arena's centre.\n"
     )
     .unwrap();
 

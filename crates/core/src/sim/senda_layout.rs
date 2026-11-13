@@ -453,8 +453,24 @@ pub fn back_fence() -> f64 {
     house_front() + STAGGER.into_iter().fold(0.0, f64::max) + HOUSE_DEPTH + BACK_YARD
 }
 
-/// Whether `(x, z)` lies on Senda's paving: a street with its sidewalks or a
-/// cul-de-sac. Ground effects throw concrete grit there, not earth.
+/// How many times its design the level stands in the world. Senda is laid out in design
+/// metres, the scale its streets were traced to (the standard arena's, at about half
+/// real size like the tanks), and stands this much larger about the arena's middle, so
+/// its houses, streets and trees stand larger beside the vehicles while they, the
+/// camera and the effects keep their size. Every function of the level answers in
+/// design metres; [`senda_layout`] scales its cover, the map declares the scale
+/// (`ArenaMap::scale`), the scenery scales its root and a house's structure and model
+/// are its design's scaled ([`HouseDesign::scale`]). A world position asks the level in
+/// design metres through [`senda_design_point`].
+pub const SENDA_SCALE: f64 = 1.25;
+
+/// A world position `(x, z)` in the level's design metres ([`SENDA_SCALE`]).
+pub fn senda_design_point(x: f64, z: f64) -> DVec2 {
+    DVec2::new(x, z) / SENDA_SCALE
+}
+
+/// Whether `(x, z)` (design metres) lies on Senda's paving: a street with its sidewalks
+/// or a cul-de-sac. Ground effects throw concrete grit there, not earth.
 pub fn is_senda_paved(x: f64, z: f64) -> bool {
     let p = DVec2::new(x, z);
     Street::ALL.into_iter().any(|street| {
@@ -2182,7 +2198,35 @@ fn boundary_cover(boundary: &[DVec2]) -> Vec<CoverDef> {
         .collect()
 }
 
+/// The level's cover as it stands in the world: its design's ([`senda_design_layout`])
+/// scaled by [`SENDA_SCALE`] about the arena's middle, place and size. A tree's family
+/// follows from where it stands (`tree_proportions`), so each tree stands at the nearest
+/// spot east of its scaled place that grows the family its design place grows: the
+/// level's oaks stay oaks, within a few centimetres of their places.
 fn senda_layout() -> Vec<CoverDef> {
+    senda_design_layout()
+        .into_iter()
+        .map(|cover| {
+            let mut world = CoverDef {
+                x: cover.x * SENDA_SCALE,
+                z: cover.z * SENDA_SCALE,
+                w: cover.w * SENDA_SCALE,
+                d: cover.d * SENDA_SCALE,
+                h: cover.h * SENDA_SCALE,
+                ..cover
+            };
+            if cover.kind == CoverKind::Tree {
+                let family = tree_proportions(cover.x, cover.z, 1.0, 1.0, 1.0).family;
+                (world.x, world.z) = tree_site(world.x, world.z, family);
+            }
+            world
+        })
+        .collect()
+}
+
+/// The level's cover in design metres, as its houses, lots and scenery are laid out
+/// ([`senda_layout`] stands it in the world).
+pub fn senda_design_layout() -> Vec<CoverDef> {
     let boundary = senda_boundary();
     let mut covers = boundary_cover(&boundary);
     let houses = senda_houses();
@@ -2271,8 +2315,9 @@ pub static SENDA_MAP: ArenaMap = ArenaMap {
     floor: None,
     outer_floor: None,
     outer_floor_extent: None,
-    scale: None,
+    scale: Some(SENDA_SCALE),
     layout: senda_layout,
+    // In design metres: the simulation places pickups at the map's scale.
     pickups: &SENDA_PICKUPS,
 };
 

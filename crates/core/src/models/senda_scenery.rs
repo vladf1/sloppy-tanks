@@ -23,7 +23,7 @@
 use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
-use glam::{DQuat, DVec2};
+use glam::{DQuat, DVec2, DVec3};
 
 use crate::geometry::{
     Mesh, RingGeometry, box_geometry, cylinder_geometry, icosahedron_geometry, octahedron_geometry,
@@ -36,11 +36,12 @@ use crate::sim::kinds::{CoverKind, Team};
 use crate::sim::model_data::ARENA;
 use crate::sim::senda_layout::{
     self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, DRIVEWAY_PAST_DOOR, HOUSE_DEPTH, HOUSE_WIDTH,
-    LAMP_HEIGHT, Line, MEDIAN_HALF, PARKWAY, PASEO_WIDTH, Row, SENDA_PICKUPS, SIDE_YARD, SIDEWALK,
-    SOUTH_LANE, SPLITTER_ISLAND, STREET_LAMP_COLORS, SendaHouse, Street, WAY_LAMP_HEIGHT,
-    WAY_PARKWAY, WAY_PATH, greenbelt_mouth, house_front, in_arena, in_median_opening,
-    inside_boundary, is_senda_paved, lamp_is_cover, lamp_sites, left, neblina_bend, oak_site,
-    outer_way_tree_sites, paseos, senda_boundary, senda_houses, way_tree_sites,
+    LAMP_HEIGHT, Line, MEDIAN_HALF, PARKWAY, PASEO_WIDTH, Row, SENDA_PICKUPS, SENDA_SCALE,
+    SIDE_YARD, SIDEWALK, SOUTH_LANE, SPLITTER_ISLAND, STREET_LAMP_COLORS, SendaHouse, Street,
+    WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, greenbelt_mouth, house_front, in_arena,
+    in_median_opening, inside_boundary, is_senda_paved, lamp_is_cover, lamp_sites, left,
+    neblina_bend, oak_site, outer_way_tree_sites, paseos, senda_boundary, senda_houses,
+    way_tree_sites,
 };
 use crate::sim::senda_yards::{
     LOGGIA_COLUMN, LOGGIA_EAVE, Lot, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover,
@@ -585,23 +586,29 @@ const AGAVES: usize = 5;
 
 /// Senda's scenery, retained across matches.
 pub fn senda_scenery() -> Node {
-    let mut root = Node::group("senda-scenery");
+    // Built in the level's design metres and standing SENDA_SCALE times larger about the
+    // arena's middle, as its cover does; the spawn pads are the vehicles' size, at the
+    // simulation's spawns.
+    let mut design = Node::group("");
     let hills = Hills::new();
-    root.children.push(grass(&hills));
-    root.children.push(planted_ground(&Lines::new()));
-    root.children.push(paving());
-    root.children.push(paseo_grounds());
+    design.children.push(grass(&hills));
+    design.children.push(planted_ground(&Lines::new()));
+    design.children.push(paving());
+    design.children.push(paseo_grounds());
+    design.children.push(slope_trees(&hills));
+    design.children.push(greenbelt_scrub());
+    design.children.push(outer_slopes());
+    design.children.push(shrubs());
+    design.children.push(bank_planting());
+    design.children.push(yard_props());
+    design.children.push(street_lamps());
+    design.scale = DVec3::splat(SENDA_SCALE);
     let mut pads = Node::group("");
-    pads.children.push(create_spawn_pads(1.0));
+    pads.children.push(create_spawn_pads(SENDA_SCALE));
     batch(&mut pads);
+    let mut root = Node::group("senda-scenery");
+    root.children.push(design);
     root.children.push(pads);
-    root.children.push(slope_trees(&hills));
-    root.children.push(greenbelt_scrub());
-    root.children.push(outer_slopes());
-    root.children.push(shrubs());
-    root.children.push(bank_planting());
-    root.children.push(yard_props());
-    root.children.push(street_lamps());
     root
 }
 
@@ -1969,7 +1976,7 @@ fn creek_trees(group: &mut Node, lines: &Lines, thicket: &Thicket) {
     if thicket.creek.0.len() < 2 {
         return;
     }
-    let oaks: Vec<DVec2> = (senda_layout::SENDA_MAP.layout)()
+    let oaks: Vec<DVec2> = senda_layout::senda_design_layout()
         .into_iter()
         .filter(|cover| cover.kind == CoverKind::Tree)
         .map(|cover| DVec2::new(cover.x, cover.z))

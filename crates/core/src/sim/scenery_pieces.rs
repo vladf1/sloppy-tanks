@@ -17,6 +17,7 @@ use super::simulation::Simulation;
 use super::arena::cover_turn;
 use super::house_layout::SENDA_STYLES;
 use super::senda_entries::is_entry;
+use super::senda_layout::SENDA_SCALE;
 use super::senda_yards::{LOGGIA_COLUMN, LOGGIA_EAVE, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover};
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
@@ -237,9 +238,11 @@ pub fn break_scenery(
 /// A loggia or pergola brought down: its posts or columns, the beam across them and its
 /// roof (a loggia's tile in two halves, a pergola's slats in a few bundles) fall from
 /// where they stood, turned as the cover was, in the house's paint or the stained wood.
+/// Laid out in Senda's design metres, as its model is drawn, and scaled as it stands
+/// ([`SENDA_SCALE`]).
 fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: PatioCover) {
     let cover = breakup.cover;
-    let (w, d) = (cover.w, cover.d);
+    let (w, d) = (cover.w / SENDA_SCALE, cover.d / SENDA_SCALE);
     let turn = cover_turn(cover.kind, cover.house_plan);
     let (sin, cos) = turn.sin_cos();
     // From the box's own frame (+z toward the house) into the world's, about its middle.
@@ -288,6 +291,7 @@ fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: P
         }
     }
     for (shape, at, size, color, material, pitch) in pieces {
+        let (at, size) = (at.map(|v| v * SENDA_SCALE), size.map(|v| v * SENDA_SCALE));
         let piece = breakup.piece(simulation, shape, at, size, Some(color), material);
         let body = simulation.fragments[piece].body;
         let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(-pitch, 0.0, 0.0));
@@ -304,10 +308,15 @@ const ENTRY_TILE: f64 = 0.09;
 /// An office and entry brought down: its stucco front in two slabs, its side wall between
 /// the room and the porch bay, and its tile roof in two halves fall from where they stood,
 /// turned as the cover was, in its house's paint and tile. Nothing stays standing: the
-/// house's own front stands behind it.
+/// house's own front stands behind it. Laid out in Senda's design metres, as its model is
+/// drawn, and scaled as it stands ([`SENDA_SCALE`]).
 fn break_entry(breakup: &mut Breakup, simulation: &mut Simulation) {
     let cover = breakup.cover;
-    let (w, d, h) = (cover.w, cover.d, cover.h);
+    let (w, d, h) = (
+        cover.w / SENDA_SCALE,
+        cover.d / SENDA_SCALE,
+        cover.h / SENDA_SCALE,
+    );
     let turn = cover_turn(cover.kind, cover.house_plan);
     let (sin, cos) = turn.sin_cos();
     // From the box's own frame (+z out from the house) into the world's, about its middle.
@@ -329,6 +338,7 @@ fn break_entry(breakup: &mut Breakup, simulation: &mut Simulation) {
         pieces.push((at, [w / 2.0, ENTRY_TILE, d], style.roof, pitch));
     }
     for (at, size, color, pitch) in pieces {
+        let (at, size) = (at.map(|v| v * SENDA_SCALE), size.map(|v| v * SENDA_SCALE));
         let piece = breakup.piece(simulation, FragmentShape::Panel, at, size, Some(color), stucco);
         let body = simulation.fragments[piece].body;
         let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(pitch, 0.0, 0.0));

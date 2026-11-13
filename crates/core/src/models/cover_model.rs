@@ -39,7 +39,7 @@ use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
     is_senda_paved, is_street_tree, is_trash_bin, street_lamp_look,
-    SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
+    SENDA_FENCE_COLOR, SENDA_SCALE, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
 };
 use crate::sim::senda_yards::{PatioCover, YARD_VIEW_COLOR, YARD_WALL_COLOR};
 use crate::sim::crate_structure::{CRATE_WALLS, CratePart, crate_structure};
@@ -136,9 +136,29 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         };
         return standing_tree_model(&tree, detail, look, &|part| !gone(part));
     }
-    let mut node = Node::default();
+    // Senda's walls, lamps, bins, loggias and entries are drawn to the level's design and
+    // stand scaled about their ground centre, as the level does (a house scales its own).
+    let senda = drawn_to_senda_design(c);
+    let mut node = Node {
+        position: DVec3::new(c.x, 0.0, c.z),
+        scale: DVec3::splat(if senda { SENDA_SCALE } else { 1.0 }),
+        ..Node::default()
+    };
+    let design;
+    let c = if senda {
+        design = CoverShape {
+            x: c.x / SENDA_SCALE,
+            z: c.z / SENDA_SCALE,
+            w: c.w / SENDA_SCALE,
+            d: c.d / SENDA_SCALE,
+            h: c.h / SENDA_SCALE,
+            ..c.clone()
+        };
+        &design
+    } else {
+        c
+    };
     let group = &mut node;
-    group.position = DVec3::new(c.x, 0.0, c.z);
     match c.kind {
         CoverKind::Teeth => dragon_tooth(group, c.w, c.h, c.d, c.x, c.z),
         CoverKind::Hedgehog => {
@@ -253,6 +273,24 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail) -> Node {
         }
     }
     node
+}
+
+/// Whether a cover is one of Senda's built to its level's design and drawn scaled
+/// ([`SENDA_SCALE`]): its tract wall, street lamps, wheelie bins, loggias and pergolas,
+/// entries and lot walls. Its trees stand at their world size, as their structures do,
+/// and its houses scale their own models.
+fn drawn_to_senda_design(c: &CoverShape) -> bool {
+    match c.kind {
+        CoverKind::Drum => is_trash_bin(c.color),
+        CoverKind::Boundary => c.color == SENDA_WALL_COLOR || c.color == SENDA_FENCE_COLOR,
+        CoverKind::Concrete => {
+            street_lamp_look(c.color).is_some()
+                || PatioCover::of_color(c.color).is_some()
+                || is_entry(c.color)
+                || is_yard_wall(c.color)
+        }
+        _ => false,
+    }
 }
 
 /// How thick (m) the roof slab is over an entry drawn before its house's model is in.
