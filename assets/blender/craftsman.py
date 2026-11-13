@@ -312,7 +312,9 @@ post_z = PORCH_FRONT - 0.14
 beam_y = PORCH_EAVE - 0.06
 # the slab stops short of the piers' outer faces, which would otherwise lie on its edges
 box("Entry__Concrete", (PORCH_X[0] + ENTRY_INSET, 0.0, HALF_D), (PORCH_X[1] - ENTRY_INSET, SLAB, PORCH_FRONT - ENTRY_INSET))
-box("Entry__Concrete", (PORCH_X[0] + 0.9, 0.0, PORCH_FRONT), (PORCH_X[1] - 0.2, SLAB / 2, PORCH_FRONT + 0.2))
+# the step's tread well over the entry walk the scenery runs under it (its top 0.052)
+STEP_TOP = 0.08
+box("Entry__Concrete", (PORCH_X[0] + 0.9, 0.0, PORCH_FRONT), (PORCH_X[1] - 0.2, STEP_TOP, PORCH_FRONT + 0.2))
 
 
 def tapered_post(x, z):
