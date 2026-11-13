@@ -279,9 +279,12 @@ fn cottage_material(surface: Surface, palette: &Palette, walls: WallFinish) -> A
         Surface::Curtain if walls == WallFinish::Stucco => satin(PLANTATION_BLINDS),
         Surface::GarageDoor => satin(garage_door_paint(palette.siding)),
         Surface::Cladding => satin(TRACT_CLADDING),
-        Surface::Siding | Surface::Brick | Surface::Stone | Surface::Glass | Surface::Lamp => {
-            source
-        }
+        Surface::Siding
+        | Surface::Brick
+        | Surface::Stone
+        | Surface::Glass
+        | Surface::Lamp
+        | Surface::Solar => source,
         // Freshly split timber catches the light, so a torn edge reads as torn timber
         // from the battlefield's height.
         Surface::Splinters => satin(FRESH_SPLIT),

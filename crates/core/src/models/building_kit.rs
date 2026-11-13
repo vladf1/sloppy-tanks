@@ -28,10 +28,14 @@ pub const STONE_TEXTURE: &str = "textures/houses/stone.webp";
 /// walls carry the clapboard's texture density whatever their finish; the stucco
 /// repeats within it (`house_model.rs`).
 pub const STUCCO_TEXTURE: &str = "textures/houses/stucco.webp";
-/// Metres per texture tile.
+/// A solar array's cells: dark navy in fine silver gaps, painted in its own colours.
+pub const SOLAR_TEXTURE: &str = "textures/houses/solar.webp";
+/// Metres per texture tile; the solar image's 8 cells at about 9 cm, a real panel's at
+/// the houses' reduced scale.
 const CLAPBOARD_TILE: f64 = 2.4;
 const BRICK_TILE: f64 = 1.2;
 const STONE_TILE: f64 = 1.6;
+const SOLAR_TILE: f64 = 0.71;
 /// The average sRGB colour of the clapboard image: paint divided by it keeps
 /// the painted wall at the paint's colour on average.
 pub(super) const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
@@ -54,10 +58,6 @@ const STAINED_WOOD: u32 = 0x76512f;
 /// lying upturned in the sun shows as boards (darker, it read as a black hole).
 const SHEATHING: u32 = 0x7a6650;
 const LAMP_GLASS: u32 = 0xf1d18f;
-/// Solar cells under their glass: a dark navy blue-grey, as the tract's arrays read from
-/// the air under a midday sun (darker, they read as holes in the roofs), satin rather than
-/// glossy (from overhead a glossy array mirrored the sky in streaks).
-const SOLAR_GLASS: u32 = 0x24304a;
 /// Timber freshly split where a building broke apart, paler than its stain.
 const SPLIT_TIMBER: u32 = 0xb48d5c;
 
@@ -222,7 +222,10 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
         Surface::Curtain | Surface::Lining => finish(CURTAIN, MATTE),
         Surface::Splinters => finish(SPLIT_TIMBER, MATTE),
         Surface::Sheathing => finish(SHEATHING, MATTE),
-        Surface::Solar => finish(SOLAR_GLASS, SATIN),
+        // Solar cells under their glass, satin rather than glossy (from overhead a
+        // glossy array mirrored the sky in streaks): a dark navy grid as the tract's
+        // arrays read from the air (flat near black, they read as holes in the roofs).
+        Surface::Solar => textured(SOLAR_TEXTURE, 0xffffff, 0.0, SATIN.1 as f32),
         Surface::GarageDoor => finish(STAINED_WOOD, SATIN),
         Surface::Cladding => finish(palette.accent, SATIN),
     }
@@ -234,6 +237,7 @@ pub(super) fn uv_per_metre(surface: Surface) -> f64 {
         Surface::Siding => 1.0 / CLAPBOARD_TILE,
         Surface::Brick => 1.0 / BRICK_TILE,
         Surface::Stone => 1.0 / STONE_TILE,
+        Surface::Solar => 1.0 / SOLAR_TILE,
         _ => PLAIN_UV_PER_METRE,
     }
 }

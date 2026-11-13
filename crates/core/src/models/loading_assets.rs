@@ -75,13 +75,14 @@ const VILLAGE_COVER_TEXTURE_FILES: &[&str] = &[
     "textures/trees/rings.webp",
 ];
 
-/// Senda's cover: its houses' stucco, the Craftsman wings' and porches' brick, the
+/// Senda's cover: its houses' stucco and solar cells, the Craftsman wings' and porches' brick, the
 /// stacked stone (sandstone) of the Prairie porches' piers and the buff wings, the lot
 /// walls' split-face block, and its oaks and the parkways' young birches: their bark,
 /// birch bark, and the rings of a felled tree's cut. Its tile roofs need no file the
 /// round's scenery does not already fetch.
 const SENDA_COVER_TEXTURE_FILES: &[&str] = &[
     "textures/houses/brick.webp",
+    "textures/houses/solar.webp",
     "textures/houses/stucco.webp",
     "textures/quarry/sandstone.webp",
     "textures/trees/bark.webp",
