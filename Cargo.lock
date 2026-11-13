@@ -3664,7 +3664,6 @@ dependencies = [
  "egui-winit",
  "egui_glow",
  "futures-util",
- "glam 0.33.12",
  "image",
  "js-sys",
  "kira",
