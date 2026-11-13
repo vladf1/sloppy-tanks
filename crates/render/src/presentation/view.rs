@@ -2366,6 +2366,7 @@ impl Presentation {
     fn update_camera(&mut self, state: &RenderState, alpha: f64, dt: f64, overview: bool) {
         let has_model = self.tanks.contains_key(&state.viewer_id);
         self.viewer_id = Some(state.viewer_id);
+        self.rig.frame_map(state.map_scale);
         self.rig
             .update(&Self::viewer_pose(state), alpha, dt, overview, has_model);
     }

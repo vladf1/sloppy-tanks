@@ -35,7 +35,7 @@ use crate::sim::physics::{
 };
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
 use crate::sim::arena::cover_turn;
-use crate::sim::simulation::{Simulation, arena_world, cover_parts};
+use crate::sim::simulation::{Simulation, arena_world, cover_parts, fit_arena_floor};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
 use crate::sim::types::{CoverKind, VehicleKind};
@@ -491,12 +491,14 @@ pub struct TankPredictor {
     broken: Vec<ColliderHandle>,
     /// Where the scene's shells leave its arena.
     arena_edge: f64,
+    /// The scene's map scale its ground slab is fitted to.
+    floor_scale: f64,
 }
 
 impl Default for TankPredictor {
     fn default() -> Self {
         Self {
-            world: arena_world(),
+            world: arena_world(1.0),
             hull: None,
             covers: BTreeMap::new(),
             tanks: BTreeMap::new(),
@@ -505,6 +507,7 @@ impl Default for TankPredictor {
             gone: Vec::new(),
             broken: Vec::new(),
             arena_edge: arena_edge(1.0),
+            floor_scale: 1.0,
         }
     }
 }
@@ -527,6 +530,10 @@ impl TankPredictor {
     /// at its replicated pose.
     pub fn sync_covers(&mut self, state: &RenderState) {
         self.arena_edge = arena_edge(state.map_scale);
+        if self.floor_scale != state.map_scale {
+            self.floor_scale = state.map_scale;
+            fit_arena_floor(&mut self.world, state.map_scale);
+        }
         self.sync += 1;
         let sync = self.sync;
         for cover in &state.covers {

@@ -1330,11 +1330,15 @@ pub struct SceneMap {
     pub scale: Option<f64>,
 }
 
+/// The map scales a scene may carry: a compact yard's (the Scrap Yard's 0.65) up to a
+/// level standing larger than its design (the Neighborhood's `SENDA_SCALE`).
+const MAP_SCALES: std::ops::RangeInclusive<f64> = 0.1..=2.0;
+
 pub fn read_map(record: &WireRecord) -> ReadResult<SceneMap> {
     use map::*;
     let fields = Fields::new(MAP_FIELDS, record);
     let scale = fields.opt_fixed(SCALE)?;
-    if scale.is_some_and(|scale| !(0.1..=1.0).contains(&scale)) {
+    if scale.is_some_and(|scale| !MAP_SCALES.contains(&scale)) {
         return Err("scale: Invalid number".into());
     }
     Ok(SceneMap {

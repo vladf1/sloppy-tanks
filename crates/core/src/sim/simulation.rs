@@ -461,7 +461,9 @@ impl Simulation {
         if let Some(rewind) = &mut self.shooter_rewind {
             rewind.clear();
         }
-        self.world = arena_world();
+        // The round's map, chosen first: its scale sizes the ground slab.
+        let map = selected_map(self.map_mode, self.custom_map);
+        self.world = arena_world(map.scale.unwrap_or(1.0));
         self.contact_forces.clear();
         self.debris_contacts.clear();
         self.movable_covers.clear();
@@ -500,7 +502,7 @@ impl Simulation {
             self.seed + self.match_state.round as f64 * SIMULATION_RULES.round_seed_stride,
         );
         self.bot_names = shuffled_bot_names(round_seed as f64);
-        self.current_map = selected_map(self.map_mode, self.custom_map);
+        self.current_map = map;
         for cover in (self.current_map.layout)() {
             self.add_cover(&cover);
         }
@@ -529,6 +531,7 @@ impl Simulation {
             })
             .collect();
         self.nav.clear();
+        self.nav.set_map_scale(scale);
         self.nav.rebuild(&self.covers, None);
         if self.game_mode == GameMode::Solo {
             self.add_tank(self.human_team, true, self.human_kind, 2);
@@ -1246,19 +1249,42 @@ pub struct SnapshotCounts {
     pub covers: usize,
 }
 
-/// A fresh physics world at the fixed step whose first body is the arena's ground slab,
-/// shared with client prediction so its world matches the server's.
-pub(crate) fn arena_world() -> PhysicsWorld {
+/// A fresh physics world at the fixed step whose first body is the ground slab of a map
+/// `map_scale` times the standard arena, shared with client prediction so its world
+/// matches the server's.
+pub(crate) fn arena_world(map_scale: f64) -> PhysicsWorld {
     let mut world = PhysicsWorld::new();
     world.gravity = vector(0.0, -GRAVITY, 0.0);
     world.integration_parameters.dt = STEP as f32;
     let ground = world.insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
+    let half = arena_floor_half(map_scale) as f32;
     world.insert_collider(
-        ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
-            .collision_groups(interaction_groups(group::GROUND)),
+        ColliderBuilder::cuboid(half, 0.5, half).collision_groups(interaction_groups(group::GROUND)),
         Some(ground),
     );
     world
+}
+
+/// How far (m) the ground slab reaches from the centre along either axis: a little past
+/// the standard arena's walls, or past a larger map's (a smaller map keeps the standard
+/// slab).
+pub(crate) fn arena_floor_half(map_scale: f64) -> f64 {
+    ARENA * map_scale.max(1.0) + FLOOR_PAST_EDGE
+}
+
+/// How far (m) the ground slab runs on past the arena's edge.
+const FLOOR_PAST_EDGE: f64 = 2.0;
+
+/// Fit the ground slab of a world [`arena_world`] made to a map `map_scale` times the
+/// standard arena: a client's predicted world follows the scene's map.
+pub(crate) fn fit_arena_floor(world: &mut PhysicsWorld, map_scale: f64) {
+    // The slab is the world's first body, never removed.
+    let ground = RigidBodyHandle::from_raw_parts(0, 0);
+    let Some(&collider) = world.bodies.get(ground).and_then(|body| body.colliders().first()) else {
+        return;
+    };
+    let half = arena_floor_half(map_scale) as f32;
+    world.colliders[collider].set_shape(SharedShape::cuboid(half, 0.5, half));
 }
 
 /// A cover's body and colliders as the simulation builds them, shared with client
