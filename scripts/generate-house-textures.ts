@@ -294,9 +294,11 @@ async function save(name: string, paint: (u: number, v: number) => number[], pix
   const cells = 8;
   const rng = new Random(6203);
   const shades = Array.from({ length: cells * cells }, () => rng.range(-0.05, 0.05));
-  const cell = [24, 32, 54];
-  const gap = [128, 136, 152];
-  const busbar = [60, 70, 94];
+  // The gaps only a little lighter than the cells: from the play camera a cell is two
+  // or three pixels, and bright gaps between them crawled as the camera moved.
+  const cell = [30, 40, 66];
+  const gap = [72, 82, 106];
+  const busbar = [44, 54, 80];
   await save(
     "solar",
     (u, v) => {

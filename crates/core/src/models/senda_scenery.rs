@@ -106,6 +106,17 @@ const KERB_WIDTH: f64 = 0.16;
 /// Paving heights over the floor: the streets, then the kerbs, sidewalks and median
 /// (raised over the asphalt they cross so junctions do not flicker).
 const STREET_TOP: f64 = 0.045;
+/// What lies on a street's asphalt, each this far (m) over it and clear of the one
+/// under it (laid a millimetre or two apart they flickered against each other from the
+/// play camera): a turning circle's own asphalt over its street's end, the paving seam,
+/// the patches, the gutter pans and the painted lines.
+const CIRCLE_LIFT: f64 = 0.003;
+const SEAM_LIFT: f64 = 0.006;
+const PATCH_LIFT: f64 = 0.009;
+const GUTTER_LIFT: f64 = 0.012;
+const PAINT_LIFT: f64 = 0.016;
+/// A joint scored in a slab or a sidewalk stands this far (m) over it.
+const JOINT_LIFT: f64 = 0.004;
 const WALK_TOP: f64 = 0.06;
 /// The entry walk's width, and the strip of darker pavers bordering some driveways along
 /// their outer side (width, paint).
@@ -1185,7 +1196,7 @@ fn asphalt_wear(
             line,
             offset - width / 2.0,
             offset + width / 2.0,
-            STREET_TOP + 0.002,
+            STREET_TOP + SEAM_LIFT,
             &nothing,
         ),
         ASPHALT_SEALED,
@@ -1208,7 +1219,7 @@ fn asphalt_wear(
                 &patch,
                 middle - width / 2.0,
                 middle + width / 2.0,
-                STREET_TOP + 0.003,
+                STREET_TOP + PATCH_LIFT,
                 crossing,
             ),
             ASPHALT_PATCH_TONE,
@@ -1389,7 +1400,7 @@ fn paving() -> Node {
                 line,
                 side * (half - GUTTER.0),
                 inner,
-                STREET_TOP + 0.004,
+                STREET_TOP + GUTTER_LIFT,
                 &crossing,
             );
             group.children.push(flat(gutter, GUTTER.1));
@@ -1401,7 +1412,12 @@ fn paving() -> Node {
             };
             let walk = ribbon(line, side * near, side * far, WALK_TOP, &crossing);
             group.children.push(flat(walk, SIDEWALK_CONCRETE));
-            let joints = score_lines(line, (side * near, side * far), WALK_TOP + 0.002, &crossing);
+            let joints = score_lines(
+                line,
+                (side * near, side * far),
+                WALK_TOP + JOINT_LIFT,
+                &crossing,
+            );
             group.children.push(flat(joints, CONCRETE_JOINT));
         }
         asphalt_wear(&mut group, *street, line, &crossing);
@@ -1444,7 +1460,7 @@ fn neblina_centre_line(group: &mut Node) {
             side * CENTRE_LINE_GAP / 2.0,
             side * (CENTRE_LINE_GAP / 2.0 + CENTRE_LINE),
         );
-        let paint = ribbon(&line.0, near, far, STREET_TOP + 0.006, &skip);
+        let paint = ribbon(&line.0, near, far, STREET_TOP + PAINT_LIFT, &skip);
         group.children.push(flat(paint, CENTRE_LINE_PAINT));
     }
 }
@@ -1472,7 +1488,11 @@ fn splitter_island(group: &mut Node) {
     // The gutter pan round its foot, its kerb and its mulch, each a little inside the
     // last.
     for (grow, y, color) in [
-        (KERB_WIDTH + ISLAND_GUTTER, STREET_TOP + 0.004, GUTTER.1),
+        (
+            KERB_WIDTH + ISLAND_GUTTER,
+            STREET_TOP + GUTTER_LIFT,
+            GUTTER.1,
+        ),
         (KERB_WIDTH, KERB_HEIGHT, KERB),
         (0.0, KERB_HEIGHT + 0.01, MEDIAN),
     ] {
@@ -1579,7 +1599,7 @@ fn senda_parkway(group: &mut Node, line: &[DVec2]) {
     let (a, b) = (middle - LANE_LINE / 2.0, middle + LANE_LINE / 2.0);
     for side in [-1.0, 1.0] {
         group.children.push(flat(
-            ribbon(line, side * a, side * b, STREET_TOP + 0.006, &nothing),
+            ribbon(line, side * a, side * b, STREET_TOP + PAINT_LIFT, &nothing),
             LANE_PAINT,
         ));
     }
@@ -2833,14 +2853,14 @@ fn cul_de_sac(group: &mut Node, street: Street, middle: DVec2, lawn: &Arc<crate:
     .build();
     asphalt.rotate_x(-FRAC_PI_2);
     let mut node = flat(asphalt, ASPHALT);
-    node.position = glam::DVec3::new(middle.x, STREET_TOP + 0.002, middle.y);
+    node.position = glam::DVec3::new(middle.x, STREET_TOP + CIRCLE_LIFT, middle.y);
     group.children.push(node);
     let (gutter, width) = (CUL_DE_SAC_RADIUS - GUTTER.0, half - GUTTER.0);
     let rings = [
         (
             gutter,
             CUL_DE_SAC_RADIUS,
-            STREET_TOP + 0.004,
+            STREET_TOP + GUTTER_LIFT,
             GUTTER.1,
             width,
         ),
@@ -2874,7 +2894,7 @@ fn cul_de_sac(group: &mut Node, street: Street, middle: DVec2, lawn: &Arc<crate:
         ring(
             middle,
             (island, island + ISLAND_GUTTER),
-            STREET_TOP + 0.004,
+            STREET_TOP + GUTTER_LIFT,
             &nothing,
         ),
         GUTTER.1,
@@ -3046,7 +3066,7 @@ fn front_yard_ground(group: &mut Node, lot: &Lot, k: usize, lawn: &Arc<crate::sc
         lot,
         (yard.garage, (yard.front + yard.sidewalk) / 2.0),
         (joint, yard.sidewalk - yard.front),
-        0.0565,
+        0.055 + JOINT_LIFT,
         CONCRETE_JOINT,
     );
     for share in DRIVEWAY_JOINTS {
@@ -3056,7 +3076,7 @@ fn front_yard_ground(group: &mut Node, lot: &Lot, k: usize, lawn: &Arc<crate::sc
             lot,
             (yard.garage, v),
             (yard.driveway - 0.06, joint),
-            0.0565,
+            0.055 + JOINT_LIFT,
             CONCRETE_JOINT,
         );
     }
