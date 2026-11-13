@@ -21,7 +21,6 @@ app-store = []
 
 [dependencies]
 sloppy-core.workspace = true
-glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 winit = "0.30"

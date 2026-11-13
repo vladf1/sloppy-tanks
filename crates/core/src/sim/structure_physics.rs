@@ -981,11 +981,12 @@ impl Simulation {
         let layout = state.layout.clone();
         let mut removed = Vec::new();
         let mut added = Vec::new();
-        for index in 0..layout.parts.len() {
-            match (gone.contains(index), state.colliders[index]) {
+        let parts = layout.parts.len();
+        for (index, collider) in state.colliders.iter_mut().enumerate().take(parts) {
+            match (gone.contains(index), *collider) {
                 (true, Some(handle)) => {
                     removed.push(handle);
-                    state.colliders[index] = None;
+                    *collider = None;
                 }
                 (false, None) => added.push(index),
                 _ => {}

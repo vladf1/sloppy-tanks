@@ -54,8 +54,8 @@ pub fn route_direction(simulation: &mut Simulation, tank_index: usize) -> Vec2 {
         .count();
     brain.path.drain(..arrived);
     let mut skip = 0;
-    for i in 1..LOOKAHEAD_WAYPOINTS.min(brain.path.len()) {
-        if !nav.clear_line(position, brain.path[i]) {
+    for (i, &waypoint) in brain.path.iter().enumerate().take(LOOKAHEAD_WAYPOINTS).skip(1) {
+        if !nav.clear_line(position, waypoint) {
             break;
         }
         skip = i;
