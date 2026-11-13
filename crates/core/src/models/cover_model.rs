@@ -19,7 +19,7 @@ use super::house_parts_model::{house_debris, structural_house};
 use super::imported_house::standing_entry;
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
-use super::senda_scenery::{is_yard_wall, patio_cover, street_lamp, yard_wall};
+use super::senda_scenery::{boundary_wall, is_yard_wall, patio_cover, street_lamp, yard_wall};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
@@ -38,7 +38,7 @@ use crate::sim::senda_entries::is_entry;
 use crate::sim::render_state::RenderCover;
 use crate::sim::arena::cover_turn;
 use crate::sim::senda_layout::{
-    is_trash_bin, street_lamp_look,
+    is_senda_paved, is_trash_bin, street_lamp_look,
     SENDA_FENCE_COLOR, SENDA_WALL_COLOR, WALL_THICKNESS, WallFace,
 };
 use crate::sim::senda_yards::{PatioCover, YARD_VIEW_COLOR, YARD_WALL_COLOR};
@@ -275,11 +275,24 @@ const TRACT_PILASTER_SPACING: f64 = 5.5;
 /// stands one there.
 const TRACT_END_PIECE: f64 = 0.36;
 
+/// Where the level's wall closes Senda Parkway, it stands as a line of precast concrete
+/// T-wall panels rather than a garden wall across the lanes: each panel's width (m) and the
+/// gap between panels, its stem's thickness (the drawn wall's) and its footing's height and
+/// depth (m, reaching outward under the cover's collider), in two weathered tones.
+const ROAD_PANEL: (f64, f64) = (1.2, 0.03);
+const ROAD_PANEL_FOOTING: (f64, f64) = (0.3, 0.7);
+const ROAD_PANEL_TONES: [u32; 2] = [0xaba89f, 0x9a978e];
+/// The concrete mow strip along the inside of the level's view fence (its width and top,
+/// m, and paint): the pale line that marks the level's edge from overhead.
+const MOW_STRIP: (f64, f64, u32) = (0.5, 0.05, 0xb8b2a5);
+
 /// Senda's edge, a run of the tract's own wall: capped split-face block, or along the
-/// open ground a black view fence on a low block base, both as the lots' walls are built,
-/// 0.2 m thick on the inside face of the run's cover (which keeps its depth outside it
-/// for the collider alone), from end to end of the run, with a capped pilaster every few
-/// metres and at both ends.
+/// open ground a black view fence on a low block base with a concrete mow strip inside
+/// it, both as the lots' walls are built (with lighter coursing), 0.2 m thick on the
+/// inside face of the run's cover (which keeps its depth outside it for the collider
+/// alone), from end to end of the run, with a capped pilaster every few metres and at
+/// both ends; where the run crosses Senda Parkway's paving, a line of road-closure
+/// T-walls instead.
 fn tract_wall(group: &mut Node, c: &CoverShape) {
     let Some(plan) = c.house_plan else {
         return;
@@ -293,11 +306,46 @@ fn tract_wall(group: &mut Node, c: &CoverShape) {
     let close = WALL_THICKNESS / thick;
     let (from, to) = (from - face.reach[0] * close, to + face.reach[1] * close);
     let across = face.inside * (thick - WALL_THICKNESS) / 2.0;
+    // A part `w` along the run by `d` across it, centred `u` along and `v` across.
+    let place_part = |group: &mut Node, part: Node, (u, v): (f64, f64), y: f64| {
+        let (x, z) = if long_x { (u, v) } else { (v, u) };
+        let mut part = part;
+        if !long_x {
+            part.rotation = glam::DQuat::from_rotation_y(std::f64::consts::FRAC_PI_2);
+        }
+        put(group, part, x, y, z);
+    };
+    if is_senda_paved(c.x, c.z) {
+        let (panel, gap) = ROAD_PANEL;
+        let (footing, deep) = ROAD_PANEL_FOOTING;
+        let count = ((to - from) / panel).round().max(1.0) as usize;
+        let pitch = (to - from) / count as f64;
+        // The footing's inner edge flush with the stem's inside face.
+        let out = across - face.inside * (deep - WALL_THICKNESS) / 2.0;
+        for k in 0..count {
+            let u = from + pitch * (k as f64 + 0.5);
+            let tone = ROAD_PANEL_TONES[k % ROAD_PANEL_TONES.len()];
+            let stem = box_part(pitch - gap, c.h - footing, WALL_THICKNESS, tone, 0.0);
+            place_part(group, stem, (u, across), footing + (c.h - footing) / 2.0);
+            let foot = box_part(pitch - gap, footing, deep, tone, 0.0);
+            place_part(group, foot, (u, out), footing / 2.0);
+        }
+        return;
+    }
     let color = if c.color == SENDA_FENCE_COLOR {
         YARD_VIEW_COLOR
     } else {
         YARD_WALL_COLOR
     };
+    if c.color == SENDA_FENCE_COLOR {
+        let (width, top, paint) = MOW_STRIP;
+        let mut strip = box_part(to - from, top, width, paint, 0.0);
+        if let Some(drawable) = &mut strip.drawable {
+            drawable.cast_shadow = false;
+        }
+        let v = across + face.inside * (WALL_THICKNESS + width) / 2.0;
+        place_part(group, strip, ((from + to) / 2.0, v), top / 2.0);
+    }
     let pieces = ((to - from) / TRACT_PILASTER_SPACING).ceil().max(1.0) as usize;
     let piece = (to - from) / pieces as f64;
     let mut place = |u: f64, length: f64| {
@@ -309,7 +357,7 @@ fn tract_wall(group: &mut Node, c: &CoverShape) {
             run.position = DVec3::new(across, 0.0, u);
             (WALL_THICKNESS, length)
         };
-        yard_wall(&mut run, (w, d, c.h), color, 0.0);
+        boundary_wall(&mut run, (w, d, c.h), color);
         group.children.push(run);
     };
     for k in 0..pieces {

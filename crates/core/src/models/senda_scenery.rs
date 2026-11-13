@@ -68,29 +68,37 @@ const STREET_HALF_WALK: f64 = crate::sim::senda_layout::STREET_HALF + PARKWAY + 
 /// and its vertices' spacing (m).
 const GROUND_EXTENT: f64 = 340.0;
 const GROUND_STEP: f64 = 2.75;
-/// Paving colours: weathered asphalt, sidewalk and kerb concrete, driveways a warmer
-/// broom-finished concrete, and Senda Parkway's planted median, mulch and shrubs under
-/// its trees.
-const ASPHALT: u32 = 0x4e5052;
+/// Paving colours: asphalt weathered to the light grey of the tract's streets (about
+/// two thirds as bright as the sidewalk), sidewalk and kerb concrete, driveways a warmer
+/// broom-finished concrete, and Senda Parkway's raised median, bark mulch under its
+/// shrubs and trees.
+const ASPHALT: u32 = 0x707274;
 const SIDEWALK_CONCRETE: u32 = 0xc4bfb3;
 const KERB: u32 = 0xd3cec2;
+/// The concrete gutter pan along every kerb's foot: its width (m) on the asphalt and its
+/// colour, a little darker than the kerb, which gives each street its light edge from
+/// above.
+const GUTTER: (f64, u32) = (0.4, 0xb0aa9e);
+/// The narrower pan round the turning circles' islands and along the splitter island.
+const ISLAND_GUTTER: f64 = 0.25;
 /// The walks' score lines: one every so far (m), their width (m) and colour.
 const WALK_SCORE: f64 = 1.4;
 const CONCRETE_JOINT_WIDTH: f64 = 0.025;
 const CONCRETE_JOINT: u32 = 0x958f83;
 /// The residential streets' paving seam (its offset from the middle and width, m) and
-/// crack sealant; their patches (length and width, m, about one every so far, m) of
-/// darker, newer asphalt.
+/// crack sealant; their utility trench patches (length along the street and width, m,
+/// about one every so far, m), long and narrow beside a gutter, only a shade darker than
+/// the asphalt round them so they never read as holes.
 const ASPHALT_SEAM: (f64, f64) = (0.45, 0.05);
-const ASPHALT_SEALED: u32 = 0x3c3e40;
-const ASPHALT_PATCH: (f64, f64) = (2.2, 1.3);
+const ASPHALT_SEALED: u32 = 0x65676a;
+const ASPHALT_PATCH: (f64, f64) = (4.4, 0.65);
 const ASPHALT_PATCH_STEP: f64 = 19.0;
-const ASPHALT_PATCH_DARK: u32 = 0x444648;
+const ASPHALT_PATCH_TONE: u32 = 0x6a6c6e;
 const DRIVEWAY: u32 = 0xbdb3a1;
 /// Where the driveways' cross joints fall, as shares from the garage door to the
 /// sidewalk.
 const DRIVEWAY_JOINTS: [f64; 3] = [0.34, 0.67, 1.0];
-const MEDIAN: u32 = 0x7e8a86;
+const MEDIAN: u32 = 0x6e604e;
 /// Slab thickness and kerb height and width (m).
 const SLAB: f64 = 0.05;
 const KERB_HEIGHT: f64 = 0.13;
@@ -252,13 +260,16 @@ const UMBRELLA_CANVAS: (u32, u32) = (0xd9cfb2, 0x9c4a36);
 /// radius (m).
 const POT: (f64, f64, u32) = (0.2, 0.3, 0xa65e3e);
 const POT_PLANT: f64 = 0.24;
-/// The front yards: the parkways' clipped lawn, brighter than the yards' (sRGB paint, a
-/// flat slab so its edges cut clean at the aprons), the front lawn panels, and the
-/// depth (m) of the dark planting bed along each house's front that they stop short of.
-/// The front lawns' and parkways' tint over the dry-grass tile, linear: a muted mid green.
-const FRONT_LAWN_TINT: [f32; 3] = [0.5, 0.86, 1.75];
-/// The bend park's kidney lawn (sRGB paint).
-const PARK_GRASS: u32 = 0x5c6a40;
+/// The mown lawns' tint (the front lawns, the parkways and the bend park's) over the
+/// packed-dirt tile, linear: a calm mid green. That tile's fine, low-contrast grain
+/// reads as close-mown turf; the dry-grass tile's leafy straw, pushed green, shimmered as
+/// the camera moved.
+const FRONT_LAWN_TINT: [f32; 3] = [0.23, 0.64, 0.95];
+/// The turning circles' islands: a lower, darker groundcover over the same tile.
+const ISLAND_GROUNDCOVER_TINT: [f32; 3] = [0.19, 0.52, 0.72];
+/// The mottle over a lawn: how much its brightness swells and falls over a few metres,
+/// and from cell to cell.
+const LAWN_MOTTLE: (f64, f64) = (0.07, 0.04);
 /// The house models' entry passage along the front corner away from the garage, its
 /// width on a [`HOUSE_WIDTH`] front (the models scale with their width), and how far (m)
 /// the entry walk runs into it under the steps.
@@ -288,10 +299,11 @@ const FRONT_BLOSSOM: [u32; 2] = [0xd8782c, 0xb8382c];
 const FRONT_AGAVE: (f64, f64) = (0.22, 0.3);
 /// The little park on the outside of Neblina's bend: its kidney lawn's half width and
 /// half depth as shares of the park's, and the bite out of its street side; the walk's
-/// width (m); the mulch of its beds; its benches' length and seat height (m) and wood.
+/// width (m); the bark mulch round it (a tint over the packed-dirt tile, linear); its
+/// benches' length and seat height (m) and wood.
 const PARK_LAWN: (f64, f64, f64) = (0.5, 0.48, 0.28);
 const PARK_WALK: f64 = 1.2;
-const PARK_MULCH: u32 = 0x6a5a45;
+const PARK_MULCH_TINT: [f32; 3] = [0.25, 0.32, 0.68];
 const BENCH: (f64, f64) = (1.3, 0.45);
 const BENCH_WOOD: u32 = 0x5a4632;
 /// The planted bed outside a row's end lot's view fence toward the street or the
@@ -518,11 +530,10 @@ const MAILBOX_PAINT: u32 = 0x4a554c;
 const MAILBOX_PAD: u32 = 0xc4bfb3;
 /// The turning circles' islands: low shrubs in a ring this share of the island's radius
 /// out from its tree, about this far apart (m), this size range (radius, m), over the
-/// island's groundcover.
+/// island's groundcover ([`ISLAND_GROUNDCOVER_TINT`]).
 const ISLAND_RING: f64 = 0.62;
 const ISLAND_SHRUB_STEP: f64 = 0.9;
 const ISLAND_SHRUB: (f64, f64) = (0.22, 0.32);
-const ISLAND_GROUNDCOVER: u32 = 0x5f7c3e;
 /// The dark bark mulch of the planting beds.
 const BED_MULCH: u32 = 0x5c4a36;
 /// The bank's crest beside Senda Parkway's path: a row of dark mulch basins, half discs
@@ -1018,6 +1029,72 @@ fn ribbon(line: &[DVec2], from: f64, to: f64, y: f64, skip: &dyn Fn(DVec2) -> bo
     Mesh::from_f64(&positions, &normals, &uvs, None)
 }
 
+/// A kerb's face: an upright strip along `line` at `at` metres to its left, from the
+/// asphalt's top to the kerb's, facing toward its left (`facing` +1) or right (-1), in the
+/// pieces [`ribbon`] cuts the kerb from `kerb.0` to `kerb.1` metres into and leaving out
+/// the same ones, so face and top end together.
+fn kerb_face(
+    line: &[DVec2],
+    at: f64,
+    kerb: (f64, f64),
+    facing: f64,
+    skip: &dyn Fn(DVec2) -> bool,
+) -> Mesh {
+    let n = line.len();
+    let normal = |i: usize| {
+        let along = (line[(i + 1).min(n - 1)] - line[i.saturating_sub(1)]).normalize();
+        left(along)
+    };
+    let mut wall = Wall::default();
+    for i in 0..n - 1 {
+        let (a, b) = (line[i], line[i + 1]);
+        let (na, nb) = (normal(i), normal(i + 1));
+        let pieces = (a.distance(b) / 1.0).ceil().max(1.0) as usize;
+        for k in 0..pieces {
+            let (t0, t1) = (k as f64 / pieces as f64, (k + 1) as f64 / pieces as f64);
+            let point = |t: f64, offset: f64| a.lerp(b, t) + na.lerp(nb, t).normalize() * offset;
+            if skip((point(t0, kerb.0) + point(t1, kerb.1)) / 2.0) {
+                continue;
+            }
+            let out = na.lerp(nb, (t0 + t1) / 2.0).normalize() * facing;
+            wall.quad(point(t0, at), point(t1, at), (STREET_TOP, KERB_HEIGHT), out);
+        }
+    }
+    wall.mesh()
+}
+
+/// Upright quads gathered into one flat-shaded mesh, world-aligned uvs like the paving's.
+#[derive(Default)]
+struct Wall {
+    positions: Vec<f64>,
+    normals: Vec<f64>,
+    uvs: Vec<f64>,
+}
+
+impl Wall {
+    /// The quad from `a` to `b` on the ground plan, `y0` to `y1` up, facing `out`.
+    fn quad(&mut self, a: DVec2, b: DVec2, (y0, y1): (f64, f64), out: DVec2) {
+        let corners = [(a, y0), (b, y0), (b, y1), (a, y1)];
+        // Counter-clockwise seen from its front: (b - a) × up points along (-dz, dx).
+        let along = b - a;
+        let order = if DVec2::new(-along.y, along.x).dot(out) > 0.0 {
+            [0, 1, 2, 0, 2, 3]
+        } else {
+            [0, 2, 1, 0, 3, 2]
+        };
+        for index in order {
+            let (p, y) = corners[index];
+            self.positions.extend([p.x, y, p.y]);
+            self.normals.extend([out.x, 0.0, out.y]);
+            self.uvs.extend([(p.x + p.y) / 4.0, y / 4.0]);
+        }
+    }
+
+    fn mesh(self) -> Mesh {
+        Mesh::from_f64(&self.positions, &self.normals, &self.uvs, None)
+    }
+}
+
 /// The score lines across a walk along `line` between `from` and `to` metres to its
 /// left: a thin dark joint every [`WALK_SCORE`] metres, at `y`, but where `skip` holds.
 fn score_lines(
@@ -1058,9 +1135,16 @@ fn score_lines(
 }
 
 /// A residential street's wear: the paving joint a little off its middle, where the two
-/// passes of the paver met (sealed darker), and a few patches of newer, darker asphalt
-/// over old trenches, one every so far along it. Senda Parkway, striped, keeps neither.
-fn asphalt_wear(group: &mut Node, street: Street, line: &[DVec2]) {
+/// passes of the paver met (sealed a shade darker), and a few long, narrow patches of
+/// newer asphalt over old utility trenches beside one gutter or the other, one every so
+/// far along it, but where `crossing` says it meets another street. Senda Parkway,
+/// striped, keeps neither.
+fn asphalt_wear(
+    group: &mut Node,
+    street: Street,
+    line: &[DVec2],
+    crossing: &dyn Fn(DVec2) -> bool,
+) {
     if street == Street::SendaParkway {
         return;
     }
@@ -1085,22 +1169,19 @@ fn asphalt_wear(group: &mut Node, street: Street, line: &[DVec2]) {
             ASPHALT_PATCH.0 * (0.6 + 0.8 * hash(seed)),
             ASPHALT_PATCH.1 * (0.6 + 0.8 * hash(seed + 0.4)),
         );
-        let (a, _) = trace.at(s);
-        let (b, _) = trace.at((s + length).min(trace.length()));
-        let middle = (hash(seed + 0.9) - 0.5) * (street.half() - width);
+        // Along the street's own curve, just clear of a gutter pan.
+        let patch = cut_line(&trace, s, (s + length).min(trace.length()));
+        let side = if hash(seed + 0.9) < 0.5 { -1.0 } else { 1.0 };
+        let middle = side * (street.half() - GUTTER.0 - 0.1 - width / 2.0);
         group.children.push(flat(
             ribbon(
-                &[a, b],
+                &patch,
                 middle - width / 2.0,
                 middle + width / 2.0,
                 STREET_TOP + 0.003,
-                &nothing,
+                crossing,
             ),
-            if k % 2 == 0 {
-                ASPHALT_PATCH_DARK
-            } else {
-                ASPHALT_SEALED
-            },
+            ASPHALT_PATCH_TONE,
         ));
         s += ASPHALT_PATCH_STEP * (0.7 + 0.6 * hash(seed + 1.7));
         k += 1;
@@ -1269,14 +1350,19 @@ fn paving() -> Node {
             ASPHALT,
         ));
         for side in [-1.0, 1.0] {
-            let kerb = ribbon(
+            let (inner, outer) = (side * half, side * (half + KERB_WIDTH));
+            let kerb = ribbon(line, inner, outer, KERB_HEIGHT, &crossing);
+            group.children.push(flat(kerb, KERB));
+            let face = kerb_face(line, inner, (inner, outer), -side, &crossing);
+            group.children.push(flat(face, KERB));
+            let gutter = ribbon(
                 line,
-                side * half,
-                side * (half + KERB_WIDTH),
-                KERB_HEIGHT,
+                side * (half - GUTTER.0),
+                inner,
+                STREET_TOP + 0.004,
                 &crossing,
             );
-            group.children.push(flat(kerb, KERB));
+            group.children.push(flat(gutter, GUTTER.1));
             // Senda Parkway's south side has the wide path past its groundcover.
             let (near, far) = if *street == Street::SendaParkway && side < 0.0 {
                 (half + WAY_PARKWAY, half + WAY_PARKWAY + WAY_PATH)
@@ -1288,13 +1374,16 @@ fn paving() -> Node {
             let joints = score_lines(line, (side * near, side * far), WALK_TOP + 0.002, &crossing);
             group.children.push(flat(joints, CONCRETE_JOINT));
         }
-        asphalt_wear(&mut group, *street, line);
+        asphalt_wear(&mut group, *street, line, &crossing);
         if *street == Street::SendaParkway {
             senda_parkway(&mut group, line);
         }
     }
-    for middle in &bulbs {
-        cul_de_sac(&mut group, *middle);
+    let lawn = lawn_material();
+    for street in Street::ALL {
+        if let Some(middle) = street.cul_de_sac() {
+            cul_de_sac(&mut group, street, middle, &lawn);
+        }
     }
     let lines = Lines::new();
     neblina_centre_line(&mut group);
@@ -1302,8 +1391,8 @@ fn paving() -> Node {
     greenbelt_path(&mut group, &lines);
     trails(&mut group, &lines);
     yard_grounds(&mut group, &lines.lots);
-    front_lawns(&mut group, &lines.lots);
-    bend_park_grounds(&mut group, &lines);
+    front_lawns(&mut group, &lines.lots, &lawn);
+    bend_park_grounds(&mut group, &lines, &lawn);
     west_park_grounds(&mut group, &lines);
     crest_basins(&mut group, &lines);
     batch(&mut group);
@@ -1330,7 +1419,7 @@ fn neblina_centre_line(group: &mut Node) {
     }
 }
 
-/// The kerbed splitter island in Neblina's mouth, planted with groundcover: round at its
+/// The kerbed splitter island in Neblina's mouth, mulched as the median is: round at its
 /// end toward Senda Parkway, tapering to a point down Neblina's centre line, in pieces
 /// this long (m).
 const ISLAND_PIECE: f64 = 0.25;
@@ -1350,7 +1439,10 @@ fn splitter_island(group: &mut Node) {
         }
     };
     let pieces = ((to - from) / ISLAND_PIECE).ceil() as usize;
+    // The gutter pan round its foot, its kerb and its mulch, each a little inside the
+    // last.
     for (grow, y, color) in [
+        (KERB_WIDTH + ISLAND_GUTTER, STREET_TOP + 0.004, GUTTER.1),
         (KERB_WIDTH, KERB_HEIGHT, KERB),
         (0.0, KERB_HEIGHT + 0.01, MEDIAN),
     ] {
@@ -1365,6 +1457,39 @@ fn splitter_island(group: &mut Node) {
             group.children.push(flat(quad(corners, y), color));
         }
     }
+    // The kerb's face round its outline, across its blunt nose and tail too.
+    let outline = |t: f64, sign: f64| {
+        let (point, along) = neblina.at(from + t);
+        point + left(along) * sign * (half(t) + KERB_WIDTH)
+    };
+    let mut face = Wall::default();
+    let length = to - from;
+    for k in 0..pieces {
+        let t0 = k as f64 * ISLAND_PIECE;
+        let t1 = (t0 + ISLAND_PIECE).min(length);
+        for sign in [-1.0, 1.0] {
+            let (a, b) = (outline(t0, sign), outline(t1, sign));
+            let along = b - a;
+            let out = DVec2::new(-along.y, along.x).normalize();
+            let axis = neblina.at(from + (t0 + t1) / 2.0).0;
+            let out = if out.dot((a + b) / 2.0 - axis) > 0.0 {
+                out
+            } else {
+                -out
+            };
+            face.quad(a, b, (STREET_TOP, KERB_HEIGHT), out);
+        }
+    }
+    for (t, outward) in [(0.0, -1.0), (length, 1.0)] {
+        let (_, along) = neblina.at(from + t);
+        face.quad(
+            outline(t, -1.0),
+            outline(t, 1.0),
+            (STREET_TOP, KERB_HEIGHT),
+            along * outward,
+        );
+    }
+    group.children.push(flat(face.mesh(), KERB));
 }
 
 /// Senda Parkway's raised median, kerbed, planted and mulched under its trees, and its
@@ -1385,14 +1510,11 @@ fn senda_parkway(group: &mut Node, line: &[DVec2]) {
             MEDIAN,
         ));
         for side in [-1.0, 1.0] {
-            let kerb = ribbon(
-                &span,
-                side * MEDIAN_HALF,
-                side * reach,
-                KERB_HEIGHT,
-                &nothing,
-            );
+            let (inner, outer) = (side * MEDIAN_HALF, side * reach);
+            let kerb = ribbon(&span, inner, outer, KERB_HEIGHT, &nothing);
             group.children.push(flat(kerb, KERB));
+            let face = kerb_face(&span, outer, (inner, outer), side, &nothing);
+            group.children.push(flat(face, KERB));
         }
         // A nose where the median meets the opening, not where it runs off the level.
         for (end, outward) in [(from, -1.0), (to, 1.0)] {
@@ -1408,6 +1530,18 @@ fn senda_parkway(group: &mut Node, line: &[DVec2]) {
                 nose(centre, out, (MEDIAN_HALF, reach), KERB_HEIGHT),
                 KERB,
             ));
+            let side = left(out);
+            let point = |k: usize| {
+                let angle = std::f64::consts::PI * k as f64 / NOSE_SEGMENTS as f64;
+                centre + (side * angle.cos() + out * angle.sin()) * reach
+            };
+            let mut face = Wall::default();
+            for k in 0..NOSE_SEGMENTS {
+                let (a, b) = (point(k), point(k + 1));
+                let outward = ((a + b) / 2.0 - centre).normalize();
+                face.quad(a, b, (STREET_TOP, KERB_HEIGHT), outward);
+            }
+            group.children.push(flat(face.mesh(), KERB));
         }
     }
     let half = Street::SendaParkway.half();
@@ -2638,44 +2772,146 @@ fn cul_de_sac_ends() -> Vec<(DVec2, DVec2)> {
         .collect()
 }
 
-/// A cul-de-sac's turning circle round `middle`, with its kerb ring and the planted
-/// island in its middle.
-fn cul_de_sac(group: &mut Node, middle: DVec2) {
-    let disc = |inner: f64, outer: f64, color: u32, y: f64| {
-        let mut geometry = RingGeometry {
-            inner_radius: inner,
-            outer_radius: outer,
-            theta_segments: 28,
-            ..RingGeometry::default()
-        }
-        .build();
-        geometry.rotate_x(-FRAC_PI_2);
-        let mut node = flat(geometry, color);
-        node.position = glam::DVec3::new(middle.x, y, middle.y);
-        node
+/// The pieces round a turning circle's rings: fine enough that the kerb and walk end
+/// close to the street they open onto.
+const RING_SEGMENTS: usize = 96;
+
+/// A cul-de-sac's turning circle round `middle`, at the end of `street`: its asphalt,
+/// gutter pan, kerb and sidewalk rings, open where the street comes in, and the planted
+/// island in its middle, kerbed and guttered round.
+fn cul_de_sac(group: &mut Node, street: Street, middle: DVec2, lawn: &Arc<crate::scene::Material>) {
+    let (line, half) = (street.line(), street.half());
+    let (_, inward) = line.at(line.length());
+    // Within `width` (m) of the street's centre line on its side of the circle: the
+    // mouth the rings stay out of.
+    let mouth = |width: f64| {
+        let line = &line;
+        move |p: DVec2| (p - middle).dot(inward) < 0.0 && line.distance(p) < width
     };
-    group
-        .children
-        .push(disc(0.0, CUL_DE_SAC_RADIUS, ASPHALT, STREET_TOP + 0.002));
-    group.children.push(disc(
-        CUL_DE_SAC_RADIUS,
-        CUL_DE_SAC_RADIUS + KERB_WIDTH,
+    let mut asphalt = RingGeometry {
+        inner_radius: 0.0,
+        outer_radius: CUL_DE_SAC_RADIUS,
+        theta_segments: 28,
+        ..RingGeometry::default()
+    }
+    .build();
+    asphalt.rotate_x(-FRAC_PI_2);
+    let mut node = flat(asphalt, ASPHALT);
+    node.position = glam::DVec3::new(middle.x, STREET_TOP + 0.002, middle.y);
+    group.children.push(node);
+    let (gutter, width) = (CUL_DE_SAC_RADIUS - GUTTER.0, half - GUTTER.0);
+    let rings = [
+        (
+            gutter,
+            CUL_DE_SAC_RADIUS,
+            STREET_TOP + 0.004,
+            GUTTER.1,
+            width,
+        ),
+        (
+            CUL_DE_SAC_RADIUS,
+            CUL_DE_SAC_RADIUS + KERB_WIDTH,
+            KERB_HEIGHT,
+            KERB,
+            half,
+        ),
+        (
+            CUL_DE_SAC_RADIUS + PARKWAY,
+            CUL_DE_SAC_RADIUS + PARKWAY + SIDEWALK,
+            WALK_TOP,
+            SIDEWALK_CONCRETE,
+            half + PARKWAY,
+        ),
+    ];
+    for (inner, outer, y, color, width) in rings {
+        group
+            .children
+            .push(flat(ring(middle, (inner, outer), y, &mouth(width)), color));
+    }
+    group.children.push(flat(
+        ring_face(middle, CUL_DE_SAC_RADIUS, -1.0, &mouth(half)),
         KERB,
-        KERB_HEIGHT,
     ));
-    let walk = CUL_DE_SAC_RADIUS + PARKWAY;
-    group
-        .children
-        .push(disc(walk, walk + SIDEWALK, SIDEWALK_CONCRETE, WALK_TOP));
-    group.children.push(disc(
-        CUL_DE_SAC_ISLAND,
-        CUL_DE_SAC_ISLAND + KERB_WIDTH,
+    let island = CUL_DE_SAC_ISLAND + KERB_WIDTH;
+    let nothing = |_: DVec2| false;
+    group.children.push(flat(
+        ring(
+            middle,
+            (island, island + ISLAND_GUTTER),
+            STREET_TOP + 0.004,
+            &nothing,
+        ),
+        GUTTER.1,
+    ));
+    group.children.push(flat(
+        ring(middle, (CUL_DE_SAC_ISLAND, island), KERB_HEIGHT, &nothing),
         KERB,
-        KERB_HEIGHT,
     ));
     group
         .children
-        .push(disc(0.0, CUL_DE_SAC_ISLAND, ISLAND_GROUNDCOVER, 0.1));
+        .push(flat(ring_face(middle, island, 1.0, &nothing), KERB));
+    let rim = |theta: f64| middle + DVec2::new(theta.cos(), theta.sin()) * CUL_DE_SAC_ISLAND;
+    let ground = lawn_fan(middle, &rim, 0.1, ISLAND_GROUNDCOVER_TINT);
+    group
+        .children
+        .push(shadow_receiver(Arc::new(ground), lawn.clone()));
+}
+
+/// A flat ring round `middle` from radius `inner` to `outer` at height `y`, in
+/// [`RING_SEGMENTS`] pieces, leaving out those whose middle `skip` says.
+fn ring(middle: DVec2, (inner, outer): (f64, f64), y: f64, skip: &dyn Fn(DVec2) -> bool) -> Mesh {
+    let mut positions: Vec<f64> = Vec::new();
+    for k in 0..RING_SEGMENTS {
+        let (a, b) = (ring_point(k, 1.0), ring_point(k + 1, 1.0));
+        if skip(middle + (a + b) * (inner + outer) / 4.0) {
+            continue;
+        }
+        let corners = [
+            middle + a * inner,
+            middle + a * outer,
+            middle + b * outer,
+            middle + b * inner,
+        ];
+        let [p, q, r, _] = corners;
+        // Up-facing when the corners turn clockwise seen from above (+z south).
+        let turn = (q.y - p.y) * (r.x - p.x) - (q.x - p.x) * (r.y - p.y);
+        let order = if turn > 0.0 {
+            [0, 1, 2, 0, 2, 3]
+        } else {
+            [0, 2, 1, 0, 3, 2]
+        };
+        for index in order {
+            positions.extend([corners[index].x, y, corners[index].y]);
+        }
+    }
+    let count = positions.len() / 3;
+    let normals: Vec<f64> = (0..count).flat_map(|_| [0.0, 1.0, 0.0]).collect();
+    let uvs: Vec<f64> = positions
+        .chunks(3)
+        .flat_map(|p| [p[0] / 4.0, p[2] / 4.0])
+        .collect();
+    Mesh::from_f64(&positions, &normals, &uvs, None)
+}
+
+/// A kerb's face round `middle` at `radius`, from the asphalt's top to the kerb's,
+/// facing out (`facing` +1) or in toward the middle (-1), in the pieces of [`ring`].
+fn ring_face(middle: DVec2, radius: f64, facing: f64, skip: &dyn Fn(DVec2) -> bool) -> Mesh {
+    let mut face = Wall::default();
+    for k in 0..RING_SEGMENTS {
+        let (a, b) = (ring_point(k, radius), ring_point(k + 1, radius));
+        if skip(middle + (a + b) / 2.0) {
+            continue;
+        }
+        let out = (a + b).normalize() * facing;
+        face.quad(middle + a, middle + b, (STREET_TOP, KERB_HEIGHT), out);
+    }
+    face.mesh()
+}
+
+/// The `k`th of [`RING_SEGMENTS`] points round a circle of `radius` about the origin.
+fn ring_point(k: usize, radius: f64) -> DVec2 {
+    let angle = std::f64::consts::TAU * k as f64 / RING_SEGMENTS as f64;
+    DVec2::new(angle.cos(), angle.sin()) * radius
 }
 
 /// A lot's front yard as the tract laid them out, in the lot's frame (`u` across, `v`
@@ -2926,17 +3162,19 @@ fn cut_line(line: &Line, from: f64, to: f64) -> Vec<DVec2> {
     points
 }
 
+/// The pieces of a median nose's half ring, its kerb's face following them.
+const NOSE_SEGMENTS: usize = 12;
+
 /// A round nose's half ring about `centre`, bulging toward `out`, from radius `inner`
 /// (0 for its top) to `outer`, flat at height `y`.
 fn nose(centre: DVec2, out: DVec2, (inner, outer): (f64, f64), y: f64) -> Mesh {
-    const SEGMENTS: usize = 12;
     let side = left(out);
     let point = |k: usize, radius: f64| {
-        let angle = std::f64::consts::PI * k as f64 / SEGMENTS as f64;
+        let angle = std::f64::consts::PI * k as f64 / NOSE_SEGMENTS as f64;
         centre + (side * angle.cos() + out * angle.sin()) * radius
     };
     let mut positions = Vec::new();
-    for k in 0..SEGMENTS {
+    for k in 0..NOSE_SEGMENTS {
         let corners = [
             point(k, inner.max(1e-3)),
             point(k, outer),
@@ -3031,12 +3269,8 @@ fn yard_grounds(group: &mut Node, lots: &[Lot]) {
 
 /// The front yards: the parkway's strip of clipped lawn between the kerb and the sidewalk
 /// across each lot (its driveway apron and entry walk laid over it), and each lot's front
-/// yard ([`front_yard_ground`]).
-fn front_lawns(group: &mut Node, lots: &[Lot]) {
-    let mut grass = ground_material(GroundKind::DryGrass);
-    grass.vertex_colors = true;
-    grass.color = crate::scene::Color(0xffffff);
-    let grass = Arc::new(grass);
+/// yard ([`front_yard_ground`]), their lawns in `lawn`.
+fn front_lawns(group: &mut Node, lots: &[Lot], lawn: &Arc<crate::scene::Material>) {
     for (k, lot) in lots.iter().enumerate() {
         let (u0, u1) = (lot.line_u(0), lot.line_u(1));
         let walk = lot.half_depth + lot.house.setback + SIDEWALK;
@@ -3049,14 +3283,71 @@ fn front_lawns(group: &mut Node, lots: &[Lot]) {
         );
         group
             .children
-            .push(shadow_receiver(Arc::new(mesh), grass.clone()));
-        front_yard_ground(group, lot, k, &grass);
+            .push(shadow_receiver(Arc::new(mesh), lawn.clone()));
+        front_yard_ground(group, lot, k, lawn);
     }
 }
 
-/// A lawn on `lot` round `(u, v)` of `(w, d)` (m) with its top `top` up: the dry-grass tile
-/// watered a muted mid green, mottled from cell to cell (a grid this fine, m) as a real
-/// lawn's patches of thicker and thinner grass are.
+/// The mown lawns' and planted islands' ground: the packed-dirt tile under vertex tints.
+fn lawn_material() -> Arc<crate::scene::Material> {
+    let mut surface = ground_material(GroundKind::PackedDirt);
+    surface.vertex_colors = true;
+    surface.color = crate::scene::Color(0xffffff);
+    Arc::new(surface)
+}
+
+/// A lawn's tone at `at`: `tint`, its brightness swelling and falling gently over a few
+/// metres and a little from cell to cell, as a real lawn's thicker and thinner patches.
+fn lawn_tone(at: DVec2, tint: [f32; 3]) -> [f32; 3] {
+    let (swell, grain) = LAWN_MOTTLE;
+    let mottle = 1.0
+        + swell * (at.x * 0.9 + at.y * 1.3).sin() * (at.y * 0.7 - at.x * 1.1).cos()
+        + grain * (hash(at.x * 3.1 + at.y * 7.7) - 0.5);
+    tint.map(|c| c * mottle as f32)
+}
+
+/// A round lawn: a fan about `centre` out to `rim(theta)`, with a ring halfway so its
+/// mottle has somewhere to vary, at height `y` in `tint`.
+fn lawn_fan(centre: DVec2, rim: &dyn Fn(f64) -> DVec2, y: f64, tint: [f32; 3]) -> Mesh {
+    const SEGMENTS: usize = 24;
+    let mut positions: Vec<f64> = vec![centre.x, y, centre.y];
+    let mut colors = vec![lawn_tone(centre, tint)];
+    for k in 0..SEGMENTS {
+        let edge = rim(std::f64::consts::TAU * k as f64 / SEGMENTS as f64);
+        for p in [centre.lerp(edge, 0.5), edge] {
+            positions.extend([p.x, y, p.y]);
+            colors.push(lawn_tone(p, tint));
+        }
+    }
+    let point = |i: u32| {
+        let i = i as usize * 3;
+        DVec2::new(positions[i], positions[i + 2])
+    };
+    let mut indices: Vec<u32> = Vec::new();
+    let mut triangle = |[a, b, c]: [u32; 3]| {
+        // Up-facing when the corners turn clockwise seen from above (+z south).
+        let (pa, pb, pc) = (point(a), point(b), point(c));
+        let turn = (pb.y - pa.y) * (pc.x - pa.x) - (pb.x - pa.x) * (pc.y - pa.y);
+        indices.extend(if turn > 0.0 { [a, b, c] } else { [a, c, b] });
+    };
+    for k in 0..SEGMENTS as u32 {
+        let next = (k + 1) % SEGMENTS as u32;
+        let (inner, outer) = (1 + 2 * k, 2 + 2 * k);
+        let (next_inner, next_outer) = (1 + 2 * next, 2 + 2 * next);
+        triangle([0, inner, next_inner]);
+        triangle([inner, outer, next_outer]);
+        triangle([inner, next_outer, next_inner]);
+    }
+    let count = positions.len() / 3;
+    let normals: Vec<f64> = (0..count).flat_map(|_| [0.0, 1.0, 0.0]).collect();
+    let mut mesh = Mesh::from_f64(&positions, &normals, &vec![0.0; count * 2], Some(indices));
+    ground_uvs(&mut mesh, 0.0, 0.0);
+    mesh.colors = colors;
+    mesh
+}
+
+/// A lawn on `lot` round `(u, v)` of `(w, d)` (m) with its top `top` up, in
+/// [`FRONT_LAWN_TINT`] mottled from cell to cell (a grid this fine, m) by [`lawn_tone`].
 const LAWN_CELL: f64 = 0.6;
 
 fn lawn_patch(lot: &Lot, (u, v): (f64, f64), (w, d): (f64, f64), top: f64) -> Mesh {
@@ -3073,10 +3364,7 @@ fn lawn_patch(lot: &Lot, (u, v): (f64, f64), (w, d): (f64, f64), top: f64) -> Me
                 v - d / 2.0 + d * j as f64 / rows as f64,
             );
             positions.extend([at.x, top, at.y]);
-            let mottle = 0.88
-                + 0.12 * (at.x * 0.9 + at.y * 1.3).sin() * (at.y * 0.7 - at.x * 1.1).cos()
-                + 0.1 * (hash(at.x * 3.1 + at.y * 7.7) - 0.5);
-            colors.push(FRONT_LAWN_TINT.map(|c| c * mottle as f32));
+            colors.push(lawn_tone(at, FRONT_LAWN_TINT));
         }
     }
     let mut indices: Vec<u32> = Vec::new();
@@ -3193,43 +3481,36 @@ fn bend_park(lines: &Lines) -> Option<Park> {
     })
 }
 
-/// The bend park's ground: bark mulch between its lot lines, its kidney lawn and the
-/// concrete walk curving round it from the sidewalk and back.
-fn bend_park_grounds(group: &mut Node, lines: &Lines) {
+/// The bend park's ground: bark mulch between its lot lines, its kidney lawn (mown, as
+/// the front lawns, in `lawn` with them, the mulch on the same tile) and the concrete walk
+/// curving round it from the sidewalk and back.
+fn bend_park_grounds(group: &mut Node, lines: &Lines, lawn: &Arc<crate::scene::Material>) {
     let Some(park) = bend_park(lines) else {
         return;
     };
+    let mut mulch = quad(park.corners, 0.026);
+    ground_uvs(&mut mulch, 0.0, 0.0);
+    mulch.colors = mulch
+        .positions
+        .iter()
+        .map(|p| {
+            lawn_tone(
+                DVec2::new(f64::from(p[0]), f64::from(p[2])),
+                PARK_MULCH_TINT,
+            )
+        })
+        .collect();
     group
         .children
-        .push(flat(quad(park.corners, 0.026), PARK_MULCH));
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    const SEGMENTS: usize = 36;
-    let rim = |k: usize| {
-        let theta = std::f64::consts::TAU * k as f64 / SEGMENTS as f64;
+        .push(shadow_receiver(Arc::new(mulch), lawn.clone()));
+    let rim = |theta: f64| {
         let r = park.lawn(theta);
         park.at(theta.cos() * r, theta.sin() * r)
     };
-    for k in 0..SEGMENTS {
-        let (a, b) = (rim(k), rim(k + 1));
-        let middle = park.middle;
-        let turn = (a.y - middle.y) * (b.x - middle.x) - (a.x - middle.x) * (b.y - middle.y);
-        let triangle = if turn > 0.0 {
-            [middle, a, b]
-        } else {
-            [middle, b, a]
-        };
-        for p in triangle {
-            positions.extend([p.x, 0.036, p.y]);
-            normals.extend([0.0, 1.0, 0.0]);
-            uvs.extend([p.x / 4.0, p.y / 4.0]);
-        }
-    }
-    group.children.push(flat(
-        Mesh::from_f64(&positions, &normals, &uvs, None),
-        PARK_GRASS,
-    ));
+    let grass = lawn_fan(park.middle, &rim, 0.036, FRONT_LAWN_TINT);
+    group
+        .children
+        .push(shadow_receiver(Arc::new(grass), lawn.clone()));
     let nothing = |_: DVec2| false;
     group.children.push(flat(
         ribbon(
@@ -5145,6 +5426,32 @@ pub fn is_yard_wall(color: u32) -> bool {
 /// block piers. Each is built along x and turned a quarter more where the box runs along
 /// z.
 pub fn yard_wall(group: &mut Node, (w, d, h): (f64, f64, f64), color: u32, turn: f64) {
+    wall_run(group, (w, d, h), color, turn, Coursing::Full);
+}
+
+/// A run of the level's own wall, built as a lot's ([`yard_wall`]) but with only every
+/// other bed joint and no head joints: the long boundary is seen from further off, where
+/// the finer joints fall under a pixel and only shimmer.
+pub fn boundary_wall(group: &mut Node, (w, d, h): (f64, f64, f64), color: u32) {
+    wall_run(group, (w, d, h), color, 0.0, Coursing::Sparse);
+}
+
+/// How much of the block's coursing a wall draws.
+#[derive(Clone, Copy, PartialEq)]
+enum Coursing {
+    /// A bed joint under every course and the head joints in running bond.
+    Full,
+    /// A bed joint under every second course alone.
+    Sparse,
+}
+
+fn wall_run(
+    group: &mut Node,
+    (w, d, h): (f64, f64, f64),
+    color: u32,
+    turn: f64,
+    coursing: Coursing,
+) {
     group.rotation = DQuat::from_rotation_y(turn);
     let (length, thick) = if w >= d { (w, d) } else { (d, w) };
     let mut run = Node::default();
@@ -5153,9 +5460,9 @@ pub fn yard_wall(group: &mut Node, (w, d, h): (f64, f64, f64), color: u32, turn:
     }
     match color {
         YARD_GATE_COLOR => gate_return(&mut run, length, h),
-        YARD_VIEW_COLOR => view_fence_run(&mut run, length, thick, h),
-        YARD_PERIMETER_COLOR => block_run(&mut run, length, thick, h, PERIMETER_BLOCK),
-        _ => block_run(&mut run, length, thick, h, LOT_BLOCK),
+        YARD_VIEW_COLOR => view_fence_run(&mut run, length, thick, h, coursing),
+        YARD_PERIMETER_COLOR => block_run(&mut run, length, thick, h, PERIMETER_BLOCK, coursing),
+        _ => block_run(&mut run, length, thick, h, LOT_BLOCK, coursing),
     }
     group.children.push(run);
 }
@@ -5220,11 +5527,13 @@ fn pilaster(run: &mut Node, (side, deep): (f64, f64), u: f64, top: f64, look: Bl
 
 /// The block's coursing over a wall `length` long and `thick` across, from the ground to
 /// `top`: a bed joint under each course across both faces, and the head joints between
-/// its blocks in running bond, flat strips on both faces in one mesh.
-fn coursing(run: &mut Node, length: f64, thick: f64, top: f64, look: BlockLook) {
+/// its blocks in running bond, flat strips on both faces in one mesh; or, `Sparse`, a
+/// bed joint under every second course alone.
+fn coursing(run: &mut Node, length: f64, thick: f64, top: f64, look: BlockLook, detail: Coursing) {
     let (joint, proud, _) = BLOCK_JOINT;
     let paint_of = look.joint;
-    let mut y = BLOCK_COURSE;
+    let courses = if detail == Coursing::Sparse { 2.0 } else { 1.0 };
+    let mut y = BLOCK_COURSE * courses;
     while y < top - 0.05 {
         along(
             run,
@@ -5232,7 +5541,10 @@ fn coursing(run: &mut Node, length: f64, thick: f64, top: f64, look: BlockLook) 
             0.0,
             y,
         );
-        y += BLOCK_COURSE;
+        y += BLOCK_COURSE * courses;
+    }
+    if detail == Coursing::Sparse {
+        return;
     }
     let mut positions: Vec<f64> = Vec::new();
     let mut normals: Vec<f64> = Vec::new();
@@ -5281,7 +5593,7 @@ fn coursing(run: &mut Node, length: f64, thick: f64, top: f64, look: BlockLook) 
 
 /// A run of split-face block under its cap, with a capped pilaster at its start, so one
 /// stands at every joint between runs and at the lot lines' corners.
-fn block_run(run: &mut Node, length: f64, thick: f64, h: f64, look: BlockLook) {
+fn block_run(run: &mut Node, length: f64, thick: f64, h: f64, look: BlockLook, detail: Coursing) {
     let cap = YARD_WALL_CAP.0;
     along(
         run,
@@ -5290,7 +5602,7 @@ fn block_run(run: &mut Node, length: f64, thick: f64, h: f64, look: BlockLook) {
         (h - cap) / 2.0,
     );
     wall_cap(run, length, thick, h, look);
-    coursing(run, length, thick, h - cap, look);
+    coursing(run, length, thick, h - cap, look, detail);
     let (side, out, rise) = PILASTER;
     pilaster(
         run,
@@ -5304,7 +5616,7 @@ fn block_run(run: &mut Node, length: f64, thick: f64, h: f64, look: BlockLook) {
 /// A run of tubular steel view fence: black pickets between a bottom and a top rail over
 /// a low capped block base, between capped block pilasters at its start and, on a long
 /// run, its middle.
-fn view_fence_run(run: &mut Node, length: f64, thick: f64, h: f64) {
+fn view_fence_run(run: &mut Node, length: f64, thick: f64, h: f64, detail: Coursing) {
     let cap = YARD_WALL_CAP.0;
     along(
         run,
@@ -5313,7 +5625,7 @@ fn view_fence_run(run: &mut Node, length: f64, thick: f64, h: f64) {
         (VIEW_BASE - cap) / 2.0,
     );
     wall_cap(run, length, thick, VIEW_BASE, LOT_BLOCK);
-    coursing(run, length, thick, VIEW_BASE - cap, LOT_BLOCK);
+    coursing(run, length, thick, VIEW_BASE - cap, LOT_BLOCK, detail);
     let (side, out, rise) = PILASTER;
     let mut posts = vec![-length / 2.0 + side / 2.0];
     if length > VIEW_FENCE.2 {
@@ -5328,21 +5640,53 @@ fn view_fence_run(run: &mut Node, length: f64, thick: f64, h: f64) {
     }
     let (picket, spacing) = PICKETS;
     let tall = h - VIEW_BASE - 0.02;
+    let mut sites = Vec::new();
     let mut u = -length / 2.0 + side + spacing / 2.0;
     while u < length / 2.0 - spacing / 3.0 {
         if posts
             .iter()
             .all(|&post| (u - post).abs() > side / 2.0 + 0.02)
         {
-            along(
-                run,
-                box_part(picket, tall, picket, FENCE_STEEL, 0.0),
-                u,
-                VIEW_BASE + tall / 2.0,
-            );
+            sites.push(u);
         }
         u += spacing;
     }
+    if !sites.is_empty() {
+        run.children.push(shadowed(
+            Arc::new(pickets(&sites, picket, (VIEW_BASE, VIEW_BASE + tall))),
+            paint(FENCE_STEEL),
+        ));
+    }
+}
+
+/// A run's pickets, `side` square at each of `sites` along x, from `y0` to `y1`: their
+/// four sides alone in one mesh, since their ends sit on the base's cap and under a
+/// pixel at the top.
+fn pickets(sites: &[f64], side: f64, (y0, y1): (f64, f64)) -> Mesh {
+    let half = side / 2.0;
+    let mut positions: Vec<f64> = Vec::with_capacity(sites.len() * 16 * 3);
+    let mut normals: Vec<f64> = Vec::with_capacity(sites.len() * 16 * 3);
+    let mut indices: Vec<u32> = Vec::with_capacity(sites.len() * 24);
+    // Each face's two bottom corners (x, z) seen from outside it, left to right, and its
+    // normal.
+    let faces = [
+        ([(-half, half), (half, half)], [0.0, 0.0, 1.0]),
+        ([(half, half), (half, -half)], [1.0, 0.0, 0.0]),
+        ([(half, -half), (-half, -half)], [0.0, 0.0, -1.0]),
+        ([(-half, -half), (-half, half)], [-1.0, 0.0, 0.0]),
+    ];
+    for &u in sites {
+        for ([(x0, z0), (x1, z1)], normal) in faces {
+            let first = (positions.len() / 3) as u32;
+            for (x, y, z) in [(x0, y0, z0), (x1, y0, z1), (x1, y1, z1), (x0, y1, z0)] {
+                positions.extend([u + x, y, z]);
+                normals.extend(normal);
+            }
+            indices.extend([0, 1, 2, 0, 2, 3].map(|k| first + k));
+        }
+    }
+    let uvs = vec![0.0; positions.len() / 3 * 2];
+    Mesh::from_f64(&positions, &normals, &uvs, Some(indices))
 }
 
 /// A gate return: stained boards between two capped block piers.
