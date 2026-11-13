@@ -180,7 +180,9 @@ checks and the engine fixtures (`scripts/README.md`). Keep them passing: fix or 
 check that no longer matches the game rather than leaving it broken. Checks launch headless
 Chrome
 through the shared `headless` flag so they never pop windows over the user's desktop;
-only `SLOPPY_HEADED=1` opens a visible window.
+only `SLOPPY_HEADED=1` opens a visible window. Open their browser with `launchChrome`:
+headless Chrome on macOS takes the Mac's real pointer when a page locks it (first
+person does), so `launchChrome` gives every page a pointer lock of its own.
 
 A second review of a branch comes from the Codex CLI, run non-interactively and
 read-only on `gpt-6-astra` at `xhigh` effort (`codex review` alone runs at `max`,
