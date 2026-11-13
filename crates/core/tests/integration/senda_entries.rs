@@ -2,6 +2,9 @@
 //! clear of its driveway, the street's paving, its neighbours and every other cover; a tank
 //! cannot path through one, the street before it stays open, and one brought down leaves
 //! its house standing and its ground free.
+//!
+//! The layout is measured in its design metres (`senda_design_layout`); a simulation's
+//! cover and navigation stand `SENDA_SCALE` times larger.
 
 use glam::DVec2;
 use sloppy_core::sim::arena::{CoverDef, cover_turn};
@@ -12,8 +15,8 @@ use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::senda_entries::{entry_place, is_entry};
 use sloppy_core::sim::senda_layout::{
-    CUL_DE_SAC_RADIUS, PARKWAY, SENDA_MAP, SENDA_PICKUPS, SIDEWALK, SendaHouse, Street, lamp_sites,
-    senda_houses,
+    CUL_DE_SAC_RADIUS, PARKWAY, SENDA_MAP, SENDA_PICKUPS, SENDA_SCALE, SIDEWALK, SendaHouse,
+    Street, lamp_sites, senda_design_layout, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{front_openings, senda_lots};
 use sloppy_core::sim::{Cover, CoverKind, Simulation, Team};
@@ -25,6 +28,9 @@ const TOUCH: f64 = 0.02;
 const ARRIVAL: f64 = 1.8;
 /// Half a navigation cell (m): a cell's centre lies this near a point in it.
 const HALF_CELL: f64 = 0.75;
+/// Quarter-metre steps (design) from a sidewalk's middle across its outer half, the
+/// parkway and into the street.
+const STREET_STEPS: u8 = 12;
 
 fn senda(seed: f64) -> Simulation {
     let streets = extra_level(MapId::Neighborhood).expect("the Neighborhood has its own streets");
@@ -124,6 +130,18 @@ impl Box2 {
     }
 }
 
+/// A house as it stands in the world.
+fn standing(house: &SendaHouse) -> SendaHouse {
+    SendaHouse {
+        x: house.x * SENDA_SCALE,
+        z: house.z * SENDA_SCALE,
+        w: house.w * SENDA_SCALE,
+        d: house.d * SENDA_SCALE,
+        h: house.h * SENDA_SCALE,
+        ..*house
+    }
+}
+
 fn house_box(house: &SendaHouse) -> Box2 {
     Box2::of(
         CoverKind::House,
@@ -155,7 +173,7 @@ fn entry_of<'a>(layout: &'a [CoverDef], house: &SendaHouse) -> Vec<&'a CoverDef>
 #[test]
 fn every_home_has_one_entry_against_its_front_and_clear_of_its_drive_the_street_and_its_neighbours()
 {
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     let houses = senda_houses();
     assert_eq!(
         entries(&layout).len(),
@@ -288,14 +306,17 @@ fn entries_block_tanks_and_leave_the_street_before_them_open() {
     }
     let way_past = |sim: &mut Simulation, lot: &sloppy_core::sim::senda_yards::Lot| {
         let v = lot.half_depth + lot.house.setback + SIDEWALK / 2.0;
+        // From the sidewalk's middle at each lot line, out toward the street to the first
+        // open cell (a cell on the house's side may be a pocket beside the entry).
         let ends = [-1.0, 1.0].map(|side| {
-            let p = lot.at(side * lot.half_width, v);
-            let p = Vec2::new(p.x, p.y);
-            if sim.nav.is_blocked(p) {
-                sim.nav.point(sim.nav.nearest(sim.nav.index(p)))
-            } else {
-                p
-            }
+            let at = |out: f64| {
+                let p = lot.at(side * lot.half_width, v + out) * SENDA_SCALE;
+                Vec2::new(p.x, p.y)
+            };
+            (0..=STREET_STEPS)
+                .map(|step| at(f64::from(step) * 0.25))
+                .find(|&p| !sim.nav.is_blocked(p))
+                .unwrap_or_else(|| sim.nav.point(sim.nav.nearest(sim.nav.index(at(0.0)))))
         });
         let path = sim.nav.find(ends[0], ends[1]);
         path.last()
@@ -338,6 +359,7 @@ fn an_entry_brought_down_leaves_its_house_standing_and_its_ground_free() {
     let houses = senda_houses();
     let mut freed = 0;
     for house in &houses {
+        let house = &standing(house);
         let house_index = sim
             .covers
             .iter()
@@ -367,7 +389,7 @@ fn an_entry_brought_down_leaves_its_house_standing_and_its_ground_free() {
         let around: Vec<Vec2> = (-3..=3)
             .flat_map(|i| (-3..=3).map(move |j| (i, j)))
             .map(|(i, j)| {
-                let p = entry.centre + DVec2::new(f64::from(i), f64::from(j)) * 1.5;
+                let p = entry.centre + DVec2::new(f64::from(i), f64::from(j)) * 2.0 * HALF_CELL;
                 sim.nav.point(sim.nav.index(Vec2::new(p.x, p.y)))
             })
             .filter(|p| near(DVec2::new(p.x, p.z)) && alone(DVec2::new(p.x, p.z)))
@@ -422,7 +444,9 @@ fn a_shell_from_the_street_strikes_an_entry() {
     let house = houses
         .iter()
         .find(|house| house.plan.style == REFERENCE_HOUSE)
+        .map(standing)
         .expect("the reference house");
+    let house = &house;
     let index = sim
         .covers
         .iter()

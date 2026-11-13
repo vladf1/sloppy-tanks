@@ -1,6 +1,10 @@
 //! Senda: its houses front their streets in rows that leave every spawn, pickup and
 //! flank lane clear and reachable from both spawn lines, its houses are the
 //! neighbourhood's three types built of parts, and a house falls like the village's.
+//!
+//! The level is laid out in design metres and stands `SENDA_SCALE` times larger: its
+//! layout's own measures are read in design metres (`senda_design_layout`), what a
+//! simulation does in the world's ([`world`], [`design`]).
 
 use crate::support;
 
@@ -17,13 +21,12 @@ use sloppy_core::sim::level_rules::standard_rules;
 use sloppy_core::sim::map_options::{MapId, is_extra_level};
 use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::model_data::ARENA;
-use sloppy_core::sim::navigation::GRID_SIZE;
 use sloppy_core::sim::senda_layout::{
     CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, HOUSE_DEPTH, LOT_PITCH, Line, PARKWAY, Row,
-    SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_WALL_COLOR, SETBACK, SIDE_YARD, SIDEWALK,
-    STREET_HALF, SendaHouse, Street, WALL_THICKNESS, WallFace, bend_park, faces_circle,
+    SENDA_FENCE_COLOR, SENDA_MAP, SENDA_PICKUPS, SENDA_SCALE, SENDA_WALL_COLOR, SETBACK, SIDE_YARD,
+    SIDEWALK, STREET_HALF, SendaHouse, Street, WALL_THICKNESS, WallFace, bend_park, faces_circle,
     greenbelt_mouth, house_front, inside_boundary, is_senda_paved, left, neblina_bend, paseos,
-    past_sidewalk, senda_boundary, senda_houses,
+    past_sidewalk, senda_boundary, senda_design_layout, senda_houses,
 };
 use sloppy_core::sim::senda_yards::{
     YARD_GATE_COLOR, YARD_PERIMETER_COLOR, YARD_VIEW_COLOR, YARD_WALL_COLOR, back_yard,
@@ -42,6 +45,16 @@ fn senda(seed: f64) -> Simulation {
     Simulation::new(seed, standard_rules().merged(streets))
 }
 
+/// A design point where it stands in the world.
+fn world(at: DVec2) -> Vec2 {
+    Vec2::new(at.x * SENDA_SCALE, at.y * SENDA_SCALE)
+}
+
+/// A world point in design metres.
+fn design(at: Vec2) -> DVec2 {
+    DVec2::new(at.x, at.z) / SENDA_SCALE
+}
+
 #[test]
 fn the_neighborhood_is_a_standard_map_with_its_own_streets() {
     assert!(!is_extra_level(MapId::Neighborhood));
@@ -57,8 +70,8 @@ fn every_spawn_pickup_and_flank_is_clear_and_reachable_from_both_spawn_lines() {
     let points = assert_spawns_and_pickups_clear(&mut sim);
     let layout = (SENDA_MAP.layout)();
     let starts = [
-        spawn_positions(Team::Blue, 1.0)[0],
-        spawn_positions(Team::Red, 1.0)[0],
+        spawn_positions(Team::Blue, SENDA_SCALE)[0],
+        spawn_positions(Team::Red, SENDA_SCALE)[0],
     ];
     // The bots' flank waypoints and the line they patrol along each side: one in a
     // house or a yard sends a bot to the nearest open cell, which lies inside the wall
@@ -66,11 +79,11 @@ fn every_spawn_pickup_and_flank_is_clear_and_reachable_from_both_spawn_lines() {
     let boundary = senda_boundary();
     let patrol = [-20.0, 20.0]
         .into_iter()
-        .flat_map(|x| [-38.0, 0.0, 38.0].map(|z| Vec2::new(x, z)))
+        .flat_map(|x| [-38.0, 0.0, 38.0].map(|z| world(DVec2::new(x, z))))
         .chain(
             [-46.0, 46.0]
                 .into_iter()
-                .flat_map(|x| [-44.0, -22.0, 0.0, 22.0, 44.0].map(|z| Vec2::new(x, z))),
+                .flat_map(|x| [-44.0, -22.0, 0.0, 22.0, 44.0].map(|z| world(DVec2::new(x, z)))),
         );
     for waypoint in patrol {
         let goal = if sim.nav.is_blocked(waypoint) {
@@ -79,7 +92,7 @@ fn every_spawn_pickup_and_flank_is_clear_and_reachable_from_both_spawn_lines() {
             waypoint
         };
         assert!(
-            inside_boundary(&boundary, DVec2::new(goal.x, goal.z)),
+            inside_boundary(&boundary, design(goal)),
             "the waypoint {waypoint:?} sends bots past the wall to {goal:?}"
         );
         for start in starts {
@@ -294,8 +307,10 @@ fn gap(a: &[DVec2; 4], b: &[DVec2; 4]) -> f64 {
 fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold() {
     let houses = senda_houses();
     // Every pair of neighbours keeps the tract's side yard between their walls (3-3.5 m,
-    // about a quarter of a house's width), and most stand no further apart: too narrow
-    // for a tank, which crosses a block only by breaching it.
+    // about a quarter of a house's width), and most stand no further apart: as the level
+    // stands, no wider than a tank's hull and a quarter metre each side, too narrow to
+    // steer a tank through (its gates close it anyway), which crosses a block only by
+    // breaching it.
     let footprints: Vec<[DVec2; 4]> = houses.iter().map(corners).collect();
     let hull =
         sloppy_core::sim::tank_dimensions::tank_hull(sloppy_core::sim::VehicleKind::Balanced)
@@ -312,13 +327,13 @@ fn the_houses_stand_detached_with_side_yards_in_rows_as_long_as_the_streets_hold
             );
             if yard < 3.0 {
                 neighbours += 1;
-                tight += usize::from(yard < hull);
+                tight += usize::from(yard * SENDA_SCALE < hull + 0.5);
             }
         }
     }
     assert!(
         tight * 10 > neighbours * 8,
-        "{tight} of {neighbours} side yards narrower than a {hull:.2} m hull"
+        "{tight} of {neighbours} side yards too narrow for a {hull:.2} m hull"
     );
     // The rows: Rumbo's north and south sides, Gaviota's (with the houses on the inside
     // of Neblina's curve), and Neblina's west side from Senda Parkway round the outside
@@ -417,7 +432,7 @@ fn a_walled_paseo_leads_from_the_west_field_through_neblinas_west_row() {
         (-8.0..8.0).contains(&middle.y),
         "the paseo at {middle:?} is not near the row's middle"
     );
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     let walls: Vec<_> = layout
         .iter()
         .filter(|c| c.kind == CoverKind::Concrete && c.color == YARD_WALL_COLOR)
@@ -443,8 +458,8 @@ fn a_walled_paseo_leads_from_the_west_field_through_neblinas_west_row() {
         }
     }
     let mut sim = senda(23.0);
-    let from = spawn_positions(Team::Blue, 1.0)[2];
-    let to = Vec2::new(paseo.sidewalk.x, paseo.sidewalk.y);
+    let from = spawn_positions(Team::Blue, SENDA_SCALE)[2];
+    let to = world(paseo.sidewalk);
     let path = sim.nav.find(from, to);
     assert!(
         path.last().is_some_and(|end| distance(*end, to) < ARRIVAL),
@@ -740,7 +755,7 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
         assert!(inside_boundary(&boundary, at), "{at:?} past the wall");
     }
     // The wall is drawn: boundary cover stands along every run.
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     let walls = layout
         .iter()
         .filter(|c| c.kind == CoverKind::Boundary)
@@ -820,7 +835,7 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
         (-1, 1),
         (-1, -1),
     ];
-    let cell_of = |at: DVec2| sim.nav.index(Vec2::new(at.x, at.y));
+    let cell_of = |at: DVec2| sim.nav.index(world(at));
     for &pad in &pads {
         let start = cell_of(pad);
         let mut seen = vec![false; sim.nav.blocked.len()];
@@ -829,13 +844,16 @@ fn the_wall_closes_round_every_house_spawn_and_pickup_and_no_tank_can_leave() {
         while let Some(cell) = open.pop() {
             let point = sim.nav.point(cell);
             assert!(
-                inside_boundary(&boundary, DVec2::new(point.x, point.z)),
+                inside_boundary(&boundary, design(point)),
                 "a tank from {pad:?} gets out at {point:?}"
             );
-            let (x, z) = ((cell % GRID_SIZE) as i64, (cell / GRID_SIZE) as i64);
+            let (x, z) = (
+                (cell % sim.nav.grid_size()) as i64,
+                (cell / sim.nav.grid_size()) as i64,
+            );
             for (dx, dz) in neighbours {
                 let (nx, nz) = (x + dx, z + dz);
-                let size = GRID_SIZE as i64;
+                let size = sim.nav.grid_size() as i64;
                 if nx < 0 || nz < 0 || nx >= size || nz >= size {
                     continue;
                 }
@@ -1017,7 +1035,7 @@ fn the_greenbelt_lane_runs_open_from_neblina_to_the_hillside() {
         "the lane's west end at {west:?} is not on Neblina's sidewalk"
     );
     assert!(east.x >= ARENA - 1.0, "the lane ends at {east:?}");
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     for &p in lane.iter().filter(|p| p.x < ARENA - 3.0) {
         for c in &layout {
             let room = cover_distance(c, p);
@@ -1031,7 +1049,7 @@ fn the_greenbelt_lane_runs_open_from_neblina_to_the_hillside() {
         }
     }
     let mut sim = senda(23.0);
-    let (from, to) = (Vec2::new(west.x, west.y), Vec2::new(east.x - 3.0, east.y));
+    let (from, to) = (world(west), world(DVec2::new(east.x - 3.0, east.y)));
     let path = sim.nav.find(from, to);
     assert!(
         path.last().is_some_and(|end| distance(*end, to) < ARRIVAL),
@@ -1040,13 +1058,13 @@ fn the_greenbelt_lane_runs_open_from_neblina_to_the_hillside() {
     let line = Line(lane.clone());
     for p in &path {
         assert!(
-            line.distance(DVec2::new(p.x, p.z)) < 5.0,
+            line.distance(design(*p)) < 5.0,
             "the way down the lane strays to {p:?}"
         );
     }
     let length = route_length(from, &path);
     assert!(
-        length < Line(lane).length() * 1.2,
+        length < Line(lane).length() * SENDA_SCALE * 1.2,
         "the way down the lane runs {length:.0} m"
     );
 }
@@ -1153,7 +1171,12 @@ fn the_rows_run_on_round_true_size_turning_circles_whose_far_ends_open_onto_the_
 #[test]
 fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island() {
     let houses = senda_houses();
+    // The tank's own size against the circle as it stands in the world.
     let layout = (SENDA_MAP.layout)();
+    let (island, radius) = (
+        CUL_DE_SAC_ISLAND * SENDA_SCALE,
+        CUL_DE_SAC_RADIUS * SENDA_SCALE,
+    );
     let sim = senda(5.0);
     let hull =
         sloppy_core::sim::tank_dimensions::tank_hull(sloppy_core::sim::VehicleKind::Balanced).size;
@@ -1164,11 +1187,11 @@ fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island(
         (width - 1.95).abs() < 0.05 && (length - 4.27).abs() < 0.05,
         "{hull:?}"
     );
-    let drive = (CUL_DE_SAC_ISLAND + CUL_DE_SAC_RADIUS) / 2.0;
+    let drive = (island + radius) / 2.0;
     let inner = drive - width / 2.0;
     let outer = (drive + width / 2.0).hypot(length / 2.0);
     assert!(
-        inner > CUL_DE_SAC_ISLAND + 0.2 && outer < CUL_DE_SAC_RADIUS - 0.2,
+        inner > island + 0.2 && outer < radius - 0.2,
         "a Bruiser round the island spans {inner:.2} to {outer:.2} m"
     );
     for middle in Street::ALL.into_iter().filter_map(Street::cul_de_sac) {
@@ -1180,6 +1203,7 @@ fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island(
             })
             .count();
         assert!(homes >= 2, "{homes} homes face the circle at {middle:?}");
+        let middle = middle * SENDA_SCALE;
         // Nothing stands in the ring it drives, and the way round is open.
         for c in &layout {
             // The circle's middle in the cover's turned box frame: the box's nearest and
@@ -1200,11 +1224,11 @@ fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island(
         }
         // The navigation's open cells between the island's kerb and the circle's join up
         // all the way round.
-        let size = GRID_SIZE as i64;
+        let size = sim.nav.grid_size() as i64;
         let in_ring = |cell: usize| {
             let p = sim.nav.point(cell);
             let gap = DVec2::new(p.x, p.z).distance(middle);
-            (CUL_DE_SAC_ISLAND..CUL_DE_SAC_RADIUS).contains(&gap) && sim.nav.blocked[cell] == 0
+            (island..radius).contains(&gap) && sim.nav.blocked[cell] == 0
         };
         let start = (0..sim.nav.blocked.len())
             .find(|&cell| in_ring(cell))
@@ -1212,7 +1236,10 @@ fn each_turning_circle_has_homes_round_it_and_a_bruiser_drives_round_its_island(
         let mut seen = HashSet::from([start]);
         let mut open = vec![start];
         while let Some(cell) = open.pop() {
-            let (x, z) = ((cell % GRID_SIZE) as i64, (cell / GRID_SIZE) as i64);
+            let (x, z) = (
+                (cell % sim.nav.grid_size()) as i64,
+                (cell / sim.nav.grid_size()) as i64,
+            );
             for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1)] {
                 let (nx, nz) = (x + dx, z + dz);
                 if nx < 0 || nz < 0 || nx >= size || nz >= size {
@@ -1322,13 +1349,18 @@ fn wheelie_bins_stand_in_pairs_against_the_kerb_and_explode_as_drums() {
         assert_eq!([trash.color, recycling.color], TRASH_BIN_COLORS);
         assert_eq!(trash.house_plan, recycling.house_plan);
         let apart = DVec2::new(trash.x - recycling.x, trash.z - recycling.z).length();
-        assert!((0.6..1.2).contains(&apart), "{apart}");
+        assert!(
+            (0.6 * SENDA_SCALE..1.2 * SENDA_SCALE).contains(&apart),
+            "{apart}"
+        );
         for bin in pair {
             // Explosive drums, in the street against its kerb.
             assert_eq!(bin.kind, CoverKind::Drum);
             assert!(bin.destructible && bin.hp > 0.0);
-            assert_eq!((bin.w, bin.d, bin.h), TRASH_BIN);
-            let at = DVec2::new(bin.x, bin.z);
+            let (w, d, h) = TRASH_BIN;
+            let size = (w * SENDA_SCALE, d * SENDA_SCALE, h * SENDA_SCALE);
+            assert_eq!((bin.w, bin.d, bin.h), size);
+            let at = DVec2::new(bin.x, bin.z) / SENDA_SCALE;
             let inside_kerb = lines
                 .iter()
                 .map(|(street, line)| street.half() - line.distance(at))
@@ -1435,7 +1467,7 @@ fn each_porch_patch_is_clear_and_each_loggia_fits_its_yard() {
     };
     let houses = senda_houses();
     let lots = senda_lots(&houses);
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     let (low, eave) = PATIO_ROOF;
     assert!((low, eave) == (1.75, 2.1), "single-storey roofs");
     for lot in &lots {
@@ -1493,7 +1525,7 @@ fn street_trees_stand_in_the_parkway_strips_before_most_lots_never_before_a_driv
     let houses = senda_houses();
     let lots = senda_lots(&houses);
     let lines = Street::ALL.map(|street| (street, street.line()));
-    let layout = (SENDA_MAP.layout)();
+    let layout = senda_design_layout();
     let street_trees: Vec<_> = layout
         .iter()
         .filter(|c| c.kind == CoverKind::Tree)
@@ -1574,7 +1606,7 @@ fn the_street_lamps_inside_the_level_are_cover_a_tank_cannot_drive_through() {
 
 /// A tank's shortest drive (m) from `team`'s spawn pads to `to`, by the navigation.
 fn drive(sim: &mut Simulation, team: Team, to: Vec2) -> f64 {
-    spawn_positions(team, 1.0)
+    spawn_positions(team, SENDA_SCALE)
         .into_iter()
         .map(|start| {
             let path = sim.nav.find(start, to);
@@ -1596,7 +1628,7 @@ fn each_teams_pickups_lie_as_far_from_its_spawns_as_the_other_teams() {
     let drives: Vec<(PickupKind, Vec2, f64, f64)> = SENDA_PICKUPS
         .iter()
         .map(|p| {
-            let at = Vec2::new(p.x, p.z);
+            let at = world(DVec2::new(p.x, p.z));
             (
                 p.kind,
                 at,
