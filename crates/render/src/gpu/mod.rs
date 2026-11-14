@@ -68,10 +68,13 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
+use sloppy_core::scene::{Blending, Effect, Node, Side, TextureRef, TextureSource};
 
 use crate::atmosphere_map::cloud_tile_offset;
-use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
+use crate::camera::{
+    Coverage, Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view,
+    transformed_box,
+};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
     ClassOrder, Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW,
@@ -82,8 +85,8 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined,
-    prepare_merged, prepare_model, prepare_scenery,
+    CullTree, InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, cut_scenery,
+    prepare_combined, prepare_merged, prepare_model, prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::presentation::theme::{Grade, Tone};
@@ -680,6 +683,8 @@ struct PartEntry {
     /// A part merged across a combined model's fixed joints: each joint's share of
     /// its mesh, drawn in runs of the joints that show and are in view.
     segments: Option<Vec<Segment>>,
+    /// A static scenery part's ranges by place, drawn in runs of those in view.
+    cull: Option<CullTree>,
     /// Its shadow draws from the model's merged casters (unless faded).
     merged_shadow: bool,
     fixed_shadow: bool,
@@ -801,6 +806,11 @@ struct MergedDraw {
 
 /// Shadow merge cells for static scenery, in metres.
 const SHADOW_MERGE_CELL: f32 = 60.0;
+
+/// The most indices of a static scenery part outside a view that a run draws through
+/// to reach the next range in view (`CullTree::runs`): a draw saved for at most this
+/// many indices of vertex work, which clipping then discards.
+const CULL_BRIDGE_INDICES: u32 = 3 * 1024;
 
 /// The record of a hidden part among a model's merged shadow slots: it moves every
 /// vertex to the world origin, so the part's triangles have no area.
@@ -1674,6 +1684,7 @@ impl Renderer {
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances,
                 segments: part.segments,
+                cull: part.cull,
                 merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
@@ -1899,7 +1910,8 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
-        let prepared = prepare_scenery(root, &mut self.interner);
+        let mut prepared = prepare_scenery(root, &mut self.interner);
+        self.cut(&mut prepared);
         let merge = self.merge_for(&prepared, true, usize::MAX);
         let pending = PendingModel { prepared, merge };
         self.add_pending_scenery(pending, lifetime)
@@ -1912,10 +1924,27 @@ impl Renderer {
     /// the shadow merge copies the casters again, so a theme's 20 MB of source
     /// geometry and every merge of it never all sit in the Wasm heap at once.
     pub fn prepare_pending_scenery(&mut self, root: Node) -> PendingModel {
-        let prepared = prepare_scenery(&root, &mut self.interner);
+        let mut prepared = prepare_scenery(&root, &mut self.interner);
         drop(root);
+        self.cut(&mut prepared);
         let merge = self.merge_for(&prepared, true, usize::MAX);
         PendingModel { prepared, merge }
+    }
+
+    /// Give prepared scenery's parts their cull trees (`model::cut_scenery`), except
+    /// where an effect moves the vertices: a tree's bounds hold the mesh as it is, not
+    /// as a vertex hook moves it.
+    fn cut(&self, prepared: &mut PreparedModel) {
+        let effects = &self.effects;
+        cut_scenery(prepared, |material| match &material.effect {
+            Effect::None => true,
+            Effect::Custom { name, params } => effects
+                .id_for(name, params)
+                .and_then(|id| effects.get(id))
+                .is_some_and(|effect| {
+                    !(effect.has_vertex() || effect.has_world() || effect.has_clip())
+                }),
+        });
     }
 
     /// Upload scenery [`Self::prepare_pending_scenery`] prepared, as `add_scenery`
@@ -3037,6 +3066,62 @@ impl Renderer {
                     continue;
                 }
                 let transform = joints[part.node] * part.local;
+                if let Some(tree) = &part.cull {
+                    // Runs of the ranges each view sees. The tree's bounds have the
+                    // part's `local` applied: only the joint moves them (never, for
+                    // the scenery's identity instance).
+                    let joint = joints[part.node];
+                    let moved = joint != Mat4::IDENTITY;
+                    let mut record = None;
+                    for view in 0..VIEW_COUNT {
+                        if !candidate[view] {
+                            continue;
+                        }
+                        // The main view tests boxes, accepting a subtree wholly in view;
+                        // the reflection's mask and the shadow's reach take spheres.
+                        let coverage = |node: &crate::model::CullNode| {
+                            let (center, half) = if moved {
+                                transformed_box(&joint, node.center, node.half)
+                            } else {
+                                (node.center, node.half)
+                            };
+                            let sphere = || Sphere {
+                                center,
+                                radius: half.length(),
+                            };
+                            if view == MAIN_VIEW {
+                                culls[view].frustum.box_coverage(center, half)
+                            } else if in_view(view, &sphere()) {
+                                Coverage::Crossing
+                            } else {
+                                Coverage::Outside
+                            }
+                        };
+                        // The shadow view draws only the casters its tests let in: one its
+                        // reach test leaves out may still write the map.
+                        let bridge = if view == SHADOW_VIEW {
+                            0
+                        } else {
+                            CULL_BRIDGE_INDICES
+                        };
+                        tree.runs(bridge, coverage, |first, count| {
+                            let index = *record.get_or_insert_with(|| {
+                                builder.record(InstanceRecord::new(&transform, tint, instance.data))
+                            });
+                            builder.push_run(
+                                view,
+                                class_index,
+                                transparent && view != SHADOW_VIEW,
+                                part.render_order,
+                                0.0,
+                                index,
+                                first,
+                                count,
+                            );
+                        });
+                    }
+                    continue;
+                }
                 if let Some(segments) = &part.segments {
                     // Runs of the segments each view shows: consecutive ones are
                     // contiguous in the mesh, so a run is one draw of one record.

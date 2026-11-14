@@ -137,6 +137,23 @@ impl Sphere {
     }
 }
 
+/// Where a box lies against a frustum ([`Frustum::box_coverage`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Coverage {
+    Outside,
+    Crossing,
+    Inside,
+}
+
+/// The axis-aligned box (centre, half extents) holding the box of centre `center` and
+/// half extents `half` moved by `matrix`.
+pub fn transformed_box(matrix: &Mat4, center: Vec3, half: Vec3) -> (Vec3, Vec3) {
+    let extent = matrix.x_axis.xyz().abs() * half.x
+        + matrix.y_axis.xyz().abs() * half.y
+        + matrix.z_axis.xyz().abs() * half.z;
+    (matrix.transform_point3(center), extent)
+}
+
 /// Six clip planes extracted from a view-projection matrix with depth 0..1.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frustum {
@@ -162,6 +179,29 @@ impl Frustum {
         self.planes
             .iter()
             .all(|plane| plane.xyz().dot(sphere.center) + plane.w >= -sphere.radius)
+    }
+
+    /// Where the axis-aligned box of centre `center` and half extents `half` lies:
+    /// outside when it is wholly behind one plane, inside when wholly in front of all
+    /// six. Conservative like the sphere test: a box past a frustum's corner, behind no
+    /// single plane, counts as crossing.
+    pub fn box_coverage(&self, center: Vec3, half: Vec3) -> Coverage {
+        let mut inside = true;
+        for plane in &self.planes {
+            let normal = plane.xyz();
+            let distance = normal.dot(center) + plane.w;
+            // How far the box reaches along the normal from its centre.
+            let reach = normal.abs().dot(half);
+            if distance < -reach {
+                return Coverage::Outside;
+            }
+            inside &= distance >= reach;
+        }
+        if inside {
+            Coverage::Inside
+        } else {
+            Coverage::Crossing
+        }
     }
 
     /// Whether `sphere`, moved in a straight line by `sweep`, may touch the
@@ -412,6 +452,35 @@ mod tests {
         assert!(frustum.intersects_sphere(&sphere(200.0, 0.0, 0.0, 190.0)));
         assert!(!frustum.intersects_sphere(&sphere(0.0, 0.0, -600.0, 5.0)));
         assert!(!frustum.intersects_sphere(&sphere(0.0, 60.0, 40.0, 1.0)));
+    }
+
+    #[test]
+    fn boxes_lie_outside_across_or_inside_the_view() {
+        let camera = game_camera();
+        let frustum = Frustum::from_view_projection(&camera.view_projection());
+        let at = |x: f32, z: f32, half: f32| {
+            frustum.box_coverage(Vec3::new(x, 0.25, z), Vec3::new(half, 0.25, half))
+        };
+        assert_eq!(at(0.0, 0.0, 1.0), Coverage::Inside);
+        assert_eq!(at(0.0, 0.0, 100.0), Coverage::Crossing);
+        assert_eq!(at(200.0, 0.0, 1.0), Coverage::Outside);
+        assert_eq!(at(0.0, -600.0, 5.0), Coverage::Outside);
+        // A ground strip far longer than the view is wide crosses it; the same strip
+        // behind the camera does not.
+        let strip =
+            |z: f32| frustum.box_coverage(Vec3::new(0.0, 0.0, z), Vec3::new(300.0, 0.0, 1.5));
+        assert_eq!(strip(0.0), Coverage::Crossing);
+        assert_eq!(strip(60.0), Coverage::Outside);
+        // Every corner of a box stays inside its moved box.
+        let matrix = Mat4::from_rotation_y(0.7) * Mat4::from_translation(Vec3::new(5.0, 1.0, -3.0));
+        let (center, half) = (Vec3::new(1.0, 0.5, 1.0), Vec3::new(2.0, 0.5, 3.0));
+        let (moved_center, moved_half) = transformed_box(&matrix, center, half);
+        for corner in 0..8 {
+            let sign = |bit: usize| if corner & bit == 0 { -1.0 } else { 1.0 };
+            let point = center + half * Vec3::new(sign(1), sign(2), sign(4));
+            let offset = (matrix.transform_point3(point) - moved_center).abs();
+            assert!(offset.cmple(moved_half + 1e-4).all());
+        }
     }
 
     #[test]
