@@ -5,6 +5,13 @@ import { brotliCompress, gzip, constants } from "node:zlib";
 // Quality 11 makes the shell's binary 4% (82 KB) smaller than 10 does, for about six
 // more seconds of the deploy; a browser decodes either as fast.
 const BROTLI_QUALITY = 11;
+// Brotli looks back over a window of 4 MB unless told otherwise (window bits 22), and
+// the shell's binary is larger, so its far repeats went unfound: a window that holds the
+// whole file makes it 2 KB smaller. 24 bits (16 MB) is the most a browser decodes.
+const DEFAULT_WINDOW_BITS = 22;
+const MAX_WINDOW_BITS = 24;
+const windowBits = (size) =>
+  Math.min(MAX_WINDOW_BITS, Math.max(DEFAULT_WINDOW_BITS, Math.ceil(Math.log2(size + 16))));
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
@@ -31,7 +38,10 @@ await Promise.all(
     const original = await readFile(new URL(file, assetDirectory));
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {
-        params: { [constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY },
+        params: {
+          [constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
+          [constants.BROTLI_PARAM_LGWIN]: windowBits(original.length),
+        },
       }),
       gzipAsync(original, { level: 9 }),
     ]);
