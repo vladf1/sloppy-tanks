@@ -1,7 +1,8 @@
 //! The game's runtime files of `public/`, by their path there
 //! (`textures/ground/village-ground.webp`): embedded in a native binary (`build.rs`); in
-//! a page, the fonts, sounds and previews `index.html` fetches beside the Wasm and leaves
-//! in `globalThis.sloppyFiles` (the renderer fetches its textures itself).
+//! a page, the fonts and previews `index.html` fetches beside the Wasm, and the sounds it
+//! makes (`audio/<name>.wav`, `src/sounds.ts`), left in `globalThis.sloppyFiles` (the
+//! renderer fetches its textures itself).
 
 use std::borrow::Cow;
 
@@ -45,7 +46,7 @@ pub fn load(path: &str) -> Asset {
 
 /// The runtime file at `path` as the page left it: its bytes once arrived (copied in,
 /// the page keeps its own for a later ask), its pending download until then, `null`
-/// once that failed, nothing for a file it never fetched.
+/// once that failed, nothing for a file it neither fetched nor made.
 #[cfg(target_arch = "wasm32")]
 pub fn load(path: &str) -> Asset {
     use wasm_bindgen::JsCast;

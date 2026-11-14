@@ -659,6 +659,7 @@
       import webgpuShaders from "/src/generated/shaders/webgpu.json?url";
       import webglShaders from "/src/generated/shaders/webgl.json?url";
       import { startGeometryCache } from "/src/geometry-cache.ts";
+      import { SOUNDS, soundFile } from "/src/sounds.ts";
 
       performance.mark("sloppy:boot");
       // A returning visit's cached vehicles and scenery read meanwhile (geometry-cache.ts).
@@ -796,11 +797,11 @@
 
       // The runtime files under content-hashed names that browsers keep across releases
       // (scripts/hashed-assets.ts): the renderer resolves texture paths through
-      // `sloppyAssets`. The fonts, sounds and Battle Setup's previews download beside the
-      // binary, which downloads again with every release, into `sloppyFiles` for the
-      // shell (crates/desktop/src/assets.rs): each its download, then its bytes, or null
-      // once it failed. The fonts must be there before the shell starts; the previews
-      // and sounds may come late, so they leave the bandwidth to the binary.
+      // `sloppyAssets`. The fonts and Battle Setup's previews download beside the binary,
+      // which downloads again with every release, into `sloppyFiles` for the shell
+      // (crates/desktop/src/assets.rs): each its download, then its bytes, or null once
+      // it failed. The fonts must be there before the shell starts; the previews may
+      // come late, so they leave the bandwidth to the binary.
       const assets = (globalThis.sloppyAssets = JSON.parse(
         document.getElementById("sloppy-assets")?.textContent || "{}",
       ));
@@ -819,12 +820,20 @@
       for (const path of Object.keys(assets)) {
         if (path.startsWith("fonts/")) {
           fonts.push((files[path] = fetchFile(path, "high")));
-        } else if (/^(audio|previews)\//.test(path)) {
+        } else if (path.startsWith("previews/")) {
           files[path] = fetchFile(path, "low").catch((error) =>
             console.warn(`${path} did not download: ${message(error)}`),
           );
         }
       }
+      // The sounds are formulas (src/sounds.ts), so the page makes their files rather than
+      // download them, once the downloads above are on their way: about 10 ms for all
+      // thirteen, long before the first shot. Each is pending in `sloppyFiles` until then,
+      // like a download.
+      const sounds = new Promise((resolve) => setTimeout(resolve)).then(() => {
+        for (const sound of SOUNDS) files[`audio/${sound[0]}.wav`] = soundFile(sound);
+      });
+      for (const [name] of SOUNDS) files[`audio/${name}.wav`] = sounds;
 
       // The shader stages the chosen build draws, generated with it (bun run wasm,
       // crates/render/src/shader/tables.rs): they download beside the binary and stay

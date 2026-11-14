@@ -6,9 +6,10 @@ import type { Plugin } from "vite";
 
 /**
  * The game page's runtime files under content-hashed names, so a returning visitor
- * keeps them for good: every texture the renderer fetches, and the fonts, sounds and
- * Battle Setup previews the page hands the shell (`sloppyFiles` in `index.html`;
- * natively they are embedded, `crates/desktop/build.rs`). A build emits each file of
+ * keeps them for good: every texture the renderer fetches, and the fonts and Battle
+ * Setup previews the page hands the shell (`sloppyFiles` in `index.html`; natively they
+ * are embedded, `crates/desktop/build.rs`, with the sounds, which the page makes itself,
+ * `src/sounds.ts`). A build emits each file of
  * `HASHED` as `assets/<path>-<hash><ext>` and puts the manifest from its path under
  * `public/` to that URL in the game page, as JSON in `<script id="sloppy-assets">`,
  * which the boot script hands on as `globalThis.sloppyAssets`; the renderer resolves
@@ -16,9 +17,9 @@ import type { Plugin } from "vite";
  * dev server's manifest names the plain files, which Vite serves from `public/`, as it
  * still does in builds for the pages without a manifest (the tools and fixtures).
  */
-const HASHED = ["textures", "audio", "previews", "fonts"];
+const HASHED = ["textures", "previews", "fonts"];
 /** What the runtime reads; the licences and notes beside the files stay plain. */
-const RUNTIME_FILE = /\.(webp|mp3|ttc)$/;
+const RUNTIME_FILE = /\.(webp|ttc)$/;
 /**
  * Icons the game page links to, which a built page names by hash too. The web app
  * manifest keeps its plain address: a Home Screen app is installed from it and its
