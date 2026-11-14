@@ -68,10 +68,13 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
+use sloppy_core::scene::{Blending, Effect, Node, Side, TextureRef, TextureSource};
 
 use crate::atmosphere_map::cloud_tile_offset;
-use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
+use crate::camera::{
+    Coverage, Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view,
+    transformed_box,
+};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
     ClassOrder, Draw, DrawListBuilder, DrawState, InstanceRecord, MAIN_VIEW, REFLECTION_VIEW,
@@ -82,8 +85,8 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined,
-    prepare_merged, prepare_model, prepare_scenery,
+    CullTree, InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, cut_scenery,
+    prepare_combined, prepare_merged, prepare_model, prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::presentation::theme::{Grade, Tone};
@@ -91,8 +94,8 @@ use crate::quality::{Tier, TierFeatures};
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
-    MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge, merge_shadows, merged_draw_order,
-    shadow_merge_kind,
+    MAX_STILL_GROUP_VERTICES, MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge,
+    caster_triangles, merge_shadows, merged_draw_order, shadow_merge_kind,
 };
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
 use pools::PoolEntry;
@@ -678,6 +681,8 @@ struct PartEntry {
     /// A part merged across a combined model's fixed joints: each joint's share of
     /// its mesh, drawn in runs of the joints that show and are in view.
     segments: Option<Vec<Segment>>,
+    /// A static scenery part's ranges by place, drawn in runs of those in view.
+    cull: Option<CullTree>,
     /// Its shadow draws from the model's merged casters (unless faded).
     merged_shadow: bool,
     fixed_shadow: bool,
@@ -800,6 +805,11 @@ struct MergedDraw {
 /// Shadow merge cells for static scenery, in metres.
 const SHADOW_MERGE_CELL: f32 = 60.0;
 
+/// The most indices of a static scenery part outside a view that a run draws through
+/// to reach the next range in view (`CullTree::runs`): a draw saved for at most this
+/// many indices of vertex work, which clipping then discards.
+const CULL_BRIDGE_INDICES: u32 = 3 * 1024;
+
 /// The record of a hidden part among a model's merged shadow slots: it moves every
 /// vertex to the world origin, so the part's triangles have no area.
 const ZERO_RECORD: InstanceRecord = InstanceRecord {
@@ -818,6 +828,10 @@ struct ModelEntry {
     owned_meshes: Vec<u32>,
     lifetime: Lifetime,
     scenery: bool,
+    /// Its instances stand still and only show or hide their joints (a round's
+    /// combined static covers), so its merged shadow is fixed between those changes:
+    /// it draws into the cached fixed-scenery shadow with the scenery's.
+    still: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -831,6 +845,8 @@ struct InstanceEntry {
     model: u32,
     /// Its model is baked scenery (`ModelEntry::scenery`).
     scenery: bool,
+    /// Its model's shadow is cached while nothing of it changes (`ModelEntry::still`).
+    still: bool,
     lifetime: Lifetime,
     world: Mat4,
     visible: bool,
@@ -995,6 +1011,8 @@ pub struct Renderer {
     static_merged_draws: Vec<MergedDraw>,
     static_records: Vec<InstanceRecord>,
     static_dirty: bool,
+    /// A still model's instance came or went: the cached shadow's casters changed.
+    still_changed: bool,
 
     environment: Environment,
     atmosphere: Atmosphere,
@@ -1134,6 +1152,7 @@ impl Renderer {
             static_merged_draws: Vec::new(),
             static_records: vec![InstanceRecord::IDENTITY],
             static_dirty: true,
+            still_changed: false,
             environment: Environment::default(),
             atmosphere: Atmosphere::default(),
             sun_shadow,
@@ -1544,18 +1563,25 @@ impl Renderer {
         scenery: bool,
         fades: bool,
     ) -> ModelId {
-        let merge = self.merge_for(&prepared, scenery);
+        let merge = self.merge_for(&prepared, scenery, usize::MAX);
         self.register_merged(prepared, merge, lifetime, scenery, fades)
     }
 
-    /// A prepared model's merged shadow casters.
-    fn merge_for(&self, prepared: &PreparedModel, scenery: bool) -> ShadowMerge {
+    /// A prepared model's merged shadow casters, in groups of up to `group_vertices`
+    /// ([`merge_shadows`]).
+    fn merge_for(
+        &self,
+        prepared: &PreparedModel,
+        scenery: bool,
+        group_vertices: usize,
+    ) -> ShadowMerge {
         let effects = &self.effects;
         merge_shadows(
             prepared,
             |index| shadow_merge_kind(effects, &prepared.parts[index].material),
             scenery,
             SHADOW_MERGE_CELL,
+            group_vertices,
         )
     }
 
@@ -1656,6 +1682,7 @@ impl Renderer {
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances,
                 segments: part.segments,
+                cull: part.cull,
                 merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
@@ -1700,6 +1727,7 @@ impl Renderer {
             owned_meshes: owned,
             lifetime,
             scenery,
+            still: false,
         });
         ModelId { index, generation }
     }
@@ -1731,9 +1759,36 @@ impl Renderer {
     /// Prepare a model whose root's named children are fixed, only ever shown or
     /// hidden (`model::prepare_combined`): their plain opaque parts merge across them
     /// per material and draw in runs of the joints that show.
-    pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
-        let prepared = prepare_combined(root, &mut self.interner);
-        self.register(prepared, lifetime, false, false)
+    ///
+    /// Its instances are placed once and stand still, so while none of their joints
+    /// changes their merged shadow stays in the cached fixed-scenery shadow
+    /// (`ModelEntry::still`) rather than being drawn again every frame.
+    ///
+    /// It takes the tree to drop it once prepared, before the shadow merge and the
+    /// uploads: the merged parts copy its meshes, and the Wasm heap keeps its peak, so
+    /// the tree and its copies should not all be alive at once (a round's covers). Its
+    /// shadow merges in bounded groups ([`MAX_STILL_GROUP_VERTICES`]).
+    pub fn add_combined_model(&mut self, root: Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(&root, &mut self.interner);
+        drop(root);
+        // Its groups split only where the cached fixed shadow will hold them: drawn
+        // every frame (a Stress Grid's), each would be a draw.
+        let effects = &self.effects;
+        let triangles = caster_triangles(&prepared, |index| {
+            shadow_merge_kind(effects, &prepared.parts[index].material)
+        });
+        let cached = self.fixed_shadow_triangles() + triangles >= MIN_CACHED_SHADOW_TRIANGLES;
+        let group_vertices = if cached {
+            MAX_STILL_GROUP_VERTICES
+        } else {
+            usize::MAX
+        };
+        let merge = self.merge_for(&prepared, false, group_vertices);
+        let model = self.register_merged(prepared, merge, lifetime, false, false);
+        if let Some(entry) = self.models.get_mut(model.index, model.generation) {
+            entry.still = true;
+        }
+        model
     }
 
     /// A piece of debris falling for a few seconds (a collapsing cottage's shard),
@@ -1789,7 +1844,9 @@ impl Renderer {
             .map(|(index, _)| index)
             .collect();
         for index in users {
-            self.instances.remove(index);
+            if let Some(instance) = self.instances.remove(index) {
+                self.still_changed |= instance.still;
+            }
         }
         self.release_model(model.index);
     }
@@ -1829,10 +1886,12 @@ impl Renderer {
         if entry.scenery {
             self.static_dirty = true;
         }
-        let scenery = entry.scenery;
+        let (scenery, still) = (entry.scenery, entry.still);
+        self.still_changed |= still;
         let (index, generation) = self.instances.insert(InstanceEntry {
             model: model.index,
             scenery,
+            still,
             lifetime,
             world,
             visible: true,
@@ -1849,8 +1908,9 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
-        let prepared = prepare_scenery(root, &mut self.interner);
-        let merge = self.merge_for(&prepared, true);
+        let mut prepared = prepare_scenery(root, &mut self.interner);
+        self.cut(&mut prepared);
+        let merge = self.merge_for(&prepared, true, usize::MAX);
         let pending = PendingModel { prepared, merge };
         self.add_pending_scenery(pending, lifetime)
     }
@@ -1862,10 +1922,27 @@ impl Renderer {
     /// the shadow merge copies the casters again, so a theme's 20 MB of source
     /// geometry and every merge of it never all sit in the Wasm heap at once.
     pub fn prepare_pending_scenery(&mut self, root: Node) -> PendingModel {
-        let prepared = prepare_scenery(&root, &mut self.interner);
+        let mut prepared = prepare_scenery(&root, &mut self.interner);
         drop(root);
-        let merge = self.merge_for(&prepared, true);
+        self.cut(&mut prepared);
+        let merge = self.merge_for(&prepared, true, usize::MAX);
         PendingModel { prepared, merge }
+    }
+
+    /// Give prepared scenery's parts their cull trees (`model::cut_scenery`), except
+    /// where an effect moves the vertices: a tree's bounds hold the mesh as it is, not
+    /// as a vertex hook moves it.
+    fn cut(&self, prepared: &mut PreparedModel) {
+        let effects = &self.effects;
+        cut_scenery(prepared, |material| match &material.effect {
+            Effect::None => true,
+            Effect::Custom { name, params } => effects
+                .id_for(name, params)
+                .and_then(|id| effects.get(id))
+                .is_some_and(|effect| {
+                    !(effect.has_vertex() || effect.has_world() || effect.has_clip())
+                }),
+        });
     }
 
     /// Upload scenery [`Self::prepare_pending_scenery`] prepared, as `add_scenery`
@@ -1886,6 +1963,7 @@ impl Renderer {
             return;
         }
         let instance = self.instances.remove(id.index).expect("checked");
+        self.still_changed |= instance.still;
         if instance.scenery {
             self.release_model(instance.model);
         }
@@ -1895,6 +1973,7 @@ impl Renderer {
         let instance = self.instances.get_mut(id.index, id.generation)?;
         // Scenery bakes its instance state into the static records.
         self.static_dirty |= instance.scenery;
+        self.static_shadow_dirty |= instance.still;
         Some(instance)
     }
 
@@ -1965,6 +2044,7 @@ impl Renderer {
         instance.overrides[node] = local;
         // Scenery bakes its instance state into the static records.
         self.static_dirty |= instance.scenery;
+        self.static_shadow_dirty |= instance.still;
     }
 
     pub fn set_node_visible(&mut self, id: InstanceId, node: usize, visible: bool) {
@@ -1987,8 +2067,12 @@ impl Renderer {
                 .node_visible
                 .extend(nodes.iter().map(|node| node.visible));
         }
+        if instance.node_visible[node] == visible {
+            return;
+        }
         instance.node_visible[node] = visible;
         self.static_dirty |= instance.scenery;
+        self.static_shadow_dirty |= instance.still;
     }
 
     /// Replace the instances of an InstancedMesh part of a model instance's model
@@ -2336,20 +2420,17 @@ impl Renderer {
         self.rebuild_pool_groups();
     }
 
-    /// Rebuild the persistent records of static instanced scenery.
-    fn upload_static(&mut self) {
-        if !self.static_dirty {
-            return;
-        }
-        self.static_dirty = false;
-        self.static_shadow_dirty = true;
-        let triangles: u64 = self
-            .instances
+    /// The triangles the cached fixed-scenery shadow would hold: the shown scenery's
+    /// fixed casters and the still models' merged ones.
+    fn fixed_shadow_triangles(&self) -> u64 {
+        self.instances
             .iter()
             // Themes hide other maps' shared scenery; only shown sets cast.
             .filter(|(_, instance)| instance.visible)
             .filter_map(|(_, instance)| {
-                self.models.at(instance.model).filter(|model| model.scenery)
+                self.models
+                    .at(instance.model)
+                    .filter(|model| model.scenery || model.still)
             })
             .map(|model| {
                 let merged: u64 = model
@@ -2357,6 +2438,9 @@ impl Renderer {
                     .iter()
                     .map(|mesh| u64::from(mesh.range.index_count / 3))
                     .sum();
+                if model.still {
+                    return merged;
+                }
                 let separate: u64 = model
                     .parts
                     .iter()
@@ -2369,8 +2453,20 @@ impl Renderer {
                     .sum();
                 merged + separate
             })
-            .sum();
-        self.cache_static_shadow = triangles >= MIN_CACHED_SHADOW_TRIANGLES;
+            .sum()
+    }
+
+    /// Rebuild the persistent records of static instanced scenery.
+    fn upload_static(&mut self) {
+        if self.static_dirty || self.still_changed {
+            self.still_changed = false;
+            self.static_shadow_dirty = true;
+            self.cache_static_shadow = self.fixed_shadow_triangles() >= MIN_CACHED_SHADOW_TRIANGLES;
+        }
+        if !self.static_dirty {
+            return;
+        }
+        self.static_dirty = false;
         self.static_records.truncate(1);
         for instance in self.instances.iter_mut() {
             let Some(model) = self.models.at(instance.model).filter(|m| m.scenery) else {
@@ -2963,6 +3059,62 @@ impl Renderer {
                     continue;
                 }
                 let transform = joints[part.node] * part.local;
+                if let Some(tree) = &part.cull {
+                    // Runs of the ranges each view sees. The tree's bounds have the
+                    // part's `local` applied: only the joint moves them (never, for
+                    // the scenery's identity instance).
+                    let joint = joints[part.node];
+                    let moved = joint != Mat4::IDENTITY;
+                    let mut record = None;
+                    for view in 0..VIEW_COUNT {
+                        if !candidate[view] {
+                            continue;
+                        }
+                        // The main view tests boxes, accepting a subtree wholly in view;
+                        // the reflection's mask and the shadow's reach take spheres.
+                        let coverage = |node: &crate::model::CullNode| {
+                            let (center, half) = if moved {
+                                transformed_box(&joint, node.center, node.half)
+                            } else {
+                                (node.center, node.half)
+                            };
+                            let sphere = || Sphere {
+                                center,
+                                radius: half.length(),
+                            };
+                            if view == MAIN_VIEW {
+                                culls[view].frustum.box_coverage(center, half)
+                            } else if in_view(view, &sphere()) {
+                                Coverage::Crossing
+                            } else {
+                                Coverage::Outside
+                            }
+                        };
+                        // The shadow view draws only the casters its tests let in: one its
+                        // reach test leaves out may still write the map.
+                        let bridge = if view == SHADOW_VIEW {
+                            0
+                        } else {
+                            CULL_BRIDGE_INDICES
+                        };
+                        tree.runs(bridge, coverage, |first, count| {
+                            let index = *record.get_or_insert_with(|| {
+                                builder.record(InstanceRecord::new(&transform, tint, instance.data))
+                            });
+                            builder.push_run(
+                                view,
+                                class_index,
+                                transparent && view != SHADOW_VIEW,
+                                part.render_order,
+                                0.0,
+                                index,
+                                first,
+                                count,
+                            );
+                        });
+                    }
+                    continue;
+                }
                 if let Some(segments) = &part.segments {
                     // Runs of the segments each view shows: consecutive ones are
                     // contiguous in the mesh, so a run is one draw of one record.
@@ -3073,6 +3225,12 @@ impl Renderer {
                         }
                     }
                 } else {
+                    // A still model's shadow is in the cached map until something of
+                    // it changes; like the scenery's, it must then cover every camera.
+                    let cached = model.still && *cache_static_shadow;
+                    if cached && !*static_shadow_dirty {
+                        continue;
+                    }
                     let first = merged_records.len();
                     let mut sphere: Option<Sphere> = None;
                     for slot in &model.shadow_slots {
@@ -3101,7 +3259,7 @@ impl Renderer {
                     match sphere {
                         Some(sphere)
                             if shadow.intersects_sphere(&sphere)
-                                && shadow_reach.reaches(&sphere) =>
+                                && (cached || shadow_reach.reaches(&sphere)) =>
                         {
                             for (group, mesh) in model.shadow.iter().enumerate() {
                                 merged_items.push(MergedItem::new(
@@ -3128,7 +3286,7 @@ impl Renderer {
                 && self
                     .models
                     .at(draw.model)
-                    .is_some_and(|model| model.scenery)
+                    .is_some_and(|model| model.scenery || model.still)
             {
                 self.static_merged_draws.push(*draw);
                 false

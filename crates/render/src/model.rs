@@ -22,7 +22,7 @@ use glam::{DMat4, Mat3, Mat4, Vec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Drawable, Material, Node};
 
-use crate::camera::Sphere;
+use crate::camera::{Coverage, Sphere};
 use crate::color::hex_to_linear;
 use crate::material::{MaterialInterner, is_paintable, painted};
 
@@ -173,6 +173,9 @@ pub struct PreparedPart {
     /// A combined model's part merged across its fixed joints ([`prepare_combined`]):
     /// each joint's share of the mesh, drawn while that joint shows.
     pub segments: Option<Vec<Segment>>,
+    /// A static scenery part's ranges of triangles by place ([`cut_scenery`]), drawn
+    /// only where a view sees them.
+    pub cull: Option<CullTree>,
 }
 
 /// One fixed joint's triangles in a part merged across joints: contiguous index and
@@ -409,6 +412,7 @@ impl<'a> Builder<'a, '_> {
             frustum_culled: drawable.frustum_culled,
             instances: instances_of(drawable),
             segments: None,
+            cull: None,
         }
     }
 
@@ -708,6 +712,7 @@ pub fn prepare_merged(parts: Vec<MergedPart>, interner: &mut MaterialInterner) -
             frustum_culled: true,
             instances: None,
             segments: None,
+            cull: None,
         });
     }
     model
@@ -786,6 +791,211 @@ pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> Prepared
         builder.model.parts.push(part);
     }
     builder.finish()
+}
+
+/// The ground extent (m) of a [`CullTree`]'s leaves: [`cut_scenery`] ends a leaf where
+/// its triangles' centroids would spread further across either axis, once it holds
+/// [`CULL_LEAF_TRIANGLES`]. Smaller leaves leave out more of what no view shows but
+/// make more boxes to test each frame. Over the Neighborhood's six measured views
+/// (zoom 34, and 52 at the street), a model of the batches with 256-triangle leaves drew
+/// 557k scenery triangles with 10 m leaves, 580k with 15 m and 594k with 20 m, for
+/// about 620, 570 and 525 boxes tested a frame.
+pub const CULL_LEAF_EXTENT: f32 = 15.0;
+
+/// The fewest triangles a [`CullTree`] leaf holds before its extent ends it: a box test
+/// costs more than drawing a few hundred triangles, and a part merged from small pieces
+/// in no order by place (a street's kerbs, props and trunks) otherwise splits into
+/// leaves of a dozen. Over the same six views, leaves of at least 1, 256 and 512
+/// triangles tested about 1,600, 570 and 415 boxes a frame and drew 501k, 580k and 620k
+/// scenery triangles in all; the page's render CPU still rose measurably at 256.
+pub const CULL_LEAF_TRIANGLES: usize = 512;
+
+/// A static scenery part's triangles, in their mesh's order, as a tree of contiguous
+/// index ranges with bounds, so a view draws only the ranges it sees, in runs
+/// ([`CullTree::runs`]). The core merges whole groups into map-wide meshes (a ground
+/// plane, a street's paving), and [`prepare_scenery`] merges by the 60 m cell of each
+/// drawable's centre, so without it a map-wide part draws in every view wherever the
+/// camera is.
+///
+/// The triangles keep their order: a run draws them as the whole mesh did, less those
+/// outside the view, so depth ties (a crest's two faces, overlapping pieces) still
+/// resolve in the mesh's order. (Sorting them into cells by place instead changed a few
+/// hundred pixels at distant crests and overlaps in a first-person view.) Leaves are the stretches of the mesh whose
+/// centroids stay within [`CULL_LEAF_EXTENT`] (or that are still short of
+/// [`CULL_LEAF_TRIANGLES`]); above them the tree halves the leaves by count, so a node
+/// is a contiguous range too.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CullTree {
+    /// Depth first, each node before its two children.
+    pub nodes: Vec<CullNode>,
+    /// The part's index count: where the last range ends.
+    pub indices: u32,
+}
+
+/// A [`CullTree`] node: indices `first` up to the next range's (the node at `skip`, or
+/// the mesh's end), and the box (centre, half extents) of their vertices where the part
+/// places them (its `local` applied).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CullNode {
+    pub center: Vec3,
+    pub half: Vec3,
+    pub first: u32,
+    /// The node after its subtree: the next node for a leaf.
+    pub skip: u32,
+}
+
+impl CullTree {
+    /// The runs of indices a view draws, in mesh order, each passed to `emit` as
+    /// (first, count): every range `coverage` does not put outside, joined across
+    /// ranges it does put outside of at most `bridge` indices in all (they draw no
+    /// pixel, so drawing them saves a draw and changes nothing). A node wholly inside
+    /// is drawn whole without testing its subtree.
+    pub fn runs(
+        &self,
+        bridge: u32,
+        mut coverage: impl FnMut(&CullNode) -> Coverage,
+        mut emit: impl FnMut(u32, u32),
+    ) {
+        // The open run: its first index, its end, and the end of the ranges outside
+        // the view since then that it may bridge.
+        let mut run: Option<(u32, u32, u32)> = None;
+        let mut index = 0;
+        while let Some(node) = self.nodes.get(index) {
+            let skip = node.skip as usize;
+            let end = self.nodes.get(skip).map_or(self.indices, |next| next.first);
+            let leaf = skip == index + 1;
+            match coverage(node) {
+                Coverage::Crossing if !leaf => {
+                    index += 1;
+                    continue;
+                }
+                Coverage::Outside => match &mut run {
+                    Some((_, drawn, through)) if end - *drawn <= bridge => *through = end,
+                    _ => {
+                        if let Some((first, drawn, _)) = run.take() {
+                            emit(first, drawn - first);
+                        }
+                    }
+                },
+                _ => match &mut run {
+                    Some((_, drawn, through)) if *through == node.first => {
+                        *drawn = end;
+                        *through = end;
+                    }
+                    _ => {
+                        if let Some((first, drawn, _)) = run.take() {
+                            emit(first, drawn - first);
+                        }
+                        run = Some((node.first, end, end));
+                    }
+                },
+            }
+            index = skip;
+        }
+        if let Some((first, drawn, _)) = run {
+            emit(first, drawn - first);
+        }
+    }
+}
+
+/// Give static scenery's parts their [`CullTree`]: those drawn opaque (blended parts
+/// sort whole by depth), frustum culled and not instanced, whose material `cuttable`
+/// says moves no vertex from where the mesh has it (the bounds are measured on the
+/// mesh) and whose triangles spread over more than one leaf. Meshes, parts and the
+/// shadow merge stay as they were.
+pub fn cut_scenery(model: &mut PreparedModel, cuttable: impl Fn(&Material) -> bool) {
+    for part in &mut model.parts {
+        if part.instances.is_some()
+            || part.segments.is_some()
+            || !part.frustum_culled
+            || part.material.transparent
+            || part.material.blending != sloppy_core::scene::Blending::Normal
+            || !cuttable(&part.material)
+        {
+            continue;
+        }
+        let local = part.local;
+        part.cull = match &part.mesh {
+            PartMesh::Owned(index) => {
+                let data = &model.meshes[*index];
+                cull_tree(data.indices.len(), |i| {
+                    let vertex = data.indices[i] as usize;
+                    local.transform_point3(Vec3::from(data.vertices[vertex].position))
+                })
+            }
+            PartMesh::Shared(mesh) => {
+                let count = mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len);
+                cull_tree(count, |i| {
+                    let vertex = mesh
+                        .indices
+                        .as_ref()
+                        .map_or(i, |indices| indices[i] as usize);
+                    local.transform_point3(Vec3::from(mesh.positions[vertex]))
+                })
+            }
+        };
+    }
+}
+
+/// The [`CullTree`] of a mesh of `indices` indices, `corner(i)` placing index `i`'s
+/// vertex; `None` when its triangles make one leaf.
+fn cull_tree(indices: usize, corner: impl Fn(usize) -> Vec3) -> Option<CullTree> {
+    // Leaves: (first index, min, max), each the longest stretch of the mesh whose
+    // centroids stay within the extent on the ground once it holds enough triangles,
+    // and the spread of the open one's centroids.
+    let mut leaves: Vec<(u32, Vec3, Vec3)> = Vec::new();
+    let mut spread = (Vec3::ZERO, Vec3::ZERO);
+    for triangle in 0..indices / 3 {
+        let points = [0, 1, 2].map(|k| corner(3 * triangle + k));
+        let centroid = (points[0] + points[1] + points[2]) / 3.0;
+        let min = points[0].min(points[1]).min(points[2]);
+        let max = points[0].max(points[1]).max(points[2]);
+        let (low, high) = (spread.0.min(centroid), spread.1.max(centroid));
+        let width = high - low;
+        match leaves.last_mut() {
+            Some((first, leaf_min, leaf_max))
+                if width.x.max(width.z) <= CULL_LEAF_EXTENT
+                    || triangle - *first as usize / 3 < CULL_LEAF_TRIANGLES =>
+            {
+                *leaf_min = leaf_min.min(min);
+                *leaf_max = leaf_max.max(max);
+                spread = (low, high);
+            }
+            _ => {
+                leaves.push(((3 * triangle) as u32, min, max));
+                spread = (centroid, centroid);
+            }
+        }
+    }
+    if leaves.len() < 2 {
+        return None;
+    }
+    fn build(leaves: &[(u32, Vec3, Vec3)], nodes: &mut Vec<CullNode>) {
+        let at = nodes.len();
+        let (min, max) = leaves
+            .iter()
+            .fold((leaves[0].1, leaves[0].2), |(min, max), leaf| {
+                (min.min(leaf.1), max.max(leaf.2))
+            });
+        nodes.push(CullNode {
+            center: (min + max) * 0.5,
+            half: (max - min) * 0.5,
+            first: leaves[0].0,
+            skip: 0,
+        });
+        if leaves.len() > 1 {
+            let half = leaves.len() / 2;
+            build(&leaves[..half], nodes);
+            build(&leaves[half..], nodes);
+        }
+        nodes[at].skip = nodes.len() as u32;
+    }
+    let mut nodes = Vec::with_capacity(2 * leaves.len() - 1);
+    build(&leaves, &mut nodes);
+    Some(CullTree {
+        nodes,
+        indices: indices as u32,
+    })
 }
 
 fn collect_visible<'a>(node: &'a Node, parent: DMat4, out: &mut Vec<(&'a Drawable, DMat4)>) {
@@ -1169,5 +1379,219 @@ mod tests {
         assert_eq!(merged.len(), 2);
         let vertices: usize = scenery.meshes.iter().map(|m| m.vertices.len()).sum();
         assert_eq!(vertices, 8);
+    }
+
+    /// A yard of scenery parts: a 100 m indexed ground and a 40 m strip without indices
+    /// (each one shared mesh), painted gratings 7 m apart merged into the model's own
+    /// mesh, and three parts that keep no tree: a blended pane, a mesh small enough for
+    /// one leaf, and a mesh on a material whose effect moves it.
+    fn cut_yard() -> (Node, Arc<Material>) {
+        use sloppy_core::geometry::{plane_geometry, plane_geometry_segments};
+        let textured = |file: &'static str| {
+            Arc::new(Material {
+                map: Some(sloppy_core::scene::TextureRef::file(file)),
+                ..Material::standard(0xffffff, 0.0, 0.9)
+            })
+        };
+        let flat = |mesh: Mesh, material: &Arc<Material>, x: f64| {
+            let mut node = Node::mesh(Arc::new(mesh), material.clone());
+            node.position = DVec3::new(x, 0.0, 10.0);
+            node.rotation = DQuat::from_rotation_x(-std::f64::consts::FRAC_PI_2);
+            node
+        };
+        let swaying = Arc::new(Material {
+            effect: sloppy_core::scene::Effect::Custom {
+                name: "sway",
+                params: Vec::new(),
+            },
+            ..Material::standard(0x446633, 0.0, 0.9)
+        });
+        let glass = Arc::new(Material {
+            transparent: true,
+            opacity: 0.5,
+            ..Material::default()
+        });
+        let mut root = Node::group("yard");
+        root.children = vec![
+            flat(
+                plane_geometry_segments(100.0, 100.0, 25, 25),
+                &textured("grass.webp"),
+                0.0,
+            ),
+            flat(
+                plane_geometry_segments(40.0, 4.0, 200, 2).to_non_indexed(),
+                &textured("sand.webp"),
+                0.0,
+            ),
+            flat(plane_geometry(80.0, 80.0), &glass, 0.0),
+            flat(plane_geometry(2.0, 2.0), &textured("mud.webp"), 300.0),
+            flat(plane_geometry_segments(60.0, 60.0, 6, 6), &swaying, -300.0),
+        ];
+        let paint = Arc::new(Material::standard(0x887766, 0.0, 0.9));
+        let piece = Arc::new(plane_geometry_segments(1.0, 1.0, 10, 10));
+        for i in 0..8 {
+            root.children
+                .push(part(&piece, &paint, 2.0 + 7.0 * f64::from(i)));
+        }
+        (root, swaying)
+    }
+
+    /// Every vertex index of a part's mesh, in draw order, and where the part places it.
+    fn placed_indices(part: &PreparedPart, meshes: &[MeshData]) -> Vec<(u32, Vec3)> {
+        match &part.mesh {
+            PartMesh::Owned(index) => {
+                let data = &meshes[*index];
+                data.indices
+                    .iter()
+                    .map(|&i| {
+                        let at = Vec3::from(data.vertices[i as usize].position);
+                        (i, part.local.transform_point3(at))
+                    })
+                    .collect()
+            }
+            PartMesh::Shared(mesh) => {
+                let count = mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len);
+                (0..count)
+                    .map(|i| {
+                        let vertex = mesh.indices.as_ref().map_or(i as u32, |indices| indices[i]);
+                        let at = Vec3::from(mesh.positions[vertex as usize]);
+                        (vertex, part.local.transform_point3(at))
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    #[test]
+    fn scenery_parts_cut_into_ranges_that_keep_every_triangle_in_order() {
+        let (root, swaying) = cut_yard();
+        let mut interner = MaterialInterner::default();
+        let before = prepare_scenery(&root, &mut interner);
+        let mut after = prepare_scenery(&root, &mut interner);
+        // As the renderer does for an effect that moves its vertices.
+        cut_scenery(&mut after, |material| material.effect != swaying.effect);
+        // Nothing but the trees changes: the same parts drawing the same indices.
+        assert_eq!(before.parts.len(), after.parts.len());
+        assert_eq!(before.meshes, after.meshes);
+        let mut cut = 0;
+        for (old, new) in before.parts.iter().zip(&after.parts) {
+            assert_eq!(
+                placed_indices(old, &before.meshes),
+                placed_indices(new, &after.meshes)
+            );
+            let Some(tree) = &new.cull else {
+                continue;
+            };
+            cut += 1;
+            let indices = placed_indices(new, &after.meshes);
+            assert_eq!(tree.indices as usize, indices.len());
+            // Every node is the contiguous range up to the node after its subtree, held
+            // by its bounds; the leaves cover the mesh once, in order, in whole triangles.
+            let mut next_leaf = 0;
+            let mut leaves = 0;
+            for (at, node) in tree.nodes.iter().enumerate() {
+                let skip = node.skip as usize;
+                assert!(skip > at && skip <= tree.nodes.len());
+                let end = tree.nodes.get(skip).map_or(tree.indices, |n| n.first);
+                assert!(node.first < end && node.first % 3 == 0 && end % 3 == 0);
+                for (_, point) in &indices[node.first as usize..end as usize] {
+                    assert!((*point - node.center).abs().cmple(node.half + 1e-4).all());
+                }
+                if skip == at + 1 {
+                    assert_eq!(node.first, next_leaf, "leaves follow one another");
+                    next_leaf = end;
+                    leaves += 1;
+                } else {
+                    assert_eq!(
+                        tree.nodes[at + 1].first,
+                        node.first,
+                        "a node starts with its first child"
+                    );
+                }
+            }
+            assert_eq!(next_leaf, tree.indices, "the leaves reach the mesh's end");
+            assert!(leaves > 1);
+        }
+        assert_eq!(cut, 3, "the ground, the strip and the painted quads");
+        let kept = |effect: &sloppy_core::scene::Effect| {
+            after
+                .parts
+                .iter()
+                .any(|p| &p.material.effect == effect && p.cull.is_none())
+        };
+        assert!(kept(&swaying.effect));
+        assert!(after.parts.iter().filter(|p| p.cull.is_none()).count() >= 3);
+    }
+
+    #[test]
+    fn cull_runs_draw_exactly_the_ranges_a_view_does_not_rule_out() {
+        use crate::camera::{Frustum, PerspectiveCamera};
+        let (root, _) = cut_yard();
+        let mut interner = MaterialInterner::default();
+        let mut model = prepare_scenery(&root, &mut interner);
+        cut_scenery(&mut model, |_| true);
+        let mut camera = PerspectiveCamera::new(43.0, 0.1, 320.0);
+        camera.aspect = 1.6;
+        for (eye, target) in [
+            (Vec3::new(0.0, 30.0, 30.0), Vec3::new(0.0, 0.0, 6.0)),
+            (Vec3::new(-20.0, 1.5, 10.0), Vec3::new(20.0, 1.0, 12.0)),
+            (Vec3::new(10.0, 20.0, -20.0), Vec3::new(40.0, 0.0, 20.0)),
+        ] {
+            camera.look_at(eye, target);
+            let frustum = Frustum::from_view_projection(&camera.view_projection());
+            for tree in model.parts.iter().filter_map(|p| p.cull.as_ref()) {
+                let leaves: Vec<(u32, u32, bool)> = (0..tree.nodes.len())
+                    .filter(|&at| tree.nodes[at].skip as usize == at + 1)
+                    .map(|at| {
+                        let node = &tree.nodes[at];
+                        let end = tree.nodes.get(at + 1).map_or(tree.indices, |n| n.first);
+                        let seen =
+                            frustum.box_coverage(node.center, node.half) != Coverage::Outside;
+                        (node.first, end, seen)
+                    })
+                    .collect();
+                for bridge in [0, 3 * 4, 3 * 1024] {
+                    let mut runs = Vec::new();
+                    tree.runs(
+                        bridge,
+                        |node| frustum.box_coverage(node.center, node.half),
+                        |first, count| runs.push((first, first + count)),
+                    );
+                    // Runs in order, apart: two that touch would have been one draw.
+                    assert!(runs.windows(2).all(|w| w[0].1 < w[1].0));
+                    let drawn = |index: u32| runs.iter().any(|&(a, b)| a <= index && index < b);
+                    for &(first, end, seen) in &leaves {
+                        if seen {
+                            assert!(
+                                drawn(first) && drawn(end - 1),
+                                "a leaf in view is drawn whole"
+                            );
+                        }
+                    }
+                    // What a run draws outside the view is a stretch of at most `bridge`
+                    // indices between two in view.
+                    for &(a, b) in &runs {
+                        let mut outside = 0;
+                        for &(first, end, seen) in leaves.iter().filter(|l| l.0 >= a && l.1 <= b) {
+                            if seen {
+                                outside = 0;
+                            } else {
+                                outside += end - first;
+                                assert!(outside <= bridge, "bridged {outside} > {bridge}");
+                            }
+                        }
+                        let starts = leaves
+                            .iter()
+                            .find(|l| l.0 == a)
+                            .expect("a run starts at a leaf");
+                        let ends = leaves
+                            .iter()
+                            .find(|l| l.1 == b)
+                            .expect("a run ends at a leaf");
+                        assert!(starts.2 && ends.2, "a run starts and ends in view");
+                    }
+                }
+            }
+        }
     }
 }
