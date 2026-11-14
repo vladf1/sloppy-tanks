@@ -1027,10 +1027,11 @@ enum SharedLook {
     /// None of its `covers` built yet.
     Unbuilt { covers: usize },
     /// Built for its first cover, which stands at `origin`, `left` covers still to
-    /// build: they join their combined model with copies of `root`.
+    /// build: they join their combined model with copies of `root` (boxed: a `Node` is
+    /// far larger than the other looks' records).
     Merged {
         left: usize,
-        root: Node,
+        root: Box<Node>,
         origin: DVec3,
     },
     /// Too large to merge: its covers are instances of its own model, as movable
@@ -1095,11 +1096,11 @@ impl CoverPlan {
         let offset = DVec3::new(cover.x, 0.0, cover.z) - *origin;
         let mut model = if *left == 0 {
             match self.looks.remove(key) {
-                Some(SharedLook::Merged { root, .. }) => root,
+                Some(SharedLook::Merged { root, .. }) => *root,
                 _ => unreachable!("looked up"),
             }
         } else {
-            root.clone()
+            (**root).clone()
         };
         model.position += offset;
         Some(model)
@@ -1126,7 +1127,7 @@ impl CoverPlan {
         } else {
             SharedLook::Merged {
                 left: covers - 1,
-                root: model.clone(),
+                root: Box::new(model.clone()),
                 origin: DVec3::new(cover.x, 0.0, cover.z),
             }
         };
