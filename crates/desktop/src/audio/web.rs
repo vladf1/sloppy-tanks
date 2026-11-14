@@ -1,6 +1,8 @@
-//! Battle sounds in a page: the browser's Web Audio decodes the MP3s and plays each
-//! voice through its own gain and pan into the master gain, so no mixing runs in the
-//! Wasm on the main thread, and no decoder ships in it.
+//! Battle sounds in a page: the browser's Web Audio decodes the sound files and plays
+//! each voice through its own gain and pan into the master gain, so no mixing runs in
+//! the Wasm on the main thread, and no decoder ships in it. The files are the WAVs the
+//! page makes when it starts (`src/sounds.ts`), the samples the apps' MP3s were encoded
+//! from; decoding them resamples each to the output's rate as it did the MP3s.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -20,7 +22,7 @@ use crate::assets::Asset;
 /// A sound's decoded file.
 enum Clip {
     Ready(AudioBuffer),
-    /// The page is still downloading the file: looked for again at each play.
+    /// The page is still making the file: looked for again at each play.
     Loading,
     /// The browser is decoding it.
     Decoding,
@@ -109,7 +111,7 @@ impl Audio {
 
     /// Hand `sound`'s file to the browser to decode, once the page has it.
     fn decode(&mut self, sound: Sound) {
-        let path = format!("audio/{}.mp3", sound.name());
+        let path = format!("audio/{}.wav", sound.name());
         let slot = Rc::clone(&self.sounds[sound as usize]);
         let bytes = match crate::assets::load(&path) {
             Asset::Ready(bytes) => bytes,

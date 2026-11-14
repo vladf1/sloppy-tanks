@@ -141,6 +141,44 @@ fn decode_file(path: &str) -> Result<ImageData, String> {
     image_data(width, height, image.as_raw())
 }
 
+/// A texture file a page cuts out of another file instead of downloading it: the file
+/// that holds its texels, and their left, top, width and height there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileCrop {
+    pub of: &'static str,
+    pub rect: [u32; 4],
+}
+
+const TREE_ATLAS: &str = "textures/trees/atlas.webp";
+
+/// The textures a page cuts out of a file it downloads anyway. The village's breakable
+/// trees map their bark, birch bark and growth rings as textures of their own, and the
+/// tree atlas every village arena draws holds the same three surfaces in its first
+/// columns (`scripts/generate-tree-atlas.ts` stacks each 256 px surface twice in a
+/// 512 px column), so the page decodes them from the atlas's file rather than fetch
+/// three more (51 KB). The native apps embed every file and decode each as it is.
+pub const FILE_CROPS: &[(&str, FileCrop)] = &[
+    ("textures/trees/bark.webp", tree_atlas_crop(0)),
+    ("textures/trees/birch.webp", tree_atlas_crop(256)),
+    ("textures/trees/rings.webp", tree_atlas_crop(512)),
+];
+
+const fn tree_atlas_crop(left: u32) -> FileCrop {
+    FileCrop {
+        of: TREE_ATLAS,
+        rect: [left, 0, 256, 256],
+    }
+}
+
+/// Where a page finds `path`'s texels when it does not download the file itself.
+#[cfg(target_arch = "wasm32")]
+fn file_crop(path: &str) -> Option<FileCrop> {
+    FILE_CROPS
+        .iter()
+        .find(|(file, _)| *file == path)
+        .map(|&(_, crop)| crop)
+}
+
 /// Finished loads, filled by the browser's promises or native decode threads.
 #[derive(Clone, Default)]
 struct LoadedQueue(
@@ -227,9 +265,9 @@ const DECODER = `const download = async (url) => {
   if (!response.ok) throw new Error(response.status + " " + response.statusText);
   return response.blob();
 };
-onmessage = async ({ data: { id, url, file, flip } }) => {
+onmessage = async ({ data: { id, url, file, flip, crop } }) => {
   try {
-    const bitmap = await createImageBitmap(file ?? (await download(url)), {
+    const bitmap = await createImageBitmap(file ?? (await download(url)), ...(crop ?? []), {
       premultiplyAlpha: "none",
       colorSpaceConversion: "none",
       ...(flip ? { imageOrientation: "flipY" } : {}),
@@ -265,31 +303,38 @@ function decoder() {
   return entry;
 }
 
-// Files fetched ahead of their decode, by absolute URL, until a decode takes them.
+// Files fetched ahead of their decodes, by absolute URL: each stays until the last of
+// the `uses` decodes it was fetched for has taken it (a file some textures are cut out
+// of is fetched once for all of them).
 const fetched = new Map();
 
-export function prefetchTexture(url) {
+export function prefetchTexture(url, uses) {
   const href = new URL(url, document.baseURI).href;
-  if (fetched.has(href)) return;
+  const earlier = fetched.get(href);
+  if (earlier) {
+    earlier.uses += uses;
+    return;
+  }
   const file = fetch(href).then((response) => (response.ok ? response.blob() : null));
   // A failed fetch leaves the decode to fetch the file itself and report why.
-  fetched.set(href, file.catch(() => null));
+  fetched.set(href, { file: file.catch(() => null), uses });
 }
 
-export function textureBitmap(url, flip) {
+// The bitmap of the file at `url`, or of the `crop` of it (left, top, width, height).
+export function textureBitmap(url, flip, crop) {
   // The worker's base is its blob URL, so it fetches an absolute one.
   const href = new URL(url, document.baseURI).href;
   const early = fetched.get(href);
-  fetched.delete(href);
+  if (early && --early.uses <= 0) fetched.delete(href);
   return new Promise((resolve, reject) => {
     const decode = (file) => {
       const id = nextId++;
       const entry = decoder();
       entry.pending++;
       waiting.set(id, { resolve, reject });
-      entry.worker.postMessage({ id, url: href, file, flip });
+      entry.worker.postMessage({ id, url: href, file, flip, crop });
     };
-    if (early) early.then(decode);
+    if (early) early.file.then(decode);
     else decode(null);
   });
 }"#)]
@@ -297,9 +342,9 @@ extern "C" {
     #[wasm_bindgen(js_name = assetUrl)]
     fn asset_url(base: &str, path: &str) -> String;
     #[wasm_bindgen(js_name = textureBitmap)]
-    fn texture_bitmap(url: &str, flip: bool) -> js_sys::Promise;
+    fn texture_bitmap(url: &str, flip: bool, crop: Option<Vec<u32>>) -> js_sys::Promise;
     #[wasm_bindgen(js_name = prefetchTexture)]
-    fn prefetch_texture(url: &str);
+    fn prefetch_texture(url: &str, uses: u32);
     #[wasm_bindgen(js_name = uploadsImageData)]
     fn uploads_image_data() -> bool;
     #[wasm_bindgen(js_name = imageDataBitmap)]
@@ -307,8 +352,13 @@ extern "C" {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
-    JsFuture::from(texture_bitmap(url, flip_y && FLIP_BITMAPS_ON_DECODE))
+async fn fetch_bitmap(
+    url: &str,
+    flip_y: bool,
+    crop: Option<FileCrop>,
+) -> Result<web_sys::ImageBitmap, JsValue> {
+    let crop = crop.map(|crop| crop.rect.to_vec());
+    JsFuture::from(texture_bitmap(url, flip_y && FLIP_BITMAPS_ON_DECODE, crop))
         .await?
         .dyn_into()
 }
@@ -352,13 +402,27 @@ impl TextureStore {
     /// Fetch the files of `paths` this store has not loaded, ahead of the requests
     /// that decode them, and count the files requested from now on that it did not.
     pub fn prefetch(&mut self, paths: &[&'static str]) {
+        // Each file to download, with how many of the paths decode from it
+        // (`FILE_CROPS`).
+        #[cfg(target_arch = "wasm32")]
+        let mut downloads: Vec<(&'static str, u32)> = Vec::new();
         for &path in paths {
             if self.prefetched.contains(&path) || self.has_file(path) {
                 continue;
             }
             #[cfg(target_arch = "wasm32")]
-            prefetch_texture(&asset_url(&self.asset_base, path));
+            {
+                let file = file_crop(path).map_or(path, |crop| crop.of);
+                match downloads.iter_mut().find(|(listed, _)| *listed == file) {
+                    Some((_, uses)) => *uses += 1,
+                    None => downloads.push((file, 1)),
+                }
+            }
             self.prefetched.push(path);
+        }
+        #[cfg(target_arch = "wasm32")]
+        for (file, uses) in downloads {
+            prefetch_texture(&asset_url(&self.asset_base, file), uses);
         }
         self.unlisted = Some(Vec::new());
     }
@@ -414,13 +478,15 @@ impl TextureStore {
         match &key.source {
             #[cfg(target_arch = "wasm32")]
             TextureSource::File(path) => {
-                let url = asset_url(&self.asset_base, path);
+                let path = *path;
+                let crop = file_crop(path);
+                let url = asset_url(&self.asset_base, crop.map_or(path, |crop| crop.of));
                 let loaded = self.loaded.clone();
                 wasm_bindgen_futures::spawn_local(async move {
-                    let result = fetch_bitmap(&url, key.flip_y)
+                    let result = fetch_bitmap(&url, key.flip_y, crop)
                         .await
                         .map(Pixels::Bitmap)
-                        .map_err(|error| format!("{url}: {}", js_message(&error)));
+                        .map_err(|error| format!("{path} ({url}): {}", js_message(&error)));
                     loaded.push(Loaded { key, result });
                 });
             }

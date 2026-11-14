@@ -547,9 +547,11 @@ offline.
   encoders rather than hand-editing generated binaries.
 - The game page fetches its runtime files under content-hashed names that browsers
   keep for good (`scripts/hashed-assets.ts`): the renderer's textures through the
-  page's manifest, and the fonts, sounds and previews that `index.html` downloads
+  page's manifest, and the fonts and previews that `index.html` downloads
   beside the Wasm for the shell (`crates/desktop/src/assets.rs`), which the native
-  apps embed instead. Do not embed files in the page's Wasm, which downloads again
+  apps embed instead. The page downloads no sounds: it makes them from their formulas
+  when it starts (`src/sounds.ts`), and the apps embed MP3s of the same samples. Do not
+  embed files in the page's Wasm, which downloads again
   with every release that changes its code, nor fetch a runtime file by its plain path
   from the game page.
 - The page's Wasm is named by its hash too, so a release that leaves its code alone
