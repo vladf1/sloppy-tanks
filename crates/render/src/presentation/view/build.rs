@@ -37,8 +37,8 @@ pub(super) enum BuildStage {
     SceneryPipelines,
     /// The theme's scenery, water and light shown, and the effects cleared.
     Theme,
-    /// The static covers of a look of their own, one model a step, then their
-    /// combined model.
+    /// The static covers, one model a step, and each of their combined models in a step
+    /// once its covers are built.
     CombinedCovers(Box<CoverPlan>),
     /// The other covers, one a step from this index of the plan's.
     OwnCovers(Vec<usize>, usize),
@@ -163,9 +163,7 @@ impl Presentation {
                 if self.build_combined_cover(&mut plan, &state.covers) {
                     BuildStage::CombinedCovers(plan)
                 } else {
-                    let own = std::mem::take(&mut plan.own);
-                    self.add_combined_covers(*plan, &state.covers);
-                    BuildStage::OwnCovers(own, 0)
+                    BuildStage::OwnCovers(plan.own, 0)
                 }
             }
             BuildStage::OwnCovers(own, next) => match own.get(next) {

@@ -10,8 +10,6 @@
 //!   renderer draws with its planar reflection, and the chimney smoke that
 //!   `VillageScenery::set_covers` refills each round.
 
-use std::collections::HashMap;
-
 use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
@@ -68,23 +66,17 @@ impl TreeParts {
     }
 }
 
-/// What distinguishes covers that look alike: every builder input except where
-/// the model stands. Builders seeded by position contribute their seed or
-/// variant, so identical drums, containers, hedgehogs and walls share one model.
-/// The order a round's covers are added in, by index: first the static covers with a
-/// look of their own, which join one combined model (a joint each) so their shadows
-/// merge into a couple of draws, then the rest, each its own instance (covers sharing a
-/// look stay instanced, movable ones move). A lone static cover with a look of its own
-/// is not worth a combined model: it leads the rest instead.
+/// The order a round's covers are added in, by index: first the static covers, which
+/// join one combined model (a joint each) so their parts merge into a few draws per
+/// material and their shadows stay in the cached shadow, then the movable ones, each
+/// its own instance. Static covers sharing a look join it too: the Neighborhood's yard
+/// walls come in many lengths of a few covers each, and as instances of a model per
+/// look they cost a draw per look and material in every pass (presentation keeps a look
+/// too large to merge instanced). A lone static cover is not worth a combined model: it
+/// leads the rest instead.
 pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
-    let mut looks: HashMap<String, usize> = HashMap::new();
-    for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
-        *looks.entry(cover_key(cover)).or_default() += 1;
-    }
-    let (mut combined, mut own): (Vec<usize>, Vec<usize>) = (0..covers.len()).partition(|&index| {
-        let cover = &covers[index];
-        cover.motion.is_none() && looks[&cover_key(cover)] == 1
-    });
+    let (mut combined, mut own): (Vec<usize>, Vec<usize>) =
+        (0..covers.len()).partition(|&index| covers[index].motion.is_none());
     if combined.len() < 2 {
         combined.append(&mut own);
         own = std::mem::take(&mut combined);
@@ -92,6 +84,9 @@ pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
     (combined, own)
 }
 
+/// What distinguishes covers that look alike: every builder input except where
+/// the model stands. Builders seeded by position contribute their seed or
+/// variant, so identical drums, containers, hedgehogs and walls share one model.
 pub fn cover_key(cover: &RenderCover) -> String {
     let placement = match cover.kind {
         CoverKind::Drum
@@ -535,7 +530,7 @@ mod tests {
     }
 
     #[test]
-    fn covers_with_looks_of_their_own_combine_first() {
+    fn static_covers_combine_first() {
         let drum = |x: f64| RenderCover {
             kind: CoverKind::Drum,
             x,
@@ -552,10 +547,11 @@ mod tests {
             motion: Some(Default::default()),
             ..house(x)
         };
+        // Covers sharing a look combine too.
         let covers = [drum(0.0), house(1.0), movable(2.0), drum(3.0), house(4.0)];
-        assert_eq!(cover_order(&covers), (vec![1, 4], vec![0, 2, 3]));
-        // One cover of its own look leads the rest, in order.
-        let covers = [drum(0.0), house(1.0), drum(3.0)];
+        assert_eq!(cover_order(&covers), (vec![0, 1, 3, 4], vec![2]));
+        // One static cover leads the rest, in order.
+        let covers = [movable(0.0), house(1.0), movable(3.0)];
         assert_eq!(cover_order(&covers), (vec![], vec![1, 0, 2]));
     }
 
