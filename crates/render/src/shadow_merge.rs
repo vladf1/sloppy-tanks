@@ -32,6 +32,15 @@ pub struct ShadowVertex {
     pub uv: [f32; 2],
 }
 
+/// The most vertices a still model's merged group takes from parts after its first
+/// (384 KB of them; [`merge_shadows`]' `group_vertices`). A round's combined static
+/// covers cast hundreds of thousands: in one group, a single allocation of 16 MB, which
+/// the Wasm heap, holed by the covers' models it had just freed, could only find room
+/// for by growing, for good. Where their shadow is cached, its more groups are drawn
+/// only when a cover's joint shows or hides. Other models, and still ones a frame draws
+/// anyway, keep one group a side: each group is a draw (a tank's would take two).
+pub const MAX_STILL_GROUP_VERTICES: usize = 16_384;
+
 /// How a part's shadow may merge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MergeKind {
@@ -167,13 +176,16 @@ fn part_geometry<'a>(part: &'a PreparedPart, meshes: &'a [MeshData]) -> Geometry
 /// part may merge (see [`MergeKind`]; on movable models only non-instanced
 /// parts merge). `scenery` bakes world
 /// transforms (and InstancedMesh placements) into the vertices, grouped per
-/// `cell_size` cell; otherwise vertices stay in mesh space with a slot per part.
-/// Every group has triangles.
+/// `cell_size` cell; otherwise vertices stay in mesh space with a slot per part, and a
+/// group takes parts after its first only up to `group_vertices` vertices
+/// ([`MAX_STILL_GROUP_VERTICES`]; `usize::MAX` for one group a side). Every group has
+/// triangles.
 pub fn merge_shadows(
     model: &PreparedModel,
     kind: impl Fn(usize) -> MergeKind,
     scenery: bool,
     cell_size: f32,
+    group_vertices: usize,
 ) -> ShadowMerge {
     let mut merge = ShadowMerge {
         merged: vec![false; model.parts.len()],
@@ -253,9 +265,11 @@ pub fn merge_shadows(
                 (0, 0)
             };
             let key = (side, cell, material_key);
-            let group = match keys.iter().position(|k| *k == key) {
-                Some(group) => group,
-                None => {
+            // A model's group closes at `group_vertices` and the next part of its key
+            // opens another.
+            let group = match keys.iter().rposition(|k| *k == key) {
+                Some(group) if scenery || sizes[group].0 + vertex_count <= group_vertices => group,
+                _ => {
                     keys.push(key);
                     bounds.push(None);
                     sizes.push((0, 0));
@@ -346,6 +360,19 @@ struct Placed {
 }
 
 /// The vertex and triangle-index counts [`part_geometry`] gathers for a part.
+/// The triangles [`merge_shadows`] would merge of a movable or still model's casters.
+pub fn caster_triangles(model: &PreparedModel, kind: impl Fn(usize) -> MergeKind) -> u64 {
+    model
+        .parts
+        .iter()
+        .enumerate()
+        .filter(|&(index, part)| {
+            part.cast_shadow && part.instances.is_none() && kind(index) != MergeKind::Separate
+        })
+        .map(|(_, part)| part_counts(part, &model.meshes).1 as u64 / 3)
+        .sum()
+}
+
 fn part_counts(part: &PreparedPart, meshes: &[MeshData]) -> (usize, usize) {
     match &part.mesh {
         PartMesh::Shared(mesh) => {
@@ -478,14 +505,14 @@ mod tests {
                 MergeKind::Separate
             }
         };
-        let merge = merge_shadows(&model, kind, false, 0.0);
+        let merge = merge_shadows(&model, kind, false, 0.0, usize::MAX);
         // Front-sided casters share one group (their back faces); double-sided
         // ones get their own; the alpha-tested card keeps its own shadow draw.
         assert_eq!(merge.groups.len(), 2);
         assert_eq!(merge.slots.len(), model.parts.len() - 1);
         assert_eq!(merge.merged.iter().filter(|m| !**m).count(), 1);
         // As a cutout it merges into a group of its own material.
-        let cutouts = merge_shadows(&model, |_| MergeKind::Cutout, false, 0.0);
+        let cutouts = merge_shadows(&model, |_| MergeKind::Cutout, false, 0.0, usize::MAX);
         assert!(cutouts.groups.iter().all(|g| g.cutout.is_some()));
         assert_eq!(cutouts.slots.len(), model.parts.len());
         let back = merge.groups.iter().find(|g| g.side == Side::Back).unwrap();
@@ -521,7 +548,7 @@ mod tests {
             .expect("a merged part");
         let segments = part.segments.as_ref().unwrap();
         assert_eq!(segments.len(), 3);
-        let merge = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0);
+        let merge = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0, usize::MAX);
         assert!(merge.merged[index]);
         let slots: Vec<_> = merge.slots.iter().filter(|s| s.part == index).collect();
         assert_eq!(slots.len(), 3, "a slot per segment");
@@ -539,6 +566,52 @@ mod tests {
         }
     }
 
+    /// A still model's casters split into groups no larger than the bound past their
+    /// first part, each part whole in one; other models' and scenery's do not split.
+    #[test]
+    fn still_model_shadows_split_into_bounded_groups() {
+        let vertices = MAX_STILL_GROUP_VERTICES / 2 + 3;
+        let mesh = Arc::new(sloppy_core::geometry::Mesh {
+            positions: (0..vertices).map(|i| [i as f32, 0.0, 0.0]).collect(),
+            ..Default::default()
+        });
+        let mut root = Node::group("covers");
+        for x in 0..5 {
+            let mut joint = Node::group(format!("cover:{x}"));
+            joint.children.push(caster(
+                &mesh,
+                Material::standard(0x887766, 0.0, 0.9),
+                f64::from(x),
+            ));
+            root.children.push(joint);
+        }
+        let mut interner = MaterialInterner::default();
+        let model = prepare_model(&root, &mut interner);
+        let bounded = MAX_STILL_GROUP_VERTICES;
+        let merge = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0, bounded);
+        let sizes: Vec<usize> = merge.groups.iter().map(|g| g.vertices.len()).collect();
+        assert_eq!(
+            sizes,
+            vec![vertices; 5],
+            "two parts would overrun the bound"
+        );
+        assert!(merge.merged.iter().all(|&merged| merged));
+        // Each group's indices stay within its own vertices.
+        for group in &merge.groups {
+            assert!(
+                group
+                    .indices
+                    .iter()
+                    .all(|&i| (i as usize) < group.vertices.len())
+            );
+        }
+        let merge = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0, usize::MAX);
+        assert_eq!(merge.groups.len(), 1);
+        let scenery = prepare_scenery(&root, &mut interner);
+        let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 0.0, bounded);
+        assert_eq!(merge.groups.len(), 1);
+    }
+
     #[test]
     fn scenery_bakes_world_space_per_cell() {
         let cube = Arc::new(box_geometry(1.0, 1.0, 1.0));
@@ -549,7 +622,7 @@ mod tests {
         }
         let mut interner = MaterialInterner::default();
         let scenery = prepare_scenery(&root, &mut interner);
-        let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 60.0);
+        let merge = merge_shadows(&scenery, |_| MergeKind::Opaque, true, 60.0, usize::MAX);
         assert_eq!(merge.groups.len(), 2);
         assert!(merge.slots.is_empty());
         let far = merge
@@ -589,7 +662,7 @@ mod tests {
             } else {
                 prepare_model(&root, &mut interner)
             };
-            let merge = merge_shadows(&prepared, |_| MergeKind::Opaque, scenery, 60.0);
+            let merge = merge_shadows(&prepared, |_| MergeKind::Opaque, scenery, 60.0, usize::MAX);
             for group in &merge.groups {
                 assert_eq!(group.vertices.capacity(), group.vertices.len());
                 assert_eq!(group.indices.capacity(), group.indices.len());

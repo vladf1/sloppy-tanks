@@ -91,8 +91,8 @@ use crate::quality::{Tier, TierFeatures};
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
-    MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge, merge_shadows, merged_draw_order,
-    shadow_merge_kind,
+    MAX_STILL_GROUP_VERTICES, MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge,
+    caster_triangles, merge_shadows, merged_draw_order, shadow_merge_kind,
 };
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
 use pools::PoolEntry;
@@ -1553,18 +1553,25 @@ impl Renderer {
         scenery: bool,
         fades: bool,
     ) -> ModelId {
-        let merge = self.merge_for(&prepared, scenery);
+        let merge = self.merge_for(&prepared, scenery, usize::MAX);
         self.register_merged(prepared, merge, lifetime, scenery, fades)
     }
 
-    /// A prepared model's merged shadow casters.
-    fn merge_for(&self, prepared: &PreparedModel, scenery: bool) -> ShadowMerge {
+    /// A prepared model's merged shadow casters, in groups of up to `group_vertices`
+    /// ([`merge_shadows`]).
+    fn merge_for(
+        &self,
+        prepared: &PreparedModel,
+        scenery: bool,
+        group_vertices: usize,
+    ) -> ShadowMerge {
         let effects = &self.effects;
         merge_shadows(
             prepared,
             |index| shadow_merge_kind(effects, &prepared.parts[index].material),
             scenery,
             SHADOW_MERGE_CELL,
+            group_vertices,
         )
     }
 
@@ -1745,9 +1752,28 @@ impl Renderer {
     /// Its instances are placed once and stand still, so while none of their joints
     /// changes their merged shadow stays in the cached fixed-scenery shadow
     /// (`ModelEntry::still`) rather than being drawn again every frame.
-    pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
-        let prepared = prepare_combined(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, false, false);
+    ///
+    /// It takes the tree to drop it once prepared, before the shadow merge and the
+    /// uploads: the merged parts copy its meshes, and the Wasm heap keeps its peak, so
+    /// the tree and its copies should not all be alive at once (a round's covers). Its
+    /// shadow merges in bounded groups ([`MAX_STILL_GROUP_VERTICES`]).
+    pub fn add_combined_model(&mut self, root: Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(&root, &mut self.interner);
+        drop(root);
+        // Its groups split only where the cached fixed shadow will hold them: drawn
+        // every frame (a Stress Grid's), each would be a draw.
+        let effects = &self.effects;
+        let triangles = caster_triangles(&prepared, |index| {
+            shadow_merge_kind(effects, &prepared.parts[index].material)
+        });
+        let cached = self.fixed_shadow_triangles() + triangles >= MIN_CACHED_SHADOW_TRIANGLES;
+        let group_vertices = if cached {
+            MAX_STILL_GROUP_VERTICES
+        } else {
+            usize::MAX
+        };
+        let merge = self.merge_for(&prepared, false, group_vertices);
+        let model = self.register_merged(prepared, merge, lifetime, false, false);
         if let Some(entry) = self.models.get_mut(model.index, model.generation) {
             entry.still = true;
         }
@@ -1872,7 +1898,7 @@ impl Renderer {
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let merge = self.merge_for(&prepared, true);
+        let merge = self.merge_for(&prepared, true, usize::MAX);
         let pending = PendingModel { prepared, merge };
         self.add_pending_scenery(pending, lifetime)
     }
@@ -1886,7 +1912,7 @@ impl Renderer {
     pub fn prepare_pending_scenery(&mut self, root: Node) -> PendingModel {
         let prepared = prepare_scenery(&root, &mut self.interner);
         drop(root);
-        let merge = self.merge_for(&prepared, true);
+        let merge = self.merge_for(&prepared, true, usize::MAX);
         PendingModel { prepared, merge }
     }
 
