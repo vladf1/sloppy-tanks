@@ -1,7 +1,7 @@
 # The Senda medium Monterey, modelled after Neblina's corner house, for Sloppy Tanks in Blender
 # (headless):
 #   blender --background --python assets/blender/medium-monterey.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (writes public/models/houses/medium-monterey.glb and
+#   (writes assets/models/houses/medium-monterey.glb and
 #   crates/core/data/houses/medium-monterey.plan.json)
 #
 # The medium plan (the Prairie's, after Rumbo north lot 2) as Neblina's corner house wears it. Drawn in the

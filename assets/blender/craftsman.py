@@ -1,7 +1,7 @@
 # The Senda Craftsman house whose hip runs along the street (styles 1 and 2), modelled
 # after Rumbo north lot 9, for Sloppy Tanks in Blender (headless):
 #   blender --background --python assets/blender/craftsman.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (bun run house:craftsman writes public/models/houses/craftsman.glb and
+#   (bun run house:craftsman writes assets/models/houses/craftsman.glb and
 #   crates/core/data/houses/craftsman.plan.json)
 #
 # Drawn in the street frame on a 6.2 x 8 m lot (the tract's 11.7 x 15 m box at the level's

@@ -1,6 +1,6 @@
 # List the faces of a house model that z-fight: pairs of triangles facing the same way in
 # nearly the same plane (within TOLERANCE) whose outlines overlap. Plain Python, no Blender:
-#   python3 assets/blender/coplanar_faces.py public/models/houses/*.glb
+#   python3 assets/blender/coplanar_faces.py assets/models/houses/*.glb
 # Faces facing opposite ways in one plane are left out: the back one is culled. So are
 # pairs of one finish (`--all` keeps them): their UVs and shading are projected from the
 # position, so they draw the same colour whichever wins.

@@ -1,7 +1,7 @@
 # The Senda Prairie house (styles 12 to 14), modelled after Rumbo north lot 2, for Sloppy Tanks in
 # Blender (headless):
 #   blender --background --python assets/blender/prairie.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (bun run house:prairie writes public/models/houses/prairie.glb and
+#   (bun run house:prairie writes assets/models/houses/prairie.glb and
 #   crates/core/data/houses/prairie.plan.json)
 #
 # Drawn in the street frame on a 6.2 x 8 m lot (the tract's 11.7 x 15 m box at the level's

@@ -99,10 +99,10 @@ test("the shader tables are precompressed too, served as JSON", async () => {
   assert.equal(response.headers.get("Content-Type"), "application/json");
 });
 
-test("the house models are precompressed too, served as binary glTF", async () => {
+test("the packed house models are precompressed too, served as binary", async () => {
   let path = "";
   const response = await worker.fetch(
-    new Request("https://example.test/assets/models/houses/craftsman.glb", {
+    new Request("https://example.test/assets/models/houses-0123abcd.bin", {
       headers: { "Accept-Encoding": "br, gzip" },
     }),
     {
@@ -116,9 +116,9 @@ test("the house models are precompressed too, served as binary glTF", async () =
       },
     },
   );
-  assert.equal(path, "/assets/models/houses/craftsman.glb.br");
+  assert.equal(path, "/assets/models/houses-0123abcd.bin.br");
   assert.equal(response.headers.get("Content-Encoding"), "br");
-  assert.equal(response.headers.get("Content-Type"), "model/gltf-binary");
+  assert.equal(response.headers.get("Content-Type"), "application/octet-stream");
 });
 
 test("range requests and missing compressed variants fall back without mislabeling HTML", async () => {

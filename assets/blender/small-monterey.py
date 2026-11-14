@@ -1,6 +1,6 @@
 # The reference house (Rumbo north lot 4), modelled for Sloppy Tanks in Blender (headless):
 #   blender --background --python assets/blender/small-monterey.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (bun run house:small-monterey writes public/models/houses/small-monterey.glb and its plan,
+#   (bun run house:small-monterey writes assets/models/houses/small-monterey.glb and its plan,
 #   crates/core/data/houses/small-monterey.plan.json)
 #
 # The house is authored in the game's build frame for its lot, which is the street frame

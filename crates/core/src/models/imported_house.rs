@@ -1,8 +1,8 @@
 //! Senda's houses drawn from models made in Blender instead of
-//! [`super::house_model`]'s boxes, for the styles [`HOUSE_MODELS`] lists. Each model is a
-//! binary glTF the page downloads as a hashed runtime file
-//! (`public/models/houses/<name>.glb`, [`model_path`]) and hands over with [`install`];
-//! until then, and natively without one, the coded house stands. A model drawn for one
+//! [`super::house_model`]'s boxes, for the styles [`HOUSE_MODELS`] lists. The models come
+//! in one file the page downloads as a hashed runtime file ([`MODELS_PATH`], packed from
+//! Blender's exports, [`super::house_pack`]) and hands over with [`install`]; until then,
+//! and natively without one, the coded house stands. A model drawn for one
 //! lot fits every lot of its styles ([`ModelFit`]): mirrored for a garage on the other
 //! side, stretched to the lot's box, wall top and ridge.
 //!
@@ -35,17 +35,8 @@ use crate::sim::house_layout::{
 };
 use crate::sim::kinds::CoverKind;
 
-/// The runtime file a model downloads as.
-pub fn model_path(name: &str) -> String {
-    format!("models/houses/{name}.glb")
-}
-
-/// Every model's runtime file, by the model's name.
-pub fn model_paths() -> impl Iterator<Item = (&'static str, String)> {
-    HOUSE_MODELS
-        .iter()
-        .map(|model| (model.name, model_path(model.name)))
-}
+/// The runtime file every model downloads in.
+pub const MODELS_PATH: &str = "models/houses.bin";
 
 /// An imported model: its meshes by part and finish, in the build frame of the lot it was
 /// drawn for (ridge along z, front +z, ground at y = 0), or fitted to another lot.
@@ -99,18 +90,39 @@ static ENTRIES: Mutex<Option<HashMap<FitKey, EntryMeshes>>> = Mutex::new(None);
 /// The node prefix of a model's office and entry.
 const ENTRY_PART: &str = "Entry";
 
-/// Install the model `name` from its `.glb` bytes; an error leaves its coded houses.
-pub fn install(name: &str, bytes: &[u8]) -> Result<(), String> {
-    let model = HOUSE_MODELS
-        .iter()
-        .find(|model| model.name == name)
-        .ok_or_else(|| format!("no house model {name}"))?;
-    let house = parse_glb(bytes)?;
+/// Install every model the bytes of [`MODELS_PATH`] hold; an error installs none and leaves
+/// the coded houses.
+pub fn install(bytes: &[u8]) -> Result<(), String> {
+    install_models(bytes, |_| true)
+}
+
+/// Install only the model `name` from the bytes of [`MODELS_PATH`] (the render lab draws
+/// one at a time).
+pub fn install_model(name: &str, bytes: &[u8]) -> Result<(), String> {
+    install_models(bytes, |model| model == name)?;
+    if installed(name) {
+        Ok(())
+    } else {
+        Err(format!("no house model {name} in the file"))
+    }
+}
+
+fn install_models(bytes: &[u8], wanted: impl Fn(&str) -> bool) -> Result<(), String> {
+    let mut houses = Vec::new();
+    for (name, house) in parse_pack(bytes)? {
+        let model = HOUSE_MODELS
+            .iter()
+            .find(|model| model.name == name)
+            .ok_or_else(|| format!("no house model {name}"))?;
+        if wanted(model.name) {
+            houses.push((model.name, Arc::new(house)));
+        }
+    }
     MODELS
         .lock()
         .expect("house models")
         .get_or_insert_with(HashMap::new)
-        .insert(model.name, Arc::new(house));
+        .extend(houses);
     FITTED.lock().expect("fitted models").take();
     ENTRIES.lock().expect("fitted entries").take();
     Ok(())
@@ -411,62 +423,27 @@ fn surface_named(name: &str) -> Option<Surface> {
         .find(|surface| format!("{surface:?}") == name)
 }
 
-/// The meshes of a binary glTF whose nodes are named `<HousePart>__<Surface>` (or
-/// `Entry__<Surface>`, the office and entry before the front): each
-/// mesh's first primitive (positions, normals, metre UVs scaled to the finish's texture,
-/// indices), placed by its node's translation. Blender's +Y up and -Z forward export
-/// lands in the build frame as is.
-pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
-    let u32_at = |at: usize| -> Result<u32, String> {
-        bytes
-            .get(at..at + 4)
-            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-            .ok_or_else(|| "truncated".to_string())
-    };
-    if bytes.get(0..4) != Some(b"glTF") {
-        return Err("not a binary glTF".into());
-    }
-    let json_length = u32_at(12)? as usize;
-    let json_chunk = bytes.get(20..20 + json_length).ok_or("truncated")?;
-    let json: serde_json::Value =
-        serde_json::from_slice(json_chunk).map_err(|error| error.to_string())?;
-    let bin_start = 20 + json_length + 8;
-    let bin = bytes.get(bin_start..).ok_or("no binary chunk")?;
-    let accessor = |index: &serde_json::Value| -> Result<(&[u8], usize, usize), String> {
-        let accessor = &json["accessors"][index.as_u64().ok_or("accessor")? as usize];
-        let view = &json["bufferViews"][accessor["bufferView"].as_u64().ok_or("view")? as usize];
-        let offset = view["byteOffset"].as_u64().unwrap_or(0) as usize
-            + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
-        let count = accessor["count"].as_u64().ok_or("count")? as usize;
-        let component = accessor["componentType"].as_u64().ok_or("type")? as usize;
-        let length = view["byteLength"].as_u64().ok_or("length")? as usize;
-        let data = bin
-            .get(offset..offset + length)
-            .ok_or("a view past the binary chunk")?;
-        Ok((data, count, component))
-    };
-    let floats = |index: &serde_json::Value, n: usize| -> Result<Vec<f32>, String> {
-        let (data, count, _) = accessor(index)?;
-        let bytes = data
-            .get(..count * n * 4)
-            .ok_or("an accessor past its view")?;
-        Ok(bytes
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|b| f32::from_le_bytes(*b))
-            .collect())
-    };
+/// The models the bytes of [`MODELS_PATH`] hold, by name ([`super::house_pack`]).
+pub fn parse_pack(bytes: &[u8]) -> Result<Vec<(String, ImportedHouse)>, String> {
+    super::house_pack::unpack(bytes)?
+        .into_iter()
+        .map(|(name, objects)| {
+            let house = house_from(objects).map_err(|error| format!("{name}: {error}"))?;
+            Ok((name, house))
+        })
+        .collect()
+}
+
+/// A model from its objects, named `<HousePart>__<Surface>` (or `Entry__<Surface>`, the
+/// office and entry before the front), in the build frame (Blender's +Y up and -Z forward
+/// export lands there as is), their metre UVs scaled to each finish's texture.
+fn house_from(objects: Vec<(String, Mesh)>) -> Result<ImportedHouse, String> {
     let mut meshes = Vec::new();
     let mut entry = Vec::new();
-    for node in json["nodes"].as_array().ok_or("no nodes")? {
-        let Some(mesh_index) = node["mesh"].as_u64() else {
-            continue;
-        };
-        let name = node["name"].as_str().unwrap_or_default();
-        let base = name.split('.').next().unwrap_or(name);
+    for (name, mut mesh) in objects {
+        let base = name.split('.').next().unwrap_or(&name);
         let Some((part, surface)) = base.split_once("__") else {
-            return Err(format!("node {name} is not <HousePart>__<Surface>"));
+            return Err(format!("object {name} is not <HousePart>__<Surface>"));
         };
         let part = if part == ENTRY_PART {
             None
@@ -474,67 +451,13 @@ pub fn parse_glb(bytes: &[u8]) -> Result<ImportedHouse, String> {
             Some(part_named(part).ok_or_else(|| format!("no part {part}"))?)
         };
         let surface = surface_named(surface).ok_or_else(|| format!("no surface {surface}"))?;
-        let at = node["translation"]
-            .as_array()
-            .map(|t| [0, 1, 2].map(|k| t[k].as_f64().unwrap_or(0.0) as f32))
-            .unwrap_or([0.0; 3]);
         let uv_scale = uv_per_metre(surface) as f32;
-        for primitive in json["meshes"][mesh_index as usize]["primitives"]
-            .as_array()
-            .ok_or("no primitives")?
-        {
-            let attributes = &primitive["attributes"];
-            let positions: Vec<[f32; 3]> = floats(&attributes["POSITION"], 3)?
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .map(|p| [p[0] + at[0], p[1] + at[1], p[2] + at[2]])
-                .collect();
-            let normals: Vec<[f32; 3]> = floats(&attributes["NORMAL"], 3)?
-                .as_chunks::<3>()
-                .0
-                .to_vec();
-            let uvs: Vec<[f32; 2]> = if attributes["TEXCOORD_0"].is_null() {
-                vec![[0.0, 0.0]; positions.len()]
-            } else {
-                floats(&attributes["TEXCOORD_0"], 2)?
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|uv| [uv[0] * uv_scale, uv[1] * uv_scale])
-                    .collect()
-            };
-            let (data, count, component) = accessor(&primitive["indices"])?;
-            let indices: Vec<u32> = match component {
-                5123 => data
-                    .get(..count * 2)
-                    .ok_or("indices past their view")?
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|b| u32::from(u16::from_le_bytes(*b)))
-                    .collect(),
-                5125 => data
-                    .get(..count * 4)
-                    .ok_or("indices past their view")?
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .map(|b| u32::from_le_bytes(*b))
-                    .collect(),
-                other => return Err(format!("index type {other}")),
-            };
-            let mesh = Mesh {
-                positions,
-                normals,
-                uvs,
-                indices: Some(indices),
-                ..Mesh::default()
-            };
-            match part {
-                Some(part) => meshes.push((part, surface, Arc::new(mesh))),
-                None => entry.push((surface, Arc::new(mesh))),
-            }
+        for uv in &mut mesh.uvs {
+            *uv = uv.map(|c| c * uv_scale);
+        }
+        match part {
+            Some(part) => meshes.push((part, surface, Arc::new(mesh))),
+            None => entry.push((surface, Arc::new(mesh))),
         }
     }
     Ok(ImportedHouse { meshes, entry })
@@ -589,14 +512,138 @@ mod tests {
     use crate::sim::house_structure::{PartKind, house_structure};
     use crate::sim::senda_layout::senda_houses;
 
+    /// The shipped file's bytes.
+    fn shipped_pack() -> Vec<u8> {
+        let path = format!("{}/../../public/{MODELS_PATH}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read(&path).expect("the models are shipped")
+    }
+
     /// The shipped models, by name.
     fn shipped(name: &str) -> ImportedHouse {
+        parse_pack(&shipped_pack())
+            .expect("the models parse")
+            .into_iter()
+            .find(|(model, _)| model == name)
+            .expect("the model is shipped")
+            .1
+    }
+
+    /// A model's objects as Blender exported it (`assets/models/houses/<name>.glb`, which
+    /// `scripts/pack-houses.ts` packs): each mesh node's name and first primitive, UVs in
+    /// metres.
+    fn source(name: &str) -> Vec<(String, Mesh)> {
         let path = format!(
-            "{}/../../public/{}",
-            env!("CARGO_MANIFEST_DIR"),
-            model_path(name)
+            "{}/../../assets/models/houses/{name}.glb",
+            env!("CARGO_MANIFEST_DIR")
         );
-        parse_glb(&std::fs::read(&path).expect("the model is shipped")).expect("the model parses")
+        let bytes = std::fs::read(&path).expect("the model's source");
+        let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().expect("4 bytes"));
+        assert_eq!(&bytes[0..4], b"glTF");
+        let json_length = u32_at(12) as usize;
+        let json: serde_json::Value =
+            serde_json::from_slice(&bytes[20..20 + json_length]).expect("glTF JSON");
+        let bin = &bytes[20 + json_length + 8..];
+        let accessor = |index: &serde_json::Value| -> (&[u8], usize, u64) {
+            let accessor = &json["accessors"][index.as_u64().expect("accessor") as usize];
+            let view = &json["bufferViews"][accessor["bufferView"].as_u64().expect("view") as usize];
+            assert!(view["byteStride"].is_null(), "an interleaved view");
+            let offset = view["byteOffset"].as_u64().unwrap_or(0) as usize
+                + accessor["byteOffset"].as_u64().unwrap_or(0) as usize;
+            let count = accessor["count"].as_u64().expect("count") as usize;
+            (&bin[offset..], count, accessor["componentType"].as_u64().expect("type"))
+        };
+        let floats = |index: &serde_json::Value, n: usize| -> Vec<f32> {
+            let (data, count, component) = accessor(index);
+            assert_eq!(component, 5126, "float components");
+            data[..count * n * 4]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| f32::from_le_bytes(*b))
+                .collect()
+        };
+        let mut objects = Vec::new();
+        for node in json["nodes"].as_array().expect("nodes") {
+            let Some(mesh) = node["mesh"].as_u64() else {
+                continue;
+            };
+            assert!(node["translation"].is_null() && node["rotation"].is_null() && node["scale"].is_null());
+            let primitive = &json["meshes"][mesh as usize]["primitives"][0];
+            let attributes = &primitive["attributes"];
+            let (data, count, component) = accessor(&primitive["indices"]);
+            assert_eq!(component, 5123, "16-bit indices");
+            let indices = data[..count * 2]
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|b| u32::from(u16::from_le_bytes(*b)))
+                .collect();
+            let mesh = Mesh {
+                positions: floats(&attributes["POSITION"], 3).as_chunks::<3>().0.to_vec(),
+                normals: floats(&attributes["NORMAL"], 3).as_chunks::<3>().0.to_vec(),
+                uvs: floats(&attributes["TEXCOORD_0"], 2).as_chunks::<2>().0.to_vec(),
+                indices: Some(indices),
+                ..Mesh::default()
+            };
+            objects.push((node["name"].as_str().expect("a name").to_string(), mesh));
+        }
+        objects
+    }
+
+    /// How far the shipped file's geometry may sit from Blender's: positions (m), normals
+    /// (degrees) and UVs (m, before the finish's scale).
+    const PACKED_POSITION: f32 = 0.0002;
+    const PACKED_NORMAL: f32 = 1.0;
+    const PACKED_UV: f32 = 1.0 / 512.0;
+
+    #[test]
+    fn the_shipped_pack_holds_every_model_as_blender_exported_it() {
+        let pack = super::super::house_pack::unpack(&shipped_pack()).expect("the pack reads");
+        let names: Vec<&str> = pack.iter().map(|(name, _)| name.as_str()).collect();
+        let mut expected: Vec<&str> = HOUSE_MODELS.iter().map(|model| model.name).collect();
+        expected.sort_unstable();
+        assert_eq!(names, expected, "the pack's models (rebuild it: bun run house:pack)");
+        for (name, objects) in &pack {
+            let source = source(name);
+            assert_eq!(
+                objects.iter().map(|(object, _)| object).collect::<Vec<_>>(),
+                source.iter().map(|(object, _)| object).collect::<Vec<_>>(),
+                "{name}: objects (rebuild the pack: bun run house:pack)"
+            );
+            for ((object, packed), (_, blender)) in objects.iter().zip(&source) {
+                let stale = format!("{name} {object} (rebuild the pack: bun run house:pack)");
+                assert_eq!(packed.indices, blender.indices, "{stale}: indices");
+                assert_eq!(packed.positions.len(), blender.positions.len(), "{stale}");
+                for vertex in 0..blender.positions.len() {
+                    let (p, q) = (widen(packed.positions[vertex]), widen(blender.positions[vertex]));
+                    assert!(
+                        (p - q).abs().max_element() <= f64::from(PACKED_POSITION),
+                        "{stale}: vertex {vertex} at {p} against {q}"
+                    );
+                    let (n, m) = (widen(packed.normals[vertex]), widen(blender.normals[vertex]));
+                    assert!(
+                        n.angle_between(m).to_degrees() <= f64::from(PACKED_NORMAL),
+                        "{stale}: vertex {vertex} normal {n} against {m}"
+                    );
+                    let (uv, blender_uv) = (packed.uvs[vertex], blender.uvs[vertex]);
+                    assert!(
+                        (0..2).all(|k| (uv[k] - blender_uv[k]).abs() <= PACKED_UV),
+                        "{stale}: vertex {vertex} UV {uv:?} against {blender_uv:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_damaged_pack_is_refused() {
+        let pack = shipped_pack();
+        for length in [0, 3, 5, pack.len() / 2, pack.len() - 1] {
+            assert!(parse_pack(&pack[..length]).is_err(), "cut at {length}");
+        }
+        let mut longer = pack.clone();
+        longer.push(0);
+        assert!(parse_pack(&longer).is_err(), "a byte after it");
     }
     /// What a house may cost phones: model triangles and finishes (each a draw).
     const TRIANGLE_BUDGET: usize = 6000;

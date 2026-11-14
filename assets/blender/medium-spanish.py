@@ -1,6 +1,6 @@
 # The Senda medium Spanish, for Sloppy Tanks in Blender (headless):
 #   blender --background --python assets/blender/medium-spanish.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (writes public/models/houses/medium-spanish.glb and
+#   (writes assets/models/houses/medium-spanish.glb and
 #   crates/core/data/houses/medium-spanish.plan.json)
 #
 # The medium plan (the Prairie's, after Rumbo north lot 2) in the tract's Spanish dress; no house of

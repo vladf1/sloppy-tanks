@@ -20,7 +20,7 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
         if path.is_dir() {
             collect(&path, files);
         } else if path.extension().is_some_and(|extension| {
-            matches!(extension.to_str(), Some("webp" | "mp3" | "png" | "glb"))
+            matches!(extension.to_str(), Some("webp" | "mp3" | "png" | "bin"))
         }) {
             files.push(path);
         }

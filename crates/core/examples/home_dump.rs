@@ -1,8 +1,9 @@
 //! Experiment: the coded reference house as an OBJ underlay for Blender, with its design,
 //! roof and structure parts' boxes as JSON. `cargo run --example home_dump -- <out dir>`;
-//! with a `.glb` as the second argument, also the imported model's triangles per part.
+//! with the house models file (`public/models/houses.bin`) as the second argument, also the
+//! imported model's triangles per part.
 
-use sloppy_core::models::imported_house::{coded_pieces_obj, install, parse_glb};
+use sloppy_core::models::imported_house::{coded_pieces_obj, install, parse_pack};
 use sloppy_core::models::structural_house;
 use sloppy_core::scene::Node;
 use sloppy_core::sim::structure::PartSet;
@@ -123,12 +124,16 @@ fn main() {
         }
     };
     measure("coded");
-    if let Some(glb) = args.get(2) {
-        let bytes = std::fs::read(glb).unwrap();
+    if let Some(pack) = args.get(2) {
+        let bytes = std::fs::read(pack).unwrap();
         let start = std::time::Instant::now();
-        let house = parse_glb(&bytes).unwrap();
+        let (_, house) = parse_pack(&bytes)
+            .unwrap()
+            .into_iter()
+            .find(|(name, _)| name == "small-monterey")
+            .expect("the reference house's model");
         println!("parse {:.2} ms", start.elapsed().as_secs_f64() * 1000.0);
-        install("small-monterey", &bytes).unwrap();
+        install(&bytes).unwrap();
         measure("imported");
         let mut by_part = std::collections::BTreeMap::<String, usize>::new();
         let mut finishes = std::collections::BTreeSet::new();

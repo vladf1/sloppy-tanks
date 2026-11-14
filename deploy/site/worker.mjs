@@ -10,7 +10,8 @@ const contentTypes = {
   ".wasm": "application/wasm",
   ".ttc": "font/collection",
   ".json": "application/json",
-  ".glb": "model/gltf-binary",
+  // The Neighborhood's house models, packed (scripts/pack-houses.ts).
+  ".bin": "application/octet-stream",
 };
 
 export default {

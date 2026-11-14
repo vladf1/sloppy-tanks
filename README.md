@@ -406,6 +406,8 @@ Source images and encoding guidance live in [assets/texture-sources](assets/text
 
 For conifer artwork, run `bun scripts/generate-conifer-texture.ts` followed by `bun run optimize:textures`. Other tree patterns use `bun scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `bun scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `bun scripts/generate-house-textures.ts`, then `bun run optimize:textures`.
 
+The Neighborhood's houses are modelled in headless Blender (`assets/blender/<design>.py`). `bun run house:<design>` exports one design to `assets/models/houses/<design>.glb` with its wall plan in `crates/core/data/houses/`, then runs `bun run house:pack`, which packs every design's export into the one file the game downloads, `public/models/houses.bin` (`scripts/pack-houses.ts`). The core's tests fail while that file differs from the exports.
+
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 
 ## Deployment

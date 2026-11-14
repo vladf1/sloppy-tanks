@@ -1,7 +1,7 @@
 # The Senda large Monterey house, modelled after Rumbo north lot 6, for Sloppy Tanks in Blender
 # (headless):
 #   blender --background --python assets/blender/large-monterey.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (writes public/models/houses/large-monterey.glb and
+#   (writes assets/models/houses/large-monterey.glb and
 #   crates/core/data/houses/large-monterey.plan.json)
 #
 # Drawn in the street frame on the 6.2 x 8 m lot the kit measures, its garage on the right;

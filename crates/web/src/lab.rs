@@ -249,27 +249,28 @@ impl RenderLab {
     }
 
     /// Experiment: the Senda reference house as the game builds it, placed with its
-    /// ground centre at `x, z` and its front toward +z: the Blender-made model from
-    /// `glb`, or the coded house when `glb` is empty, its structure's parts `broken`
-    /// gone. Returns `{draws, triangles, parts}` of the model built.
+    /// ground centre at `x, z` and its front toward +z: the Blender-made model from the
+    /// models file `pack` (`models/houses.bin`), or the coded house when `pack` is empty,
+    /// its structure's parts `broken` gone. Returns `{draws, triangles, parts}` of the
+    /// model built.
     pub fn add_home(
         &mut self,
         name: &str,
-        glb: &[u8],
+        pack: &[u8],
         broken: Vec<u32>,
         x: f32,
         z: f32,
     ) -> Result<String, JsValue> {
-        use sloppy_core::models::imported_house::{install, uninstall};
+        use sloppy_core::models::imported_house::{install_model, uninstall};
         use sloppy_core::models::structural_house;
         use sloppy_core::sim::house_layout::{REFERENCE_HOUSE, SENDA_STYLES};
         use sloppy_core::sim::house_structure::shared_house_structure;
         use sloppy_core::sim::senda_layout::{SENDA_SCALE, senda_houses};
         use sloppy_core::sim::structure::PartSet;
-        if glb.is_empty() {
+        if pack.is_empty() {
             uninstall();
         } else {
-            install("small-monterey", glb).map_err(js_error)?;
+            install_model("small-monterey", pack).map_err(js_error)?;
         }
         let home = senda_houses()
             .into_iter()
@@ -318,13 +319,14 @@ impl RenderLab {
 
     /// Experiment: a Senda house of `style` on a lot of its own (`w` across its front,
     /// 7 m deep, ridge `h`, its garage on the left when `left`), drawn from the model
-    /// `model` fitted to it (`glb` empty: the coded house), standing, at `x, z`.
+    /// `model` from the models file `pack` fitted to it (`pack` empty: the coded house),
+    /// standing, at `x, z`.
     #[allow(clippy::too_many_arguments)]
     pub fn add_planned(
         &mut self,
         name: &str,
         model: &str,
-        glb: &[u8],
+        pack: &[u8],
         style: u8,
         left: bool,
         w: f64,
@@ -332,14 +334,14 @@ impl RenderLab {
         x: f32,
         z: f32,
     ) -> Result<String, JsValue> {
-        use sloppy_core::models::imported_house::{install, uninstall};
+        use sloppy_core::models::imported_house::{install_model, uninstall};
         use sloppy_core::models::structural_house;
         use sloppy_core::sim::house_layout::{GarageSide, HousePlan};
         use sloppy_core::sim::senda_layout::SENDA_SCALE;
         use sloppy_core::sim::structure::PartSet;
         uninstall();
-        if !glb.is_empty() {
-            install(model, glb).map_err(js_error)?;
+        if !pack.is_empty() {
+            install_model(model, pack).map_err(js_error)?;
         }
         let garage = if left {
             GarageSide::Left

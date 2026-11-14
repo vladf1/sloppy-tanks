@@ -18,7 +18,7 @@ import type { Plugin } from "vite";
  */
 const HASHED = ["textures", "audio", "previews", "fonts", "models"];
 /** What the runtime reads; the licences and notes beside the files stay plain. */
-const RUNTIME_FILE = /\.(webp|mp3|ttc|glb)$/;
+const RUNTIME_FILE = /\.(webp|mp3|ttc|bin)$/;
 /**
  * Icons the game page links to, which a built page names by hash too. The web app
  * manifest keeps its plain address: a Home Screen app is installed from it and its
