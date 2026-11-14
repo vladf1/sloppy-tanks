@@ -988,29 +988,165 @@ struct FallingBranch {
 }
 
 /// A round's covers being added, in `cover_order`, and the models of the combined
-/// model's covers built so far. A combined cover that changes its look later moves out
+/// models' covers built so far. A combined cover that changes its look later moves out
 /// to its own model.
+///
+/// The static covers join two combined models, each registered once its covers are
+/// built: first those with a look of their own (a Neighborhood's houses), then those
+/// sharing looks (its yard walls). Registering merges a model's covers into copies the
+/// size of all of them at once, and the second's copies then fit where the first's
+/// were freed: as one model, the round's covers held the Wasm heap's peak several MB
+/// higher for good. Each costs a draw per material it shows.
 struct CoverPlan {
-    /// The static covers with a look of their own, by index into the round's covers.
+    /// The static covers, by index into the round's covers: each combined model's in
+    /// turn.
     combined: Vec<usize>,
-    /// The rest, each its own instance, added after the combined model.
+    /// Where each combined model's covers end in `combined`, the first's first.
+    ends: VecDeque<usize>,
+    /// The rest, each its own instance, added after the combined models.
     own: Vec<usize>,
-    /// The combined model's root and each built cover's index and, for a tree, its
-    /// parts and crown ([`CoverModelEntry::crown`]).
+    /// The next combined model's root and its covers built so far.
     root: Node,
-    built: Vec<(usize, Option<TreeParts>, Option<Node>)>,
+    built: Vec<BuiltCover>,
+    /// How many of `combined` are built, the models registered included.
+    done: usize,
+    /// The looks ([`cover_key`]) several of the static covers share, each built once:
+    /// the covers showing it stand in copies of one tree, sharing its meshes.
+    looks: HashMap<String, SharedLook>,
+}
+
+/// A cover built into a combined model's tree: its index into the round's covers and,
+/// for a tree, its parts and crown ([`CoverModelEntry::crown`]).
+struct BuiltCover {
+    index: usize,
+    tree: Option<TreeParts>,
+    crown: Option<Node>,
+}
+
+/// A look several static covers share ([`CoverPlan::looks`]).
+enum SharedLook {
+    /// None of its `covers` built yet.
+    Unbuilt { covers: usize },
+    /// Built for its first cover, which stands at `origin`, `left` covers still to
+    /// build: they join their combined model with copies of `root`.
+    Merged {
+        left: usize,
+        root: Node,
+        origin: DVec3,
+    },
+    /// Too large to merge: its covers are instances of its own model, as movable
+    /// covers are.
+    Instanced,
 }
 
 impl CoverPlan {
     fn of(covers: &[RenderCover]) -> Self {
-        let (combined, own) = model_catalog::cover_order(covers);
+        let (statics, own) = model_catalog::cover_order(covers);
+        let mut looks: HashMap<String, SharedLook> = HashMap::default();
+        for &index in &statics {
+            let look = looks
+                .entry(cover_key(&covers[index]))
+                .or_insert(SharedLook::Unbuilt { covers: 0 });
+            if let SharedLook::Unbuilt { covers } = look {
+                *covers += 1;
+            }
+        }
+        looks.retain(|_, look| matches!(look, SharedLook::Unbuilt { covers } if *covers > 1));
+        let (mut combined, shared): (Vec<usize>, Vec<usize>) = statics
+            .into_iter()
+            .partition(|&index| !looks.contains_key(&cover_key(&covers[index])));
+        // A model of one cover is not worth one of its own.
+        let ends = if combined.len() < 2 || shared.len() < 2 {
+            VecDeque::from([combined.len() + shared.len()])
+        } else {
+            VecDeque::from([combined.len(), combined.len() + shared.len()])
+        };
+        combined.extend(shared);
         Self {
-            built: Vec::with_capacity(combined.len()),
+            built: Vec::new(),
             combined,
+            ends,
             own,
             root: Node::group("static-covers"),
+            done: 0,
+            looks,
         }
     }
+
+    /// The next combined model's tree and covers, once all of them are built, leaving
+    /// the plan ready for the model after it.
+    fn take_model(&mut self) -> Option<(Node, Vec<BuiltCover>)> {
+        if self.ends.front() != Some(&self.done) {
+            return None;
+        }
+        self.ends.pop_front();
+        let root = std::mem::replace(&mut self.root, Node::group("static-covers"));
+        Some((root, std::mem::take(&mut self.built)))
+    }
+
+    /// The model static cover `cover` of look `key` joins its combined model with when
+    /// another cover built its look: a copy of that tree, moved to `cover`'s footprint
+    /// (a look shows the same wherever it stands, as instances of one model showed
+    /// it). The last cover to show it takes the tree itself.
+    fn shared_look(&mut self, key: &str, cover: &RenderCover) -> Option<Node> {
+        let SharedLook::Merged { left, root, origin } = self.looks.get_mut(key)? else {
+            return None;
+        };
+        *left -= 1;
+        let offset = DVec3::new(cover.x, 0.0, cover.z) - *origin;
+        let mut model = if *left == 0 {
+            match self.looks.remove(key) {
+                Some(SharedLook::Merged { root, .. }) => root,
+                _ => unreachable!("looked up"),
+            }
+        } else {
+            root.clone()
+        };
+        model.position += offset;
+        Some(model)
+    }
+
+    /// Whether look `key` is too large to merge, its covers instances of its model.
+    fn instanced_look(&self, key: &str) -> bool {
+        matches!(self.looks.get(key), Some(SharedLook::Instanced))
+    }
+
+    /// Settle what the other static covers of `cover`'s look `key` show now that
+    /// `model` is built for it: copies of it in their combined model, unless it is too
+    /// large to merge ([`MAX_MERGED_LOOK_VERTICES`]). False if it is: then `cover` too
+    /// is an instance of its own model.
+    fn keep_look(&mut self, key: &str, cover: &RenderCover, model: &Node) -> bool {
+        let Some(look) = self.looks.get_mut(key) else {
+            return true;
+        };
+        let SharedLook::Unbuilt { covers } = *look else {
+            return true;
+        };
+        *look = if node_vertices(model) > MAX_MERGED_LOOK_VERTICES {
+            SharedLook::Instanced
+        } else {
+            SharedLook::Merged {
+                left: covers - 1,
+                root: model.clone(),
+                origin: DVec3::new(cover.x, 0.0, cover.z),
+            }
+        };
+        matches!(look, SharedLook::Merged { .. })
+    }
+}
+
+/// The most vertices a look several static covers share has to join their combined
+/// model: a larger one (a watchtower, a village's long fieldstone wall) stays one model
+/// drawn instanced, which merging would copy whole for each cover, onto the GPU and,
+/// while registering, into the Wasm heap. The Neighborhood's yard walls have 120-740.
+const MAX_MERGED_LOOK_VERTICES: usize = 2048;
+
+/// The vertices of a model tree's drawables.
+fn node_vertices(node: &Node) -> usize {
+    node.drawable
+        .as_ref()
+        .map_or(0, |drawable| drawable.mesh.positions.len())
+        + node.children.iter().map(node_vertices).sum::<usize>()
 }
 
 /// A theme's scenery model whose static parts are batched for upload
@@ -2030,15 +2166,37 @@ impl Presentation {
         }
     }
 
-    /// Build the next of `plan`'s combined covers' models into its root; false once
-    /// every one is built.
+    /// Build the next of `plan`'s combined covers' models into its root, or register
+    /// the combined model whose covers are all built; false once every one is.
     fn build_combined_cover(&mut self, plan: &mut CoverPlan, covers: &[RenderCover]) -> bool {
-        let Some(&index) = plan.combined.get(plan.built.len()) else {
+        if let Some((root, built)) = plan.take_model() {
+            self.add_combined_covers(root, built, covers);
+            return !plan.ends.is_empty();
+        }
+        let Some(&index) = plan.combined.get(plan.done) else {
             return false;
         };
+        plan.done += 1;
         let cover = &covers[index];
-        let CoverModel { root: model, tree } = model_catalog::cover_model(cover);
-        self.textures.request_scenery(&mut self.renderer, &model);
+        let key = cover_key(cover);
+        if plan.instanced_look(&key) {
+            self.add_cover(cover);
+            return true;
+        }
+        let (model, tree) = match plan.shared_look(&key, cover) {
+            Some(model) => (model, None),
+            None => {
+                let built = model_catalog::cover_model(cover);
+                // A tree's look is where it stands: no other shares it.
+                if built.tree.is_none() && !plan.keep_look(&key, cover, &built.root) {
+                    self.add_cover_with(cover, Some(built));
+                    return true;
+                }
+                self.textures
+                    .request_scenery(&mut self.renderer, &built.root);
+                (built.root, built.tree)
+            }
+        };
         let crown = tree
             .as_ref()
             .and_then(|_| model.find(tree_part::CROWN))
@@ -2046,14 +2204,13 @@ impl Presentation {
         let mut joint = Node::group(combined_joint(cover.id));
         joint.children.push(model);
         plan.root.children.push(joint);
-        plan.built.push((index, tree, crown));
+        plan.built.push(BuiltCover { index, tree, crown });
         true
     }
 
-    /// The combined model of `plan`'s covers, once each is built
-    /// ([`Self::build_combined_cover`]), and their views.
-    fn add_combined_covers(&mut self, plan: CoverPlan, covers: &[RenderCover]) {
-        let CoverPlan { root, built, .. } = plan;
+    /// A combined model of covers once each is built ([`Self::build_combined_cover`]):
+    /// its tree `root` and the covers `built`, and their views.
+    fn add_combined_covers(&mut self, root: Node, built: Vec<BuiltCover>, covers: &[RenderCover]) {
         if built.is_empty() {
             return;
         }
@@ -2065,7 +2222,7 @@ impl Presentation {
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("combined cover model");
-        for (index, tree, crown) in built {
+        for BuiltCover { index, tree, crown } in built {
             let cover = &covers[index];
             let nodes = self.renderer.model_nodes(model);
             let name = combined_joint(cover.id);
