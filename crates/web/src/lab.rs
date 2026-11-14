@@ -264,7 +264,7 @@ impl RenderLab {
         use sloppy_core::models::structural_house;
         use sloppy_core::sim::house_layout::{REFERENCE_HOUSE, SENDA_STYLES};
         use sloppy_core::sim::house_structure::shared_house_structure;
-        use sloppy_core::sim::senda_layout::senda_houses;
+        use sloppy_core::sim::senda_layout::{SENDA_SCALE, senda_houses};
         use sloppy_core::sim::structure::PartSet;
         if glb.is_empty() {
             uninstall();
@@ -281,13 +281,15 @@ impl RenderLab {
         let parts = shared_house_structure(&home.design()).parts.len();
         let set = PartSet::from_indices(broken.into_iter().map(|index| index as usize));
         let mut group = Node::group("home");
+        // The house's cover as the level hands it to the game: its design box at the
+        // level's scale, which the builder takes back to the design before building.
         structural_house(
             &mut group,
-            home.x,
-            home.z,
-            home.w,
-            home.d,
-            home.h,
+            home.x * SENDA_SCALE,
+            home.z * SENDA_SCALE,
+            home.w * SENDA_SCALE,
+            home.d * SENDA_SCALE,
+            home.h * SENDA_SCALE,
             Some(home.plan),
             &set,
         );
@@ -333,6 +335,7 @@ impl RenderLab {
         use sloppy_core::models::imported_house::{install, uninstall};
         use sloppy_core::models::structural_house;
         use sloppy_core::sim::house_layout::{GarageSide, HousePlan};
+        use sloppy_core::sim::senda_layout::SENDA_SCALE;
         use sloppy_core::sim::structure::PartSet;
         uninstall();
         if !glb.is_empty() {
@@ -350,13 +353,15 @@ impl RenderLab {
             garage,
         };
         let mut root = Node::group("house");
+        // Its lot is given in the level's design metres; the game builds a planned house
+        // from its cover at the level's scale.
         structural_house(
             &mut root,
             0.0,
             0.0,
-            w,
-            7.0,
-            h,
+            w * SENDA_SCALE,
+            7.0 * SENDA_SCALE,
+            h * SENDA_SCALE,
             Some(plan),
             &PartSet::default(),
         );
