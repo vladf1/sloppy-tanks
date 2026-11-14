@@ -98,6 +98,12 @@ pub trait RoomHost: Send + 'static {
     /// A disposed host must answer with a fatal `expired` error and a close.
     fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput);
 
+    /// The session's clock once a [`receive`](RoomHost::receive) has returned, called
+    /// after each one. A message that begins a round builds its simulation inside that
+    /// call (tens of milliseconds on the large maps), after `now_ms` was read: the host
+    /// starts the round's clock here, so the build is not owed to physics as ticks.
+    fn round_built(&mut self, _now_ms: u64) {}
+
     /// The connection is gone (closed by the client, closed by the server, or failed).
     /// Its seat, if any, stays reserved for the reconnect grace. Must ignore connections
     /// it does not know, because the session also calls it for sockets that never joined

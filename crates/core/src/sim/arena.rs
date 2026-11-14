@@ -1,6 +1,6 @@
 //! Pine Village's authored cover, and the shared pickup and spawn layout every map uses.
 
-use super::house_layout::HOUSE_HEALTH;
+use super::house_layout::{HOUSE_HEALTH, HousePlan};
 use super::kinds::{CoverKind, PickupKind, Team};
 use super::math::{Vec2, js_round};
 use super::model_data::ARENA;
@@ -21,6 +21,8 @@ pub struct CoverDef {
     pub timber_join: Option<TimberJoin>,
     /// How many independently breakable bays a timber run splits into.
     pub timber_bays: Option<usize>,
+    /// A house its map lays out (type, front and garage); village cottages have none.
+    pub house_plan: Option<HousePlan>,
 }
 
 /// Outer walls are this thick, grown outward from the arena edge so most of a gun
@@ -38,6 +40,36 @@ pub fn boundary_walls(side: f64, half: f64, h: f64, color: u32) -> [CoverDef; 2]
         wall(centre, 0.0, BOUNDARY_THICKNESS, length),
         wall(0.0, centre, length, BOUNDARY_THICKNESS),
     ]
+}
+
+/// How far (radians about +y) a plain cover turns from the world's axes. One laid out in
+/// a lot's frame (Senda's yard walls) carries its lot's plan and turns as the plan's
+/// house does, its box its own before that turn, as a house's is; a house turns inside
+/// its structure instead, and every other cover stands square.
+pub fn cover_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
+    match plan {
+        Some(plan) if kind != CoverKind::House => {
+            f64::from(plan.street) * std::f64::consts::FRAC_PI_2
+                + f64::from(plan.angle).to_radians()
+        }
+        _ => 0.0,
+    }
+}
+
+/// How far (radians about +y) a planned house's box (the Neighborhood's) turns inside its
+/// structure beyond its body, which stays square: its plan's own angle, since the box is
+/// given in world axes after the plan's quarter turns. Every other cover's is 0.
+pub fn structure_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
+    match plan {
+        Some(plan) if kind == CoverKind::House => f64::from(plan.angle).to_radians(),
+        _ => 0.0,
+    }
+}
+
+/// How far (radians about +y) a cover's box, `w` by `d`, stands turned from the world's
+/// axes: its body's turn and its structure's.
+pub fn box_turn(kind: CoverKind, plan: Option<HousePlan>) -> f64 {
+    cover_turn(kind, plan) + structure_turn(kind, plan)
 }
 
 impl CoverDef {
@@ -63,6 +95,7 @@ impl CoverDef {
             color,
             timber_join: None,
             timber_bays: None,
+            house_plan: None,
         }
     }
 

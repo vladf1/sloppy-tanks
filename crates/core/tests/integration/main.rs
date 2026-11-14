@@ -10,6 +10,7 @@ mod support;
 
 mod ammunition;
 mod bot_movement;
+mod calm_and_place;
 mod cargo_crates;
 mod cover_destruction;
 mod cover_hit_effects;
@@ -49,6 +50,9 @@ mod render_state;
 mod resting_stones;
 mod round_recap;
 mod scene_codec;
+mod senda_entries;
+mod senda_level;
+mod senda_scale;
 mod shoot_mines;
 mod shooter_first;
 mod simulation_setup;

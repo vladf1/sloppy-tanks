@@ -29,8 +29,8 @@ use serde::{Deserialize, Serialize};
 
 use super::crate_structure::{CratePart, crate_structure};
 use super::debris_physics::DebrisMaterial;
-use super::house_layout::{HouseDesign, Roof};
-use super::house_structure::{HouseRole, shared_house_structure};
+use super::house_layout::{HouseDesign, HousePlan, Roof};
+use super::house_structure::{HouseRole, standing_house_structure};
 use super::kinds::CoverKind;
 use super::tree_structure::{TreePart, tree_structure};
 use super::structure_physics::ShapeCache;
@@ -694,6 +694,7 @@ impl<K: PartialEq> HeldLayouts<K> {
 }
 
 /// The structure a cover of `kind` stands for, if it is built of parts.
+#[allow(clippy::too_many_arguments)]
 pub fn structure_of(
     kind: CoverKind,
     x: f64,
@@ -702,9 +703,12 @@ pub fn structure_of(
     d: f64,
     h: f64,
     join: Option<TimberJoin>,
+    plan: Option<HousePlan>,
 ) -> Option<Arc<Structure>> {
     match kind {
-        CoverKind::House => Some(shared_house_structure(&HouseDesign::of(x, z, w, d, h))),
+        CoverKind::House => Some(standing_house_structure(&HouseDesign::for_cover(
+            x, z, w, d, h, plan,
+        ))),
         CoverKind::Tower => Some(tower_structure()),
         CoverKind::Timber => Some(timber_structure(w, d, h, join)),
         CoverKind::Cargo => Some(crate_structure(w, d, h)),
@@ -862,6 +866,60 @@ impl Structure {
             Build::House { roof, .. } => Some(roof),
             _ => None,
         }
+    }
+
+    /// A cottage's structure standing `scale` times as large about its ground centre (a
+    /// Senda house, built to its design: [`HouseDesign::scale`]). Every length in its
+    /// parts and landing pieces scales: their shapes, boxes, mass centres, ground
+    /// contacts, model cells and tear reach, the tipping rule's margin and stub height
+    /// and the standing colliders' seam, so it stands, tips and comes apart as its
+    /// design does. What a part bears on scales evenly, so the share rule's seats (areas
+    /// and lengths it only compares) stay. Masses stay too: the share and tipping rules
+    /// weigh parts only against each other, a body's own fall does not depend on its
+    /// mass, and a blast, a shell or a tank meets a piece as heavy as the design's, so
+    /// debris is thrown and shoved as it is now. A body falling from a height that much
+    /// greater lands faster by the scale's square root, so the landing speed that breaks
+    /// it up grows by that root too and it breaks where the design's would. Whether a part
+    /// blocks a tank is the tank's measure, in metres: a part lifted clear of
+    /// [`GROUND_BLOCK`] no longer does. Its build keeps the design, which its model is
+    /// built to before it is scaled.
+    pub fn scaled(&self, scale: f64) -> Structure {
+        debug_assert!(matches!(self.build, Build::House { .. }), "only a cottage's roles are scaled");
+        let mut scaled = self.clone();
+        for part in scaled.parts.iter_mut().chain(&mut scaled.pieces) {
+            for shape in &mut part.shapes {
+                match shape {
+                    PartShape::Box { center, half, .. } => {
+                        *center *= scale;
+                        *half *= scale;
+                    }
+                    PartShape::Hull(points) => points.iter_mut().for_each(|p| *p *= scale),
+                }
+            }
+            part.min *= scale;
+            part.max *= scale;
+            part.mass_center *= scale;
+            part.contacts.iter_mut().for_each(|p| *p *= scale);
+            part.material.tear *= scale;
+            part.blocks_ground &= part.min.y < GROUND_BLOCK;
+            if let Role::House(role) = &mut part.role {
+                for cell in &mut role.cells {
+                    cell.min *= scale;
+                    cell.max *= scale;
+                }
+            }
+        }
+        if let Some(tipping) = &mut scaled.tipping {
+            tipping.margin *= scale;
+            tipping.snap = tipping.snap.map(|snap| snap * scale);
+        }
+        scaled.debris.seam *= scale;
+        scaled.debris.landing_speed *= scale.sqrt();
+        for (_, min, max) in &mut scaled.foliage {
+            *min *= scale;
+            *max *= scale;
+        }
+        scaled
     }
 
     /// Each part's support: 1 for a grounded standing part, otherwise the best share of

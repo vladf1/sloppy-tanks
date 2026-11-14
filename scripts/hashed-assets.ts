@@ -16,9 +16,9 @@ import type { Plugin } from "vite";
  * dev server's manifest names the plain files, which Vite serves from `public/`, as it
  * still does in builds for the pages without a manifest (the tools and fixtures).
  */
-const HASHED = ["textures", "audio", "previews", "fonts"];
+const HASHED = ["textures", "audio", "previews", "fonts", "models"];
 /** What the runtime reads; the licences and notes beside the files stay plain. */
-const RUNTIME_FILE = /\.(webp|mp3|ttc)$/;
+const RUNTIME_FILE = /\.(webp|mp3|ttc|bin)$/;
 /**
  * Icons the game page links to, which a built page names by hash too. The web app
  * manifest keeps its plain address: a Home Screen app is installed from it and its

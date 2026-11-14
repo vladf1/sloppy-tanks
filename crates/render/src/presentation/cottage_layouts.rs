@@ -65,7 +65,8 @@ impl CottageLayouts {
         self.layouts
             .entry(cover)
             .or_insert_with(|| {
-                let design = HouseDesign::of(shape.x, shape.z, shape.w, shape.d, shape.h);
+                let (x, z, plan) = (shape.x, shape.z, shape.house_plan);
+                let design = HouseDesign::for_cover(x, z, shape.w, shape.d, shape.h, plan);
                 shared_house_structure(&design)
             })
             .clone()
@@ -155,7 +156,8 @@ mod tests {
                 parts: set,
             };
             let shared = layouts.body(&source, 0.0);
-            let own = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, &set);
+            let plan = cover.house_plan;
+            let own = house_debris(cover.x, cover.z, cover.w, cover.d, cover.h, plan, &set);
             assert_eq!(format!("{shared:?}"), format!("{own:?}"));
         }
         assert_eq!(layouts.debris.len(), 1, "one set of pieces for its bodies");

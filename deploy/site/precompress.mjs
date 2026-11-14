@@ -20,6 +20,11 @@ const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWit
 const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
   .filter((name) => name.endsWith(".ttc"))
   .map((name) => `fonts/${name}`);
+// The Neighborhood's Blender-made houses, packed into integer columns that Brotli shrinks
+// about ninefold (scripts/pack-houses.ts); Cloudflare leaves binary files uncompressed.
+const modelFiles = (await readdir(new URL("models/", assetDirectory)))
+  .filter((name) => name.endsWith(".bin"))
+  .map((name) => `models/${name}`);
 
 if (wasmFiles.length === 0 || fontFiles.length === 0) {
   throw new Error(`Build ${build} before preparing Worker assets`);
@@ -27,7 +32,7 @@ if (wasmFiles.length === 0 || fontFiles.length === 0) {
 
 // The files compress at once on zlib's thread pool, so the wait is the largest one's.
 await Promise.all(
-  [...wasmFiles, ...tableFiles, ...fontFiles].map(async (file) => {
+  [...wasmFiles, ...tableFiles, ...fontFiles, ...modelFiles].map(async (file) => {
     const original = await readFile(new URL(file, assetDirectory));
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {

@@ -122,12 +122,13 @@ pub const DIFFICULTIES: [(&str, Difficulty); 3] = [
     ("normal", Difficulty::Normal),
     ("hard", Difficulty::Hard),
 ];
-pub const MAP_MODES: [(&str, MapId); 5] = [
+pub const MAP_MODES: [(&str, MapId); 6] = [
     ("village", MapId::Village),
     ("harbor", MapId::Harbor),
     ("quarry", MapId::Quarry),
     ("stress-test", MapId::StressTest),
     ("superstress", MapId::Superstress),
+    ("neighborhood", MapId::Neighborhood),
 ];
 
 /// A message to one client: JSON text, or a binary state message.

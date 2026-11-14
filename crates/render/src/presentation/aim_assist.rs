@@ -15,6 +15,7 @@
 
 use glam::{DQuat, DVec3, Vec2, Vec3};
 use sloppy_core::sim::RenderState;
+use sloppy_core::sim::arena::structure_turn;
 use sloppy_core::sim::data::weapon;
 use sloppy_core::sim::math::angle_delta;
 use sloppy_core::sim::render_state::{RenderCover, RenderTank};
@@ -274,12 +275,13 @@ fn lane_clear(covers: &[RenderCover], from: (f64, f64), to: (f64, f64)) -> bool 
         if !cover.alive || cover.position.y + cover.h / 2.0 < SIGHT_HEIGHT {
             return true;
         }
-        let rotation = DQuat::from_xyzw(
+        // A planned house's structure turns its box past its square body.
+        let rotation = (DQuat::from_xyzw(
             cover.rotation.x,
             cover.rotation.y,
             cover.rotation.z,
             cover.rotation.w,
-        )
+        ) * DQuat::from_rotation_y(structure_turn(cover.kind, cover.house_plan)))
         .inverse();
         let local = |(x, z): (f64, f64)| {
             let point = rotation * DVec3::new(x - cover.position.x, 0.0, z - cover.position.z);
@@ -519,6 +521,23 @@ mod tests {
         assert!(!lane_clear(&covers, (0.0, 0.0), (10.0, 0.0)));
         assert!(lane_clear(&covers, (7.0, -10.0), (7.0, 10.0)));
         assert!(!lane_clear(&covers, (5.0, -10.0), (5.0, 10.0)));
+    }
+
+    #[test]
+    fn a_planned_house_blocks_by_its_turned_box_though_its_body_stays_square() {
+        use sloppy_core::sim::house_layout::{GarageSide, HousePlan};
+        // A long box 8 m by 2 about (5, 0), turned 45 degrees inside its structure: its
+        // far end lies toward -z, clear of the strip its square body would cover.
+        let mut covers = vec![wall(5.0, 0.0, 8.0, 2.0)];
+        covers[0].kind = CoverKind::House;
+        covers[0].house_plan = Some(HousePlan {
+            style: 0,
+            street: 0,
+            angle: 45,
+            garage: GarageSide::Left,
+        });
+        assert!(lane_clear(&covers, (7.0, 2.0), (7.0, 0.8)));
+        assert!(!lane_clear(&covers, (7.0, -1.4), (7.0, -6.0)));
     }
 
     #[test]

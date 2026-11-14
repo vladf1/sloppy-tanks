@@ -826,6 +826,15 @@
         }
       }
 
+      // Files only some arenas draw (the Neighborhood's house models) download once the
+      // shell asks for them (`assets::request`), wanted before that arena is built.
+      globalThis.sloppyRequestFile = (path) => {
+        if (path in files || !(path in assets)) return;
+        files[path] = fetchFile(path, "high").catch((error) =>
+          console.warn(`${path} did not download: ${message(error)}`),
+        );
+      };
+
       // The shader stages the chosen build draws, generated with it (bun run wasm,
       // crates/render/src/shader/tables.rs): they download beside the binary and stay
       // here as `sloppyShaders`, from which the renderer reads one stage at a time.

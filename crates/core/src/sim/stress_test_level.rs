@@ -2,7 +2,7 @@
 //! cottages that collapse like the village's among them) for finding body, navigation,
 //! destruction and resource-growth regressions. Do not weaken it.
 
-use super::arena::{CoverDef, boundary_walls};
+use super::arena::{CoverDef, PICKUP_LAYOUT, boundary_walls};
 use super::data::ARENA;
 use super::house_layout::HOUSE_HEALTH;
 use super::map_options::MapId;
@@ -139,6 +139,7 @@ pub static STRESS_TEST_MAP: ArenaMap = ArenaMap {
     outer_floor_extent: Some(ARENA * 2.0 + 20.0),
     scale: None,
     layout: stress_test_layout,
+    pickups: &PICKUP_LAYOUT,
 };
 
 /// The grid and its 30-tank roster, shared by single player and multiplayer rooms. Players

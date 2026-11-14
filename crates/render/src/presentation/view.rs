@@ -20,6 +20,7 @@ use sloppy_core::sim::crate_structure::crate_structure;
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
+use sloppy_core::sim::senda_layout::is_street_tree;
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::structure::PartSet;
@@ -1505,6 +1506,17 @@ impl Presentation {
         }
     }
 
+    /// A tank's drawn translation and whether its whole pose is finite (diagnostics: a
+    /// health bar over no tank).
+    pub fn tank_drawn_pose(&self, id: u32) -> Option<([f32; 3], bool)> {
+        self.tanks.get(&id).map(|view| {
+            let t = view.world.w_axis;
+            let finite =
+                view.world.is_finite() && view.pose.iter().flatten().all(|pose| pose.is_finite());
+            ([t.x, t.y, t.z], finite)
+        })
+    }
+
     /// Whether a tank's model is shown (diagnostics).
     pub fn tank_shown(&self, id: u32) -> Option<bool> {
         self.tanks.get(&id).map(|view| view.world.w_axis.w != 0.0)
@@ -1677,6 +1689,9 @@ impl Presentation {
             self.renderer.set_water(water);
             self.theme = Some(theme);
         }
+        // The team flags stand on the boundary wall, which Senda does not draw.
+        self.renderer
+            .set_visible(self.flags.instance, theme != Theme::Senda);
         let look = theme_look(theme);
         self.renderer.set_environment(environment(&look));
         self.renderer.set_atmosphere(look.atmosphere);
@@ -2542,6 +2557,7 @@ impl Presentation {
     fn update_camera(&mut self, state: &RenderState, alpha: f64, dt: f64, overview: bool) {
         let has_model = self.tanks.contains_key(&state.viewer_id);
         self.viewer_id = Some(state.viewer_id);
+        self.rig.frame_map(state.map_scale);
         self.rig
             .update(&Self::viewer_pose(state), alpha, dt, overview, has_model);
     }
@@ -3908,7 +3924,14 @@ fn tree_view(
         leaves: LeafCrown {
             x: cover.x,
             z: cover.z,
-            foliage: tree_foliage(&shape),
+            foliage: {
+                let mut foliage = tree_foliage(&shape);
+                // The Neighborhood's parkway sycamores shed the tan leaves they wear.
+                if is_street_tree(cover.color) {
+                    foliage.color = cover.color;
+                }
+                foliage
+            },
         },
         shudder: None,
     }

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize, Serializer};
 
 use super::ai::bot_command;
 use super::ammunition::{has_ammo, select_ammo};
-use super::arena::{CoverDef, PICKUP_LAYOUT};
+use super::arena::{CoverDef, cover_turn};
 use super::barrel_physics::barrel_collider;
 use super::bot_personalities::{BotPersonality, shuffled_bot_names};
 use super::combat_record::CombatRecord;
@@ -255,6 +255,10 @@ pub struct Simulation {
     pub humans_only: bool,
     /// Optional level rules, run at the end of every playing tick.
     pub after_step: Option<AfterStep>,
+    /// A capture's still field (the page's `calm` hook): bots get idle commands, so
+    /// they neither think, move nor fire, and no tank takes damage. False in play, where
+    /// nothing reads it: a match that never sets it draws the same random numbers.
+    pub calm: bool,
     /// When `Some`, every projectile sweep is recorded here for the caller to drain.
     pub projectile_moves: Option<Vec<ProjectileMove>>,
     /// In a room, the hulls' recent past, so players' shells favor their shooters.
@@ -349,6 +353,7 @@ impl Simulation {
             players: None,
             humans_only: false,
             after_step: None,
+            calm: false,
             projectile_moves: None,
             difficulty: Difficulty::Normal,
             game_mode: GameMode::Team,
@@ -456,7 +461,9 @@ impl Simulation {
         if let Some(rewind) = &mut self.shooter_rewind {
             rewind.clear();
         }
-        self.world = arena_world();
+        // The round's map, chosen first: its scale sizes the ground slab.
+        let map = selected_map(self.map_mode, self.custom_map);
+        self.world = arena_world(map.scale.unwrap_or(1.0));
         self.contact_forces.clear();
         self.debris_contacts.clear();
         self.movable_covers.clear();
@@ -495,13 +502,15 @@ impl Simulation {
             self.seed + self.match_state.round as f64 * SIMULATION_RULES.round_seed_stride,
         );
         self.bot_names = shuffled_bot_names(round_seed as f64);
-        self.current_map = selected_map(self.map_mode, self.custom_map);
+        self.current_map = map;
         for cover in (self.current_map.layout)() {
             self.add_cover(&cover);
         }
         drop(laid_out);
         let scale = self.map_scale();
-        self.pickups = PICKUP_LAYOUT
+        self.pickups = self
+            .current_map
+            .pickups
             .iter()
             .map(|placement| {
                 let laser = placement.kind == super::types::PickupKind::Laser;
@@ -522,6 +531,7 @@ impl Simulation {
             })
             .collect();
         self.nav.clear();
+        self.nav.set_map_scale(scale);
         self.nav.rebuild(&self.covers, None);
         if self.game_mode == GameMode::Solo {
             self.add_tank(self.human_team, true, self.human_kind, 2);
@@ -554,10 +564,24 @@ impl Simulation {
 
     /// Create a cover record and its physics body from an authored placement.
     pub fn add_cover(&mut self, def: &CoverDef) -> usize {
-        let structure = structure_of(def.kind, def.x, def.z, def.w, def.d, def.h, def.timber_join)
-            .map(StructureState::new);
-        let (body, colliders) =
-            self.cover_body(def.kind, def.x, def.z, def.w, def.d, def.h, structure.as_ref());
+        let structure = structure_of(
+            def.kind,
+            def.x,
+            def.z,
+            def.w,
+            def.d,
+            def.h,
+            def.timber_join,
+            def.house_plan,
+        )
+        .map(StructureState::new);
+        let turn = cover_turn(def.kind, def.house_plan);
+        let (body, colliders) = self.cover_body(
+            def.kind,
+            (def.x, def.z, turn),
+            (def.w, def.d, def.h),
+            structure.as_ref(),
+        );
         let cover = Cover {
             id: self.allocate_id(),
             kind: def.kind,
@@ -574,6 +598,7 @@ impl Simulation {
             collider: colliders[0],
             color: def.color,
             timber_join: def.timber_join,
+            house_plan: def.house_plan,
             motion: None,
             fallen_at: None,
             structure,
@@ -645,8 +670,9 @@ impl Simulation {
         cover.hp = cover.max_hp;
         cover.alive = true;
         let (kind, x, z, w, d, h) = (cover.kind, cover.x, cover.z, cover.w, cover.d, cover.h);
+        let turn = cover_turn(kind, cover.house_plan);
         let structure = cover.structure.take();
-        let (body, colliders) = self.cover_body(kind, x, z, w, d, h, structure.as_ref());
+        let (body, colliders) = self.cover_body(kind, (x, z, turn), (w, d, h), structure.as_ref());
         self.covers[index].structure = structure;
         self.covers[index].body = body;
         self.covers[index].collider = colliders[0];
@@ -655,20 +681,17 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
-    #[allow(clippy::too_many_arguments)]
+    /// A cover's body standing at `(x, z)` turned `turn` about +y, of size `(w, d, h)`.
     fn cover_body(
         &mut self,
         kind: CoverKind,
-        x: f64,
-        z: f64,
-        w: f64,
-        d: f64,
-        h: f64,
+        (x, z, turn): (f64, f64, f64),
+        (w, d, h): (f64, f64, f64),
         structure: Option<&StructureState>,
     ) -> (RigidBodyHandle, Vec<ColliderHandle>) {
         let parts = match structure {
             Some(state) => structure_parts(&state.layout, x, z, &state.gone),
-            None => cover_parts(kind, x, z, w, d, h),
+            None => cover_parts(kind, x, z, w, d, h, turn),
         };
         let body = self.world.insert_body(parts.body);
         let colliders = parts
@@ -836,6 +859,7 @@ impl Simulation {
                 0f64.max(tank.recoil - STEP * SIMULATION_RULES.recoil_recovery_per_second);
             let c = match commands {
                 Some(commands) => match tank.driver {
+                    Driver::Bot if self.calm => VehicleCommand::idle_aiming(tank.aim),
                     Driver::Bot => bot_command(self, i, STEP),
                     Driver::Human => commands
                         .get(&tank.id)
@@ -844,6 +868,7 @@ impl Simulation {
                     Driver::Idle => VehicleCommand::idle_aiming(tank.aim),
                 },
                 None if tank.human && !autoplay => command.unwrap_or_default(),
+                None if self.calm => VehicleCommand::idle_aiming(tank.aim),
                 None => bot_command(self, i, STEP),
             };
             let tank = &mut self.tanks[i];
@@ -1224,19 +1249,42 @@ pub struct SnapshotCounts {
     pub covers: usize,
 }
 
-/// A fresh physics world at the fixed step whose first body is the arena's ground slab,
-/// shared with client prediction so its world matches the server's.
-pub(crate) fn arena_world() -> PhysicsWorld {
+/// A fresh physics world at the fixed step whose first body is the ground slab of a map
+/// `map_scale` times the standard arena, shared with client prediction so its world
+/// matches the server's.
+pub(crate) fn arena_world(map_scale: f64) -> PhysicsWorld {
     let mut world = PhysicsWorld::new();
     world.gravity = vector(0.0, -GRAVITY, 0.0);
     world.integration_parameters.dt = STEP as f32;
     let ground = world.insert_body(RigidBodyBuilder::fixed().translation(vector(0.0, -0.5, 0.0)));
+    let half = arena_floor_half(map_scale) as f32;
     world.insert_collider(
-        ColliderBuilder::cuboid((ARENA + 2.0) as f32, 0.5, (ARENA + 2.0) as f32)
-            .collision_groups(interaction_groups(group::GROUND)),
+        ColliderBuilder::cuboid(half, 0.5, half).collision_groups(interaction_groups(group::GROUND)),
         Some(ground),
     );
     world
+}
+
+/// How far (m) the ground slab reaches from the centre along either axis: a little past
+/// the standard arena's walls, or past a larger map's (a smaller map keeps the standard
+/// slab).
+pub(crate) fn arena_floor_half(map_scale: f64) -> f64 {
+    ARENA * map_scale.max(1.0) + FLOOR_PAST_EDGE
+}
+
+/// How far (m) the ground slab runs on past the arena's edge.
+const FLOOR_PAST_EDGE: f64 = 2.0;
+
+/// Fit the ground slab of a world [`arena_world`] made to a map `map_scale` times the
+/// standard arena: a client's predicted world follows the scene's map.
+pub(crate) fn fit_arena_floor(world: &mut PhysicsWorld, map_scale: f64) {
+    // The slab is the world's first body, never removed.
+    let ground = RigidBodyHandle::from_raw_parts(0, 0);
+    let Some(&collider) = world.bodies.get(ground).and_then(|body| body.colliders().first()) else {
+        return;
+    };
+    let half = arena_floor_half(map_scale) as f32;
+    world.colliders[collider].set_shape(SharedShape::cuboid(half, 0.5, half));
 }
 
 /// A cover's body and colliders as the simulation builds them, shared with client
@@ -1249,7 +1297,10 @@ pub struct CoverParts {
     pub tank_footprint: Option<ColliderBuilder>,
 }
 
-pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> CoverParts {
+/// A plain cover's body and colliders: `w` × `d` × `h` at `(x, z)`, turned `turn` about
+/// +y ([`cover_turn`]).
+#[allow(clippy::too_many_arguments)]
+pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64, turn: f64) -> CoverParts {
     let drum = kind == CoverKind::Drum;
     let movable = kind.movable();
     let builder = if movable {
@@ -1323,7 +1374,9 @@ pub fn cover_parts(kind: CoverKind, x: f64, z: f64, w: f64, d: f64, h: f64) -> C
             .friction(0.8)
     });
     CoverParts {
-        body: builder.translation(vector(x, h / 2.0, z)),
+        body: builder
+            .translation(vector(x, h / 2.0, z))
+            .rotation(vector(0.0, turn, 0.0)),
         colliders,
         tank_footprint,
     }

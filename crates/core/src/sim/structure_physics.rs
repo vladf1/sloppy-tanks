@@ -30,7 +30,8 @@ use super::data::{STEP, group};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{blast_loose_debris, debris_material, track_debris_contacts};
 use super::math::{Point3, Vec2};
-use super::navigation::Footprint;
+use super::arena::box_turn;
+use super::navigation::{Footprint, turned_box_footprints};
 use super::physics::{ContactForce, from_vector, interaction_groups, query_filter, vector};
 use super::simulation::Simulation;
 use super::structure::{Breaking, Contact, Lie, PartSet, PartShape, Structure};
@@ -594,7 +595,12 @@ pub fn ground_footprints(cover: &Cover, out: &mut Vec<Footprint>) {
         .any(|index| state.gone.contains(index) && layout.parts[index].blocks_ground);
     if !open {
         if state.gone.len() < layout.parts.len() {
-            out.push(Footprint::from(cover));
+            let turn = box_turn(cover.kind, cover.house_plan);
+            if turn == 0.0 {
+                out.push(Footprint::from(cover));
+            } else {
+                turned_box_footprints((cover.x, cover.z), (cover.w, cover.d), turn, out);
+            }
         }
         return;
     }

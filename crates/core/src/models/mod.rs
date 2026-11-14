@@ -55,9 +55,12 @@ beyond_geometry! {
     mod barrel_surfaces;
     mod cover_model;
     mod house_parts_model;
+    mod house_pack;
+    pub mod imported_house;
     mod crate_model;
     pub mod effects_props;
     mod flags;
+    mod wheelie_bin;
 }
 mod harbor_models;
 beyond_geometry! {
@@ -100,6 +103,8 @@ mod quarry_site_details;
 mod quarry_soil;
 mod quarry_terrain;
 mod scenery;
+mod senda_hills;
+mod senda_scenery;
 mod village_atmosphere;
 mod village_ground;
 mod village_landmarks;
@@ -146,7 +151,7 @@ beyond_geometry! {
     pub use tower_model::tower_debris;
 }
 pub use tree_models::{
-    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, grown_pieces,
+    TREE_FAMILIES, TreeDetail, TreeFoliage, TreeLook, TreeShape, branch_drop_stage, grown_pieces,
     standing_tree_model, tree_branch_stage, tree_foliage, tree_model, tree_part, tree_pieces,
 };
 

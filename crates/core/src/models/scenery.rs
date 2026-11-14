@@ -25,6 +25,7 @@ use super::model_primitives::{
     TEAM_COLORS, box_part, cylinder_part, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::quarry_scenery::quarry_scenery;
+use super::senda_scenery::senda_scenery;
 use super::village_atmosphere::CHIMNEY_SMOKE_NODE;
 use super::village_scenery::VillageScenery;
 
@@ -36,6 +37,7 @@ pub enum Scenery {
     Village(Box<VillageScenery>),
     Harbor(Box<HarborScenery>),
     Quarry(Box<Node>),
+    Neighborhood(Box<Node>),
 }
 
 /// `Presentation.buildScenery(theme)`: build a theme's scenery. Callers cache it; it
@@ -46,6 +48,7 @@ pub fn build_scenery(theme: MapTheme) -> Scenery {
         MapTheme::Village => Scenery::Village(Box::default()),
         MapTheme::Harbor => Scenery::Harbor(Box::default()),
         MapTheme::Quarry => Scenery::Quarry(Box::new(quarry_scenery())),
+        MapTheme::Neighborhood => Scenery::Neighborhood(Box::new(senda_scenery())),
     }
 }
 
@@ -57,6 +60,7 @@ impl Scenery {
             MapTheme::Village => Scenery::Village(Box::new(VillageScenery::from_root(root))),
             MapTheme::Harbor => Scenery::Harbor(Box::new(HarborScenery { root })),
             MapTheme::Quarry => Scenery::Quarry(Box::new(root)),
+            MapTheme::Neighborhood => Scenery::Neighborhood(Box::new(root)),
         }
     }
 
@@ -64,7 +68,7 @@ impl Scenery {
         match self {
             Scenery::Village(scenery) => &scenery.root,
             Scenery::Harbor(scenery) => &scenery.root,
-            Scenery::Quarry(root) => root,
+            Scenery::Quarry(root) | Scenery::Neighborhood(root) => root,
         }
     }
 
@@ -75,7 +79,7 @@ impl Scenery {
         match self {
             Scenery::Village(scenery) => scenery.update(time),
             Scenery::Harbor(scenery) => scenery.update(time),
-            Scenery::Quarry(_) => {}
+            Scenery::Quarry(_) | Scenery::Neighborhood(_) => {}
         }
     }
 
@@ -88,7 +92,7 @@ impl Scenery {
         let root = match self {
             Scenery::Village(scenery) => &mut scenery.root,
             Scenery::Harbor(scenery) => &mut scenery.root,
-            Scenery::Quarry(root) => root,
+            Scenery::Quarry(root) | Scenery::Neighborhood(root) => root,
         };
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {

@@ -16,8 +16,14 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 //   (`house_surfaces.rs`, unflipped): each row's top is a course's butt edge at
 //   the eave side, keyways run up from it and the next course's butt shades the
 //   row's bottom.
+// - stucco: a fine dash finish of tiny rounded bumps, near white so the paint tints
+//   it.
+// - solar: a roof array's cells, dark navy in fine silver gaps, in its own colours.
+//
+// Name images on the command line to draw only those (`bun scripts/generate-house-textures.ts solar`).
 const size = 1024;
 const folder = new URL("../assets/texture-sources/houses/", import.meta.url);
+const wanted = process.argv.slice(2);
 
 /** Tileable fractal noise of a point in [0, 1)², `cells` cells across a lattice that
  * wraps in both axes. */
@@ -35,13 +41,14 @@ const wrapDistance = (x: number, mark: number) => {
   return Math.min(d, 1 - d);
 };
 
-async function save(name: string, paint: (u: number, v: number) => number[]) {
-  const data = new Uint8ClampedArray(size * size * 4);
+async function save(name: string, paint: (u: number, v: number) => number[], pixels = size) {
+  if (wanted.length > 0 && !wanted.includes(name)) return;
+  const data = new Uint8ClampedArray(pixels * pixels * 4);
   const sum = [0, 0, 0];
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const rgb = paint((x + 0.5) / size, (y + 0.5) / size);
-      const i = (y * size + x) * 4;
+  for (let y = 0; y < pixels; y++) {
+    for (let x = 0; x < pixels; x++) {
+      const rgb = paint((x + 0.5) / pixels, (y + 0.5) / pixels);
+      const i = (y * pixels + x) * 4;
       for (let c = 0; c < 3; c++) {
         data[i + c] = rgb[c];
         sum[c] += data[i + c];
@@ -50,9 +57,9 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
     }
   }
   await mkdir(folder, { recursive: true });
-  await writeFile(new URL(`${name}.webp`, folder), encodePixelsWebp(data, size, size));
+  await writeFile(new URL(`${name}.webp`, folder), encodePixelsWebp(data, pixels, pixels));
   const average = sum.map((c) =>
-    Math.round(c / (size * size))
+    Math.round(c / (pixels * pixels))
       .toString(16)
       .padStart(2, "0"),
   );
@@ -240,4 +247,71 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
     const spot = smooth(0.64, 0.72, tileable(lichen, u, v, 24, 3)) * (t > butt ? 1 : 0);
     return base.map((c, i) => mix(c, [196, 204, 150][i] * shade, spot * 0.55));
   });
+}
+
+// Stucco: a fine dash finish, one tiny rounded bump beside the next (128 across the
+// tile, half a centimetre each at the walls' 0.6 m tile) with no larger pattern, so
+// the tile repeats across a wall unseen. The crevices between bumps are a little
+// darker than their tops.
+{
+  const cells = 128;
+  const rng = new Random(4107);
+  const bumps = Array.from({ length: cells * cells }, (_, i) => ({
+    x: ((i % cells) + rng.range(0.2, 0.8)) / cells,
+    y: (Math.floor(i / cells) + rng.range(0.2, 0.8)) / cells,
+    radius: rng.range(0.45, 0.72) / cells,
+    height: rng.range(0.55, 1),
+  }));
+  const grit = lattice(42, true);
+  await save("stucco", (u, v) => {
+    const cx = Math.floor(u * cells);
+    const cy = Math.floor(v * cells);
+    let height = 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const gx = cx + dx;
+        const gy = cy + dy;
+        const bump =
+          bumps[(((gy % cells) + cells) % cells) * cells + (((gx % cells) + cells) % cells)];
+        const t =
+          Math.hypot(u - bump.x - Math.floor(gx / cells), v - bump.y - Math.floor(gy / cells)) /
+          bump.radius;
+        if (t < 1) height = Math.max(height, bump.height * Math.sqrt(1 - t * t));
+      }
+    }
+    const shade = 0.84 + 0.16 * height + (tileable(grit, u, v, 400, 2) - 0.375) * 0.03;
+    return [250, 247, 240].map((c) => c * shade);
+  });
+}
+
+// Solar: 8 x 8 monocrystalline cells (16 px each in a 128 px tile, about 9 cm at the
+// houses' scale), a dark navy that varies a little cell to cell, parted by one-pixel
+// silver gaps and crossed by two faint busbars. Painted in its own colours (the material
+// is white), its average a light navy, so from overhead an array reads as dark blue glass
+// rather than a hole, and close up as cells.
+{
+  const pixels = 128;
+  const cells = 8;
+  const rng = new Random(6203);
+  const shades = Array.from({ length: cells * cells }, () => rng.range(-0.05, 0.05));
+  // The gaps only a little lighter than the cells: from the play camera a cell is two
+  // or three pixels, and bright gaps between them crawled as the camera moved.
+  const cell = [30, 40, 66];
+  const gap = [72, 82, 106];
+  const busbar = [44, 54, 80];
+  await save(
+    "solar",
+    (u, v) => {
+      const x = Math.floor(u * pixels);
+      const y = Math.floor(v * pixels);
+      const span = pixels / cells;
+      const cx = x % span;
+      const cy = y % span;
+      if (cx === 0 || cy === 0) return gap;
+      if (cx === 5 || cx === 11) return busbar;
+      const shade = 1 + shades[Math.floor(y / span) * cells + Math.floor(x / span)];
+      return cell.map((c) => c * shade);
+    },
+    pixels,
+  );
 }

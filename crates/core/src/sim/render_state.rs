@@ -6,6 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::debris_physics::DebrisMaterial;
+use super::house_layout::HousePlan;
 use super::map_options::MapId;
 use super::maps::GroundKind;
 use super::math::{Point3, Quat4, Vec2};
@@ -123,6 +124,9 @@ pub struct RenderCover {
     pub destructible: bool,
     pub color: u32,
     pub timber_join: Option<TimberJoin>,
+    /// A house its map lays out (Senda's); the village's cottages have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub house_plan: Option<HousePlan>,
     /// A structure's parts broken or fallen from it.
     #[serde(default, skip_serializing_if = "PartSet::is_empty")]
     pub broken: PartSet,
@@ -315,6 +319,7 @@ impl Simulation {
             view.destructible = cover.destructible;
             view.color = cover.color;
             view.timber_join = cover.timber_join;
+            view.house_plan = cover.house_plan;
             (view.broken, view.cracked) = match &cover.structure {
                 Some(state) => (state.gone, state.cracked()),
                 None => (PartSet::EMPTY, PartSet::EMPTY),

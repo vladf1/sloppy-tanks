@@ -75,6 +75,14 @@ pub const MAP_CARDS: [MapCard; MAP_OPTIONS.len()] = [
         team_tanks: None,
     },
     MapCard {
+        id: MapId::Neighborhood,
+        description: "Cul-de-sacs. Clay roofs.",
+        short_description: None,
+        icon: "neighborhood",
+        tint: 0xc0794a,
+        team_tanks: None,
+    },
+    MapCard {
         id: MapId::StressTest,
         description: "30 tanks · 83 destructibles · cottages fall, barriers stand",
         short_description: Some("30 tanks · 83 destructibles"),

@@ -400,6 +400,8 @@ struct FrameUniform {
     aerial: [f32; 4],
     ridge: [f32; 4],
     ridge_shape: [f32; 4],
+    ridge_near: [f32; 4],
+    ridge_summit: [f32; 4],
     haze_far: [f32; 4],
     ground: [f32; 4],
     quality: [f32; 4],
@@ -2674,6 +2676,11 @@ impl Renderer {
             aerial: rgb4(sky(a.haze.aerial), a.haze.arena_share),
             ridge: rgb4(sky(a.ridges.color), a.ridges.height),
             ridge_shape: [a.ridges.features, a.ridges.mesa, a.ridges.gaps, 0.0],
+            ridge_near: a.ridges.near.map_or([0.0; 4], |near| rgb4(sky(near), 1.0)),
+            ridge_summit: a.ridges.summit.map_or([0.0; 4], |summit| {
+                let toward = Vec2::from(summit.toward).normalize_or_zero();
+                [toward.x, toward.y, summit.height, summit.separation / 2.0]
+            }),
             haze_far: [
                 a.haze.far_density,
                 a.haze.far_start,

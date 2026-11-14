@@ -89,7 +89,11 @@ page's WebGL2 build. Each exits non-zero on failure and writes screenshots to th
 `artifacts/performance/<check>/`. Shared setup lives in `browser-helpers.mjs`
 (`launchGame()`, `openShell()`, `untilState()`, `clickWidget()`, `fingers()`,
 `tapWidget()`, `shellDebug()`); `bun run check:browser` runs them all
-(`browser-checks.mjs`).
+(`browser-checks.mjs`). The hook's `debug(name, ...args)` commands are listed on
+`automation::Command`; for repeatable single-player captures, `debug("calm", true)` holds
+the bots still and silent and every tank immune, and `debug("place", x, z, heading)` sets
+the player's tank down at rest at world `(x, z)` facing `heading` degrees (90 is east,
++x). A room page refuses both.
 
 ```sh
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/round-check.mjs

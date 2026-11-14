@@ -99,14 +99,20 @@ pub fn cover_key(cover: &RenderCover) -> String {
         CoverKind::Teeth => format!("v{}", dragon_tooth_variant(cover.x, cover.z)),
         _ => format!("@{}/{}", cover.x, cover.z),
     };
+    // A plan turns a plain cover laid out in a lot's frame (Senda's yard walls). A drum
+    // (Senda's wheelie bins) is drawn at its body's pose, which its plan turned.
+    let plan = (cover.kind != CoverKind::Drum)
+        .then_some(cover.house_plan)
+        .flatten();
     format!(
-        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:x?}{}",
+        "{:?}/{}/{}/{}/{:x}/{placement}/{:?}/{:?}/{:x?}{}",
         cover.kind,
         cover.w,
         cover.h,
         cover.d,
         cover.color,
         cover.timber_join,
+        plan,
         cover.broken.0,
         tower_scars(cover),
     )
@@ -276,7 +282,7 @@ fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
             paths.push(vec![root.children.len() - 1]);
             paths
         }
-        Scenery::Quarry(_) => Vec::new(),
+        Scenery::Quarry(_) | Scenery::Neighborhood(_) => Vec::new(),
     }
 }
 
@@ -384,8 +390,10 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
 const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
 
 /// Whether a cottage's chimney is up: it smokes until it breaks or falls.
+/// A village cottage's chimney still standing; a planned house (Senda's) has none, and
+/// its structure's part at the chimney's index is a corner post's foot.
 fn chimney_stands(cover: &RenderCover) -> bool {
-    !cover.broken.contains(CHIMNEY_PART)
+    cover.house_plan.is_none() && !cover.broken.contains(CHIMNEY_PART)
 }
 
 /// Every cottage and whether its chimney stands, to notice when the smoke changes.
@@ -439,6 +447,7 @@ pub(crate) mod shared_scenery {
 mod tests {
     use super::shared_scenery::shared_scenery;
     use super::*;
+    use sloppy_core::sim::house_layout::{GarageSide, HousePlan};
     use sloppy_core::sim::render_state::RenderCover;
 
     #[test]
@@ -567,6 +576,25 @@ mod tests {
             ..RenderCover::default()
         };
         assert_eq!(cover_key(&drum(0.0)), cover_key(&drum(5.0)));
+        // A drum's plan turned its body, not its model; a yard wall's turns its model.
+        let plan = |street| {
+            Some(HousePlan {
+                style: 0,
+                street,
+                angle: 0,
+                garage: GarageSide::Left,
+            })
+        };
+        let bin = |street| RenderCover {
+            house_plan: plan(street),
+            ..drum(0.0)
+        };
+        assert_eq!(cover_key(&bin(1)), cover_key(&bin(2)));
+        let wall = |street| RenderCover {
+            kind: CoverKind::Concrete,
+            ..bin(street)
+        };
+        assert_ne!(cover_key(&wall(1)), cover_key(&wall(2)));
         let house = |x: f64| RenderCover {
             kind: CoverKind::House,
             ..drum(x)

@@ -57,8 +57,7 @@ use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::weapon;
-use sloppy_core::sim::math::{Point3, Quat4, Vec2};
-use sloppy_core::sim::physics::{to_rotation, vector};
+use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::{
     AmmoInventory, CoverKind, DamageCause, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment,
     Shot, SimEvent, SimEventType, Team, VehicleCommand, VehicleKind, Weapon,
@@ -280,22 +279,9 @@ impl Game {
 
     /// Teleport a tank at rest; `heading` NaN keeps its heading.
     pub fn debug_place_tank(&mut self, id: u32, x: f64, z: f64, heading: f64) {
-        let Some(index) = self.sim.tank_index(id) else {
-            return;
-        };
-        let tank = &mut self.sim.tanks[index];
-        if !heading.is_nan() {
-            tank.heading = heading;
-        }
-        let heading = tank.heading;
-        tank.previous = Vec2::new(x, z);
-        tank.brain.last = Vec2::new(x, z);
-        let body = tank.body;
-        if let Some(body) = self.sim.world.bodies.get_mut(body) {
-            body.set_translation(vector(x, 0.65, z), true);
-            body.set_rotation(to_rotation(Quat4::yaw(heading)), true);
-            body.set_linvel(vector(0.0, 0.0, 0.0), true);
-            body.set_angvel(vector(0.0, 0.0, 0.0), true);
+        if let Some(index) = self.sim.tank_index(id) {
+            let heading = (!heading.is_nan()).then_some(heading);
+            self.sim.place_tank(index, x, z, heading);
         }
     }
 

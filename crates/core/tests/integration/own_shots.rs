@@ -184,6 +184,7 @@ fn a_predicted_shell_stops_at_cover_and_a_ricochet_bounces_off_it() {
             color: 0x888888,
             timber_join: None,
             timber_bays: None,
+            house_plan: None,
         });
         sim.world.step();
         let cover = predictor(&sim, viewer);
@@ -234,6 +235,7 @@ fn a_shell_predicted_with_the_old_weapon_bounces_as_the_hosts_once_its_launch_ar
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     sim.world.step();
     let cover = predictor(&sim, viewer);

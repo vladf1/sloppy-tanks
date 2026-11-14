@@ -94,7 +94,8 @@ pub(super) fn noise(x: f64, z: f64, seed: u64) -> f64 {
     top + (bottom - top) * uz
 }
 
-fn fbm(x: f64, z: f64, seed: u64) -> f64 {
+/// Three octaves of [`noise`], in [0, 1].
+pub(super) fn fbm(x: f64, z: f64, seed: u64) -> f64 {
     noise(x, z, seed) * 0.55
         + noise(x * 2.03 + 17.3, z * 2.03 - 4.1, seed + 1) * 0.3
         + noise(x * 4.11 - 9.1, z * 4.11 + 3.7, seed + 2) * 0.15

@@ -248,6 +248,141 @@ impl RenderLab {
         Ok(())
     }
 
+    /// Experiment: the Senda reference house as the game builds it, placed with its
+    /// ground centre at `x, z` and its front toward +z: the Blender-made model from the
+    /// models file `pack` (`models/houses.bin`), or the coded house when `pack` is empty,
+    /// its structure's parts `broken` gone. Returns `{draws, triangles, parts}` of the
+    /// model built.
+    pub fn add_home(
+        &mut self,
+        name: &str,
+        pack: &[u8],
+        broken: Vec<u32>,
+        x: f32,
+        z: f32,
+    ) -> Result<String, JsValue> {
+        use sloppy_core::models::imported_house::{install_model, uninstall};
+        use sloppy_core::models::structural_house;
+        use sloppy_core::sim::house_layout::{REFERENCE_HOUSE, SENDA_STYLES};
+        use sloppy_core::sim::house_structure::shared_house_structure;
+        use sloppy_core::sim::senda_layout::{SENDA_SCALE, senda_houses};
+        use sloppy_core::sim::structure::PartSet;
+        if pack.is_empty() {
+            uninstall();
+        } else {
+            install_model("small-monterey", pack).map_err(js_error)?;
+        }
+        let home = senda_houses()
+            .into_iter()
+            .find(|house| {
+                SENDA_STYLES[usize::from(house.plan.style)]
+                    == SENDA_STYLES[usize::from(REFERENCE_HOUSE)]
+            })
+            .ok_or_else(|| js_error("no home"))?;
+        let parts = shared_house_structure(&home.design()).parts.len();
+        let set = PartSet::from_indices(broken.into_iter().map(|index| index as usize));
+        let mut group = Node::group("home");
+        // The house's cover as the level hands it to the game: its design box at the
+        // level's scale, which the builder takes back to the design before building.
+        structural_house(
+            &mut group,
+            home.x * SENDA_SCALE,
+            home.z * SENDA_SCALE,
+            home.w * SENDA_SCALE,
+            home.d * SENDA_SCALE,
+            home.h * SENDA_SCALE,
+            Some(home.plan),
+            &set,
+        );
+        uninstall();
+        let mut root = group;
+        // Its quarter turns stay (its front faces +z), the street's slant does not.
+        let turned = f64::from(home.design().turns) * std::f64::consts::FRAC_PI_2;
+        for child in &mut root.children {
+            child.position = glam::DVec3::ZERO;
+            child.rotation = glam::DQuat::from_rotation_y(turned);
+        }
+        let (draws, triangles) = count_draws(&root);
+        let model = self.renderer.add_model(&root, Lifetime::Round);
+        let instance = self
+            .renderer
+            .add_instance(
+                model,
+                Mat4::from_translation(Vec3::new(x, 0.0, z)),
+                Lifetime::Round,
+            )
+            .ok_or_else(|| js_error("home model"))?;
+        self.objects.push((name.to_owned(), instance));
+        self.models.push((instance, model));
+        Ok(serde_json::json!({"draws": draws, "triangles": triangles, "parts": parts}).to_string())
+    }
+
+    /// Experiment: a Senda house of `style` on a lot of its own (`w` across its front,
+    /// 7 m deep, ridge `h`, its garage on the left when `left`), drawn from the model
+    /// `model` from the models file `pack` fitted to it (`pack` empty: the coded house),
+    /// standing, at `x, z`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_planned(
+        &mut self,
+        name: &str,
+        model: &str,
+        pack: &[u8],
+        style: u8,
+        left: bool,
+        w: f64,
+        h: f64,
+        x: f32,
+        z: f32,
+    ) -> Result<String, JsValue> {
+        use sloppy_core::models::imported_house::{install_model, uninstall};
+        use sloppy_core::models::structural_house;
+        use sloppy_core::sim::house_layout::{GarageSide, HousePlan};
+        use sloppy_core::sim::senda_layout::SENDA_SCALE;
+        use sloppy_core::sim::structure::PartSet;
+        uninstall();
+        if !pack.is_empty() {
+            install_model(model, pack).map_err(js_error)?;
+        }
+        let garage = if left {
+            GarageSide::Left
+        } else {
+            GarageSide::Right
+        };
+        let plan = HousePlan {
+            style,
+            street: 0,
+            angle: 0,
+            garage,
+        };
+        let mut root = Node::group("house");
+        // Its lot is given in the level's design metres; the game builds a planned house
+        // from its cover at the level's scale.
+        structural_house(
+            &mut root,
+            0.0,
+            0.0,
+            w * SENDA_SCALE,
+            7.0 * SENDA_SCALE,
+            h * SENDA_SCALE,
+            Some(plan),
+            &PartSet::default(),
+        );
+        uninstall();
+        let (draws, triangles) = count_draws(&root);
+        let id = self.renderer.add_model(&root, Lifetime::Round);
+        let instance = self
+            .renderer
+            .add_instance(
+                id,
+                Mat4::from_translation(Vec3::new(x, 0.0, z)),
+                Lifetime::Round,
+            )
+            .ok_or_else(|| js_error("house model"))?;
+        self.objects.push((name.to_owned(), instance));
+        self.models.push((instance, id));
+        Ok(serde_json::json!({"draws": draws, "triangles": triangles}).to_string())
+    }
+
     /// Replace the clear color without reloading the scene.
     pub fn set_background(&mut self, color: u32) {
         let mut environment = *self.renderer.environment();
@@ -282,4 +417,21 @@ impl RenderLab {
     pub fn error(&self) -> Option<String> {
         self.renderer.error()
     }
+}
+
+/// Drawables and triangles of a model tree (the experiment's `add_home`).
+fn count_draws(node: &Node) -> (usize, usize) {
+    let mut totals = node.drawable.as_ref().map_or((0, 0), |drawable| {
+        let mesh = &drawable.mesh;
+        (
+            1,
+            mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len) / 3,
+        )
+    });
+    for child in &node.children {
+        let (draws, triangles) = count_draws(child);
+        totals.0 += draws;
+        totals.1 += triangles;
+    }
+    totals
 }
