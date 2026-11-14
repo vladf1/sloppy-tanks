@@ -19,7 +19,9 @@ use super::house_parts_model::{house_debris, structural_house};
 use super::imported_house::standing_entry;
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
-use super::senda_scenery::{boundary_wall, is_yard_wall, patio_cover, street_lamp, yard_wall};
+use super::senda_scenery::{
+    MOW_STRIP, boundary_wall, is_yard_wall, patio_cover, street_lamp, yard_wall,
+};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
@@ -331,9 +333,6 @@ const TRACT_END_PIECE: f64 = 0.36;
 const ROAD_PANEL: (f64, f64) = (1.2, 0.03);
 const ROAD_PANEL_FOOTING: (f64, f64) = (0.3, 0.7);
 const ROAD_PANEL_TONES: [u32; 2] = [0xaba89f, 0x9a978e];
-/// The concrete mow strip along the inside of the level's view fence (its width and top,
-/// m, and paint): the pale line that marks the level's edge from overhead.
-const MOW_STRIP: (f64, f64, u32) = (0.5, 0.05, 0xb8b2a5);
 
 /// Senda's edge, a run of the tract's own wall: capped split-face block, or along the
 /// open ground a black view fence on a low block base with a concrete mow strip inside

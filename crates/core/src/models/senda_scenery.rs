@@ -60,8 +60,8 @@ use super::model_primitives::{
 };
 use super::scenery::create_spawn_pads;
 use super::senda_hills::Hills;
-use super::senda_plants::{ShrubForm, rounded_shrub};
 use super::tree_models::{TreeDetail, TreeShape, leafy_shrub, tree_model};
+use super::village_ground::fbm;
 
 /// From a residential street's centre line to the back of its sidewalk (m).
 const STREET_HALF_WALK: f64 = crate::sim::senda_layout::STREET_HALF + PARKWAY + SIDEWALK;
@@ -168,9 +168,6 @@ const DIRT_BED: [f32; 3] = [0.22, 0.25, 0.7];
 const MOUTH_COVER: [f32; 3] = [0.3, 0.8, 1.9];
 /// The bank's bark mulch, grey-brown rather than the slopes' warmer brown.
 const DIRT_BANK_MULCH: [f32; 3] = [0.4, 0.68, 2.1];
-/// How much of the ground behind the outer rows is groundcover rather than shade, at
-/// least and how much more it drifts.
-const UNDER_TREES_COVER: (f64, f64) = (0.55, 0.35);
 const PLANTED_REACH: f64 = 12.0;
 const PLANTED_STEP: f64 = 1.5;
 /// The foothills' ground over the dry-grass tile: tan dry grass, gold where it faces the
@@ -204,10 +201,8 @@ const HILLSIDE_BLEND: f64 = 5.0;
 /// its top, and over how many metres down from the path it darkens.
 const BANK_SHADE: f32 = 0.3;
 const BANK_FALL: f64 = 10.0;
-/// The terrace drains along the slopes' contours: narrow concrete V-ditches, their width,
-/// paint and the darker crease down their middle (its width).
-const TRAIL_WIDTH: f64 = 0.6;
-/// The hillside's wider terrace drains (m).
+/// The hillside's terrace drains along its contours: concrete V-ditches this wide (m), in
+/// this paint, with a darker crease down their middle (its width).
 const HILL_TRAIL_WIDTH: f64 = 1.0;
 const TRAIL: u32 = 0xc4c1b8;
 const TRAIL_CREASE: (f64, u32) = (0.1, 0x9c998f);
@@ -221,6 +216,9 @@ const BANK_WALK: f64 = 1.2;
 const BANK_WALK_EDGE: (f64, u32) = (0.08, 0xd8d3c6);
 const BANK_SPURS: [f64; 3] = [-14.0, 8.0, 27.0];
 const BANK_SPUR: f64 = 0.9;
+/// How far (m) the terrace walk may run on past the bank's wide part to reach a street's
+/// walk.
+const BANK_WALK_REACH: f64 = 10.0;
 /// The terrace walk's top and its spurs' (m), the spurs a few millimetres lower as they
 /// start under the terrace walk's edge, this far (m) in; and how far over each walk its
 /// paler edges lie.
@@ -244,7 +242,7 @@ const HILLSIDE_TRAIL_SPAN: (f64, f64) = (-70.0, 72.0);
 const TRAIL_SPAWN_ROOM: f64 = 4.5;
 /// How far (m) a hillside trail's middle keeps from the face of the wall along the
 /// arena's east edge.
-const TRAIL_WALL_ROOM: f64 = 1.0 + TRAIL_WIDTH / 2.0;
+const TRAIL_WALL_ROOM: f64 = 1.3;
 /// The shrubs that grow in drifts along the hillside trails: how far (m) from a trail's
 /// middle.
 const TRAIL_SHRUBS: (f64, f64) = (1.0, 2.4);
@@ -314,16 +312,19 @@ const OFFICE_BED: f64 = 0.32;
 const LEAST_FRONT_LAWN: f64 = 0.12;
 /// The decomposed granite of the gravel front yards.
 const FRONT_GRAVEL: u32 = 0xb4a68c;
-/// The front yards' shrubs: clipped cones (radius at the foot, height range, m), rounded
-/// mounds (radius range, m), in dark glossy greens, and the gravel yards' small agaves
-/// (size range, m).
-const FRONT_CONE_RADIUS: f64 = 0.15;
-const FRONT_CONE: (f64, f64) = (0.5, 0.72);
-const FRONT_MOUND: (f64, f64) = (0.16, 0.22);
+/// The front yards' shrubs: the upright one by the garage (radius, m, and how tall for its
+/// breadth), the low ones in the beds (radius range, m), in dark glossy greens, and the
+/// gravel yards' small agaves (size range, m).
+const FRONT_UPRIGHT: (f64, f64) = (0.26, 1.4);
+const FRONT_MOUND: (f64, f64) = (0.2, 0.27);
 const FRONT_SHRUB_LEAVES: [u32; 3] = [0x34502f, 0x3f5a35, 0x4a6238];
-/// The cones' tiers spread this much wider than their foot's radius; the share of the
-/// front beds' mounds in flower, and their blossoms: daylily orange, salvia red.
-const FRONT_CONE_SPREAD: f64 = 1.25;
+/// How tall the low bed shrubs stand for their breadth (the front beds', the paseos', the
+/// turning circles' islands', Senda Parkway's flowering ones), and the flowering ones'
+/// tufts.
+const BED_SHRUB_SQUASH: f64 = 0.7;
+const BED_FLOWER_SQUASH: f64 = 0.9;
+/// The share of the front beds' shrubs in flower, and their blossoms: daylily orange,
+/// salvia red.
 const FRONT_FLOWERING: f64 = 0.3;
 const FRONT_BLOSSOM: [u32; 2] = [0xd8782c, 0xb8382c];
 const FRONT_AGAVE: (f64, f64) = (0.22, 0.3);
@@ -477,9 +478,11 @@ const CREEK_STEP: f64 = 0.45;
 const CREEK_MEANDER: (f64, f64, f64) = (1.4, 0.21, 0.53);
 /// The tubular steel view fence across the greenbelt's mouth on Neblina, on block
 /// pilasters: its height, the pilasters' side and spacing, the pickets' side and spacing
-/// (m), and its black paint.
+/// (m), and its black paint. The pickets, these and the lots' view panels', are fewer and
+/// stouter than a real fence's: at the zoomed-out camera thin close pickets were under
+/// half a pixel and broke into shimmering dashes as the camera moved.
 const VIEW_FENCE: (f64, f64, f64) = (1.1, 0.4, 2.6);
-const PICKETS: (f64, f64) = (0.025, 0.12);
+const PICKETS: (f64, f64) = (0.045, 0.3);
 const FENCE_STEEL: u32 = YARD_VIEW_COLOR;
 /// The planted slopes' shrubs, round and neat on their mulch as the tract's are: set out
 /// in contour rows this far apart (m) down the slope, about one every so many metres
@@ -498,8 +501,8 @@ const CONTOUR_LEAVES: [u32; 3] = [0x58603f, 0x4e5638, 0x5f6845];
 /// (m) toward the back walls, where the real slope rises; the mat fills a grid this fine
 /// (m) and stays this far (m) off a spawn pad's middle (its rim and a tank's way off it)
 /// and a pickup.
-const WEST_MAT: (f64, f64) = (0.3, 0.75);
-const WEST_MAT_RISE: f64 = 0.3;
+const WEST_MAT: (f64, f64) = (0.22, 0.5);
+const WEST_MAT_RISE: f64 = 0.15;
 const OUTER_MAT_STEP: f64 = 0.5;
 /// How far (m) a planted mat's surface sits below its mounds' height, so where it thins
 /// out it sinks under the ground; and over how much height above the ground it takes on
@@ -516,9 +519,13 @@ const OUTER_PICKUP_ROOM: f64 = 2.0;
 const WEST_MAT_TONES: [[f32; 3]; 3] = [[0.15, 0.35, 0.56], [0.18, 0.4, 0.66], [0.12, 0.28, 0.45]];
 const WEST_MAT_SHADE: [f32; 3] = [0.05, 0.09, 0.11];
 /// Behind Neblina's west row the mat stands full in a planted strip this deep (m) from
-/// the walls' mulch, fading over its edge to this height at least and at most (m); past
-/// it the field is the tract's park, mown lawn ([`west_park`]).
+/// the walls' mulch, ending over this much (m) at its edge, where it sinks toward this
+/// height at least and at most (m); past it, and under it, the field is the tract's park,
+/// mown lawn ([`west_park`]). A wider fade, drawn on the planted ground's coarse grid,
+/// read as a brown stain along the walls rather than as a bed.
 const WEST_BAND: f64 = 2.5;
+const WEST_BAND_EDGE: f64 = 0.6;
+const WEST_SHOULDER: f64 = 1.8;
 const WEST_COVER: (f64, f64) = (0.14, 0.34);
 /// The groundcover down the slope behind Gaviota's south row toward Gardenia, under its
 /// trees: a fresh green, a little taller than the west slope's low cover, kept off the
@@ -590,16 +597,15 @@ const MAILBOX_PAD: u32 = 0xc4bfb3;
 /// out from its tree, about this far apart (m), this size range (radius, m), over the
 /// island's groundcover ([`ISLAND_GROUNDCOVER_TINT`]).
 const ISLAND_RING: f64 = 0.62;
-const ISLAND_SHRUB_STEP: f64 = 0.9;
-const ISLAND_SHRUB: (f64, f64) = (0.22, 0.32);
+const ISLAND_SHRUB_STEP: f64 = 1.1;
+const ISLAND_SHRUB: (f64, f64) = (0.3, 0.4);
 /// The dark bark mulch of the planting beds.
 const BED_MULCH: u32 = 0x5c4a36;
 /// The bank's crest beside Senda Parkway's path: a row of dark mulch basins, half discs
 /// this wide (radius, m), one every this many metres, each holding a shrub.
 const CREST_BASIN: (f64, f64, u32) = (0.9, 4.8, 0x4a3b2c);
-/// The agaves and the concrete down-drain at the end of each cul-de-sac on the hillside:
-/// how far (m) past the turning circle's sidewalk, the agaves' blue-grey leaves and how
-/// many stand in a cluster.
+/// The agaves at the end of each cul-de-sac on the hillside: they cluster half this far
+/// (m) past the turning circle's sidewalk, in blue-grey leaves, this many to a cluster.
 const CUL_DE_SAC_END: f64 = 9.0;
 const AGAVE: u32 = 0x7d9089;
 /// An agave's rings of leaves: how many, how steeply they rise (radians), how long for
@@ -865,21 +871,6 @@ fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
         // Under the slopes' trees the groundcover is darker, the mulch showing through.
         let shaded = mix(DIRT_MULCH[i] * 0.8, DIRT_SHADE[i], 0.45 + 0.55 * noise);
         let planted = mix(planted, shaded, zone.bank_foot * (1.0 - zone.bank_land));
-        // Behind the outer rows, under the street trees and the slope's: groundcover
-        // over the mulch, darker in the shade.
-        let under_trees = mix(
-            DIRT_SHADE[i],
-            DIRT_COVER[i],
-            UNDER_TREES_COVER.0 + UNDER_TREES_COVER.1 * noise,
-        );
-        // Past the band of trees behind Neblina's west row, the field is grey-brown
-        // mulch with drifts of low groundcover.
-        let field = mix(
-            DIRT_BANK_MULCH[i] * (0.62 + 0.16 * noise) as f32,
-            DIRT_COVER[i],
-            0.3 * noise,
-        );
-        let west = mix(field, under_trees, west_band(p, lines));
         // The slope behind Gaviota's south row: the green of its groundcover, which sinks
         // into it short of the lane along the wall, so its edge does not show.
         let south = mix(
@@ -888,7 +879,6 @@ fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
             0.3 + 0.5 * noise,
         ) * SOUTH_GROUND_SHADE;
         let planted = mix(planted, south, zone.south);
-        let planted = mix(planted, west, zone.west);
         // The greenbelt's mouth: blue-grey and green groundcover under its grasses.
         let mouth = mix(MOUTH_COVER[i], DIRT_COVER[i], 0.3 + 0.4 * noise);
         let planted = mix(planted, mouth, zone.mouth);
@@ -915,6 +905,9 @@ struct Lines {
     bend: f64,
     /// How far along Neblina the greenbelt's mouth ends, at Gaviota's first lot.
     mouth_end: f64,
+    /// How far along Neblina its west row's first lot starts: before it the field behind
+    /// the row comes round to the corner bed by Neblina's sidewalk.
+    west_row_from: f64,
     /// The greenbelt's east end, at the nearer cul-de-sac (arena x): past it the
     /// hillside runs on.
     greenbelt_end: f64,
@@ -942,12 +935,22 @@ impl Lines {
         } else {
             greenbelt_mouth() - HOUSE_WIDTH / 2.0 - SIDE_YARD
         };
+        let west_row_from = lots
+            .iter()
+            .filter(|lot| lot.house.row == Row::NeblinaWest)
+            .flat_map(|lot| {
+                let (u, v) = (lot.half_width, lot.half_depth);
+                [lot.at(-u, -v), lot.at(u, -v), lot.at(-u, v), lot.at(u, v)]
+            })
+            .map(|corner| gaviota.along(corner))
+            .fold(f64::INFINITY, f64::min);
         Lines {
             rumbo: Street::Rumbo.line(),
             gaviota,
             way: Street::SendaParkway.line(),
             bend: neblina_bend(),
             mouth_end,
+            west_row_from,
             greenbelt_end: Street::ALL
                 .into_iter()
                 .filter_map(Street::cul_de_sac)
@@ -1010,8 +1013,9 @@ struct Zones {
     /// south row.
     west: f64,
     south: f64,
-    /// The park's mown lawn over the field behind Neblina's west row, past its planted
-    /// strip.
+    /// The park's mown lawn over the field behind Neblina's west row, inside the level's
+    /// wall: right up to the rear walls' mulch, the planted band along them a mat standing
+    /// on it with an edge of its own.
     park: f64,
     /// The natural hillside east of the cul-de-sacs.
     hillside: f64,
@@ -1042,10 +1046,23 @@ fn zones(p: DVec2, lines: &Lines) -> Zones {
     // Neblina's west side and Gaviota's south side (Neblina's line's right), past
     // their rows: the field before the bend, the slope past it.
     let outer = ((-gaviota) - rows + 1.0).clamp(0.0, 1.0) * (1.0 - lawn) * south_of_way;
-    let south =
-        outer * ((lines.gaviota.along(p) - lines.bend) / HILLSIDE_BLEND + 0.5).clamp(0.0, 1.0);
+    let along = lines.gaviota.along(p);
+    let south = outer * ((along - lines.bend) / HILLSIDE_BLEND + 0.5).clamp(0.0, 1.0);
+    // Before the west row's first lot the field comes round past the rows' back walls to
+    // the corner bed by Neblina's sidewalk, so the lawn round the blue pad there does not
+    // end in a strip of bare mulch.
+    let corner_field = ((-gaviota) - STREET_HALF_WALK - CORNER_BED + 1.0).clamp(0.0, 1.0)
+        * (lines.west_row_from - along + 1.0).clamp(0.0, 1.0)
+        * (1.0 - lawn)
+        * south_of_way;
+    let west = (outer - south).max(corner_field);
     let down = way - WAY_PARKWAY - WAY_PATH;
-    let bank_land = down.clamp(0.0, 1.0) * (rumbo - rows).clamp(0.0, 1.0) * south_of_way;
+    // East of Neblina only: past Rumbo's line's west end the field behind Neblina's west
+    // row lies north of Rumbo too, and the bank's carpet once ran on over it round the
+    // blue pad there as a sheet of bare-looking ground.
+    let east_of_neblina = gaviota.clamp(0.0, 1.0);
+    let bank_land =
+        down.clamp(0.0, 1.0) * (rumbo - rows).clamp(0.0, 1.0) * south_of_way * east_of_neblina;
     // The share of the way down from the bank's top to the back walls.
     let fall = down / (down + (-inside).max(0.0)).max(0.1);
     let beyond_wall = if inside_boundary(&lines.boundary, p) {
@@ -1061,14 +1078,17 @@ fn zones(p: DVec2, lines: &Lines) -> Zones {
         greenbelt: between.max(mouth) * (1.0 - lawn),
         mouth: mouth * (1.0 - lawn),
         groundcover: (WAY_PARKWAY + 0.5 - way).clamp(0.0, 1.0),
-        bank: (down / BANK_FALL).clamp(0.0, 1.0) * (rumbo - rows).clamp(0.0, 1.0) * south_of_way,
+        bank: (down / BANK_FALL).clamp(0.0, 1.0)
+            * (rumbo - rows).clamp(0.0, 1.0)
+            * south_of_way
+            * east_of_neblina,
         bank_land,
         bank_foot: bank_land * ((fall - 0.62) / 0.08).clamp(0.0, 1.0) * (1.0 - lawn),
         bank_fall: fall,
         meadow: bank_land * ((p.x - BANK_MEADOW.0) / BANK_MEADOW.1).clamp(0.0, 1.0),
-        west: outer - south,
+        west,
         south,
-        park: (outer - south) * (1.0 - west_band(p, lines)) * (1.0 - beyond_wall),
+        park: west * (1.0 - beyond_wall),
         hillside: ((p.x - HILLSIDE_FROM) / HILLSIDE_BLEND).clamp(0.0, 1.0),
         // The bank runs on outside the north wall under the Way; west of the level the
         // Way has ended at the wall.
@@ -1078,9 +1098,21 @@ fn zones(p: DVec2, lines: &Lines) -> Zones {
 
 /// The hillside's scrub patches: where a slow noise passes [`HILL_PATCH`], from 0 to 1.
 fn hill_patch(p: DVec2) -> f64 {
-    let noise =
-        0.5 + 0.25 * (p.x * 0.19 + p.y * 0.27).sin() + 0.2 * (p.y * 0.23 - p.x * 0.13 + 0.9).cos();
-    ((noise - HILL_PATCH) / 0.12).clamp(0.0, 1.0)
+    ((patches(p, 12.0, 31) - HILL_PATCH) / 0.12).clamp(0.0, 1.0)
+}
+
+/// How far value noise's spread is stretched about its middle to match the plane waves'
+/// it replaced, so the thresholds on it keep their shares of the ground.
+const PATCH_SPREAD: f64 = 1.6;
+
+/// Patches about `size` metres across at `p`, from 0 to 1, from value noise (`seed` picks
+/// which), its grid turned off the world's axes. The ground's tints once came from sums
+/// and products of a few plane waves, which repeat: from the zoomed-out camera they tiled
+/// the land past the wall in a lattice of light and dark ovals.
+fn patches(p: DVec2, size: f64, seed: u64) -> f64 {
+    let (sin, cos) = GRASS_TILE_TURN.sin_cos();
+    let q = DVec2::new(p.x * cos - p.y * sin, p.x * sin + p.y * cos) / size;
+    (0.5 + (fbm(q.x, q.y, seed) - 0.5) * PATCH_SPREAD).clamp(0.0, 1.0)
 }
 
 /// The ground's colour at `p`: the planted slopes' groundcover drifting over bark mulch
@@ -1104,8 +1136,7 @@ fn grass_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
         + 0.25 * (p.y * 0.97 - p.x * 0.29 + 0.6).cos())
     .clamp(0.0, 1.0);
     // The hillside's green and tan, about 8 m across.
-    let tan = (0.5 + 0.5 * (p.x * 0.61 + p.y * 0.47).sin() * (p.y * 0.53 - p.x * 0.29).cos())
-        .clamp(0.0, 1.0);
+    let tan = patches(p, 8.0, 37);
     let scrub = hill_patch(p);
     let parkway = under_parkway(p, lines);
     let mix = |a: f32, b: f32, t: f64| a + (b - a) * t as f32;
@@ -2390,6 +2421,7 @@ fn off_paseos(ways: &[Line], p: DVec2, room: f64) -> bool {
 /// tank's tracks: it is a way out.
 fn paseo_grounds() -> Node {
     let mut group = Node::group("senda-paseos");
+    let heart = Arc::new(heart_geometry());
     let off = |p: DVec2| is_senda_paved(p.x, p.y);
     let (walk, granite, strip) = PASEO_BANDS;
     for way in paseo_ways() {
@@ -2467,13 +2499,12 @@ fn paseo_grounds() -> Node {
                 let (least, most) = PASEO_SHRUB;
                 let size = least + (most - least) * hash(seed);
                 let blossom = (k % 5 == 2).then_some(FRONT_BLOSSOM[k % FRONT_BLOSSOM.len()]);
-                rounded_shrub(
+                bed_shrub(
                     &mut group,
+                    &heart,
                     (at, 0.03),
-                    (size, size * 1.1),
-                    ShrubForm::Mound,
-                    PLANTED_LEAVES[k % PLANTED_LEAVES.len()],
-                    blossom,
+                    (size, BED_SHRUB_SQUASH),
+                    (PLANTED_LEAVES[k % PLANTED_LEAVES.len()], blossom),
                     seed,
                 );
             }
@@ -2747,18 +2778,43 @@ fn senda_parkway(group: &mut Node, line: &[DVec2]) {
 }
 
 /// The greenbelt's path: a narrow walk of packed bark mulch down its lane's middle, from
-/// Neblina's sidewalk to the hillside.
+/// Neblina's sidewalk toward the hillside, ending in a round end well short of the red
+/// spawn pad that stands across its line there, rather than running under the pad.
 fn greenbelt_path(group: &mut Node, lines: &Lines) {
-    let line = greenbelt_lane();
+    let lane = Line(greenbelt_lane());
+    if lane.0.len() < 2 {
+        return;
+    }
+    let pads: Vec<DVec2> = [Team::Blue, Team::Red]
+        .into_iter()
+        .flat_map(|team| spawn_positions(team, 1.0))
+        .map(|spawn| DVec2::new(spawn.x, spawn.z))
+        .collect();
+    let half = PATH_WIDTH / 2.0;
+    // Its round end, `half` past the last point, clear of the pad's room too.
+    let short_of_pads = |p: DVec2| {
+        pads.iter()
+            .all(|pad| pad.distance(p) > OUTER_PAD_ROOM + PATH_WIDTH)
+    };
+    let mut end = 0.0;
+    while end < lane.length() && short_of_pads(lane.at(end).0) {
+        end += 0.1;
+    }
+    let line = cut_line(&lane, 0.0, end);
     if line.len() < 2 {
         return;
     }
-    let half = PATH_WIDTH / 2.0;
     let off_ground = |p: DVec2| is_senda_paved(p.x, p.y) || lines.lot(p).0 > -0.1;
     group.children.push(flat(
         ribbon(&line, -half, half, 0.035, &off_ground),
         PATH_MULCH,
     ));
+    if end < lane.length() {
+        let (tip, along) = lane.at(end);
+        group
+            .children
+            .push(flat(nose(tip, along, (0.0, half), 0.035), PATH_MULCH));
+    }
 }
 
 /// A smooth step from 0 at `x` 0 to 1 at 1.
@@ -3227,7 +3283,10 @@ fn scrub_surface(
     let (hills, lines) = (Hills::new(), Lines::new());
     let (sink, fade) = MAT_SINK;
     let color = |p: DVec2, (weight, height): (f64, f64)| {
-        let leaves = tone(p, height);
+        // Lit by its mound's own height, not as the thinning mat sinks: lit as it sinks, its
+        // edge darkened to its hollows' shade first and read as a brown stain round it.
+        let own = if weight > 1e-6 { height / weight } else { 0.0 };
+        let leaves = tone(p, own);
         // Inside the mat (its weight full) its hollows keep their own shade.
         let shown =
             rise((height - sink - PLANTED_LIFT) / fade).max(rise(2.0 * weight - 1.0)) as f32;
@@ -3398,7 +3457,7 @@ impl Outer {
         let near_walls = rise(1.0 - (-lines.lot(p).0 - WALL_FOOT) / 8.0);
         let band = WEST_MAT.0 + (WEST_MAT.1 - WEST_MAT.0) * mound + WEST_MAT_RISE * near_walls;
         let cover = WEST_COVER.0 + (WEST_COVER.1 - WEST_COVER.0) * mound;
-        let west = cover + (band - cover) * west_band(p, lines);
+        let west = cover + (band - cover) * west_shoulder(p, lines);
         let scrub = SOUTH_MAT.0 + (SOUTH_MAT.1 - SOUTH_MAT.0) * mound;
         west + (scrub - west) * south + ripple
     }
@@ -3430,10 +3489,22 @@ const BANK_MAT_STEP: f64 = 0.45;
 const BANK_MAT: (f64, f64) = (0.1, 0.34);
 const BANK_MAT_DOME: f64 = 0.7;
 const BANK_MAT_EDGE: f64 = 0.35;
-/// The carpet's tints over the packed-dirt tile, linear (its orange tan drawn to a
-/// grey green): three tones in drifts, darker toward this in its hollows.
-const BANK_MAT_TONES: [[f32; 3]; 3] = [[0.31, 0.59, 1.63], [0.27, 0.52, 1.41], [0.35, 0.66, 1.85]];
-const BANK_MAT_SHADE: [f32; 3] = [0.14, 0.26, 0.6];
+/// The carpet's tints over the packed-dirt tile, linear (its orange tan drawn to a muted
+/// grey green, about sRGB (105, 118, 88) in the sun as the drone footage shows it; more
+/// red read as tan dirt, more blue as mint): three tones in drifts, darker toward this in
+/// its hollows.
+const BANK_MAT_TONES: [[f32; 3]; 3] = [
+    [0.197, 0.454, 1.48],
+    [0.171, 0.4, 1.29],
+    [0.222, 0.508, 1.68],
+];
+const BANK_MAT_SHADE: [f32; 3] = [0.088, 0.2, 0.545];
+/// The concrete mow strip along the inside of the level's view fence (its width and top,
+/// m, and paint): the pale line that marks the level's edge from overhead. The bank's
+/// carpet stops this far (m) short of it: its mounds rose over the strip's top in places,
+/// leaving torn pale shards of it at the fence's foot.
+pub(super) const MOW_STRIP: (f64, f64, u32) = (0.5, 0.05, 0xb8b2a5);
+const MOW_STRIP_ROOM: f64 = 0.15;
 const BANK_HEDGE_OUT: f64 = 1.0;
 const BANK_HEDGE_STEP: f64 = 0.7;
 const BANK_HEDGE: (f64, f64) = (0.5, 0.9);
@@ -3467,7 +3538,7 @@ fn bank_planting() -> Node {
             * (1.0 - zone.hillside)
             * rise((edge + wander * uneven - zone.meadow) / 0.12)
             * rise((BANK_COVER_DOWN - zone.bank_fall) / 0.05)
-            * rise((outer.inside(p) + 0.2) / BANK_MAT_EDGE);
+            * rise((outer.inside(p) - MOW_STRIP.0 - MOW_STRIP_ROOM) / BANK_MAT_EDGE);
         // Clear of every street's paving: Senda Parkway's path at the bank's top, and
         // Neblina where the bank comes down to it at the junction.
         for (reach, line) in &outer.streets {
@@ -3540,9 +3611,16 @@ fn bank_planting() -> Node {
 }
 
 /// How much of the dense band behind Neblina's west row's rear walls `p` lies in, from 1
-/// within [`WEST_BAND`] of the walls' mulch to 0 a couple of metres past it.
+/// within [`WEST_BAND`] of the walls' mulch to 0 past it, over [`WEST_BAND_EDGE`].
 fn west_band(p: DVec2, lines: &Lines) -> f64 {
-    rise((WEST_BAND + 1.0 - (-lines.lot(p).0 - WALL_FOOT)) / 2.0)
+    rise((WEST_BAND - (-lines.lot(p).0 - WALL_FOOT)) / WEST_BAND_EDGE + 0.5)
+}
+
+/// How far up the band's mounds stand at `p`, from 1 a shoulder's width
+/// ([`WEST_SHOULDER`]) inside its edge down to the field's low cover at the edge itself:
+/// standing full to a crisp edge, the band's sunlit outer face read as a stripe.
+fn west_shoulder(p: DVec2, lines: &Lines) -> f64 {
+    rise((WEST_BAND - (-lines.lot(p).0 - WALL_FOOT)) / WEST_SHOULDER)
 }
 
 /// The planted slopes round the tract's outer rows, scenery a tank pushes through: behind
@@ -3562,7 +3640,7 @@ fn outer_slopes() -> Node {
     let tone = |p: DVec2, height: f64| {
         let south = zones(p, &lines).south;
         // Lit against its own tops: the field's low cover against its own height.
-        let top = WEST_COVER.1 + (tall - WEST_COVER.1) * west_band(p, &lines).max(south);
+        let top = WEST_COVER.1 + (tall - WEST_COVER.1) * west_shoulder(p, &lines).max(south);
         let light = height / top;
         let west = mat_tone(p, light, &WEST_MAT_TONES, WEST_MAT_SHADE);
         let scrub = mat_tone(p, light, &SOUTH_MAT_TONES, SOUTH_MAT_SHADE);
@@ -3730,22 +3808,25 @@ fn view_fence(group: &mut Node, lines: &Lines, path: &Line) {
                 at.y,
             );
         }
-        // Top and bottom rails, then the pickets.
+        // Top and bottom rails in 1.2 m lengths, then the pickets.
         let mut s = 0.0;
         while s < length {
             let (at, along) = line.at(s);
             let yaw = along.x.atan2(along.y);
-            if s.rem_euclid(1.2) < gap {
-                for y in [0.12, height - 0.05] {
-                    put(
-                        group,
-                        rotated(box_part(0.04, 0.04, 1.2, FENCE_STEEL, 0.0), 0.0, yaw, 0.0),
-                        at.x + along.x * 0.6,
-                        y,
-                        at.y + along.y * 0.6,
-                    );
-                }
+            for y in [0.12, height - 0.05] {
+                put(
+                    group,
+                    rotated(box_part(0.04, 0.04, 1.2, FENCE_STEEL, 0.0), 0.0, yaw, 0.0),
+                    at.x + along.x * 0.6,
+                    y,
+                    at.y + along.y * 0.6,
+                );
             }
+            s += 1.2;
+        }
+        let mut s = 0.0;
+        while s < length {
+            let (at, _) = line.at(s);
             put(
                 group,
                 box_part(picket, height, picket, FENCE_STEEL, 0.0),
@@ -3759,10 +3840,10 @@ fn view_fence(group: &mut Node, lines: &Lines, path: &Line) {
 }
 
 /// The bank's concrete terrace walk between Senda Parkway's path and Rumbo's back fences
-/// with its spur walks up to the path, and the terrace drains, concrete V-ditches with a
-/// crease down their middle, following the hillside's contours round the cul-de-sacs' ends,
-/// all left out round
-/// the spawn pads and where they cross Senda Parkway.
+/// with its spur walks up to the path, and the hillside's terrace drain, a concrete
+/// V-ditch with a crease down its middle following the hillside's contours past the
+/// cul-de-sacs' ends, all left out round the spawn pads and where they cross Senda
+/// Parkway.
 fn trails(group: &mut Node, lines: &Lines) {
     let pads: Vec<DVec2> = [Team::Blue, Team::Red]
         .into_iter()
@@ -3832,20 +3913,12 @@ fn trails(group: &mut Node, lines: &Lines) {
             ));
         }
     }
-    let mut drains: Vec<(Vec<DVec2>, f64)> = Vec::new();
-    drains.extend(
-        hillside_trails()
-            .into_iter()
-            .map(|line| (line, HILL_TRAIL_WIDTH)),
-    );
-    // Each from its turning circle's far rim onto the hillside, short of the east wall.
-    drains.extend(cul_de_sac_ends().into_iter().map(|(start, out)| {
-        let to_wall = (ARENA - TRAIL_WALL_ROOM - start.x) / out.x.max(0.1);
-        (
-            vec![start, start + out * (CUL_DE_SAC_END * 1.6).min(to_wall)],
-            TRAIL_WIDTH,
-        )
-    }));
+    // No drain runs off the turning circles' far rims: the red spawn pads stand there,
+    // and their room cut each into short stubs of concrete lying in the grass.
+    let drains: Vec<(Vec<DVec2>, f64)> = hillside_trails()
+        .into_iter()
+        .map(|line| (line, HILL_TRAIL_WIDTH))
+        .collect();
     for (line, width) in &drains {
         group.children.push(flat(
             ribbon(line, -width / 2.0, width / 2.0, 0.025, &off_pads),
@@ -3944,8 +4017,9 @@ fn hillside_trails() -> Vec<Vec<DVec2>> {
 }
 
 /// The walks on the bank: one terrace walk along it a third of the way down from
-/// Senda Parkway's path wherever the bank is wide enough, and the straight spur walks from
-/// it up to the Way's path every few lots.
+/// Senda Parkway's path wherever the bank is wide enough, joining a street's walk or
+/// turning up the bank at its ends, and the straight spur walks from it up to the Way's
+/// path every few lots.
 fn bank_trails(lines: &Lines) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
     let (way, rumbo) = (&lines.way, &lines.rumbo);
     let top = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH;
@@ -3962,6 +4036,8 @@ fn bank_trails(lines: &Lines) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
         (fence, path)
     };
     let mut terrace: Vec<DVec2> = Vec::new();
+    // The Way's path across from each of the terrace walk's points.
+    let mut tops: Vec<DVec2> = Vec::new();
     let mut drains: Vec<Vec<DVec2>> = Vec::new();
     let mut s = 0.0;
     while s < rumbo.length() {
@@ -3981,10 +4057,59 @@ fn bank_trails(lines: &Lines) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
                 }
             }
             terrace.push(at);
+            tops.push(path);
         }
         s += 2.0;
     }
+    if terrace.len() < 2 {
+        return (terrace, drains);
+    }
+    // Neither end stops square in the open ground, where the bank grows too narrow for
+    // the walk: each runs on under a street's walk if one lies straight ahead within
+    // reach, or else turns up the bank to the Way's path as a spur does, the walk carried
+    // on past the turn by the spur's half width so the corner closes.
+    let n = terrace.len();
+    let ends = [(0, 1), (n - 1, n - 2)].map(|(tip, before)| {
+        let (tip, before, top) = (terrace[tip], terrace[before], tops[tip]);
+        let ahead = (tip - before).normalize();
+        match walk_ahead(lines, tip, ahead) {
+            Some(reach) => tip + ahead * reach,
+            None => {
+                drains.push(vec![tip, top]);
+                tip + ahead * BANK_SPUR / 2.0
+            }
+        }
+    });
+    terrace.insert(0, ends[0]);
+    terrace.push(ends[1]);
     (terrace, drains)
+}
+
+/// How far (m) the bank's terrace walk, ending at `tip` heading `ahead`, runs on until its
+/// square end lies wholly under a street's walk, if it reaches one within
+/// [`BANK_WALK_REACH`] without crossing a lot.
+fn walk_ahead(lines: &Lines, tip: DVec2, ahead: DVec2) -> Option<f64> {
+    let half = BANK_WALK / 2.0;
+    let under_walk = |p: DVec2| {
+        Street::ALL.into_iter().any(|street| {
+            let line = street.line();
+            let (near, far) = walk_band(street, line.signed_distance(p).signum());
+            (near + 0.05..far - 0.1).contains(&line.distance(p))
+        })
+    };
+    let mut reach = 0.0;
+    while reach < BANK_WALK_REACH {
+        reach += 0.1;
+        let p = tip + ahead * reach;
+        let corners = [p + left(ahead) * half, p - left(ahead) * half];
+        if corners.iter().any(|&c| lines.lot(c).0 > -0.1) {
+            return None;
+        }
+        if corners.into_iter().all(under_walk) {
+            return Some(reach);
+        }
+    }
+    None
 }
 
 /// Where each cul-de-sac's end meets the hillside: the back of its sidewalk straight on
@@ -4315,18 +4440,31 @@ fn front_yard_ground(
             .children
             .push(shadow_receiver(Arc::new(mesh), lawn.clone()));
     }
-    // The panel before the bed, and round the walk's far side to the lot line.
-    let line = if yard.side > 0.0 {
-        lot.line_u(1)
+    // The panel before the bed, and round the walk's far side to the lot line; on a corner
+    // lot on past it to the side street's sidewalk, so the strip between them is the
+    // yard's own rather than a crisp lawn set in bare ground.
+    let depth = (yard.front, yard.sidewalk);
+    let (line, other) = if yard.side > 0.0 {
+        (lot.line_u(1), lot.line_u(0))
     } else {
-        lot.line_u(0)
+        (lot.line_u(0), lot.line_u(1))
     };
+    let line_reach = side_street_reach(lot, line, yard.side, depth);
+    let other_reach = side_street_reach(lot, other, -yard.side, depth);
     let corner = yard.side * lot.house.w / 2.0;
-    let other = if yard.side > 0.0 {
-        lot.line_u(0)
+    // The side yard before the gate return, beside the house, on the side street's side,
+    // its front edge (once the panels are trimmed below) meeting the next panel's back.
+    let (gate, meet) = (lot.gate_v() + 0.01, yard.front + 0.08);
+    let side_yard = if line_reach > 0.0 {
+        Some((span(corner, line + yard.side * line_reach), (gate, meet)))
+    } else if other_reach > 0.0 {
+        let wall = -yard.side * lot.house.w / 2.0;
+        Some((span(wall, other - yard.side * other_reach), (gate, meet)))
     } else {
-        lot.line_u(1)
+        None
     };
+    let line = line + yard.side * line_reach;
+    let other = other - yard.side * other_reach;
     let panels = [
         ((inner, inner_width), (bed, yard.sidewalk)),
         (
@@ -4339,7 +4477,7 @@ fn front_yard_ground(
         ),
         (span(corner, line), (yard.front + 0.05, yard.office)),
     ];
-    for ((u, w), (from, to)) in panels {
+    for ((u, w), (from, to)) in panels.into_iter().chain(side_yard) {
         let (to, from) = (to - 0.02, from + 0.01);
         if w < 0.1 || to - from < 0.1 {
             continue;
@@ -4355,6 +4493,49 @@ fn front_yard_ground(
         }
     }
 }
+
+/// How far (m) a front yard's panels run on past lot line `u` (`out` the way past it, 1
+/// or -1 in the lot's frame) over the yard's `depth` (from the house's front to the
+/// sidewalk), to lie under a side street's walk where the lot stands on a corner: as far
+/// as that walk's middle where it is furthest, so long as the panel's edge then stays off
+/// the street's kerb where the walk is nearest; 0 on a lot with no side street in reach.
+fn side_street_reach(lot: &Lot, u: f64, out: f64, (front, sidewalk): (f64, f64)) -> f64 {
+    let own = lot.house.row.street();
+    let beside = |p: DVec2| {
+        Street::ALL
+            .into_iter()
+            .filter(|&street| street != own)
+            .any(|street| {
+                let line = street.line();
+                let (_, far) = walk_band(street, line.signed_distance(p).signum());
+                line.distance(p) < far
+            })
+    };
+    let gap = |v: f64| {
+        let mut reach = 0.0;
+        while reach < SIDE_STREET_REACH {
+            if beside(lot.at(u + out * reach, v)) {
+                return Some(reach);
+            }
+            reach += 0.05;
+        }
+        None
+    };
+    let inset = 0.3_f64.min((sidewalk - front) / 2.0);
+    let (Some(a), Some(b)) = (gap(front + inset), gap(sidewalk - inset)) else {
+        return 0.0;
+    };
+    let reach = a.max(b) + SIDEWALK / 2.0;
+    if reach < a.min(b) + SIDEWALK + PARKWAY - 0.2 {
+        reach
+    } else {
+        0.0
+    }
+}
+
+/// How far (m) past a corner lot's line its side street's walk may lie for the front
+/// yard to run on to it.
+const SIDE_STREET_REACH: f64 = 6.0;
 
 /// A flat quadrilateral through `corners` on the ground at height `y`, its face up
 /// whichever way round they run.
@@ -5885,11 +6066,9 @@ fn foothill_tint(p: DVec2, normal: [f32; 3]) -> [f32; 3] {
         * steep
         * 3.0)
         .clamp(0.0, 1.0);
-    let wave = |a: f64, b: f64, c: f64| (p.x * a + p.y * b + c).sin();
     // Patches about 20 m across, and finer drifts.
-    let patch =
-        0.5 + 0.3 * wave(0.11, 0.07, 0.4) * wave(-0.05, 0.13, 1.9) + 0.2 * wave(0.29, -0.23, 2.7);
-    let drift = 0.5 + 0.5 * wave(0.41, 0.33, 0.9) * wave(-0.27, 0.47, 3.1);
+    let patch = patches(p, 20.0, 41);
+    let drift = patches(p, 6.0, 43);
     let chaparral = rise((patch - 0.36) / 0.14 + steep * 1.5 + shaded * 1.4 - 0.2);
     let olive = rise((drift - 0.35) / 0.3) * 0.8;
     let mix = |a: f32, b: f32, t: f64| a + (b - a) * t as f32;
@@ -6194,13 +6373,12 @@ fn shrubs() -> Node {
     let neblina = Street::NeblinaGaviota.line();
     let (from, _) = senda_layout::splitter_island();
     let (island, _) = neblina.at(from + SPLITTER_ISLAND.2);
-    rounded_shrub(
+    bed_shrub(
         &mut group,
+        &bush,
         (island, KERB_HEIGHT),
-        (0.4, 0.45),
-        ShrubForm::Mound,
-        PLANTED_LEAVES[0],
-        None,
+        (0.38, BED_SHRUB_SQUASH),
+        (PLANTED_LEAVES[0], None),
         41.0,
     );
     let everywhere = (DVec2::splat(-SHRUB_EXTENT), DVec2::splat(SHRUB_EXTENT));
@@ -6279,7 +6457,7 @@ fn shrubs() -> Node {
     });
     // Down Senda Parkway's raised median and its south parkway.
     let trees = way_tree_sites();
-    way_planting(&mut group, &lump, &lines, &trees);
+    way_planting(&mut group, (&lump, &bush), &lines, &trees);
     // The bend park's beds round its lawn and walk: ornamental grasses and agaves.
     if let Some(park) = bend_park(&lines) {
         let low = park
@@ -6301,7 +6479,7 @@ fn shrubs() -> Node {
             &|p| in_park_beds(&park, p) && open(p),
         );
     }
-    front_yard_plants(&mut group, &lump, &lines.lots);
+    front_yard_plants(&mut group, (&lump, &bush), &lines.lots);
     // A ring of low shrubs round each turning circle's island tree, inside its kerb.
     for (k, middle) in Street::ALL
         .into_iter()
@@ -6318,13 +6496,12 @@ fn shrubs() -> Node {
             let at = middle + DVec2::new(angle.cos(), angle.sin()) * reach;
             let size = ISLAND_SHRUB.0 + (ISLAND_SHRUB.1 - ISLAND_SHRUB.0) * hash(seed + 0.5);
             let tone = PLANTED_LEAVES[n % PLANTED_LEAVES.len()];
-            rounded_shrub(
+            bed_shrub(
                 &mut group,
+                &bush,
                 (at, 0.1),
-                (size * 1.1, size * 1.2),
-                ShrubForm::Mound,
-                tone,
-                None,
+                (size * 1.05, BED_SHRUB_SQUASH),
+                (tone, None),
                 seed,
             );
         }
@@ -6358,24 +6535,36 @@ fn shrubs() -> Node {
     group
 }
 
-/// A clipped conical shrub (a dwarf juniper or boxwood cone) at `at`, about `radius`
-/// across at its foot and `height` tall, tapering in tiers to its tip.
-fn conical_shrub(group: &mut Node, at: DVec2, (radius, height): (f64, f64), color: u32, seed: f64) {
-    rounded_shrub(
-        group,
-        (at, 0.0),
-        (radius * FRONT_CONE_SPREAD, height),
-        ShrubForm::Cone,
-        color,
-        None,
-        seed,
-    );
+/// A clipped bed shrub on ground `base` metres up at `at`, `size` metres in radius and
+/// `squash` as tall for its breadth: a leafy shrub ([`leafy`]) in `leaves`, or where it is
+/// in flower a fountain of strappy leaves with `blossom` among them (daylilies, salvia).
+/// Not a smooth lathe: from overhead those read as olive stones and green cones, and a
+/// leafy shrub tinted toward its blossom read as a dead brown one.
+fn bed_shrub(
+    group: &mut Node,
+    core: &Arc<Mesh>,
+    (at, base): (DVec2, f64),
+    (size, squash): (f64, f64),
+    (leaves, blossom): (u32, Option<u32>),
+    seed: f64,
+) {
+    match blossom {
+        Some(flower) => tuft(
+            group,
+            at,
+            size,
+            BED_FLOWER_SQUASH,
+            &[leaves, flower, leaves],
+            seed,
+        ),
+        None => leafy(group, core, (at, base), (size, squash), leaves, seed),
+    }
 }
 
-/// The front yards' planting: two or three small shrubs, clipped cones and rounded
-/// mounds by turns, in the bed along each office's front; a cone by the garage's outer
-/// corner; and on the gravel lots a few small agaves and a mounded shrub in the gravel.
-fn front_yard_plants(group: &mut Node, lump: &Arc<Mesh>, lots: &[Lot]) {
+/// The front yards' planting: two or three low leafy shrubs in the bed along each
+/// office's front, a few in flower; one upright shrub by the garage's outer corner; and
+/// on the gravel lots a few small agaves and a low shrub in the gravel.
+fn front_yard_plants(group: &mut Node, (lump, heart): (&Arc<Mesh>, &Arc<Mesh>), lots: &[Lot]) {
     for (k, lot) in lots.iter().enumerate() {
         let Some(yard) = front_yard(lot, k) else {
             continue;
@@ -6388,25 +6577,18 @@ fn front_yard_plants(group: &mut Node, lump: &Arc<Mesh>, lots: &[Lot]) {
             let at = lot.at(a + (b - a) * t, bed);
             let seed = (k * 7 + n) as f64 * 1.9;
             let tone = FRONT_SHRUB_LEAVES[(k + n) % FRONT_SHRUB_LEAVES.len()];
-            if (k + n).is_multiple_of(2) {
-                let (low, high) = FRONT_CONE;
-                let height = low + (high - low) * hash(seed);
-                conical_shrub(group, at, (FRONT_CONE_RADIUS, height), tone, seed);
-            } else {
-                let size = FRONT_MOUND.0 + (FRONT_MOUND.1 - FRONT_MOUND.0) * hash(seed);
-                // By some entries a mound in flower: daylilies and red salvia.
-                let blossom = (hash(seed + 5.1) < FRONT_FLOWERING)
-                    .then(|| FRONT_BLOSSOM[(k + n) % FRONT_BLOSSOM.len()]);
-                rounded_shrub(
-                    group,
-                    (at, 0.0),
-                    (size * 1.1, size * 1.5),
-                    ShrubForm::Mound,
-                    tone,
-                    blossom,
-                    seed,
-                );
-            }
+            let size = FRONT_MOUND.0 + (FRONT_MOUND.1 - FRONT_MOUND.0) * hash(seed);
+            // By some entries a shrub in flower: daylilies and red salvia.
+            let blossom = (hash(seed + 5.1) < FRONT_FLOWERING)
+                .then(|| FRONT_BLOSSOM[(k + n) % FRONT_BLOSSOM.len()]);
+            bed_shrub(
+                group,
+                heart,
+                (at, 0.0),
+                (size, BED_SHRUB_SQUASH),
+                (tone, blossom),
+                seed,
+            );
         }
         // By the garage door's outer corner, where the lot leaves it room.
         let other = if yard.side > 0.0 {
@@ -6414,12 +6596,20 @@ fn front_yard_plants(group: &mut Node, lump: &Arc<Mesh>, lots: &[Lot]) {
         } else {
             lot.line_u(1)
         };
-        let corner = yard.paving_edge() - yard.side * (FRONT_CONE_RADIUS + 0.06);
-        if (other - corner) * -yard.side > FRONT_CONE_RADIUS + 0.1 {
+        let (radius, squash) = FRONT_UPRIGHT;
+        let corner = yard.paving_edge() - yard.side * (radius + 0.06);
+        if (other - corner) * -yard.side > radius + 0.1 {
             let seed = k as f64 * 3.7;
-            let at = lot.at(corner, yard.front + FRONT_CONE_RADIUS + 0.1);
-            let size = (FRONT_CONE_RADIUS, FRONT_CONE.1);
-            conical_shrub(group, at, size, FRONT_SHRUB_LEAVES[0], seed);
+            let at = lot.at(corner, yard.front + radius + 0.1);
+            let tone = FRONT_SHRUB_LEAVES[0];
+            bed_shrub(
+                group,
+                heart,
+                (at, 0.0),
+                (radius, squash),
+                (tone, None),
+                seed,
+            );
         }
         if yard.gravel {
             // On the gravel round the walk's far side, toward the lot line.
@@ -6438,13 +6628,12 @@ fn front_yard_plants(group: &mut Node, lump: &Arc<Mesh>, lots: &[Lot]) {
             }
             let at = lot.at(from + (to - from) * 0.55, yard.front + 0.35);
             let tone = FRONT_SHRUB_LEAVES[2];
-            rounded_shrub(
+            bed_shrub(
                 group,
+                heart,
                 (at, 0.0),
-                (FRONT_MOUND.1 * 1.2, FRONT_MOUND.1 * 1.3),
-                ShrubForm::Mound,
-                tone,
-                None,
+                (FRONT_MOUND.1 * 1.2, BED_SHRUB_SQUASH),
+                (tone, None),
                 k as f64,
             );
         }
@@ -6468,7 +6657,12 @@ const FLOWERING_BLOSSOM: u32 = 0xb8382c;
 /// its trees and its openings, and down the south parkway between its kerb and its path,
 /// broken round its trees and lamps and where Neblina meets it; tufts of straw-coloured
 /// grass, blue-grey agaves and red-flowering shrubs over the groundcover, not a hedge.
-fn way_planting(group: &mut Node, lump: &Arc<Mesh>, lines: &Lines, trees: &[DVec2]) {
+fn way_planting(
+    group: &mut Node,
+    (lump, heart): (&Arc<Mesh>, &Arc<Mesh>),
+    lines: &Lines,
+    trees: &[DVec2],
+) {
     let half = Street::SendaParkway.half();
     let lamps: Vec<DVec2> = lamp_sites()
         .into_iter()
@@ -6524,13 +6718,12 @@ fn way_planting(group: &mut Node, lump: &Arc<Mesh>, lines: &Lines, trees: &[DVec
                 );
             } else if pick < WAY_FLOWER_SHARE {
                 let size = 0.3 + 0.08 * hash(seed + 3.3);
-                rounded_shrub(
+                bed_shrub(
                     target,
+                    heart,
                     (at, 0.0),
-                    (size * 1.1, size * 1.3),
-                    ShrubForm::Mound,
-                    FLOWERING_LEAVES,
-                    Some(FLOWERING_BLOSSOM),
+                    (size * 1.05, BED_SHRUB_SQUASH),
+                    (FLOWERING_LEAVES, Some(FLOWERING_BLOSSOM)),
                     seed,
                 );
             }
@@ -6549,7 +6742,7 @@ fn in_arena_or_near(p: DVec2) -> bool {
 }
 
 /// A cluster of agaves at each cul-de-sac's end on the hillside, a little to one side
-/// of its down-drain, wherever `wanted` holds: blue-grey rosettes of stiff leaves.
+/// of the street's line, wherever `wanted` holds: blue-grey rosettes of stiff leaves.
 fn agaves(group: &mut Node, lump: &Arc<Mesh>, wanted: &dyn Fn(DVec2) -> bool) {
     for (k, (start, out)) in cul_de_sac_ends().into_iter().enumerate() {
         let middle = start + out * (CUL_DE_SAC_END * 0.5) + left(out) * 2.2;
@@ -7152,6 +7345,110 @@ mod ground_tests {
             }
         });
         found
+    }
+
+    /// The bank's carpet keeps under the concrete mow strip at the view fence's foot: its
+    /// mounds once rose over the strip in places and left torn pale shards of it showing.
+    #[test]
+    fn bank_carpet_keeps_under_the_mow_strip() {
+        let ground = lawn_material();
+        let outer = Outer::new(&Lines::new());
+        let (width, top, _) = MOW_STRIP;
+        let mut checked = 0;
+        bank_planting().traverse(glam::DMat4::IDENTITY, &mut |node, world| {
+            let Some(drawable) = &node.drawable else {
+                return;
+            };
+            if !Arc::ptr_eq(&drawable.material, &ground) {
+                return;
+            }
+            let mesh = &drawable.mesh;
+            let vertex = |k: u32| {
+                let p = mesh.positions[k as usize];
+                let at = glam::DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                world.transform_point3(at)
+            };
+            let indices = mesh
+                .indices
+                .clone()
+                .unwrap_or_else(|| (0..mesh.positions.len() as u32).collect());
+            for triangle in indices.chunks(3) {
+                let [a, b, c] = [0, 1, 2].map(|k| vertex(triangle[k]));
+                if [a, b, c]
+                    .iter()
+                    .all(|p| outer.inside(DVec2::new(p.x, p.z)) > width + 1.0)
+                {
+                    continue;
+                }
+                for i in 0..=8 {
+                    for j in 0..=8 - i {
+                        let p = a + (b - a) * f64::from(i) / 8.0 + (c - a) * f64::from(j) / 8.0;
+                        let inside = outer.inside(DVec2::new(p.x, p.z));
+                        if (0.0..width).contains(&inside) {
+                            checked += 1;
+                            assert!(
+                                p.y < top - 0.003,
+                                "the bank's carpet stands {:.3} m up over the mow strip at {p}",
+                                p.y
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        assert!(checked > 0, "no carpet reaches the mow strip to check");
+    }
+
+    /// Neither end of the bank's terrace walk stops square in the open ground: each lies
+    /// under a street's walk or turns up the bank in a spur.
+    #[test]
+    fn bank_terrace_walk_ends_at_something() {
+        let (terrace, spurs) = bank_trails(&Lines::new());
+        assert!(terrace.len() > 1);
+        for end in [terrace[0], terrace[terrace.len() - 1]] {
+            let under_walk = Street::ALL.into_iter().any(|street| {
+                let line = street.line();
+                let (near, far) = walk_band(street, line.signed_distance(end).signum());
+                (near..far).contains(&line.distance(end))
+            });
+            let turns_up = spurs
+                .iter()
+                .any(|spur| spur[0].distance(end) <= BANK_SPUR / 2.0 + 1e-6);
+            assert!(
+                under_walk || turns_up,
+                "the terrace walk ends in the open at {end}"
+            );
+        }
+    }
+
+    /// The greenbelt's path ends short of the spawn pads rather than running under one.
+    #[test]
+    fn greenbelt_path_stops_short_of_the_pads() {
+        let mut group = Node::default();
+        greenbelt_path(&mut group, &Lines::new());
+        let pads: Vec<DVec2> = [Team::Blue, Team::Red]
+            .into_iter()
+            .flat_map(|team| spawn_positions(team, 1.0))
+            .map(|spawn| DVec2::new(spawn.x, spawn.z))
+            .collect();
+        let mut count = 0;
+        group.traverse(glam::DMat4::IDENTITY, &mut |node, world| {
+            let Some(drawable) = &node.drawable else {
+                return;
+            };
+            for p in &drawable.mesh.positions {
+                let at = glam::DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                let at = world.transform_point3(at);
+                count += 1;
+                for pad in &pads {
+                    assert!(
+                        pad.distance(DVec2::new(at.x, at.z)) > OUTER_PAD_ROOM,
+                        "the greenbelt's path runs to the pad at {pad}"
+                    );
+                }
+            }
+        });
+        assert!(count > 0);
     }
 
     /// The groundcover mats stand nowhere on a street's asphalt: the bank's carpet once
