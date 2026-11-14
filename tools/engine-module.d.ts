@@ -15,11 +15,11 @@ declare module "*/generated/engine-labs/engine.js" {
       z: number,
       yaw: number,
     ): void;
-    add_home(name: string, glb: Uint8Array, broken: Uint32Array, x: number, z: number): string;
+    add_home(name: string, pack: Uint8Array, broken: Uint32Array, x: number, z: number): string;
     add_planned(
       name: string,
       model: string,
-      glb: Uint8Array,
+      pack: Uint8Array,
       style: number,
       left: boolean,
       w: number,

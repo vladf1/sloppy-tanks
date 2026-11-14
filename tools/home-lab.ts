@@ -1,6 +1,6 @@
 // Experiment: the Senda reference house, drawn
 // by the game's renderer as the coded house and as the Blender-made model
-// (public/models/houses/small-monterey.glb), standing or with chosen structure parts broken.
+// (small-monterey in public/models/houses.bin), standing or with chosen structure parts broken.
 // Build the labs engine with `bun run wasm:labs`; a check drives it through
 // `window.homeLab`: `show(kind, broken)` and `view(position, target)`, then screenshots.
 import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
@@ -39,8 +39,9 @@ const SCENE = {
 async function main() {
   const { RenderLab } = await loadLabsEngine();
   const lab = await RenderLab.create(canvas, base);
-  const glb = new Uint8Array(
-    await (await fetch(new URL("models/houses/small-monterey.glb", base))).arrayBuffer(),
+  // Every model, one file (crates/core/src/models/house_pack.rs).
+  const pack = new Uint8Array(
+    await (await fetch(new URL("models/houses.bin", base))).arrayBuffer(),
   );
   let time = 1.25;
   const homeLab = {
@@ -49,7 +50,7 @@ async function main() {
       const stats = JSON.parse(
         lab.add_home(
           "home",
-          kind === "imported" ? glb : new Uint8Array(),
+          kind === "imported" ? pack : new Uint8Array(),
           new Uint32Array(broken),
           0,
           0,
@@ -68,15 +69,12 @@ async function main() {
       lots: [boolean, number, number, number, number][],
     ) {
       lab.load_scene(JSON.stringify(SCENE));
-      const file = new Uint8Array(
-        await (await fetch(new URL(`models/houses/${model}.glb`, base))).arrayBuffer(),
-      );
       const stats = lots.map(([left, w, h, x, z], i) =>
         JSON.parse(
           lab.add_planned(
             `house-${i}`,
             model,
-            kind === "imported" ? file : new Uint8Array(),
+            kind === "imported" ? pack : new Uint8Array(),
             style,
             left,
             w,

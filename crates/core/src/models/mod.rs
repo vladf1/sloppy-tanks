@@ -55,6 +55,7 @@ beyond_geometry! {
     mod barrel_surfaces;
     mod cover_model;
     mod house_parts_model;
+    mod house_pack;
     pub mod imported_house;
     mod crate_model;
     pub mod effects_props;

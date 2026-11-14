@@ -20,11 +20,11 @@ const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWit
 const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
   .filter((name) => name.endsWith(".ttc"))
   .map((name) => `fonts/${name}`);
-// The Neighborhood's Blender-made houses: binary glTF, mostly float arrays that Brotli
-// shrinks about tenfold, and Cloudflare leaves model/gltf-binary uncompressed.
-const modelFiles = (await readdir(new URL("models/houses/", assetDirectory)))
-  .filter((name) => name.endsWith(".glb"))
-  .map((name) => `models/houses/${name}`);
+// The Neighborhood's Blender-made houses, packed into integer columns that Brotli shrinks
+// about ninefold (scripts/pack-houses.ts); Cloudflare leaves binary files uncompressed.
+const modelFiles = (await readdir(new URL("models/", assetDirectory)))
+  .filter((name) => name.endsWith(".bin"))
+  .map((name) => `models/${name}`);
 
 if (wasmFiles.length === 0 || fontFiles.length === 0) {
   throw new Error(`Build ${build} before preparing Worker assets`);

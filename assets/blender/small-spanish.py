@@ -1,7 +1,7 @@
 # The Senda small Spanish house, modelled after Rumbo north lot 1, for Sloppy Tanks in Blender
 # (headless):
 #   blender --background --python assets/blender/small-spanish.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (writes public/models/houses/small-spanish.glb and
+#   (writes assets/models/houses/small-spanish.glb and
 #   crates/core/data/houses/small-spanish.plan.json)
 #
 # Drawn for the 6.2 x 8 m lot with its garage on the right (the game fits it to every lot of

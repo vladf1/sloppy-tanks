@@ -1,7 +1,7 @@
 # The Senda Spanish house (styles 3, 4 and 5), modelled after Rumbo north lot 5, for Sloppy Tanks
 # in Blender (headless):
 #   blender --background --python assets/blender/spanish.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (bun run house:spanish writes public/models/houses/spanish.glb and
+#   (bun run house:spanish writes assets/models/houses/spanish.glb and
 #   crates/core/data/houses/spanish.plan.json)
 #
 # Drawn for the 6.2 x 8 m lot with its garage on the right (the game fits it to every lot of

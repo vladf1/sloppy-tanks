@@ -1,7 +1,7 @@
 # The Senda large Craftsman house, modelled after Rumbo north lots 3, 7 and 11, for Sloppy Tanks
 # in Blender (headless):
 #   blender --background --python assets/blender/large-craftsman.py -- <out.blend> <out.glb> [<out.plan.json>]
-#   (writes public/models/houses/large-craftsman.glb and
+#   (writes assets/models/houses/large-craftsman.glb and
 #   crates/core/data/houses/large-craftsman.plan.json)
 #
 # Drawn in the street frame on the 6.2 x 8 m lot the kit measures, its garage on the right;

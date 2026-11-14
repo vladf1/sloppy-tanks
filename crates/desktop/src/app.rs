@@ -1544,16 +1544,14 @@ fn window_icon() -> Option<winit::window::Icon> {
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
 }
 
-/// Download the Blender-made house models and hand them to the core as they arrive; only
-/// the Neighborhood draws them, so only its arenas ask. `?codedhome` (or
-/// `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once every one is settled:
+/// Download the Blender-made house models (one file) and hand them to the core once it
+/// arrives; only the Neighborhood draws them, so only its arenas ask. `?codedhome` (or
+/// `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once the file is settled:
 /// installed, refused, failed to download or not in the build.
 pub(crate) fn install_imported_home() -> bool {
-    use sloppy_core::models::imported_house::{install, model_paths};
-    use std::sync::Mutex;
+    use sloppy_core::models::imported_house::{MODELS_PATH, install};
     use std::sync::atomic::{AtomicBool, Ordering};
     static SETTLED: AtomicBool = AtomicBool::new(false);
-    static DONE: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
     if SETTLED.load(Ordering::Relaxed) {
         return true;
     }
@@ -1567,28 +1565,18 @@ pub(crate) fn install_imported_home() -> bool {
         SETTLED.store(true, Ordering::Relaxed);
         return true;
     }
-    let mut done = DONE.lock().expect("house models");
-    let mut pending = false;
-    for (name, path) in model_paths() {
-        if done.contains(&name) {
-            continue;
-        }
-        crate::assets::request(&path);
-        match crate::assets::load(&path) {
-            crate::assets::Asset::Ready(bytes) => {
-                if let Err(error) = install(name, &bytes) {
-                    report!("The house model {name} did not load: {error}");
-                }
-                done.push(name);
+    crate::assets::request(MODELS_PATH);
+    match crate::assets::load(MODELS_PATH) {
+        crate::assets::Asset::Ready(bytes) => {
+            if let Err(error) = install(&bytes) {
+                report!("The house models did not load: {error}");
             }
-            crate::assets::Asset::Loading => pending = true,
-            crate::assets::Asset::Missing => done.push(name),
         }
+        crate::assets::Asset::Loading => return false,
+        crate::assets::Asset::Missing => {}
     }
-    if !pending {
-        SETTLED.store(true, Ordering::Relaxed);
-    }
-    !pending
+    SETTLED.store(true, Ordering::Relaxed);
+    true
 }
 
 #[cfg(test)]
