@@ -12,6 +12,8 @@ use glam::DVec2;
 
 use crate::sim::senda_layout::{Line, Street};
 
+use super::village_ground::fbm;
+
 /// How round the hills' footing is: a rounded square, between the arena's square and a
 /// circle.
 const FOOT_ROUNDNESS: f64 = 5.0;
@@ -33,6 +35,8 @@ const ROLLING_HEIGHT: (f64, f64) = (3.0, 7.5);
 const SADDLE_TOWARD: (f64, f64) = (0.9, -0.44);
 const SADDLE_DEPTH: f64 = 0.82;
 const SADDLE_WIDTH: f64 = 0.3;
+/// The slopes' lumpy relief: its height either way (m) and how far across a lump is (m).
+const RELIEF: (f64, f64) = (0.7, 9.0);
 /// Senda Parkway's valley: from the paving's edge out, the floor stays level this far
 /// (m), then its sides rise over this run (m) to the hills' own height.
 const VALLEY_FLOOR: f64 = 4.0;
@@ -106,10 +110,13 @@ impl Hills {
         // A long concave foot, a broad rounded shoulder, and on over rolling ground.
         let shoulder = smooth(t).powf(0.85);
         let profile = shoulder * (1.0 + 0.12 * (d * 0.045 + angle * 4.0).sin() * smooth(t - 0.6));
-        // Gullies down the slopes between the spurs, and a few metres of lumpy relief.
+        // Gullies down the slopes between the spurs, and lumps of relief under a metre high
+        // and about ten across, from value noise: a product of two waves lit them in a
+        // lattice.
         let gully =
             (wave(29.0, 0.7) * 0.5 + 0.5).powi(4) * smooth(t * 2.0) * (1.0 - smooth(t - 0.8));
-        let relief = 0.7 * (x * 0.31 + z * 0.17).sin() * (z * 0.27 - x * 0.13).cos();
+        let relief =
+            RELIEF.0 * ((fbm(x / RELIEF.1, z / RELIEF.1, 47) - 0.5) * 3.2).clamp(-1.0, 1.0);
         let h = crest * profile * (1.0 - 0.08 * gully) + relief * smooth(t * 3.0);
         h.max(0.0) * self.valley(DVec2::new(x, z))
     }
