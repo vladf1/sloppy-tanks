@@ -20,7 +20,8 @@ const build = process.argv[2];
 if (!build) {
   throw new Error("Usage: bun deploy/site/precompress.mjs <build directory>");
 }
-const assetDirectory = new URL(`../../${build}/assets/`, import.meta.url);
+const buildDirectory = new URL(`../../${build}/`, import.meta.url);
+const assetDirectory = new URL("assets/", buildDirectory);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
 // The shader tables (src/generated/shaders/).
 const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".json"));
@@ -31,11 +32,16 @@ const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
 if (wasmFiles.length === 0 || fontFiles.length === 0) {
   throw new Error(`Build ${build} before preparing Worker assets`);
 }
+// The game page, which the Worker sends precompressed for its ETag (worker.mjs).
+const files = [
+  new URL("index.html", buildDirectory),
+  ...[...wasmFiles, ...tableFiles, ...fontFiles].map((file) => new URL(file, assetDirectory)),
+];
 
 // The files compress at once on zlib's thread pool, so the wait is the largest one's.
 await Promise.all(
-  [...wasmFiles, ...tableFiles, ...fontFiles].map(async (file) => {
-    const original = await readFile(new URL(file, assetDirectory));
+  files.map(async (file) => {
+    const original = await readFile(file);
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {
         params: {
@@ -46,10 +52,11 @@ await Promise.all(
       gzipAsync(original, { level: 9 }),
     ]);
 
-    await writeFile(new URL(`${file}.br`, assetDirectory), brotli);
-    await writeFile(new URL(`${file}.gz`, assetDirectory), gzipped);
+    await writeFile(new URL(`${file.href}.br`), brotli);
+    await writeFile(new URL(`${file.href}.gz`), gzipped);
+    const name = file.href.slice(buildDirectory.href.length);
     console.log(
-      `assets/${file}: ${original.length} bytes -> ${brotli.length} Brotli, ${gzipped.length} gzip`,
+      `${name}: ${original.length} bytes -> ${brotli.length} Brotli, ${gzipped.length} gzip`,
     );
   }),
 );
