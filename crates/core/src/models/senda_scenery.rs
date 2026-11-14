@@ -620,8 +620,10 @@ pub fn senda_scenery() -> Node {
     // simulation's spawns.
     let mut design = Node::group("");
     let hills = Hills::new();
-    design.children.push(grass(&hills));
-    design.children.push(planted_ground(&Lines::new()));
+    let lines = Lines::new();
+    let planted = PlantedGrid::new(&lines);
+    design.children.push(grass(&hills, &lines, &planted));
+    design.children.push(planted_ground(&lines, &planted));
     design.children.push(paving());
     design.children.push(paseo_grounds());
     design.children.push(slope_trees(&hills));
@@ -646,8 +648,11 @@ pub fn senda_scenery() -> Node {
 /// sage scrub on the slopes, rising past the arena east and south into the green
 /// rolling hills every street of the neighbourhood looks out on. Its tile repeats
 /// ([`repeated_ground_material`]) and turns off the streets' grid, so a large stretch of
-/// it shows no mirror lines; the park's mown lawn is the planted ground's.
-fn grass(hills: &Hills) -> Node {
+/// it shows no mirror lines; the park's mown lawn is the planted ground's. Where the
+/// planted ground or the paving lies over a whole triangle of it, with room to spare,
+/// the triangle is left out: it was shaded there for nothing, a whole lit layer under
+/// most of the level.
+fn grass(hills: &Hills, lines: &Lines, planted: &PlantedGrid) -> Node {
     let segments = (GROUND_EXTENT / GROUND_STEP).round() as u32;
     let mut geometry = plane_geometry_segments(GROUND_EXTENT, GROUND_EXTENT, segments, segments);
     geometry.rotate_x(-FRAC_PI_2);
@@ -661,16 +666,19 @@ fn grass(hills: &Hills) -> Node {
         let [u, v] = uv.map(f64::from);
         *uv = [(u * cos - v * sin) as f32, (u * sin + v * cos) as f32];
     }
-    let lines = Lines::new();
     geometry.colors = geometry
         .positions
         .iter()
         .zip(&geometry.normals)
         .map(|(p, normal)| {
             let at = DVec2::new(f64::from(p[0]), f64::from(p[2]));
-            ground_tint(at, *normal, hills, &lines)
+            ground_tint(at, *normal, hills, lines)
         })
         .collect();
+    let cover = GroundCover::new(planted);
+    drop_covered(&mut geometry, &|p| {
+        hills.height(p.x, p.y) <= 0.0 && cover.covers(p)
+    });
     let mut surface = repeated_ground_material(GroundKind::DryGrass);
     surface.vertex_colors = true;
     surface.color = crate::scene::Color(0xffffff);
@@ -786,27 +794,11 @@ fn ground_seen(p: DVec2, hills: &Hills, lines: &Lines) -> [f32; 3] {
 /// drift rather than as the cells' staircase; at the paving it keeps its colour to the
 /// cell that reaches under the slabs, so its edge never shows there, and it never lies
 /// over them.
-fn planted_ground(lines: &Lines) -> Node {
+fn planted_ground(lines: &Lines, grid: &PlantedGrid) -> Node {
     let hills = Hills::new();
-    let reach = ARENA + PLANTED_REACH;
-    let cells = (2.0 * reach / PLANTED_STEP).round() as usize;
-    let corner = |i: usize, j: usize| {
-        DVec2::new(
-            -reach + i as f64 * PLANTED_STEP,
-            -reach + j as f64 * PLANTED_STEP,
-        )
-    };
-    let weights: Vec<f64> = (0..(cells + 1) * (cells + 1))
-        .map(|k| planted_weight(corner(k % (cells + 1), k / (cells + 1)), lines))
-        .collect();
-    // A cell lies where it is planted off the paving; one that reaches under a slab keeps
-    // its colour there, so its edge falls under the slab.
-    let planted: Vec<bool> = (0..(cells + 1) * (cells + 1))
-        .map(|k| {
-            let p = corner(k % (cells + 1), k / (cells + 1));
-            weights[k] > 0.0 && !is_senda_paved(p.x, p.y)
-        })
-        .collect();
+    let cells = grid.cells;
+    let corner = |i: usize, j: usize| grid.corner(i, j);
+    let planted = &grid.planted;
     let mut index = vec![u32::MAX; (cells + 1) * (cells + 1)];
     let mut positions: Vec<f64> = Vec::new();
     let mut colors: Vec<[f32; 3]> = Vec::new();
@@ -840,6 +832,167 @@ fn planted_ground(lines: &Lines) -> Node {
     let mut node = shadow_receiver(Arc::new(mesh), lawn_material());
     node.position.y = PLANTED_LIFT;
     node
+}
+
+/// The planted ground's grid ([`planted_ground`]): which of its corners are planted, off
+/// the paving; a cell is drawn where any of its corners is.
+struct PlantedGrid {
+    cells: usize,
+    planted: Vec<bool>,
+}
+
+impl PlantedGrid {
+    fn new(lines: &Lines) -> PlantedGrid {
+        let cells = (2.0 * (ARENA + PLANTED_REACH) / PLANTED_STEP).round() as usize;
+        let mut grid = PlantedGrid {
+            cells,
+            planted: Vec::new(),
+        };
+        grid.planted = (0..(cells + 1) * (cells + 1))
+            .map(|k| {
+                let p = grid.corner(k % (cells + 1), k / (cells + 1));
+                planted_weight(p, lines) > 0.0 && !is_senda_paved(p.x, p.y)
+            })
+            .collect();
+        grid
+    }
+
+    /// Corner `(i, j)` of the grid.
+    fn corner(&self, i: usize, j: usize) -> DVec2 {
+        let reach = ARENA + PLANTED_REACH;
+        DVec2::new(
+            -reach + i as f64 * PLANTED_STEP,
+            -reach + j as f64 * PLANTED_STEP,
+        )
+    }
+
+    /// Whether the planted ground is drawn over `p`.
+    fn covers(&self, p: DVec2) -> bool {
+        let reach = ARENA + PLANTED_REACH;
+        let (gx, gz) = ((p.x + reach) / PLANTED_STEP, (p.y + reach) / PLANTED_STEP);
+        if gx < 0.0 || gz < 0.0 || gx >= self.cells as f64 || gz >= self.cells as f64 {
+            return false;
+        }
+        let (i, j) = (gx as usize, gz as usize);
+        [(i, j), (i + 1, j), (i + 1, j + 1), (i, j + 1)]
+            .iter()
+            .any(|&(i, j)| self.planted[j * (self.cells + 1) + i])
+    }
+}
+
+/// How far (m) past a grass triangle the surfaces over it must reach for it to be left
+/// out, so no crack opens at a kerb or a bed's edge; and how many points along each of
+/// its sides are tested, close enough that no strip a parkway wide slips between them.
+const GRASS_COVER_ROOM: f64 = 0.3;
+const GRASS_COVER_SAMPLES: usize = 6;
+
+/// What surely lies over the grass: the planted ground, the streets' asphalt, the turning
+/// circles and the walks, each tested with [`GRASS_COVER_ROOM`] to spare. Kerbs, corner
+/// slabs and the lots' own ground are not counted, so the grass stays under them.
+struct GroundCover<'a> {
+    planted: &'a PlantedGrid,
+    streets: Vec<(Street, Line)>,
+    circles: Vec<DVec2>,
+    corners: Vec<Corner>,
+    flares: Vec<Flare>,
+}
+
+impl GroundCover<'_> {
+    fn new(planted: &PlantedGrid) -> GroundCover<'_> {
+        GroundCover {
+            planted,
+            streets: Street::ALL
+                .into_iter()
+                .map(|street| (street, street.line()))
+                .collect(),
+            circles: Street::ALL
+                .into_iter()
+                .filter_map(Street::cul_de_sac)
+                .collect(),
+            corners: corners(),
+            flares: flares(),
+        }
+    }
+
+    fn covers(&self, p: DVec2) -> bool {
+        let room = GRASS_COVER_ROOM;
+        let planted = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .iter()
+            .all(|&(x, z)| self.planted.covers(p + DVec2::new(x, z) * room));
+        planted
+            || self
+                .circles
+                .iter()
+                .any(|middle| middle.distance(p) < CUL_DE_SAC_RADIUS - room)
+            || self.streets.iter().any(|(street, line)| {
+                // Square across its ends, as its ribbons are drawn.
+                let along = line.along(p);
+                if along < room || along > line.length() - room {
+                    return false;
+                }
+                let distance = line.distance(p);
+                if distance < street.half() - room {
+                    return true;
+                }
+                let side = line.signed_distance(p).signum();
+                let (near, far) = walk_band(*street, side);
+                (near + room..far - room).contains(&distance)
+                    && walk_keep(*street, side, &self.corners, &self.flares, p) > room
+            })
+    }
+}
+
+/// `mesh`'s triangles less those `covered` holds at every one of a grid of points over
+/// them, its corners among them, and its vertices less those no triangle is left with.
+fn drop_covered(mesh: &mut Mesh, covered: &dyn Fn(DVec2) -> bool) {
+    // Only plain meshes: other vertex attributes would need renumbering too.
+    if !mesh.attributes.is_empty() {
+        return;
+    }
+    let Some(indices) = mesh.indices.take() else {
+        return;
+    };
+    let at = |k: u32| {
+        let p = mesh.positions[k as usize];
+        DVec2::new(f64::from(p[0]), f64::from(p[2]))
+    };
+    let n = GRASS_COVER_SAMPLES;
+    let kept: Vec<u32> = indices
+        .chunks(3)
+        .filter(|triangle| {
+            let [a, b, c] = [0, 1, 2].map(|k| at(triangle[k]));
+            let hidden = (0..=n).all(|i| {
+                (0..=n - i).all(|j| {
+                    let (u, v) = (i as f64 / n as f64, j as f64 / n as f64);
+                    covered(a + (b - a) * u + (c - a) * v)
+                })
+            });
+            !hidden
+        })
+        .flatten()
+        .copied()
+        .collect();
+    // Renumbered over the vertices still used.
+    let mut new_index = vec![u32::MAX; mesh.positions.len()];
+    let mut order: Vec<usize> = Vec::new();
+    let indices: Vec<u32> = kept
+        .iter()
+        .map(|&k| {
+            let k = k as usize;
+            if new_index[k] == u32::MAX {
+                new_index[k] = order.len() as u32;
+                order.push(k);
+            }
+            new_index[k]
+        })
+        .collect();
+    mesh.positions = order.iter().map(|&k| mesh.positions[k]).collect();
+    mesh.normals = order.iter().map(|&k| mesh.normals[k]).collect();
+    mesh.uvs = order.iter().map(|&k| mesh.uvs[k]).collect();
+    if !mesh.colors.is_empty() {
+        mesh.colors = order.iter().map(|&k| mesh.colors[k]).collect();
+    }
+    mesh.indices = Some(indices);
 }
 
 /// Where the planted ground's edge lies: at this share of open ground (between the
@@ -2421,7 +2574,7 @@ fn off_paseos(ways: &[Line], p: DVec2, room: f64) -> bool {
 /// tank's tracks: it is a way out.
 fn paseo_grounds() -> Node {
     let mut group = Node::group("senda-paseos");
-    let heart = Arc::new(heart_geometry());
+    let heart = Heart::dome();
     let off = |p: DVec2| is_senda_paved(p.x, p.y);
     let (walk, granite, strip) = PASEO_BANDS;
     for way in paseo_ways() {
@@ -2957,7 +3110,7 @@ fn greenbelt_scrub() -> Node {
     if let Some(mat) = greenbelt_mat(&lines, &thicket) {
         group.children.push(mat);
     }
-    let bush = Arc::new(heart_geometry());
+    let bush = Heart::dome();
     let lane = greenbelt_lane();
     if lane.len() > 1 {
         let (low, high) = lane.iter().fold(
@@ -3090,7 +3243,7 @@ fn mouth_planting(group: &mut Node, lines: &Lines, thicket: &Thicket) {
         mailbox_bank(group, middle, -out);
     }
     // The grass drifts and the shrubs up the slope to the fence and on to the thicket.
-    let heart = Arc::new(heart_geometry());
+    let heart = Heart::dome();
     let (low, high) = span.iter().fold(
         (DVec2::splat(f64::INFINITY), DVec2::splat(f64::NEG_INFINITY)),
         |(low, high), &(p, _)| {
@@ -3567,7 +3720,7 @@ fn bank_planting() -> Node {
         group.children.push(mat);
     }
     // The clipped hedge along the bank's foot.
-    let heart = Arc::new(heart_geometry());
+    let heart = Heart::dome();
     for (k, lot) in lines.lots.iter().enumerate() {
         if lot.house.row != Row::RumboNorth {
             continue;
@@ -3658,7 +3811,9 @@ fn outer_slopes() -> Node {
         }
     }
     // Bigger shrubs standing out of the west slope's mat.
-    let bush = Arc::new(heart_geometry());
+    let bush = Heart::dome();
+    // The olives' crowns stand up on their trunks, seen from below: whole balls.
+    let crowns = Heart::ball();
     let mut z = -ARENA;
     while z < ARENA {
         let mut x = -ARENA;
@@ -3720,7 +3875,7 @@ fn outer_slopes() -> Node {
         if clear(at, crown) {
             let (low, high) = OLIVE_HEIGHT;
             let height = low + (high - low) * hash(seed + 1.3);
-            olive(&mut group, &bush, at, (crown, height), seed);
+            olive(&mut group, &crowns, at, (crown, height), seed);
         }
     }
     batch_in_cells(&mut group, 40.0);
@@ -3729,7 +3884,7 @@ fn outer_slopes() -> Node {
 
 /// An olive tree at `at`, its crown `crown` across and `height` tall: a short dark trunk
 /// leaning one way and forking, under a loose grey-green crown of several lumps.
-fn olive(group: &mut Node, bush: &Arc<Mesh>, at: DVec2, (crown, height): (f64, f64), seed: f64) {
+fn olive(group: &mut Node, bush: &Heart, at: DVec2, (crown, height): (f64, f64), seed: f64) {
     let lean = hash(seed + 2.1) * std::f64::consts::TAU;
     let trunk = height * 0.5;
     for (n, tilt) in [0.18, -0.3].into_iter().enumerate() {
@@ -5285,7 +5440,7 @@ fn west_park_props(group: &mut Node, lines: &Lines) {
         };
         put(group, tree_model(&shape, TreeDetail::Background), x, 0.0, z);
     }
-    let bush = Arc::new(heart_geometry());
+    let bush = Heart::dome();
     for (k, &bed) in park.beds.iter().enumerate() {
         if !WestPark::fits(bed, PARK_BED, lines, &outer) {
             continue;
@@ -5420,7 +5575,7 @@ fn crest_basin_sites(lines: &Lines) -> Vec<(DVec2, DVec2)> {
 fn yard_props() -> Node {
     let mut group = Node::group("senda-yards");
     let lines = Lines::new();
-    let bush = Arc::new(heart_geometry());
+    let bush = Heart::dome();
     let canopy = Arc::new(cylinder_geometry(0.04, UMBRELLA.0, 0.2, 8));
     // The loggias and pergolas over the patios, each as its middle and half size in its
     // lot's frame: a prop keeps clear of them.
@@ -5653,7 +5808,7 @@ fn grass_blades(group: &mut Node, at: DVec2, height: f64, leaves: &[u32], seed: 
 
 /// A red aloe at `at`: a low rosette of grey-green leaves under a few orange-red flower
 /// spikes.
-fn aloe(group: &mut Node, lump: &Arc<Mesh>, at: DVec2, seed: f64) {
+fn aloe(group: &mut Node, lump: &AgaveParts, at: DVec2, seed: f64) {
     let (size, leaves) = ALOE;
     agave_of(group, lump, (at, 0.0), (size, hash(seed) * 6.0), leaves);
     let (spike, flower) = ALOE_SPIKE;
@@ -5668,7 +5823,7 @@ fn aloe(group: &mut Node, lump: &Arc<Mesh>, at: DVec2, seed: f64) {
             tall * 0.65 / 2.0,
             spot.y,
         );
-        let mut bloom = shadowed(lump.clone(), paint(flower));
+        let mut bloom = shadowed(lump.leaf.clone(), paint(flower));
         bloom.scale = glam::DVec3::new(0.05, tall * 0.2, 0.05);
         put(group, bloom, spot.x, tall * 0.8, spot.y);
     }
@@ -5914,7 +6069,7 @@ const GRASS_CLUMPS: Clumps = Clumps {
 /// ground `base` metres up.
 fn clumps(
     group: &mut Node,
-    lump: &Arc<Mesh>,
+    lump: &Heart,
     kind: &Clumps,
     (low, high): (DVec2, DVec2),
     base: &dyn Fn(DVec2) -> f64,
@@ -5950,13 +6105,16 @@ fn clumps(
                         LumpForm::Painted => {
                             // Darker than the leaves, as a leafy shrub reads beside its
                             // sunlit cards, and lower, a mound rather than a ball.
-                            let mut heart =
-                                shadowed(lump.clone(), paint(darker(leaves, PAINTED_SHADE)));
-                            heart.scale =
-                                glam::DVec3::new(size, size * kind.squash * 0.75, size) * 0.85;
-                            heart.set_rotation_euler(0.0, hash(cx * 3.1 + cz * 1.7) * 3.0, 0.0);
-                            let rise = size * kind.squash * 0.55;
-                            put(group, heart, spot.x, base(spot) + rise, spot.y);
+                            lump.put(
+                                group,
+                                darker(leaves, PAINTED_SHADE),
+                                (spot, base(spot)),
+                                (
+                                    size * kind.squash * 0.55,
+                                    DVec3::new(size, size * kind.squash * 0.75, size) * 0.85,
+                                ),
+                                hash(cx * 3.1 + cz * 1.7) * 3.0,
+                            );
                         }
                         LumpForm::Tuft => {
                             let seed = cx * 2.3 + cz * 4.1 + n as f64;
@@ -5975,7 +6133,7 @@ fn clumps(
 /// Low coastal sage over the hillside past the arena's east edge, in patches round its
 /// oaks with natural grass between.
 fn sage_clumps(group: &mut Node, hills: &Hills) {
-    let lump = Arc::new(heart_geometry());
+    let lump = Heart::dome();
     let (near, far) = (ARENA + 3.0, ARENA + OUTER_SAGE_LEAFY);
     let (south, north) = (-ARENA - 20.0, ARENA + 20.0);
     let sparse = Clumps {
@@ -6001,7 +6159,7 @@ fn sage_clumps(group: &mut Node, hills: &Hills) {
 
 /// Sage under the belt's oaks past the south and west walls, in the hillside's patches.
 fn belt_sage(group: &mut Node, hills: &Hills, belt: &Belt) {
-    let lump = Arc::new(heart_geometry());
+    let lump = Heart::dome();
     let sage = Clumps {
         spacing: BELT_SAGE_SPACING,
         ..SAGE_CLUMPS
@@ -6026,7 +6184,7 @@ fn belt_sage(group: &mut Node, hills: &Hills, belt: &Belt) {
 /// foothills, olive-dark against the dry grass. Far scenery, so each oak is two leafy
 /// masses over a trunk rather than a whole tree.
 fn fold_oaks(group: &mut Node, hills: &Hills) {
-    let heart = Arc::new(heart_geometry());
+    let heart = Heart::ball();
     for (at, seed) in hills.fold_oaks() {
         let ground = hills.height(at.x, at.y);
         let crown = FOLD_OAK_CROWN.0 + (FOLD_OAK_CROWN.1 - FOLD_OAK_CROWN.0) * hash(seed);
@@ -6079,14 +6237,111 @@ fn foothill_tint(p: DVec2, normal: [f32; 3]) -> [f32; 3] {
     })
 }
 
-/// A leafy shrub's dark heart: a low-poly ball, shaded smooth, hidden among its cards.
+/// A leafy shrub's dark heart, hidden among its cards to keep the mass dense where their
+/// gaps would show what lies behind them: under a shrub on the ground a dome down into
+/// the ground (a whole ball there turned its lower half to the ground, unseen); in a
+/// crown up on a trunk, seen from below too, a whole ball.
+#[derive(Clone)]
+enum Heart {
+    Dome(Arc<Mesh>),
+    Ball(Arc<Mesh>),
+}
+
+impl Heart {
+    fn dome() -> Heart {
+        Heart::Dome(Arc::new(dome_geometry()))
+    }
+
+    fn ball() -> Heart {
+        Heart::Ball(Arc::new(heart_geometry()))
+    }
+
+    /// The heart in `color` turned `turn` about the vertical, for a ball of `radii` (half
+    /// extents) whose middle stands `rise` metres over ground `base` metres up at `at`: the
+    /// ball itself, or a dome as wide and as tall reaching on down into the ground.
+    fn put(
+        &self,
+        group: &mut Node,
+        color: u32,
+        (at, base): (DVec2, f64),
+        (rise, radii): (f64, DVec3),
+        turn: f64,
+    ) {
+        let (mesh, scale, y) = match self {
+            Heart::Ball(mesh) => (mesh, radii, base + rise),
+            Heart::Dome(mesh) => {
+                let sink = DOME_SINK * radii.x.max(radii.z);
+                let height = rise + radii.y + sink;
+                (mesh, DVec3::new(radii.x, height, radii.z), base - sink)
+            }
+        };
+        let mut heart = shadowed(mesh.clone(), paint(color));
+        heart.scale = scale;
+        heart.set_rotation_euler(0.0, turn, 0.0);
+        put(group, heart, at.x, y, at.y);
+    }
+}
+
+/// How far (a share of its width) a ground shrub's dome reaches down past its ground, so
+/// no gap shows under it where it stands on a slope.
+const DOME_SINK: f64 = 0.35;
+/// The dome's foot, a share of its widest ring, drawn in as a shrub's mass is at its foot.
+const DOME_FOOT: f64 = 0.9;
+
+/// A leafy shrub's heart in a crown ([`Heart::Ball`]): a low-poly ball, shaded smooth.
 fn heart_geometry() -> Mesh {
     let mut mesh = icosahedron_geometry(1.0, 0);
     for (p, n) in mesh.positions.iter().zip(mesh.normals.iter_mut()) {
-        let v = glam::DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+        let v = DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
         *n = crate::geometry::narrow(v.normalize());
     }
     mesh
+}
+
+/// A ground shrub's heart ([`Heart::Dome`]): an icosahedron stood on a vertex without its
+/// lower cap, its top at y 1 and its lower ring drawn in to [`DOME_FOOT`] at y 0, its
+/// upper ring one across: 15 triangles where the ball has 20, its five facing the ground
+/// left out; shaded smooth as the ball is, from its middle.
+fn dome_geometry() -> Mesh {
+    let (h, r) = (1.0 / 5f64.sqrt(), 2.0 / 5f64.sqrt());
+    let step = std::f64::consts::TAU / 5.0;
+    // The ball's directions: its top, its upper ring and its lower ring between them.
+    let mut ball = vec![DVec3::Y];
+    ball.extend((0..5).map(|k| {
+        let a = k as f64 * step;
+        DVec3::new(r * a.cos(), h, r * a.sin())
+    }));
+    ball.extend((0..5).map(|k| {
+        let a = (k as f64 + 0.5) * step;
+        DVec3::new(r * a.cos(), -h, r * a.sin())
+    }));
+    let placed: Vec<DVec3> = ball
+        .iter()
+        .map(|v| {
+            let across = if v.y < 0.0 { DOME_FOOT / r } else { 1.0 / r };
+            DVec3::new(v.x * across, (v.y + h) / (1.0 + h), v.z * across)
+        })
+        .collect();
+    let (upper, lower) = (|k: usize| 1 + k % 5, |k: usize| 6 + k % 5);
+    let mut faces: Vec<[usize; 3]> = Vec::new();
+    for k in 0..5 {
+        faces.push([0, upper(k), upper(k + 1)]);
+        faces.push([upper(k), lower(k), upper(k + 1)]);
+        faces.push([upper(k + 1), lower(k), lower(k + 1)]);
+    }
+    let middle = DVec3::new(0.0, 0.35, 0.0);
+    let mut indices: Vec<u32> = Vec::with_capacity(45);
+    for [a, b, c] in faces {
+        let (pa, pb, pc) = (placed[a], placed[b], placed[c]);
+        // Wound to face out, whichever way round the rings run.
+        let outward = (pb - pa).cross(pc - pa).dot((pa + pb + pc) / 3.0 - middle) > 0.0;
+        let [b, c] = if outward { [b, c] } else { [c, b] };
+        indices.extend([a, b, c].map(|k| k as u32));
+    }
+    let positions: Vec<f64> = placed.iter().flat_map(|p| [p.x, p.y, p.z]).collect();
+    let normals: Vec<f64> = ball.iter().flat_map(|n| [n.x, n.y, n.z]).collect();
+    let uvs = vec![0.0; placed.len() * 2];
+    Mesh::from_f64(&positions, &normals, &uvs, Some(indices))
 }
 
 /// Whether `p` lies on or within a metre of a house's walls.
@@ -6125,18 +6380,21 @@ fn tuft(group: &mut Node, at: DVec2, size: f64, squash: f64, leaves: &[u32], see
 /// where the cards' gaps would show the ground through.
 fn leafy(
     group: &mut Node,
-    core: &Arc<Mesh>,
+    core: &Heart,
     (at, base): (DVec2, f64),
     (size, squash): (f64, f64),
     color: u32,
     seed: f64,
 ) {
-    let radii = glam::DVec3::new(size, size * squash, size);
-    let middle = glam::DVec3::new(at.x, base + radii.y * 0.8, at.y);
-    let mut heart = shadowed(core.clone(), paint(darker(color, LEAFY_HEART)));
-    heart.scale = radii * 0.62;
-    heart.set_rotation_euler(0.0, hash(seed + 0.21) * 3.0, 0.0);
-    put(group, heart, middle.x, middle.y - radii.y * 0.12, middle.z);
+    let radii = DVec3::new(size, size * squash, size);
+    let middle = DVec3::new(at.x, base + radii.y * 0.8, at.y);
+    core.put(
+        group,
+        darker(color, LEAFY_HEART),
+        (at, base),
+        (radii.y * 0.68, radii * 0.62),
+        hash(seed + 0.21) * 3.0,
+    );
     let pick = (hash(seed + 0.37) * 1.0e6) as u32;
     group.children.push(leafy_shrub(middle, radii, color, pick));
 }
@@ -6147,7 +6405,7 @@ fn leafy(
 #[allow(clippy::too_many_arguments)]
 fn shrub(
     group: &mut Node,
-    core: &Arc<Mesh>,
+    core: &Heart,
     at: DVec2,
     size: f64,
     squash: f64,
@@ -6175,7 +6433,7 @@ fn shrub(
 /// small tree's crown on its trunk.
 fn shrub_at(
     group: &mut Node,
-    lump: &Arc<Mesh>,
+    lump: &Heart,
     (at, base): (DVec2, f64),
     (size, squash): (f64, f64),
     lumps: usize,
@@ -6196,7 +6454,7 @@ fn shrub_at(
 #[allow(clippy::too_many_arguments)]
 fn contour_rows(
     group: &mut Node,
-    lump: &Arc<Mesh>,
+    lump: &Heart,
     line: &Line,
     side: f64,
     (from, to): (f64, f64),
@@ -6243,8 +6501,8 @@ fn contour_rows(
 /// agaves at the cul-de-sacs' ends.
 fn shrubs() -> Node {
     let mut group = Node::group("senda-shrubs");
-    let lump = Arc::new(octahedron_geometry(1.0, 1));
-    let bush = Arc::new(heart_geometry());
+    let lump = AgaveParts::new();
+    let bush = Heart::dome();
     let lines = Lines::new();
     let houses = senda_houses();
     let pads: Vec<DVec2> = [Team::Blue, Team::Red]
@@ -6452,7 +6710,7 @@ fn shrubs() -> Node {
             && lines.way.distance(p) < way_reach + CORNER_BED
     };
     let near = (DVec2::splat(-ARENA), DVec2::splat(ARENA));
-    clumps(&mut group, &lump, &GRASS_CLUMPS, near, &|_| 0.0, &|p| {
+    clumps(&mut group, &bush, &GRASS_CLUMPS, near, &|_| 0.0, &|p| {
         (corner(p) || way_corner(p)) && off_lots(p, 0.3) && open(p) && !by_a_house(p, &houses)
     });
     // Down Senda Parkway's raised median and its south parkway.
@@ -6472,7 +6730,7 @@ fn shrubs() -> Node {
             .fold(DVec2::splat(f64::NEG_INFINITY), DVec2::max);
         clumps(
             &mut group,
-            &lump,
+            &bush,
             &GRASS_CLUMPS,
             (low, high),
             &|_| 0.0,
@@ -6542,7 +6800,7 @@ fn shrubs() -> Node {
 /// leafy shrub tinted toward its blossom read as a dead brown one.
 fn bed_shrub(
     group: &mut Node,
-    core: &Arc<Mesh>,
+    core: &Heart,
     (at, base): (DVec2, f64),
     (size, squash): (f64, f64),
     (leaves, blossom): (u32, Option<u32>),
@@ -6564,7 +6822,7 @@ fn bed_shrub(
 /// The front yards' planting: two or three low leafy shrubs in the bed along each
 /// office's front, a few in flower; one upright shrub by the garage's outer corner; and
 /// on the gravel lots a few small agaves and a low shrub in the gravel.
-fn front_yard_plants(group: &mut Node, (lump, heart): (&Arc<Mesh>, &Arc<Mesh>), lots: &[Lot]) {
+fn front_yard_plants(group: &mut Node, (lump, heart): (&AgaveParts, &Heart), lots: &[Lot]) {
     for (k, lot) in lots.iter().enumerate() {
         let Some(yard) = front_yard(lot, k) else {
             continue;
@@ -6659,7 +6917,7 @@ const FLOWERING_BLOSSOM: u32 = 0xb8382c;
 /// grass, blue-grey agaves and red-flowering shrubs over the groundcover, not a hedge.
 fn way_planting(
     group: &mut Node,
-    (lump, heart): (&Arc<Mesh>, &Arc<Mesh>),
+    (lump, heart): (&AgaveParts, &Heart),
     lines: &Lines,
     trees: &[DVec2],
 ) {
@@ -6743,7 +7001,7 @@ fn in_arena_or_near(p: DVec2) -> bool {
 
 /// A cluster of agaves at each cul-de-sac's end on the hillside, a little to one side
 /// of the street's line, wherever `wanted` holds: blue-grey rosettes of stiff leaves.
-fn agaves(group: &mut Node, lump: &Arc<Mesh>, wanted: &dyn Fn(DVec2) -> bool) {
+fn agaves(group: &mut Node, lump: &AgaveParts, wanted: &dyn Fn(DVec2) -> bool) {
     for (k, (start, out)) in cul_de_sac_ends().into_iter().enumerate() {
         let middle = start + out * (CUL_DE_SAC_END * 0.5) + left(out) * 2.2;
         for n in 0..AGAVES {
@@ -6760,29 +7018,75 @@ fn agaves(group: &mut Node, lump: &Arc<Mesh>, wanted: &dyn Fn(DVec2) -> bool) {
 
 /// One agave `size` across at `at`, turned `angle`: a blue-grey rosette of seven stiff
 /// leaves round its heart.
-fn agave(group: &mut Node, lump: &Arc<Mesh>, at: DVec2, size: f64, angle: f64) {
+fn agave(group: &mut Node, lump: &AgaveParts, at: DVec2, size: f64, angle: f64) {
     agave_of(group, lump, (at, 0.0), (size, angle), AGAVE);
 }
+
+/// The pieces every agave a builder plants shares: a fleshy leaf (a flattened lens), its
+/// upper half for the leaves splayed low, and the rosette's heart.
+struct AgaveParts {
+    leaf: Arc<Mesh>,
+    upper_leaf: Arc<Mesh>,
+    heart: Heart,
+}
+
+impl AgaveParts {
+    fn new() -> AgaveParts {
+        let leaf = octahedron_geometry(1.0, 1);
+        AgaveParts {
+            upper_leaf: Arc::new(upper_half(&leaf)),
+            leaf: Arc::new(leaf),
+            heart: Heart::dome(),
+        }
+    }
+}
+
+/// The triangles of unindexed `mesh` that lie wholly at or above y 0.
+fn upper_half(mesh: &Mesh) -> Mesh {
+    let mut positions: Vec<f64> = Vec::new();
+    let mut normals: Vec<f64> = Vec::new();
+    for (corners, faces) in mesh.positions.chunks(3).zip(mesh.normals.chunks(3)) {
+        if corners.iter().all(|p| p[1] >= -1e-6) {
+            positions.extend(corners.iter().flat_map(|p| p.map(f64::from)));
+            normals.extend(faces.iter().flat_map(|n| n.map(f64::from)));
+        }
+    }
+    let uvs = vec![0.0; positions.len() / 3 * 2];
+    Mesh::from_f64(&positions, &normals, &uvs, None)
+}
+
+/// An agave ring tilted less than this (radians) is its low ring.
+const AGAVE_LOW_RING: f64 = 0.8;
 
 /// One rosette like [`agave`]'s standing on ground `base` metres up, in `leaves`.
 fn agave_of(
     group: &mut Node,
-    lump: &Arc<Mesh>,
+    lump: &AgaveParts,
     (at, base): (DVec2, f64),
     (size, angle): (f64, f64),
     leaves: u32,
 ) {
-    let mut heart = shadowed(lump.clone(), paint(leaves));
-    heart.scale = glam::DVec3::new(size * 0.3, size * 0.45, size * 0.3);
-    put(group, heart, at.x, base + size * 0.2, at.y);
+    lump.heart.put(
+        group,
+        leaves,
+        (at, base),
+        (size * 0.2, DVec3::new(size * 0.3, size * 0.45, size * 0.3)),
+        angle,
+    );
     // Broad fleshy leaves, widest a third of the way out and pointed, an outer ring
     // splayed low and an inner one turned up.
     for &(count, tilt, length, phase) in &AGAVE_RINGS {
+        // The low ring's undersides face the ground, seen from no camera.
+        let mesh = if tilt < AGAVE_LOW_RING {
+            &lump.upper_leaf
+        } else {
+            &lump.leaf
+        };
         for leaf in 0..count {
             let turn = (leaf as f64 + phase) / count as f64 * std::f64::consts::TAU + angle;
             let half = size * length / 2.0;
             let out = DVec2::new(turn.sin(), turn.cos()) * (half * tilt.cos() * 0.9);
-            let mut blade = shadowed(lump.clone(), paint(leaves));
+            let mut blade = shadowed(mesh.clone(), paint(leaves));
             blade.scale = glam::DVec3::new(size * 0.17, size * 0.045, half);
             blade.rotation = DQuat::from_rotation_y(turn) * DQuat::from_rotation_x(-tilt);
             let y = base + 0.06 + half * tilt.sin();
@@ -7451,6 +7755,135 @@ mod ground_tests {
         assert!(count > 0);
     }
 
+    /// Wherever the grass counts on something lying over it, the paving or the planted
+    /// ground really does: every spot it calls covered lies under one of their upward
+    /// faces, so leaving the grass out there opens no hole.
+    #[test]
+    fn grass_is_left_out_only_under_cover() {
+        let lines = Lines::new();
+        let planted = PlantedGrid::new(&lines);
+        let cover = GroundCover::new(&planted);
+        // The upward faces at the ground of the paving and the planted ground, bucketed
+        // by 2 m cell.
+        let cell = 2.0;
+        let mut buckets: std::collections::HashMap<(i64, i64), Vec<[DVec2; 3]>> =
+            std::collections::HashMap::new();
+        let mut collect = |node: &Node| {
+            node.traverse(glam::DMat4::IDENTITY, &mut |node, world| {
+                let Some(drawable) = &node.drawable else {
+                    return;
+                };
+                let mesh = &drawable.mesh;
+                let vertex = |k: u32| {
+                    let p = mesh.positions[k as usize];
+                    world.transform_point3(DVec3::new(
+                        f64::from(p[0]),
+                        f64::from(p[1]),
+                        f64::from(p[2]),
+                    ))
+                };
+                let indices = mesh
+                    .indices
+                    .clone()
+                    .unwrap_or_else(|| (0..mesh.positions.len() as u32).collect());
+                for triangle in indices.chunks(3) {
+                    let [a, b, c] = [0, 1, 2].map(|k| vertex(triangle[k]));
+                    let normal = (b - a).cross(c - a);
+                    if normal.y.abs() < 0.9 * normal.length() || a.y > 0.2 {
+                        continue;
+                    }
+                    let flat = [a, b, c].map(|p| DVec2::new(p.x, p.z));
+                    let low = flat[0].min(flat[1]).min(flat[2]);
+                    let high = flat[0].max(flat[1]).max(flat[2]);
+                    for i in (low.x / cell).floor() as i64..=(high.x / cell).floor() as i64 {
+                        for j in (low.y / cell).floor() as i64..=(high.y / cell).floor() as i64 {
+                            buckets.entry((i, j)).or_default().push(flat);
+                        }
+                    }
+                }
+            });
+        };
+        collect(&paving());
+        collect(&planted_ground(&lines, &planted));
+        let inside = |p: DVec2, [a, b, c]: [DVec2; 3]| {
+            let side = |u: DVec2, v: DVec2| (v - u).perp_dot(p - u);
+            let (x, y, z) = (side(a, b), side(b, c), side(c, a));
+            (x >= -1e-9 && y >= -1e-9 && z >= -1e-9) || (x <= 1e-9 && y <= 1e-9 && z <= 1e-9)
+        };
+        let mut checked = 0;
+        let step = 0.25;
+        let mut z = -ARENA - PLANTED_REACH;
+        while z < ARENA + PLANTED_REACH {
+            let mut x = -ARENA - PLANTED_REACH;
+            while x < ARENA + PLANTED_REACH {
+                let p = DVec2::new(x, z);
+                if cover.covers(p) {
+                    checked += 1;
+                    let key = ((p.x / cell).floor() as i64, (p.y / cell).floor() as i64);
+                    let under = buckets
+                        .get(&key)
+                        .is_some_and(|faces| faces.iter().any(|&face| inside(p, face)));
+                    assert!(under, "the grass counts on cover at {p} that is not there");
+                }
+                x += step;
+            }
+            z += step;
+        }
+        assert!(checked > 10_000, "only {checked} covered spots");
+    }
+
+    /// A ground shrub's dome heart reaches down past its ground, by enough for a slope,
+    /// as high as the ball did, and faces out: no face of it turns to the ground.
+    #[test]
+    fn dome_hearts_reach_into_the_ground() {
+        let dome = dome_geometry();
+        let indices = dome.indices.clone().expect("indexed");
+        assert_eq!(indices.len(), 45);
+        for triangle in indices.chunks(3) {
+            let [a, b, c] = [0, 1, 2].map(|k| {
+                let p = dome.positions[triangle[k] as usize];
+                DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]))
+            });
+            let normal = (b - a).cross(c - a).normalize();
+            let out = ((a + b + c) / 3.0 - DVec3::new(0.0, 0.35, 0.0)).normalize();
+            assert!(normal.dot(out) > 0.3, "a dome face turns in");
+            assert!(normal.y > -0.5, "a dome face turns to the ground");
+        }
+        // As tall as the ball's height would be, its top at its middle's rise plus its
+        // half height; the ball, an icosahedron on an edge, stops a little short.
+        for (heart, low, high) in [(Heart::dome(), -0.05, 0.52), (Heart::ball(), 0.1, 0.49)] {
+            let mut group = Node::default();
+            leafy(
+                &mut group,
+                &heart,
+                (DVec2::ZERO, 0.0),
+                (0.5, 0.8),
+                0x4a6238,
+                1.0,
+            );
+            let mut bottom = f64::INFINITY;
+            let mut top = f64::NEG_INFINITY;
+            let mesh = &group.children[0];
+            mesh.traverse(glam::DMat4::IDENTITY, &mut |node, world| {
+                if let Some(drawable) = &node.drawable {
+                    for p in &drawable.mesh.positions {
+                        let y = world
+                            .transform_point3(DVec3::new(
+                                f64::from(p[0]),
+                                f64::from(p[1]),
+                                f64::from(p[2]),
+                            ))
+                            .y;
+                        bottom = bottom.min(y);
+                        top = top.max(y);
+                    }
+                }
+            });
+            assert!(bottom < low, "the heart's foot stands at {bottom}");
+            assert!((top - high).abs() < 0.01, "the heart's top at {top}");
+        }
+    }
+
     /// The groundcover mats stand nowhere on a street's asphalt: the bank's carpet once
     /// spilled over Neblina where it leaves Senda Parkway.
     #[test]
@@ -7479,7 +7912,8 @@ mod ground_tests {
     /// ground beside it.
     #[test]
     fn planted_ground_keeps_off_the_paving() {
-        let node = planted_ground(&Lines::new());
+        let lines = Lines::new();
+        let node = planted_ground(&lines, &PlantedGrid::new(&lines));
         let drawable = node.drawable.as_ref().expect("planted ground");
         let indices = drawable.mesh.indices.as_ref().expect("indexed");
         let paved = |k: u32| {
