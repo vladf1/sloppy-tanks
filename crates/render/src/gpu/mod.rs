@@ -60,6 +60,7 @@ pub use inspect::InstanceState;
 pub use pools::PoolId;
 #[cfg(not(target_arch = "wasm32"))]
 pub use textures::{AssetFiles, set_asset_files};
+pub use textures::{FILE_CROPS, FileCrop};
 pub use textures::{ImageData, image_data};
 
 use std::collections::HashMap;
