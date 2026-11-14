@@ -69,8 +69,8 @@ impl Presentation {
         if let Some(viewer) = state.viewer() {
             self.rig.first_person.yaw = viewer.aim;
         }
-        // The old round's views go before its renderer resources: cover models hold
-        // their source meshes, which `reset_round` can then free at once, before this
+        // The old round's views go before its renderer resources: tree cover models
+        // hold their crowns' meshes, which `reset_round` can then free at once, before this
         // round and a new theme upload into the mesh pages they leave.
         self.tanks.clear();
         self.covers.clear();

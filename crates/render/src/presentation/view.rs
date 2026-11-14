@@ -778,6 +778,9 @@ enum LookPhase {
     Ready(CoverModel),
 }
 
+/// A cover look's model. Once uploaded, only the GPU keeps its meshes: the look's tree
+/// is not kept (Wasm memory never shrinks, and a round's covers held tens of MB on the
+/// CPU for nothing), save a tree's crown, whose boughs are shed as copies.
 struct CoverModelEntry {
     model: ModelId,
     users: u32,
@@ -785,8 +788,37 @@ struct CoverModelEntry {
     combined: bool,
     /// Where the model was built; other covers sharing it are offset from here.
     origin: DVec3,
-    source: Arc<Node>,
+    /// The model root's transform and scale where it was built.
+    rest: DMat4,
+    scale: DVec3,
+    /// A tree's crown ([`tree_part::CROWN`]): its boughs fall as copies of its children.
+    crown: Option<Node>,
     tree: Option<TreeParts>,
+}
+
+impl CoverModelEntry {
+    /// What a look's entry keeps of its model's tree `root`.
+    fn kept(
+        model: ModelId,
+        combined: bool,
+        origin: DVec3,
+        root: &Node,
+        tree: Option<TreeParts>,
+    ) -> Self {
+        Self {
+            model,
+            users: 1,
+            combined,
+            origin,
+            rest: root.local_matrix(),
+            scale: root.scale,
+            crown: tree
+                .as_ref()
+                .and_then(|_| root.find(tree_part::CROWN))
+                .cloned(),
+            tree,
+        }
+    }
 }
 
 enum FragmentLook {
@@ -963,9 +995,10 @@ struct CoverPlan {
     combined: Vec<usize>,
     /// The rest, each its own instance, added after the combined model.
     own: Vec<usize>,
-    /// The combined model's root and each built cover's index, model and tree parts.
+    /// The combined model's root and each built cover's index and, for a tree, its
+    /// parts and crown ([`CoverModelEntry::crown`]).
     root: Node,
-    built: Vec<(usize, Arc<Node>, Option<TreeParts>)>,
+    built: Vec<(usize, Option<TreeParts>, Option<Node>)>,
 }
 
 impl CoverPlan {
@@ -1730,22 +1763,14 @@ impl Presentation {
             }
             self.textures.request_scenery(&mut self.renderer, &root);
             let model = self.renderer.add_model(&root, Lifetime::Round);
-            self.cover_models.insert(
-                key.clone(),
-                CoverModelEntry {
-                    model,
-                    users: 1,
-                    combined: false,
-                    origin: DVec3::new(built.x, 0.0, built.z),
-                    source: Arc::new(root),
-                    tree,
-                },
-            );
+            let origin = DVec3::new(built.x, 0.0, built.z);
+            let entry = CoverModelEntry::kept(model, false, origin, &root, tree);
+            self.cover_models.insert(key.clone(), entry);
         }
         // Covers sharing a look share its model; each stands at its own footprint.
         let entry = &self.cover_models[&key];
         let offset = DVec3::new(built.x, 0.0, built.z) - entry.origin;
-        let world = (DMat4::from_translation(offset) * entry.source.local_matrix()).as_mat4();
+        let world = (DMat4::from_translation(offset) * entry.rest).as_mat4();
         (key, world)
     }
 
@@ -1781,7 +1806,7 @@ impl Presentation {
         let (key, world) = self.cover_entry(cover, built_model);
         let entry = &self.cover_models[&key];
         let model = entry.model;
-        let scale = entry.source.scale.as_vec3();
+        let scale = entry.scale.as_vec3();
         let nodes = self.renderer.model_nodes(model);
         let tree = entry
             .tree
@@ -2014,10 +2039,14 @@ impl Presentation {
         let cover = &covers[index];
         let CoverModel { root: model, tree } = model_catalog::cover_model(cover);
         self.textures.request_scenery(&mut self.renderer, &model);
+        let crown = tree
+            .as_ref()
+            .and_then(|_| model.find(tree_part::CROWN))
+            .cloned();
         let mut joint = Node::group(combined_joint(cover.id));
-        joint.children.push(model.clone());
+        joint.children.push(model);
         plan.root.children.push(joint);
-        plan.built.push((index, Arc::new(model), tree));
+        plan.built.push((index, tree, crown));
         true
     }
 
@@ -2029,13 +2058,14 @@ impl Presentation {
             return;
         }
         // Each cover joint only ever shows or hides (a cover that changes its look
-        // moves out to its own model), so their parts merge across covers.
-        let model = self.renderer.add_combined_model(&root, Lifetime::Round);
+        // moves out to its own model), so their parts merge across covers. The tree
+        // goes once prepared: only the GPU keeps the covers' meshes.
+        let model = self.renderer.add_combined_model(root, Lifetime::Round);
         let instance = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("combined cover model");
-        for (index, source, tree) in built {
+        for (index, tree, crown) in built {
             let cover = &covers[index];
             let nodes = self.renderer.model_nodes(model);
             let name = combined_joint(cover.id);
@@ -2048,6 +2078,7 @@ impl Presentation {
                 .as_ref()
                 .map(|parts| tree_view(nodes, parts, joint..end, cover));
             let key = format!("combined/{}", cover.id);
+            // A combined cover stands in the model where it was built.
             self.cover_models.insert(
                 key.clone(),
                 CoverModelEntry {
@@ -2055,7 +2086,9 @@ impl Presentation {
                     users: 1,
                     combined: true,
                     origin: DVec3::new(cover.x, 0.0, cover.z),
-                    source,
+                    rest: DMat4::IDENTITY,
+                    scale: DVec3::ONE,
+                    crown,
                     tree,
                 },
             );
@@ -2885,9 +2918,8 @@ impl Presentation {
             return;
         };
         let Some(source) = entry
-            .tree
+            .crown
             .as_ref()
-            .and_then(|_| entry.source.find(tree_part::CROWN))
             .and_then(|crown| crown.children.get(crown_child))
         else {
             return;
