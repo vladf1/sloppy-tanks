@@ -395,7 +395,7 @@ Runtime textures, tank previews and sounds are checked in under `public/`. Devel
 | `bun run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
 | `bun run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
 | `bun run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
-| `bun run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
+| `bun run generate:audio`        | The native apps' thirteen MP3 effects (the page makes its own, `src/sounds.ts`); requires FFmpeg                                 |
 | `bun run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
 | `bun run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
 
@@ -455,7 +455,8 @@ updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
 with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
-the fonts, sounds and tank previews `index.html` downloads with it. Its shader stages come
+the fonts and tank previews `index.html` downloads with it (the page makes its sounds
+itself, from the formulas in `src/sounds.ts`). Its shader stages come
 as a hashed JSON file of their own, one per graphics backend, which `bun run wasm`
 generates (`crates/render/src/shader/tables.rs`). Those files keep
 their plain paths under `public/` for the tools and fixtures, and the build also emits
@@ -491,11 +492,15 @@ record in the sloppytanks.com Cloudflare zone, and all other records stay as the
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, where every file has a content-hashed name, so a returning visit requests
-only the page itself; `noindex` everywhere). Only the Wasm binaries, the shell's fonts
-and its shader tables run its script, `deploy/site/worker.mjs`. Cloudflare compresses
-static assets as it serves them, which gives a multi-megabyte binary a later first byte
-and a larger file than Brotli at quality 11. So `deploy:dev` first writes Brotli-11 and
-gzip copies beside each `.wasm`, shader table and the font collection
-(`deploy/site/precompress.mjs`, about ten seconds), and the script sends the one the
-client accepts, marked `no-transform`.
+only the page itself; `noindex` everywhere). Only the Wasm binaries, the shell's fonts,
+its shader tables and the game page run its script, `deploy/site/worker.mjs`. Cloudflare
+compresses static assets as it serves them, which gives a multi-megabyte binary a later
+first byte and a larger file than Brotli at quality 11. So `deploy:dev` first writes
+Brotli-11 and gzip copies beside each `.wasm`, shader table, the font collection and the
+game page (`deploy/site/precompress.mjs`, about ten seconds), and the script sends the
+one the client accepts, marked `no-transform`.
 Range requests, and clients that accept neither, get the original file.
+The game page goes this way for its ETag: Cloudflare sends its own compressed copy of an
+HTML file without one, so each visit downloaded the whole page, while the precompressed
+copy keeps the asset service's ETag and a returning visit gets a 304
+(`curl -sI -H 'Accept-Encoding: br' <site>/` shows `etag`).

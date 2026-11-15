@@ -1,6 +1,7 @@
 //! Battle sounds: the sounds `sloppy-web` plans for each event batch
-//! ([`sloppy_web::sounds`]), played from the game's MP3s (`assets.rs`). Natively kira
-//! decodes and mixes them; a page hands both to the browser's Web Audio.
+//! ([`sloppy_web::sounds`]), played from the game's sound files (`assets.rs`). Natively
+//! kira decodes and mixes the embedded MP3s; a page hands the WAVs it made, and the
+//! mixing, to the browser's Web Audio.
 
 use std::time::Duration;
 

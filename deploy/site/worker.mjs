@@ -1,31 +1,48 @@
 // The site's Worker, for the dev site and production. Static assets serve everything
-// except the engine binaries, the shell's font collection and its shader tables, which
-// `run_worker_first` routes here: Cloudflare compresses those on every request (the
-// tables 32-45% larger than Brotli-11), so precompress.mjs stores Brotli and gzip copies
-// at deploy time and this script sends the one the client accepts.
+// except the engine binaries, the shell's font collection, its shader tables and the
+// game page, which `run_worker_first` routes here: Cloudflare compresses those on every
+// request (the tables 32-45% larger than Brotli-11), so precompress.mjs stores Brotli and
+// gzip copies at deploy time and this script sends the one the client accepts.
+//
+// The game page comes this way for its ETag. A browser asks for the page again at every
+// visit, and Cloudflare sends its own compressed copy of an HTML file without one, so
+// every visit downloaded the whole page. A precompressed copy leaves here marked
+// `no-transform`, which keeps the ETag the asset service gives it (the hash of that
+// copy, so it changes exactly when the page does); the browser's next visit names it in
+// `If-None-Match`, the asset service answers 304, and nothing downloads.
 
-/** The precompressed files, by extension, with the type each is served as. */
+/** The precompressed files under `/assets/`, by extension, with the type each is served
+ * as; a browser keeps them for good. */
 const contentTypes = {
   ".wasm": "application/wasm",
   ".ttc": "font/collection",
   ".json": "application/json",
 };
+const KEPT_FOR_GOOD = "public, max-age=31536000, immutable, no-transform";
+
+/** The game page: its address, its file in the build, and how it is served. */
+const PAGE_PATH = "/";
+const PAGE_FILE = "/index.html";
+const PAGE_TYPE = "text/html; charset=utf-8";
+const ASKED_FOR_EACH_VISIT = "public, max-age=0, must-revalidate, no-transform";
 
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    const contentType = contentTypes[path.slice(path.lastIndexOf("."))];
-    if (!path.startsWith("/assets/") || contentType === undefined) {
+    const page = path === PAGE_PATH;
+    const contentType = page ? PAGE_TYPE : contentTypes[path.slice(path.lastIndexOf("."))];
+    if ((!page && !path.startsWith("/assets/")) || contentType === undefined) {
       return env.ASSETS.fetch(request);
     }
 
-    const response = await fetchCompressedAsset(request, env.ASSETS, path);
+    const file = page ? PAGE_FILE : path;
+    const response = await fetchCompressedAsset(request, env.ASSETS, file);
     if (response === null) {
       return env.ASSETS.fetch(request);
     }
 
     response.headers.set("Content-Type", contentType);
-    response.headers.set("Cache-Control", "public, max-age=31536000, immutable, no-transform");
+    response.headers.set("Cache-Control", page ? ASKED_FOR_EACH_VISIT : KEPT_FOR_GOOD);
     response.headers.set("X-Sloppy-Delivery", "precompressed");
     return response;
   },

@@ -1,7 +1,8 @@
 //! The game's runtime files of `public/`, by their path there
 //! (`textures/ground/village-ground.webp`): embedded in a native binary (`build.rs`); in
-//! a page, the fonts, sounds and previews `index.html` fetches beside the Wasm and leaves
-//! in `globalThis.sloppyFiles` (the renderer fetches its textures itself).
+//! a page, the fonts and previews `index.html` fetches beside the Wasm, and the sounds it
+//! makes (`audio/<name>.wav`, `src/sounds.ts`), left in `globalThis.sloppyFiles` (the
+//! renderer fetches its textures itself).
 
 use std::borrow::Cow;
 
@@ -45,7 +46,7 @@ pub fn load(path: &str) -> Asset {
 
 /// The runtime file at `path` as the page left it: its bytes once arrived (copied in,
 /// the page keeps its own for a later ask), its pending download until then, `null`
-/// once that failed, nothing for a file it never fetched.
+/// once that failed, nothing for a file it neither fetched nor made.
 #[cfg(target_arch = "wasm32")]
 pub fn load(path: &str) -> Asset {
     use wasm_bindgen::JsCast;
@@ -181,5 +182,37 @@ mod tests {
         }
         assert!(textures > 0, "public/textures holds the game's textures");
         assert!(super::file("textures/missing.webp").is_none());
+    }
+
+    /// The page cuts some textures out of a file it downloads anyway
+    /// (`sloppy_render::gpu::FILE_CROPS`) where the apps decode a file of their own:
+    /// both must show the same opaque surface. The sheet is a lossy copy, so its texels
+    /// sit a few levels from the file's; a crop of the wrong place is tens away.
+    #[test]
+    fn the_textures_a_page_crops_match_the_files_the_apps_decode() {
+        /// Mean difference per colour channel, of 255 (the copies measure 1 to 3.2).
+        const CLOSE: f64 = 6.0;
+        let decode = |path: &str| {
+            let bytes = super::file(path).unwrap_or_else(|| panic!("{path} is not embedded"));
+            image::load_from_memory(bytes)
+                .unwrap_or_else(|error| panic!("{path}: {error}"))
+                .into_rgba8()
+        };
+        for (path, crop) in sloppy_render::gpu::FILE_CROPS {
+            let file = decode(path);
+            let sheet = decode(crop.of);
+            let [left, top, width, height] = crop.rect;
+            assert_eq!(file.dimensions(), (width, height), "{path}");
+            let mut difference = 0;
+            for (x, y, texel) in file.enumerate_pixels() {
+                let cut = sheet.get_pixel(left + x, top + y);
+                assert_eq!(cut[3], 255, "{path} is opaque in {}", crop.of);
+                for channel in 0..3 {
+                    difference += u64::from(texel[channel].abs_diff(cut[channel]));
+                }
+            }
+            let mean = difference as f64 / f64::from(width * height * 3);
+            assert!(mean < CLOSE, "{path} differs from its crop by {mean}");
+        }
     }
 }

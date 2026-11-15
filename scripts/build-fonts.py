@@ -12,6 +12,11 @@ space is a third wider. This stretches every outline, advance and kerning value 
 by `WIDTH` and gives the space Impact's advance, so headings take production's width.
 Hinting is dropped: its programs were written for the unstretched outlines.
 
+Every face also loses what nothing that draws it reads: the glyph names of `post` (the
+shell's text engine finds glyphs through `cmap` and never asks a name; they were 22 KB of
+the file), Roboto's `VDMX` (pixel heights for an old Windows rasterizer) and any
+signature. No glyph, metric or kerning pair goes.
+
 Run with fontTools:
     uv run --with fonttools python scripts/build-fonts.py
 """
@@ -77,6 +82,18 @@ def drop_hinting(font: TTFont) -> None:
         setattr(maxp, field, 1 if field == "maxZones" else 0)
 
 
+def drop_unread(font: TTFont) -> TTFont:
+    # `post` format 3 keeps the table's metrics (italic angle, underline) without names.
+    post = font["post"]
+    post.formatType = 3.0
+    post.extraNames = []
+    post.mapping = {}
+    for tag in ("DSIG", "VDMX"):
+        if tag in font:
+            del font[tag]
+    return font
+
+
 def rename(font: TTFont) -> None:
     # A modified OFL font keeps its licence and should not pass for the original.
     for record in font["name"].names:
@@ -97,19 +114,18 @@ def anton_wide() -> TTFont:
         widen_positioning(font["GPOS"].table)
     drop_hinting(font)
     font["OS/2"].xAvgCharWidth = round(font["OS/2"].xAvgCharWidth * WIDTH)
-    if "DSIG" in font:
-        del font["DSIG"]
     rename(font)
     return font
 
 
 def main() -> None:
     collection = TTCollection()
-    collection.fonts = [
+    faces = [
         anton_wide(),
         TTFont(SOURCES / "Roboto-Regular.ttf", recalcTimestamp=False),
         TTFont(SOURCES / "Roboto-Bold.ttf", recalcTimestamp=False),
     ]
+    collection.fonts = [drop_unread(face) for face in faces]
     # The sources' own timestamps, so a rerun writes the same bytes.
     collection.save(TARGET, shareTables=True)
     print(f"{TARGET.relative_to(ROOT)}: {TARGET.stat().st_size} bytes")

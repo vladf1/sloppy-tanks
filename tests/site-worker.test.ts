@@ -141,15 +141,61 @@ test("Cloudflare's original client encoding wins over its normalized header", as
   assert.equal(response.headers.get("Content-Encoding"), "gzip");
 });
 
-test("HTML and canonical redirects pass through to the static asset service unchanged", async () => {
-  const paths = [
-    "/",
-    "/?webgl",
-    "/index.html",
-    "/test-pages",
-    "/health/",
-    "/tests/maps.browser.html",
-  ];
+test("the game page is precompressed, asked for at each visit and answered 304 by its ETag", async () => {
+  for (const address of ["/", "/?webgl"]) {
+    for (const status of [200, 304]) {
+      let upstream: Request | undefined;
+      const response = await worker.fetch(
+        new Request("https://example.test" + address, {
+          headers: { "Accept-Encoding": "gzip, br", "If-None-Match": '"page"' },
+        }),
+        {
+          ASSETS: {
+            fetch: async (request: Request) => {
+              upstream = request;
+              return new Response(status === 200 ? "encoded" : null, {
+                status,
+                headers: { "Content-Type": "application/octet-stream", ETag: '"page"' },
+              });
+            },
+          },
+        },
+      );
+      assert.equal(new URL(upstream!.url).pathname, "/index.html.br");
+      assert.equal(upstream?.headers.get("If-None-Match"), '"page"');
+      assert.equal(response.status, status);
+      assert.equal(response.headers.get("ETag"), '"page"');
+      assert.equal(response.headers.get("Content-Encoding"), "br");
+      assert.equal(response.headers.get("Content-Type"), "text/html; charset=utf-8");
+      assert.equal(response.headers.get("Vary"), "Accept-Encoding");
+      assert.equal(
+        response.headers.get("Cache-Control"),
+        "public, max-age=0, must-revalidate, no-transform",
+      );
+    }
+  }
+});
+
+test("a client that takes no compressed page gets the static one", async () => {
+  const paths: string[] = [];
+  const page = new Response("page", { headers: { "Content-Type": "text/html" } });
+  const response = await worker.fetch(
+    new Request("https://example.test/", { headers: { "Accept-Encoding": "identity" } }),
+    {
+      ASSETS: {
+        fetch: async (request: Request) => {
+          paths.push(new URL(request.url).pathname);
+          return page;
+        },
+      },
+    },
+  );
+  assert.deepEqual(paths, ["/"]);
+  assert.equal(response, page);
+});
+
+test("other HTML and canonical redirects pass through to the static asset service unchanged", async () => {
+  const paths = ["/index.html", "/test-pages", "/health/", "/tests/maps.browser.html"];
   for (const path of paths) {
     for (const method of ["GET", "HEAD"]) {
       for (const status of [200, 304]) {
