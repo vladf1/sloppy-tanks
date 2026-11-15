@@ -37,9 +37,9 @@ use crate::sim::model_data::ARENA;
 use crate::sim::senda_layout::{
     self, CUL_DE_SAC_ISLAND, CUL_DE_SAC_RADIUS, DRIVEWAY_PAST_DOOR, HOUSE_DEPTH, HOUSE_WIDTH,
     LAMP_HEIGHT, Line, MEDIAN_HALF, PARKWAY, PASEO_WIDTH, Row, SENDA_PICKUPS, SENDA_SCALE,
-    SIDE_YARD, SIDEWALK, SOUTH_LANE, SPLITTER_ISLAND, STREET_LAMP_COLORS, SendaHouse, Street,
-    WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, greenbelt_mouth, house_front, in_arena,
-    in_median_opening, inside_boundary, is_senda_paved, lamp_is_cover, lamp_sites, left,
+    SIDE_YARD, SIDEWALK, SOUTH_LANE, SPLITTER_ISLAND, STREET_LAMP_COLORS, STREET_LAMP_GLASS,
+    SendaHouse, Street, WAY_LAMP_HEIGHT, WAY_PARKWAY, WAY_PATH, greenbelt_mouth, house_front,
+    in_arena, in_median_opening, inside_boundary, is_senda_paved, lamp_is_cover, lamp_sites, left,
     neblina_bend, oak_site, outer_way_tree_sites, paseos, senda_boundary, senda_houses,
     way_tree_sites,
 };
@@ -393,7 +393,7 @@ const CENTRE_LINE_GAP: f64 = 0.15;
 const LAMP_POLE: f64 = 0.055;
 const LAMP_GLOBE: f64 = 0.16;
 const LAMP_METAL: u32 = STREET_LAMP_COLORS[0];
-const LAMP_GLASS: u32 = 0xf2eee2;
+const LAMP_GLASS: u32 = STREET_LAMP_GLASS;
 /// Senda Parkway's tall lamps' globe (m).
 const WAY_LAMP_GLOBE: f64 = 0.22;
 /// Trees outside the walls: one every this many metres on the slopes either side of

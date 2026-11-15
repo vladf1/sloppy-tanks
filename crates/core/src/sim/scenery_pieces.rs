@@ -17,7 +17,7 @@ use super::simulation::Simulation;
 use super::arena::cover_turn;
 use super::house_layout::SENDA_STYLES;
 use super::senda_entries::is_entry;
-use super::senda_layout::SENDA_SCALE;
+use super::senda_layout::{SENDA_SCALE, STREET_LAMP_GLASS, street_lamp_look};
 use super::senda_yards::{LOGGIA_COLUMN, LOGGIA_EAVE, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover};
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
@@ -38,6 +38,9 @@ struct Breakup<'a> {
     cover: &'a Cover,
     rng: Random,
     pieces: Vec<u32>,
+    /// Each piece is thrown out and up from the cover's middle as it appears: a burst.
+    /// A piece of cover a hull pushed over is left at rest for its caller to tip.
+    thrown: bool,
 }
 
 impl Breakup<'_> {
@@ -94,22 +97,24 @@ impl Breakup<'_> {
                 .restitution(surface.restitution as f32),
             Some(body),
         );
-        let angle = self.rng.range(0.0, PI * 2.0);
-        let outward = x.hypot(z);
-        let (nx, nz) = if outward > 0.1 {
-            (x / outward, z / outward)
-        } else {
-            (angle.cos(), angle.sin())
-        };
-        let speed = self.rng.range(2.0, 5.0);
-        let rigid_body = &mut simulation.world.bodies[body];
-        let mass = rigid_body.mass() as f64;
-        let lift = self.rng.range(3.0, 7.0);
-        rigid_body.apply_impulse_at_point(
-            vector(nx * speed * mass, lift * mass, nz * speed * mass),
-            vector(cover.x + x + w * 0.15, y - h * 0.2, cover.z + z + d * 0.15),
-            true,
-        );
+        if self.thrown {
+            let angle = self.rng.range(0.0, PI * 2.0);
+            let outward = x.hypot(z);
+            let (nx, nz) = if outward > 0.1 {
+                (x / outward, z / outward)
+            } else {
+                (angle.cos(), angle.sin())
+            };
+            let speed = self.rng.range(2.0, 5.0);
+            let rigid_body = &mut simulation.world.bodies[body];
+            let mass = rigid_body.mass() as f64;
+            let lift = self.rng.range(3.0, 7.0);
+            rigid_body.apply_impulse_at_point(
+                vector(nx * speed * mass, lift * mass, nz * speed * mass),
+                vector(cover.x + x + w * 0.15, y - h * 0.2, cover.z + z + d * 0.15),
+                true,
+            );
+        }
         track_debris_contacts(simulation, body, collider, id, material);
         let mut fragment = Fragment::new(
             id,
@@ -161,6 +166,7 @@ pub fn break_scenery(
         cover: &cover,
         rng: Random::new(cover.id as f64 * 73_856_093.0 + simulation.seed),
         pieces: Vec::new(),
+        thrown: true,
     };
     match cover.kind {
         CoverKind::Drum => {
@@ -233,6 +239,78 @@ pub fn break_scenery(
         }
     }
     true
+}
+
+/// A debris cylinder's drawn shape ([`FragmentShape::Wheel`]) is this wide and tall (m)
+/// before its piece's dimensions scale it.
+const CYLINDER_PIECE: (f64, f64) = (0.96, 0.28);
+/// A post's shaft is this share of its footprint across; a street lamp's globe is as wide
+/// as its footprint and this much taller than wide.
+const POST_SHAFT: f64 = 0.35;
+const LAMP_GLOBE_HEIGHT: f64 = 1.3;
+/// How fast (rad/s) a post a hull pushed over starts turning about its foot.
+const POST_TOPPLE: f64 = 2.2;
+
+/// Whether a piece of debris is one of a pushed-over post's ([`topple_post`]), which lies
+/// under tracks: the only scenery piece shaped as a cylinder. A room's client tells them
+/// from solid debris by this, from the piece's replicated shape and where it came from.
+pub fn lies_under_tracks(shape: Option<FragmentShape>, source: Option<CoverKind>) -> bool {
+    shape == Some(FragmentShape::Wheel) && source.is_some()
+}
+
+/// The post `cover_index`, which a hull pushed over, goes down whole toward `fall` (a
+/// planar direction): its shaft tips about its foot and comes to lie on the ground, and a
+/// street lamp's globe goes with it. The pieces lie where they fall, under any hull that
+/// drives over them, and clear as other scenery's do. The cover itself is already out of the round ([`Simulation::take_cover_out`]).
+pub fn topple_post(simulation: &mut Simulation, cover_index: usize, fall: (f64, f64)) {
+    let cover = simulation.covers[cover_index].clone();
+    let mut breakup = Breakup {
+        cover: &cover,
+        rng: Random::new(cover.id as f64 * 73_856_093.0 + simulation.seed),
+        pieces: Vec::new(),
+        thrown: false,
+    };
+    let length = fall.0.hypot(fall.1).max(1e-6);
+    let (fx, fz) = (fall.0 / length, fall.1 / length);
+    let across = cover.w.max(cover.d);
+    let shaft = across * POST_SHAFT;
+    let cylinder = |width: f64, height: f64| {
+        (
+            [width / CYLINDER_PIECE.0, height / CYLINDER_PIECE.1, width / CYLINDER_PIECE.0],
+            ColliderBuilder::cylinder((height / 2.0) as f32, (width / 2.0) as f32),
+        )
+    };
+    let mut pieces = Vec::new();
+    let (size, collider) = cylinder(shaft, cover.h);
+    pieces.push((cover.h / 2.0, size, cover.color, collider));
+    if street_lamp_look(cover.color).is_some() {
+        let globe = across * LAMP_GLOBE_HEIGHT;
+        let (size, collider) = cylinder(across, globe);
+        pieces.push((cover.h + globe / 2.0, size, STREET_LAMP_GLASS, collider));
+    }
+    for (y, size, color, collider) in pieces {
+        let piece = breakup.piece_with(
+            simulation,
+            FragmentShape::Wheel,
+            [0.0, y, 0.0],
+            size,
+            Some(color),
+            DebrisMaterial::Metal,
+            collider,
+        );
+        // Thin enough for tracks to roll over where it lies: it rests on the ground and
+        // meets nothing else, as a conifer's fallen boughs do. A hull would otherwise
+        // shove so light a piece down the street ahead of it.
+        let handle = simulation.fragments[piece].body;
+        for collider in simulation.world.bodies[handle].colliders().to_vec() {
+            simulation.world.colliders[collider]
+                .set_collision_groups(interaction_groups(group::BOUGH_DEBRIS));
+        }
+        // Turning about the foot: the top leads the way down.
+        let body = &mut simulation.world.bodies[simulation.fragments[piece].body];
+        body.set_angvel(vector(fz * POST_TOPPLE, 0.0, -fx * POST_TOPPLE), true);
+        body.set_linvel(vector(fx * POST_TOPPLE * y, 0.0, fz * POST_TOPPLE * y), true);
+    }
 }
 
 /// A loggia or pergola brought down: its posts or columns, the beam across them and its

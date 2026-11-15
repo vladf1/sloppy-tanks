@@ -46,6 +46,7 @@ mod own_shots;
 mod personalities;
 mod prediction;
 mod quarry;
+mod ramming;
 mod render_state;
 mod resting_stones;
 mod round_recap;
