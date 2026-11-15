@@ -340,6 +340,7 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     sim.world.step();
     let script = |tick: u64| match tick {
@@ -353,6 +354,48 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
     eprintln!("wall: {distance} m, {heading} rad");
     assert!(distance < 0.03, "{distance}");
     assert!(heading <= HEADING_ROUNDING, "{heading}");
+}
+
+/// Running a thin tree and a lamp post down (`sim::ramming`): the client's hull goes
+/// through them as the host's does, a few ticks before the host says they are down.
+/// Without the rule in the predicted world its hull stopped at the tree and ended 1.85 m
+/// from the host's. A lamp now replays exactly: its fallen pole lies under tracks in both
+/// worlds. A tree leaves up to 5 cm: its falling trunk nudges the host's hull before the
+/// client hears of it, as any breaking cover's pieces do.
+#[test]
+fn running_thin_cover_down_replays_within_a_hull_nudge() {
+    let tree = CoverDef::new(CoverKind::Tree, 0.2, 8.0, 1.5, 1.5, 4.5, 80.0, 0x169f65);
+    let lamp = CoverDef::new(
+        CoverKind::Concrete,
+        -0.2,
+        8.0,
+        0.375,
+        0.375,
+        3.5,
+        40.0,
+        0x2a3a2e,
+    );
+    for (name, def, limit) in [("lamp", lamp, 2e-3), ("tree", tree, 0.06)] {
+        for kind in VehicleKind::PLAYABLE {
+            let (mut sim, viewer) = open_field(kind);
+            let cover = sim.add_cover(&def);
+            sim.world.step();
+            let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 150);
+            assert!(
+                !sim.covers[cover].alive,
+                "{kind:?} ran the {name} down on the host"
+            );
+            for horizon in [HORIZON_100_MS, HORIZON_200_MS] {
+                let (distance, heading) = worst(&client_replays(&run, horizon));
+                eprintln!("{name} {kind:?} at {horizon} ticks: {distance:.4} m, {heading} rad");
+                assert!(
+                    distance < limit,
+                    "{kind:?} diverged {distance} m at the {name}"
+                );
+                assert!(heading <= HEADING_ROUNDING, "{kind:?} {heading}");
+            }
+        }
+    }
 }
 
 #[test]
@@ -538,6 +581,7 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         color: 0x8b5a2b,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     };
     // A wall's beams falling against the hull cost the windows of their fall as well; after
     // it the hull shoves them along, held to the host's loose-piece speed.
@@ -643,6 +687,7 @@ fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
         color: 0xaa3322,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     sim.world.step();
     let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 180);

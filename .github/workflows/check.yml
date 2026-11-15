@@ -132,11 +132,13 @@ jobs:
           max-size: 150MiB
           pr-comment: false
       - run: bun run check:server
+      # The action skips its setup when Kache's download fails, leaving no wrapper: then
+      # there is nothing to trim or save.
       - name: Trim the Kache store
-        if: steps.kache-store.outputs.cache-hit != 'true'
+        if: steps.kache-store.outputs.cache-hit != 'true' && env.RUSTC_WRAPPER != ''
         run: '"$RUSTC_WRAPPER" gc --max-age 7d'
       - name: Save the Kache store
-        if: steps.kache-store.outputs.cache-hit != 'true'
+        if: steps.kache-store.outputs.cache-hit != 'true' && env.RUSTC_WRAPPER != ''
         uses: actions/cache/save@v6
         with:
           path: ${{ runner.temp }}/kache

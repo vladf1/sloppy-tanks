@@ -339,7 +339,11 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             .received_messages
             .entry(message_type(text))
             .or_default() += 1;
-        self.with_host(|host, out| host.receive(id, text, now, out));
+        let clock = self.clock.clone();
+        self.with_host(|host, out| {
+            host.receive(id, text, now, out);
+            host.round_built(clock());
+        });
     }
 
     /// The transport closed; the seat stays reserved for the host's reconnect grace.

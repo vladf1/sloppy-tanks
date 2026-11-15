@@ -8,7 +8,14 @@ export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 export const ROOM_SEATS = 8;
 export const MAX_ROUND_MINUTES = 99;
 export const MAX_CONTENT_VERSION_LENGTH = 128;
-export const MAP_IDS = ["village", "harbor", "quarry", "stress-test", "superstress"] as const;
+export const MAP_IDS = [
+  "village",
+  "harbor",
+  "quarry",
+  "stress-test",
+  "superstress",
+  "neighborhood",
+] as const;
 export const DIFFICULTIES = ["easy", "normal", "hard"] as const;
 export const PHASES = ["lobby", "playing", "results"] as const;
 

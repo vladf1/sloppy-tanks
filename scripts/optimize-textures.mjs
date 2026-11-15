@@ -17,6 +17,8 @@ const textures = [
   ["houses/brick.webp", "houses/brick.webp", 80, 512],
   ["houses/stone.webp", "houses/stone.webp", 80, 512],
   ["houses/shingles.webp", "houses/shingles.webp", 80, 512],
+  ["houses/stucco.webp", "houses/stucco.webp", 92, 512],
+  ["houses/solar.webp", "houses/solar.webp", 92],
 ];
 for (const [source, target, quality, size, flags = []] of textures) {
   execFileSync(

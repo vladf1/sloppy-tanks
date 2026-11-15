@@ -12,9 +12,9 @@ use std::sync::Arc;
 use glam::DVec3;
 
 use super::{
-    BARK_COLORS, BIRCH_COLORS, Card, Crown, CrownShape, LEAF_COLORS, OAK_CELLS, OVATE_CELLS,
-    RINGS_COLOR, TreeDetail, TreeGeometry, TreeShape, TreeSurface, add_mesh, batch, card_tint_of,
-    geometry, into_atlas, limb, shadowed, surface,
+    Card, Crown, CrownShape, OAK_CELLS, OVATE_CELLS, RINGS_COLOR, TreeDetail, TreeGeometry,
+    TreeLook, TreeShape, TreeSurface, add_mesh, batch, card_tint_of, geometry, into_atlas, limb,
+    look_colors, shadowed, surface,
 };
 use crate::geometry::math::quat_from_euler;
 use crate::geometry::{Mesh, narrow};
@@ -148,7 +148,12 @@ pub(super) fn add_grown_crown(
 /// about its ground centre and still (no sway), without the boughs it shed at damage
 /// stages up to `shed`: what a felled tree's bodies look like as they fall and lie
 /// (`structure_debris`). Its leaves shade as the whole crown did.
-pub fn grown_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -> Node {
+pub fn grown_pieces(
+    c: &TreeShape,
+    look: TreeLook,
+    keep: &dyn Fn(TreePart) -> bool,
+    shed: u32,
+) -> Node {
     let tree = grown_layout(c.x, c.z, c.w, c.d, c.h);
     let TreeProportions {
         seed,
@@ -159,12 +164,9 @@ pub fn grown_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -
         ..
     } = tree.proportions;
     let variant = seed % 24;
-    let bark = if family == OAK {
-        surface(TreeSurface::Bark, BARK_COLORS[OAK as usize], false)
-    } else {
-        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4], false)
-    };
-    let foliage = surface(TreeSurface::LeafSprigs, LEAF_COLORS[family as usize], false);
+    let (bark_surface, bark_color, leaf_color, leaf_tint) = look_colors(look, family, seed);
+    let bark = surface(bark_surface, bark_color, false);
+    let foliage = surface(TreeSurface::LeafSprigs, leaf_color, false);
     let rings = surface(TreeSurface::Rings, RINGS_COLOR, false);
     let mut crown = Crown {
         node: Node::group("grown-pieces"),
@@ -272,7 +274,7 @@ pub fn grown_pieces(c: &TreeShape, keep: &dyn Fn(TreePart) -> bool, shed: u32) -
         center: (low + high) / 2.0,
         radii: (high - low) / 2.0,
     };
-    crown.grow_foliage(&foliage, &shape, [1.0; 3]);
+    crown.grow_foliage(&foliage, &shape, leaf_tint);
     let mut node = crown.node;
     batch(&mut node);
     into_atlas(&mut node, false);

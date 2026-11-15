@@ -7,6 +7,7 @@
 
 use glam::DVec3;
 use sloppy_core::sim::RenderState;
+use sloppy_core::sim::arena::structure_turn;
 use sloppy_core::sim::combat_rules::COMBAT;
 use sloppy_core::sim::data::weapon;
 use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
@@ -113,7 +114,8 @@ fn cover_footprint(cover: &RenderCover) -> Footprint {
     let forward = rotation * DVec3::Z;
     Footprint {
         center: (cover.position.x, cover.position.z),
-        yaw: forward.x.atan2(forward.z),
+        // A planned house's structure turns its box past its square body.
+        yaw: forward.x.atan2(forward.z) + structure_turn(cover.kind, cover.house_plan),
         half: (
             cover.w / 2.0 + SHELL_HIT_RADIUS,
             cover.d / 2.0 + SHELL_HIT_RADIUS,

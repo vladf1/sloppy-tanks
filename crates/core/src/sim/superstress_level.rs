@@ -5,7 +5,7 @@
 //! Level behaviour lives here and reaches the game only through `Simulation::after_step`,
 //! `restore_cover` and the map's scale.
 
-use super::arena::{CoverDef, boundary_walls};
+use super::arena::{CoverDef, PICKUP_LAYOUT, boundary_walls};
 use super::data::ARENA;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::map_options::MapId;
@@ -192,6 +192,7 @@ pub static SUPERSTRESS_MAP: ArenaMap = ArenaMap {
     outer_floor_extent: Some(ARENA * 2.0 + 20.0),
     scale: Some(SUPERSTRESS_SCALE),
     layout: superstress_layout,
+    pickups: &PICKUP_LAYOUT,
 };
 
 fn footprint_occupied(simulation: &Simulation, cover_index: usize) -> bool {

@@ -4,12 +4,17 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use super::arena::{box_turn, cover_turn};
 use super::data::ARENA;
 use super::structure_physics::ground_footprints;
 use super::math::Vec2;
 use super::tree_proportions::tree_proportions;
 use super::types::{Cover, CoverKind};
 
+/// A cell's side (m), and the standard arena's half extent and grid: a map larger than the
+/// standard arena (a map scale above 1) takes as many more cells as cover it at the same
+/// size, so a route keeps the same room off cover in metres (a cell's centre stands as
+/// near a cover's grown box as on a standard map); a smaller map keeps the standard grid.
 const CELL_SIZE: f64 = 1.5;
 const HALF_ARENA: f64 = ARENA;
 pub const GRID_SIZE: usize = 80; // ceil(2 * HALF_ARENA / CELL_SIZE)
@@ -30,12 +35,72 @@ pub struct Footprint {
 }
 
 impl From<&Cover> for Footprint {
+    /// The cover's box, or a turned cover's bounds along the world's axes.
     fn from(cover: &Cover) -> Self {
+        let (sin, cos) = box_turn(cover.kind, cover.house_plan).sin_cos();
+        let (sin, cos) = (sin.abs(), cos.abs());
         Self {
             x: cover.x,
             z: cover.z,
-            w: cover.w,
-            d: cover.d,
+            w: cover.w * cos + cover.d * sin,
+            d: cover.w * sin + cover.d * cos,
+        }
+    }
+}
+
+/// How far apart (m) the squares that stand in for a turned cover's footprint lie along
+/// it: well under the hull clearance they are grown by, so their union is the turned box.
+const TURNED_STEP: f64 = 0.5;
+
+/// A turned cover's footprint as a row of squares along its long side (Senda's yard
+/// walls are long and thin, so their bounds along the world's axes would block the side
+/// yards beside them).
+fn turned_footprints(cover: &Cover, obstacles: &mut Vec<Footprint>) {
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // The box's own axes in the world (as a house's build frame turns).
+    let (length, width, along) = if cover.w >= cover.d {
+        (cover.w, cover.d, (cos, -sin))
+    } else {
+        (cover.d, cover.w, (sin, cos))
+    };
+    let steps = ((length - width) / TURNED_STEP).ceil().max(1.0);
+    for k in 0..=steps as usize {
+        let u = (k as f64 / steps - 0.5) * (length - width);
+        obstacles.push(Footprint {
+            x: cover.x + along.0 * u,
+            z: cover.z + along.1 * u,
+            w: width,
+            d: width,
+        });
+    }
+}
+
+/// A turned box's footprint, `w` by `d` about `(x, z)` turned `turn` (radians about +y),
+/// as squares [`TURNED_STEP`] across filling it: grown by the hull clearance, their union
+/// is the turned box, where its bounds along the world's axes would also block the room
+/// beside its corners (the Neighborhood's houses stand square to curving streets).
+pub fn turned_box_footprints(
+    (x, z): (f64, f64),
+    (w, d): (f64, f64),
+    turn: f64,
+    obstacles: &mut Vec<Footprint>,
+) {
+    let (sin, cos) = turn.sin_cos();
+    let steps = |length: f64| (length / TURNED_STEP).ceil().max(1.0) as usize;
+    let (across, deep) = (steps(w), steps(d));
+    for i in 0..across {
+        for j in 0..deep {
+            // A square's middle in the box's own axes, then turned as a house's build
+            // frame turns.
+            let u = ((i as f64 + 0.5) / across as f64 - 0.5) * w;
+            let v = ((j as f64 + 0.5) / deep as f64 - 0.5) * d;
+            obstacles.push(Footprint {
+                x: x + u * cos + v * sin,
+                z: z - u * sin + v * cos,
+                w: w / across as f64,
+                d: d / deep as f64,
+            });
         }
     }
 }
@@ -63,6 +128,8 @@ pub struct Navigation {
     open: BinaryHeap<Reverse<u64>>,
     obstacles: Vec<Footprint>,
     pub version: u32,
+    /// Cells along each side of the grid ([`Self::set_map_scale`]).
+    grid: usize,
 }
 
 impl Default for Navigation {
@@ -81,15 +148,53 @@ impl Navigation {
             open: BinaryHeap::new(),
             obstacles: Vec::new(),
             version: 0,
+            grid: GRID_SIZE,
         }
+    }
+
+    /// Lay the grid over a map `scale` times the standard arena: a larger map's grid takes
+    /// as many more cells of the same size as cover it ([`CELL_SIZE`]); a standard or
+    /// smaller one keeps the standard grid exactly.
+    pub fn set_map_scale(&mut self, scale: f64) {
+        let grid = if scale > 1.0 {
+            (2.0 * HALF_ARENA * scale / CELL_SIZE).ceil() as usize
+        } else {
+            GRID_SIZE
+        };
+        self.size_grid(grid);
+    }
+
+    /// The grid `grid` cells a side, cleared.
+    fn size_grid(&mut self, grid: usize) {
+        self.grid = grid;
+        let cells = grid * grid;
+        self.blocked.clear();
+        self.blocked.resize(cells, 0);
+        self.cells.clear();
+        self.cells.resize(cells, SearchCell::default());
+        self.discovered.clear();
+        self.discovered.resize(cells, 0);
+    }
+
+    /// Cells along each side of the grid.
+    pub fn grid_size(&self) -> usize {
+        self.grid
+    }
+
+    /// A cell's side (m).
+    pub fn cell_size(&self) -> f64 {
+        CELL_SIZE
+    }
+
+    /// How far (m) the grid reaches from the centre along either axis.
+    pub fn half_extent(&self) -> f64 {
+        self.grid as f64 * CELL_SIZE / 2.0
     }
 
     /// Return to the state of [`Self::new`] in place, keeping the grids' storage.
     pub fn clear(&mut self) {
-        self.blocked.fill(0);
-        self.cells.fill(SearchCell::default());
+        self.size_grid(GRID_SIZE);
         self.search = 0;
-        self.discovered.fill(0);
         self.open.clear();
         self.obstacles.clear();
         self.version = 0;
@@ -104,6 +209,19 @@ impl Navigation {
                 // A structure blocks where its standing parts reach the ground, so tanks
                 // drive through its gaps where they fit.
                 ground_footprints(cover, &mut self.obstacles);
+            } else if cover.alive && cover_turn(cover.kind, cover.house_plan) != 0.0 {
+                if cover.w.min(cover.d) > TURNED_STEP * 2.0 {
+                    // A broad turned box (a patio's loggia) fills its own outline.
+                    let turn = cover_turn(cover.kind, cover.house_plan);
+                    turned_box_footprints(
+                        (cover.x, cover.z),
+                        (cover.w, cover.d),
+                        turn,
+                        &mut self.obstacles,
+                    );
+                } else {
+                    turned_footprints(cover, &mut self.obstacles);
+                }
             } else if cover.alive {
                 self.obstacles.push(Footprint::from(cover));
             } else if cover.kind == CoverKind::Tree {
@@ -125,25 +243,26 @@ impl Navigation {
     /// Mark the cells of the grid, or of those around `region`, that an obstacle's
     /// inflated footprint covers.
     fn occupy(&mut self, region: Option<Footprint>) {
-        let last = GRID_SIZE as f64 - 1.0;
+        let (grid, half) = (self.grid, self.half_extent());
+        let last = grid as f64 - 1.0;
         let (x0, x1, z0, z1) = match region {
             Some(r) => (
-                0f64.max(((r.x - r.w / 2.0 - REBUILD_PADDING + HALF_ARENA) / CELL_SIZE).floor()),
-                last.min(((r.x + r.w / 2.0 + REBUILD_PADDING + HALF_ARENA) / CELL_SIZE).ceil()),
-                0f64.max(((r.z - r.d / 2.0 - REBUILD_PADDING + HALF_ARENA) / CELL_SIZE).floor()),
-                last.min(((r.z + r.d / 2.0 + REBUILD_PADDING + HALF_ARENA) / CELL_SIZE).ceil()),
+                0f64.max(((r.x - r.w / 2.0 - REBUILD_PADDING + half) / CELL_SIZE).floor()),
+                last.min(((r.x + r.w / 2.0 + REBUILD_PADDING + half) / CELL_SIZE).ceil()),
+                0f64.max(((r.z - r.d / 2.0 - REBUILD_PADDING + half) / CELL_SIZE).floor()),
+                last.min(((r.z + r.d / 2.0 + REBUILD_PADDING + half) / CELL_SIZE).ceil()),
             ),
             None => (0.0, last, 0.0, last),
         };
         let (x0, x1, z0, z1) = (x0 as i64, x1 as i64, z0 as i64, z1 as i64);
         for z in z0..=z1 {
             for x in x0..=x1 {
-                self.blocked[(z * GRID_SIZE as i64 + x) as usize] = 0;
+                self.blocked[(z * grid as i64 + x) as usize] = 0;
             }
         }
         // Each obstacle tests only the cells about it (a cell beyond the farthest
         // centre it can reach on each side), not every cell every obstacle.
-        let index = |at: f64| ((at + HALF_ARENA) / CELL_SIZE - 0.5).floor() as i64;
+        let index = |at: f64| ((at + half) / CELL_SIZE - 0.5).floor() as i64;
         for cover in &self.obstacles {
             let (reach_x, reach_z) = (
                 cover.w / 2.0 + HULL_CLEARANCE,
@@ -155,7 +274,7 @@ impl Navigation {
             let to_z = index(cover.z + reach_z).saturating_add(1);
             for z in from_z.max(z0)..=to_z.min(z1) {
                 for x in from_x.max(x0)..=to_x.min(x1) {
-                    let cell = (z * GRID_SIZE as i64 + x) as usize;
+                    let cell = (z * grid as i64 + x) as usize;
                     let position = self.point(cell);
                     if (position.x - cover.x).abs() < reach_x
                         && (position.z - cover.z).abs() < reach_z
@@ -168,7 +287,7 @@ impl Navigation {
     }
 
     pub fn index(&self, position: Vec2) -> usize {
-        cell_at(position.x, position.z)
+        self.cell_at(position.x, position.z)
     }
 
     pub fn is_blocked(&self, position: Vec2) -> bool {
@@ -177,8 +296,8 @@ impl Navigation {
 
     pub fn point(&self, cell: usize) -> Vec2 {
         Vec2 {
-            x: ((cell % GRID_SIZE) as f64 + 0.5) * CELL_SIZE - HALF_ARENA,
-            z: ((cell / GRID_SIZE) as f64 + 0.5) * CELL_SIZE - HALF_ARENA,
+            x: ((cell % self.grid) as f64 + 0.5) * CELL_SIZE - self.half_extent(),
+            z: ((cell / self.grid) as f64 + 0.5) * CELL_SIZE - self.half_extent(),
         }
     }
 
@@ -186,12 +305,12 @@ impl Navigation {
         if self.blocked[cell] == 0 {
             return cell;
         }
-        let size = GRID_SIZE as i64;
+        let size = self.grid as i64;
         for r in 1..NEAREST_SEARCH_RADIUS {
             for z in -r..=r {
                 for x in -r..=r {
-                    let a = (cell % GRID_SIZE) as i64 + x;
-                    let b = (cell / GRID_SIZE) as i64 + z;
+                    let a = (cell % self.grid) as i64 + x;
+                    let b = (cell / self.grid) as i64 + z;
                     if a >= 0
                         && a < size
                         && b >= 0
@@ -215,7 +334,7 @@ impl Navigation {
             } else {
                 0.0
             };
-            if self.blocked[cell_at(from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f)]
+            if self.blocked[self.cell_at(from.x + (to.x - from.x) * f, from.z + (to.z - from.z) * f)]
                 != 0
             {
                 return false;
@@ -247,10 +366,12 @@ impl Navigation {
         }
         let search = self.search;
         self.open.clear();
-        let goal_x = (goal % GRID_SIZE) as i64;
-        let goal_z = (goal / GRID_SIZE) as i64;
+        let grid = self.grid;
+        let cells = (grid * grid) as u64;
+        let goal_x = (goal % grid) as i64;
+        let goal_z = (goal / grid) as i64;
         let heuristic = |cell: usize| {
-            ((cell % GRID_SIZE) as i64 - goal_x).abs() + ((cell / GRID_SIZE) as i64 - goal_z).abs()
+            ((cell % grid) as i64 - goal_x).abs() + ((cell / grid) as i64 - goal_z).abs()
         };
         // A cheaper route to an open cell pushes a smaller estimate with the cell's original
         // discovery order, so the outdated entry always pops after the cell has closed.
@@ -266,13 +387,13 @@ impl Navigation {
             state.cost = cost;
             state.parent = parent as u32;
             nav.open.push(Reverse(
-                (cost as i64 + heuristic(cell)) as u64 * CELLS as u64 + state.order as u64,
+                (cost as i64 + heuristic(cell)) as u64 * cells + state.order as u64,
             ));
         };
         reach(self, start, 0, start);
         let mut reached = start;
         while let Some(Reverse(key)) = self.open.pop() {
-            let current = self.discovered[(key % CELLS as u64) as usize] as usize;
+            let current = self.discovered[(key % cells) as usize] as usize;
             let state = &mut self.cells[current];
             if state.closed == search {
                 continue;
@@ -283,15 +404,15 @@ impl Navigation {
                 reached = current;
                 break;
             }
-            let x = (current % GRID_SIZE) as i64;
-            let z = (current / GRID_SIZE) as i64;
+            let x = (current % grid) as i64;
+            let z = (current / grid) as i64;
             for (dx, dz) in DIRECTIONS {
                 let nx = x + dx;
                 let nz = z + dz;
-                if nx < 0 || nz < 0 || nx >= GRID_SIZE as i64 || nz >= GRID_SIZE as i64 {
+                if nx < 0 || nz < 0 || nx >= grid as i64 || nz >= grid as i64 {
                     continue;
                 }
-                let next = (nz * GRID_SIZE as i64 + nx) as usize;
+                let next = (nz * grid as i64 + nx) as usize;
                 if self.blocked[next] != 0 {
                     continue;
                 }
@@ -313,13 +434,13 @@ impl Navigation {
         }
         path.reverse();
     }
-}
 
-fn cell_at(x: f64, z: f64) -> usize {
-    let last = GRID_SIZE as f64 - 1.0;
-    let column = 0f64.max(last.min(((x + HALF_ARENA) / CELL_SIZE).floor()));
-    let row = 0f64.max(last.min(((z + HALF_ARENA) / CELL_SIZE).floor()));
-    row as usize * GRID_SIZE + column as usize
+    fn cell_at(&self, x: f64, z: f64) -> usize {
+        let (last, half) = (self.grid as f64 - 1.0, self.half_extent());
+        let column = 0f64.max(last.min(((x + half) / CELL_SIZE).floor()));
+        let row = 0f64.max(last.min(((z + half) / CELL_SIZE).floor()));
+        row as usize * self.grid + column as usize
+    }
 }
 
 #[cfg(test)]

@@ -40,6 +40,18 @@ pub fn ground_material(kind: GroundKind) -> Material {
     }
 }
 
+/// [`ground_material`] with its tile repeated rather than mirrored. Both tiles join
+/// seamlessly at their edges, and a mirrored tile under an even tint reads, over a large
+/// stretch of ground, as a kaleidoscope of diamonds and crosses at every mirror line; a
+/// repeated one only repeats.
+pub fn repeated_ground_material(kind: GroundKind) -> Material {
+    let mut material = ground_material(kind);
+    if let Some(map) = &mut material.map {
+        map.wrap = Wrap::Repeat;
+    }
+    material
+}
+
 /// The Pine Village ground shared by the arena floor and the valley: the
 /// [`MEADOW_SWAY`] effect's ground mode paints lush grass from the dry-grass tile
 /// (at [`ground_uvs`]) and wears the village roads into it from the packed-dirt

@@ -30,7 +30,8 @@ use super::data::{STEP, group};
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{blast_loose_debris, debris_material, track_debris_contacts};
 use super::math::{Point3, Vec2};
-use super::navigation::Footprint;
+use super::arena::box_turn;
+use super::navigation::{Footprint, turned_box_footprints};
 use super::physics::{ContactForce, from_vector, interaction_groups, query_filter, vector};
 use super::simulation::Simulation;
 use super::structure::{Breaking, Contact, Lie, PartSet, PartShape, Structure};
@@ -300,6 +301,9 @@ pub struct StructureState {
     pub colliders: Vec<Option<ColliderHandle>>,
     /// Counted as levelled ([`super::structure::Levelling`]).
     pub levelled: bool,
+    /// A hull ran it down ([`Simulation::run_down_structure`]): it went over with a knock,
+    /// not a burst, and comes down with one.
+    pub run_down: bool,
 }
 
 impl StructureState {
@@ -312,6 +316,7 @@ impl StructureState {
             hurt: PartSet::EMPTY,
             colliders: vec![None; count],
             levelled: false,
+            run_down: false,
         }
     }
 
@@ -594,7 +599,12 @@ pub fn ground_footprints(cover: &Cover, out: &mut Vec<Footprint>) {
         .any(|index| state.gone.contains(index) && layout.parts[index].blocks_ground);
     if !open {
         if state.gone.len() < layout.parts.len() {
-            out.push(Footprint::from(cover));
+            let turn = box_turn(cover.kind, cover.house_plan);
+            if turn == 0.0 {
+                out.push(Footprint::from(cover));
+            } else {
+                turned_box_footprints((cover.x, cover.z), (cover.w, cover.d), turn, out);
+            }
         }
         return;
     }
@@ -1133,6 +1143,38 @@ impl Simulation {
             self.drop_fall(cover, &layout, fall.parts, fall.tip, blast);
         }
         self.after_break(cover, &layout, &left, by);
+    }
+
+    /// Structure `cover` run down by a hull at `from`: `broken` breaks as a blast there
+    /// would break it, so what it held comes down away from the hull, and `rooted` (its
+    /// footing, which never breaks) is torn out with it and leaves nothing standing in
+    /// a hull's way.
+    pub fn run_down_structure(
+        &mut self,
+        cover: usize,
+        broken: PartSet,
+        rooted: PartSet,
+        from: Point3,
+        by: Option<(u32, Team)>,
+    ) {
+        let before = self.events.len();
+        self.break_structure(cover, broken, PartSet::EMPTY, Some(from), by);
+        // No burst of splinters and dust: a hull pushed it over. Whoever ran it down
+        // says what that shows and sounds like.
+        let id = self.covers[cover].id;
+        let mut index = 0;
+        self.events.retain(|event| {
+            index += 1;
+            index <= before
+                || event.id != Some(id)
+                || !matches!(event.kind, SimEventType::Shatter | SimEventType::Destroy)
+        });
+        if let Some(state) = &mut self.covers[cover].structure {
+            state.run_down = true;
+        }
+        self.remove_parts(cover, &rooted);
+        let region = Footprint::from(&self.covers[cover]);
+        self.nav.rebuild(&self.covers, Some(region));
     }
 
     /// Take `parts` out of the structure's standing parts and the world.
@@ -1792,7 +1834,10 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
             if debris.parts.iter().any(|part| layout.part(part).load) {
                 let at = from_vector(body.center_of_mass());
                 let cover = &simulation.covers[debris.cover];
-                let mut crash = SimEvent::at(SimEventType::Destroy, at.x, at.z);
+                // What a hull pushed over lands with a knock, not a crash.
+                let pushed = cover.structure.as_ref().is_some_and(|state| state.run_down);
+                let landing = if pushed { SimEventType::Impact } else { SimEventType::Destroy };
+                let mut crash = SimEvent::at(landing, at.x, at.z);
                 crash.cover_kind = Some(cover.kind);
                 crash.height = Some(CRASH_HEIGHT);
                 crash.id = Some(cover.id);

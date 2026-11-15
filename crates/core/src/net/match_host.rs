@@ -230,6 +230,9 @@ pub struct MatchHost {
     participants: Vec<Player>,
     owners: HashMap<(u32, u32), String>,
     clock: Option<FixedStepClock>,
+    /// A round began and the runtime has not yet said when building it ended
+    /// ([`round_built`](Self::round_built)).
+    build_untimed: bool,
     stream: Option<StateStream>,
     events: Vec<TimedEvent>,
     shot_paths: ShotPathRecorder,
@@ -280,6 +283,7 @@ impl MatchHost {
             participants: Vec::new(),
             owners: HashMap::new(),
             clock: None,
+            build_untimed: false,
             stream: None,
             events: Vec::new(),
             shot_paths: ShotPathRecorder::default(),
@@ -320,6 +324,19 @@ impl MatchHost {
         self.clock
             .as_ref()
             .map(|clock| clock.until_next_batch_ms(now_ms as f64))
+    }
+
+    /// The runtime's time once a [`receive`](Self::receive) has returned; it calls this
+    /// after each one. Building a round's simulation runs inside the call that begins it,
+    /// after its `now_ms` was read, and no tick of the round was due meanwhile: the
+    /// round's clock counts from here, or the build would be owed to physics as ticks,
+    /// and one longer than the clock allows would end the room as it opened. Only the
+    /// first report after a round begins counts; later ones change nothing.
+    pub fn round_built(&mut self, now_ms: u64) {
+        let untimed = std::mem::take(&mut self.build_untimed);
+        if untimed && self.phase == RoomPhase::Playing && self.tick() == 0 {
+            self.clock = Some(FixedStepClock::new(now_ms as f64));
+        }
     }
 
     /// Connections that hold a seat.
@@ -1006,6 +1023,7 @@ impl MatchHost {
         simulation.projectile_moves = Some(Vec::new());
         simulation.shooter_rewind = Some(ShooterRewind::default());
         self.clock = Some(FixedStepClock::new(now_ms as f64));
+        self.build_untimed = true;
         self.stream = Some(StateStream::new(&self.room_epoch, self.round_id));
         for (_, client) in &mut self.clients {
             client.observed_tick = 0;

@@ -169,10 +169,12 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
             max_z: origin.z + 12.0,
         },
     };
-    let min_x = (-ARENA + 3.0).max(bounds.min_x);
-    let max_x = (ARENA - 3.0).min(bounds.max_x);
-    let min_z = (-ARENA + 3.0).max(bounds.min_z);
-    let max_z = (ARENA - 3.0).min(bounds.max_z);
+    // A map larger than the standard arena lands wrecks out to its own edge.
+    let edge = ARENA * simulation.map_scale().max(1.0) - 3.0;
+    let min_x = (-edge).max(bounds.min_x);
+    let max_x = edge.min(bounds.max_x);
+    let min_z = (-edge).max(bounds.min_z);
+    let max_z = edge.min(bounds.max_z);
     // Shift the landing pair inward together at arena/view edges, preserving separation.
     let centre = |separation: f64| {
         let edge = separation.min((max_x - min_x) / 2.0);

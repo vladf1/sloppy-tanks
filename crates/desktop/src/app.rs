@@ -1087,6 +1087,12 @@ impl Session {
             return Ok(());
         }
         let wanted = self.wanted_options();
+        // The Neighborhood's arena waits for its houses' models (hashed files a page
+        // downloads once the map is chosen): built before they arrive, the round would
+        // show the coded houses. Other maps draw none and never download them.
+        if wanted.map_mode == MapId::Neighborhood && !install_imported_home() {
+            return Ok(());
+        }
         if wanted != self.prepared_options {
             // The rebuild's first step holds this thread for a moment: the player's new
             // choice, or GO's LOADING…, shows first, as the page waits for a paint.
@@ -1369,6 +1375,14 @@ impl Session {
                 game.debug_set_off(off).map_err(engine_error)?;
                 Value::Null
             }
+            Command::Place { x, z, heading } => {
+                game.place_player(x, z, heading).map_err(engine_error)?;
+                Value::Null
+            }
+            Command::Calm(on) => {
+                game.set_calm(on);
+                Value::Null
+            }
             Command::Latency { .. } => return Err("single player has no connection".into()),
         })
     }
@@ -1528,6 +1542,41 @@ fn window_icon() -> Option<winit::window::Icon> {
     let image = image.into_rgba8();
     let (width, height) = image.dimensions();
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
+/// Download the Blender-made house models (one file) and hand them to the core once it
+/// arrives; only the Neighborhood draws them, so only its arenas ask. `?codedhome` (or
+/// `SLOPPY_CODED_HOME` natively) keeps the coded houses. True once the file is settled:
+/// installed, refused, failed to download or not in the build.
+pub(crate) fn install_imported_home() -> bool {
+    use sloppy_core::models::imported_house::{MODELS_PATH, install};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static SETTLED: AtomicBool = AtomicBool::new(false);
+    if SETTLED.load(Ordering::Relaxed) {
+        return true;
+    }
+    #[cfg(target_arch = "wasm32")]
+    let coded = web_sys::window()
+        .and_then(|window| window.location().search().ok())
+        .is_some_and(|search| search.contains("codedhome"));
+    #[cfg(not(target_arch = "wasm32"))]
+    let coded = std::env::var_os("SLOPPY_CODED_HOME").is_some();
+    if coded {
+        SETTLED.store(true, Ordering::Relaxed);
+        return true;
+    }
+    crate::assets::request(MODELS_PATH);
+    match crate::assets::load(MODELS_PATH) {
+        crate::assets::Asset::Ready(bytes) => {
+            if let Err(error) = install(&bytes) {
+                report!("The house models did not load: {error}");
+            }
+        }
+        crate::assets::Asset::Loading => return false,
+        crate::assets::Asset::Missing => {}
+    }
+    SETTLED.store(true, Ordering::Relaxed);
+    true
 }
 
 #[cfg(test)]

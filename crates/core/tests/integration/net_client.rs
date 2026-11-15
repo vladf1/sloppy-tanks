@@ -616,6 +616,7 @@ fn an_own_shell_strikes_near_cover_close_to_when_it_is_drawn_there() {
         color: 0x888888,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     net.run(500.0);
     net.peers[alice].recording = true;
@@ -673,6 +674,7 @@ fn a_pushed_drum_is_drawn_ahead_of_the_hull_and_handed_back_without_a_jump() {
         color: 0xaa3322,
         timber_join: None,
         timber_bays: None,
+        house_plan: None,
     });
     let drum_id = sim.covers[index].id;
     net.run(500.0);

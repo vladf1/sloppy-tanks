@@ -29,7 +29,7 @@ pub const SOIL_ROWS_PER_STEP: usize = 128;
 pub fn theme_bakes(theme: &str) -> &'static [&'static str] {
     match Theme::from_name(theme) {
         Theme::Quarry => &[QUARRY_SOIL_TEXTURE],
-        Theme::Village | Theme::Harbor | Theme::Custom => &[],
+        Theme::Village | Theme::Harbor | Theme::Senda | Theme::Custom => &[],
     }
 }
 

@@ -27,6 +27,9 @@ use crate::sim::structure_physics::{
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
 use crate::sim::projectiles::arena_edge;
+use crate::sim::ramming::{RamHull, ThinShape};
+use crate::sim::scenery_pieces::lies_under_tracks;
+use crate::sim::tree_structure::TREE_STUMP;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::{DebrisMaterial, debris_material};
 use crate::sim::math::{Point3, Quat4, Vec2};
@@ -34,7 +37,8 @@ use crate::sim::physics::{
     from_vector, interaction_groups, query_filter, to_rotation, to_vector, vector,
 };
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
-use crate::sim::simulation::{Simulation, arena_world, cover_parts};
+use crate::sim::arena::cover_turn;
+use crate::sim::simulation::{Simulation, arena_world, cover_parts, fit_arena_floor};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
 use crate::sim::types::{CoverKind, VehicleKind};
@@ -359,6 +363,9 @@ struct CoverBody {
     /// A structure's layout, and its parts that took damage.
     layout: Option<Arc<Structure>>,
     cracked: PartSet,
+    /// Where it stands and the radius a hull meets it at, if a hull runs it down
+    /// (`sim::ramming`).
+    thin: Option<(Vec2, f64)>,
     /// The scene sync that last found its record.
     seen: u64,
 }
@@ -490,12 +497,14 @@ pub struct TankPredictor {
     broken: Vec<ColliderHandle>,
     /// Where the scene's shells leave its arena.
     arena_edge: f64,
+    /// The scene's map scale its ground slab is fitted to.
+    floor_scale: f64,
 }
 
 impl Default for TankPredictor {
     fn default() -> Self {
         Self {
-            world: arena_world(),
+            world: arena_world(1.0),
             hull: None,
             covers: BTreeMap::new(),
             tanks: BTreeMap::new(),
@@ -504,6 +513,7 @@ impl Default for TankPredictor {
             gone: Vec::new(),
             broken: Vec::new(),
             arena_edge: arena_edge(1.0),
+            floor_scale: 1.0,
         }
     }
 }
@@ -526,6 +536,10 @@ impl TankPredictor {
     /// at its replicated pose.
     pub fn sync_covers(&mut self, state: &RenderState) {
         self.arena_edge = arena_edge(state.map_scale);
+        if self.floor_scale != state.map_scale {
+            self.floor_scale = state.map_scale;
+            fit_arena_floor(&mut self.world, state.map_scale);
+        }
         self.sync += 1;
         let sync = self.sync;
         for cover in &state.covers {
@@ -542,7 +556,8 @@ impl TankPredictor {
                 // A structure's layout is built once; a break only changes its parts.
                 let layout = layout.or_else(|| {
                     let (x, z, w, d) = (cover.x, cover.z, cover.w, cover.d);
-                    structure_of(cover.kind, x, z, w, d, cover.h, cover.timber_join)
+                    let (join, plan) = (cover.timber_join, cover.house_plan);
+                    structure_of(cover.kind, x, z, w, d, cover.h, join, plan)
                 });
                 let body = self.insert_cover(cover, form, layout.as_deref());
                 self.world.bodies[body].user_data = Owner::Cover(cover.id).user_data();
@@ -560,6 +575,7 @@ impl TankPredictor {
                         },
                         layout,
                         cracked: PartSet::EMPTY,
+                        thin: thin_cover(cover),
                         seen: sync,
                     },
                 );
@@ -784,7 +800,7 @@ impl TankPredictor {
         };
         let parts = match (form, layout) {
             (CoverForm::Parts(broken), Some(layout)) => structure_parts(layout, x, z, &broken),
-            _ => cover_parts(cover.kind, x, z, w, d, cover.h),
+            _ => cover_parts(cover.kind, x, z, w, d, cover.h, cover_turn(cover.kind, cover.house_plan)),
         };
         let body = self.world.insert_body(parts.body);
         match form {
@@ -920,11 +936,53 @@ impl TankPredictor {
                 other.drive,
             );
         }
+        self.run_down_thin_cover();
         // As the host does ahead of its step.
         for debris in self.debris.values().filter(|debris| debris.structure && !debris.rested) {
             cap_loose_speed(&mut self.world.bodies[debris.body]);
         }
         self.world.step();
+    }
+
+    /// The viewer's hull runs down the thin cover it is about to drive into, as the host's
+    /// pass does ahead of its step (`sim::ramming`): that cover leaves the predicted world
+    /// and the hull loses the same share of its speed. The host reaches the same cover a
+    /// few ticks behind the client; until its scene shows it down, each sync stands it up
+    /// again and each replay runs it down again at the same tick.
+    fn run_down_thin_cover(&mut self) {
+        let Some(hull) = self.hull.as_ref() else {
+            return;
+        };
+        let body = &self.world.bodies[hull.body];
+        let Some(ram) = RamHull::moving(
+            hull.hull.kind,
+            from_vector(body.translation()).planar(),
+            hull.hull.heading,
+            from_vector(body.linvel()).planar(),
+        ) else {
+            return;
+        };
+        self.gone.extend(self.covers.iter().filter_map(|(id, cover)| {
+            let (at, radius) = cover.thin?;
+            // A tree whose stump the host already tore out stands in nothing's way.
+            let stands = match cover.form {
+                CoverForm::Standing => true,
+                CoverForm::Parts(broken) => !broken.contains(TREE_STUMP),
+            };
+            (stands && ram.meets(at, radius).is_some()).then_some(*id)
+        }));
+        let struck = self.gone.len() as i32;
+        for id in self.gone.drain(..) {
+            if let Some(old) = self.covers.remove(&id) {
+                self.world.remove_body(old.body);
+            }
+        }
+        if struck > 0 {
+            let kept = ram.speed_kept(struck) as f32;
+            let body = &mut self.world.bodies[hull.body];
+            let velocity = body.linvel();
+            body.set_linvel(Vector::new(velocity.x * kept, velocity.y, velocity.z * kept), true);
+        }
     }
 
     /// What the viewer's hull touches after the last step: other tanks, cover and debris it
@@ -1200,6 +1258,24 @@ pub fn debris_offset(fragment: &RenderFragment) -> f64 {
 }
 
 /// How a cover record stands in the predicted world, or `None` when nothing is left of it.
+/// Where a replicated cover stands and the radius a hull meets it at, if a hull runs it
+/// down.
+fn thin_cover(cover: &RenderCover) -> Option<(Vec2, f64)> {
+    let radius = ThinShape {
+        kind: cover.kind,
+        structure: structural(cover.kind),
+        destructible: cover.destructible,
+        movable: cover.motion.is_some(),
+        x: cover.x,
+        z: cover.z,
+        w: cover.w,
+        d: cover.d,
+        h: cover.h,
+    }
+    .radius()?;
+    Some((Vec2::new(cover.x, cover.z), radius))
+}
+
 fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
     if structural(cover.kind) {
         Some(CoverForm::Parts(cover.broken))
@@ -1254,6 +1330,10 @@ fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, Collider
 /// pieces of broken scenery and the fallen parts of structures, which the
 /// predicted world leaves out. Small shards only touch the ground and cover.
 pub fn solid_debris(fragment: &RenderFragment) -> bool {
+    // A post a hull pushed over lies under tracks.
+    if lies_under_tracks(fragment.shape, fragment.source_kind) {
+        return false;
+    }
     fragment.wreck.is_some()
         || fragment.dimensions.is_some()
         || fragment.structure_parts.is_some()

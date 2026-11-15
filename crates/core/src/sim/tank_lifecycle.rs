@@ -266,4 +266,21 @@ impl Simulation {
         event.id = Some(id);
         self.events.push(event);
     }
+
+    /// Set a tank down at rest at `(x, z)` facing `heading` (radians; `None` keeps it):
+    /// its body moves through Rapier and the poses it is drawn between start there, so
+    /// it does not slide across the field from where it was.
+    pub fn place_tank(&mut self, tank_index: usize, x: f64, z: f64, heading: Option<f64>) {
+        let tank = &mut self.tanks[tank_index];
+        let heading = heading.unwrap_or(tank.heading);
+        tank.heading = heading;
+        tank.previous = Vec2::new(x, z);
+        tank.brain.last = Vec2::new(x, z);
+        if let Some(body) = self.world.bodies.get_mut(tank.body) {
+            body.set_translation(vector(x, SIMULATION_RULES.tank_body_height, z), true);
+            body.set_rotation(to_rotation(Quat4::yaw(heading)), true);
+            body.set_linvel(vector(0.0, 0.0, 0.0), true);
+            body.set_angvel(vector(0.0, 0.0, 0.0), true);
+        }
+    }
 }

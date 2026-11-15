@@ -500,3 +500,86 @@ fn a_panicking_host_ends_its_room_with_simulation_error() {
         assert!(room.deadline().is_none());
     }
 }
+
+/// What the manual clock gains while [`SlowBuildHost`] begins a round: more than the
+/// fixed-step clock lets a round fall behind.
+const SLOW_BUILD_MS: u64 = 400;
+
+/// The real host, whose rounds take [`SLOW_BUILD_MS`] of the session's clock to build.
+struct SlowBuildHost(MatchRoom, Arc<AtomicU64>);
+
+impl RoomHost for SlowBuildHost {
+    fn receive(&mut self, connection: ConnectionId, text: &str, now_ms: u64, out: &mut HostOutput) {
+        self.0.receive(connection, text, now_ms, out);
+        if message_type(text) == "start" {
+            self.1.fetch_add(SLOW_BUILD_MS, Ordering::Relaxed);
+        }
+    }
+    fn round_built(&mut self, now_ms: u64) {
+        self.0.round_built(now_ms);
+    }
+    fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput) {
+        self.0.disconnect(connection, now_ms, out);
+    }
+    fn advance(&mut self, now_ms: u64, out: &mut HostOutput) {
+        self.0.advance(now_ms, out);
+    }
+    fn until_next_batch_ms(&self, now_ms: u64) -> Option<f64> {
+        self.0.until_next_batch_ms(now_ms)
+    }
+    fn dispose(&mut self, reason: &str, out: &mut HostOutput) {
+        self.0.dispose(reason, out);
+    }
+    fn is_disposed(&self) -> bool {
+        self.0.is_disposed()
+    }
+    fn dispose_reason(&self) -> Option<&str> {
+        self.0.dispose_reason()
+    }
+    fn directory_entry(&self, room: &str) -> RoomListing {
+        self.0.directory_entry(room)
+    }
+    fn connections(&self) -> u32 {
+        self.0.connections()
+    }
+    fn tick(&self) -> u64 {
+        self.0.tick()
+    }
+}
+
+#[test]
+fn a_round_that_was_slow_to_build_starts_its_clock_once_built() {
+    let now = Arc::new(AtomicU64::new(1_000_000));
+    let (reader, building) = (now.clone(), now.clone());
+    let events = Arc::new(Mutex::new(Recorded::default()));
+    let factory =
+        move |options: MatchHostOptions| SlowBuildHost(MatchRoom::new(options), building.clone());
+    let mut room: RoomSession<_, FakeSocket> = RoomSession::new(
+        "SLOWBUILD",
+        Arc::new(factory),
+        NameRule::Typed,
+        Arc::new(move || reader.load(Ordering::Relaxed)),
+        Box::new(Recorder(events.clone())),
+    );
+    let player = FakeSocket::default();
+    let id = room.accept(player.clone()).unwrap();
+    room.message(id, Incoming::Text(&join("player")));
+    room.message(id, Incoming::Text(r#"{"type":"start","roundId":0}"#));
+    let built = now.load(Ordering::Relaxed);
+    assert_eq!(built, 1_000_000 + SLOW_BUILD_MS);
+    // The lobby's timer fell due during the build: its callback owes the round nothing.
+    now.fetch_max(room.deadline().unwrap(), Ordering::Relaxed);
+    room.on_timer();
+    assert_eq!(room.sample().unwrap().tick, 0);
+    assert_eq!(room.deadline(), Some(built + HOST_INTERVAL_MS));
+    // The second after it steps a second of ticks, give or take the one falling due
+    // as it ends.
+    while let Some(deadline) = room.deadline().filter(|deadline| *deadline <= built + 1000) {
+        now.store(deadline, Ordering::Relaxed);
+        room.on_timer();
+    }
+    assert_eq!(player.closed_code(), None, "the room stays open");
+    assert!(events.lock().unwrap().ended.is_empty());
+    assert!(room.sample().unwrap().tick.abs_diff(60) <= 1);
+    room.reset("test");
+}

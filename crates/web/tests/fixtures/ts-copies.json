@@ -38,7 +38,7 @@
     "codeCharacters": "23456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     "codeLength": 8,
     "difficulties": ["easy", "normal", "hard"],
-    "mapModes": ["village", "harbor", "quarry", "stress-test", "superstress"],
+    "mapModes": ["village", "harbor", "quarry", "stress-test", "superstress", "neighborhood"],
     "maxContentVersionLength": 128,
     "maxListedRooms": 256,
     "maxRoundMinutes": 99,

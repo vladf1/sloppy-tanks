@@ -5,3 +5,5 @@ assets/texture-sources/
 scripts/benchmarks/
 .claude/
 bunfig.toml
+# Written by the Blender house scripts (assets/blender/), which reproduce them byte for byte.
+crates/core/data/houses/

@@ -35,7 +35,8 @@ const OVERVIEW_BACK: f64 = 0.72;
 const SHAKE_CHANNEL_SPACING: f64 = 37.1;
 /// The followed point sits this high on the tank.
 const FOLLOW_HEIGHT: f64 = 0.7;
-/// The overview frames the whole arena from this far.
+/// The overview frames the whole standard arena from this far; a larger map's from as
+/// much further as it is larger ([`CameraRig::frame_map`]).
 const OVERVIEW_ZOOM: f64 = ARENA * 1.8;
 /// The overhead camera's near plane: this share of its zoom, within these limits (m).
 /// It stands about its zoom's distance from the ground and well over the tallest tree,
@@ -126,6 +127,8 @@ pub struct CameraRig {
     pub follow: DVec3,
     /// The zoom the overhead camera is drawn at (metres).
     pub view_zoom: f64,
+    /// The overview's zoom for the map shown (metres).
+    overview_zoom: f64,
     pub shake: CameraShake,
     /// Metres the viewer has driven, phasing the seated view's sway.
     sway_travel: f64,
@@ -180,6 +183,7 @@ impl Default for CameraRig {
             zoom: CAMERA.default_zoom,
             follow: DVec3::ZERO,
             view_zoom: CAMERA.default_zoom,
+            overview_zoom: OVERVIEW_ZOOM,
             shake: CameraShake::default(),
             sway_travel: 0.0,
             sway_speed: 0.0,
@@ -247,6 +251,12 @@ impl CameraRig {
         [f64::from(u8::from(self.first_person.enabled)), self.zoom]
     }
 
+    /// Frame the overview on a map `map_scale` times the standard arena: a larger one
+    /// from as much further, a compact yard as the standard arena.
+    pub fn frame_map(&mut self, map_scale: f64) {
+        self.overview_zoom = OVERVIEW_ZOOM * map_scale.max(1.0);
+    }
+
     /// Pose the overhead camera, advance the seat flight and orient the drawn
     /// camera. The eye position in first person waits for `place_eye`, once the
     /// turret is posed. `has_model` is false before the viewer's model exists.
@@ -277,7 +287,11 @@ impl CameraRig {
         // straight at it: it never leads the aim, the drive or the fight, lags
         // behind, or zooms by itself (the player found a moving camera
         // distracting).
-        let zoom = if overview { OVERVIEW_ZOOM } else { self.zoom };
+        let zoom = if overview {
+            self.overview_zoom
+        } else {
+            self.zoom
+        };
         self.view_zoom = zoom;
         let (height, back) = if overview {
             (OVERVIEW_HEIGHT, OVERVIEW_BACK)
@@ -286,7 +300,11 @@ impl CameraRig {
         };
         let eye = self.follow + DVec3::new(0.0, zoom * height, zoom * back);
         self.overhead.look_at(eye.as_vec3(), self.follow.as_vec3());
-        let landing_zoom = if overview { OVERVIEW_ZOOM } else { self.zoom };
+        let landing_zoom = if overview {
+            self.overview_zoom
+        } else {
+            self.zoom
+        };
         let landing_eye = self.follow
             + DVec3::new(
                 0.0,

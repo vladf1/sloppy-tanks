@@ -14,6 +14,11 @@ use super::physics::{
     from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
 };
 use super::simulation::Simulation;
+use super::arena::cover_turn;
+use super::house_layout::SENDA_STYLES;
+use super::senda_entries::is_entry;
+use super::senda_layout::{SENDA_SCALE, STREET_LAMP_GLASS, street_lamp_look};
+use super::senda_yards::{LOGGIA_COLUMN, LOGGIA_EAVE, PATIO_POST, PATIO_ROOF, PERGOLA_WOOD, PatioCover};
 use super::types::{Cover, CoverKind, Fragment, FragmentShape};
 
 /// A movable cover's world pose when it was destroyed.
@@ -33,6 +38,9 @@ struct Breakup<'a> {
     cover: &'a Cover,
     rng: Random,
     pieces: Vec<u32>,
+    /// Each piece is thrown out and up from the cover's middle as it appears: a burst.
+    /// A piece of cover a hull pushed over is left at rest for its caller to tip.
+    thrown: bool,
 }
 
 impl Breakup<'_> {
@@ -89,22 +97,24 @@ impl Breakup<'_> {
                 .restitution(surface.restitution as f32),
             Some(body),
         );
-        let angle = self.rng.range(0.0, PI * 2.0);
-        let outward = x.hypot(z);
-        let (nx, nz) = if outward > 0.1 {
-            (x / outward, z / outward)
-        } else {
-            (angle.cos(), angle.sin())
-        };
-        let speed = self.rng.range(2.0, 5.0);
-        let rigid_body = &mut simulation.world.bodies[body];
-        let mass = rigid_body.mass() as f64;
-        let lift = self.rng.range(3.0, 7.0);
-        rigid_body.apply_impulse_at_point(
-            vector(nx * speed * mass, lift * mass, nz * speed * mass),
-            vector(cover.x + x + w * 0.15, y - h * 0.2, cover.z + z + d * 0.15),
-            true,
-        );
+        if self.thrown {
+            let angle = self.rng.range(0.0, PI * 2.0);
+            let outward = x.hypot(z);
+            let (nx, nz) = if outward > 0.1 {
+                (x / outward, z / outward)
+            } else {
+                (angle.cos(), angle.sin())
+            };
+            let speed = self.rng.range(2.0, 5.0);
+            let rigid_body = &mut simulation.world.bodies[body];
+            let mass = rigid_body.mass() as f64;
+            let lift = self.rng.range(3.0, 7.0);
+            rigid_body.apply_impulse_at_point(
+                vector(nx * speed * mass, lift * mass, nz * speed * mass),
+                vector(cover.x + x + w * 0.15, y - h * 0.2, cover.z + z + d * 0.15),
+                true,
+            );
+        }
         track_debris_contacts(simulation, body, collider, id, material);
         let mut fragment = Fragment::new(
             id,
@@ -137,8 +147,14 @@ pub fn break_scenery(
         cover.w = motion.w;
         cover.d = motion.d;
     }
+    let patio = (cover.kind == CoverKind::Concrete)
+        .then(|| PatioCover::of_color(cover.color))
+        .flatten();
+    let entry = cover.kind == CoverKind::Concrete && is_entry(cover.color);
     let legacy_count = match cover.kind {
         CoverKind::Drum => 3,
+        // As many as the shards a plain cover falls back to.
+        CoverKind::Concrete if patio.is_some() || entry => 3,
         _ => return false,
     };
     // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
@@ -150,11 +166,14 @@ pub fn break_scenery(
         cover: &cover,
         rng: Random::new(cover.id as f64 * 73_856_093.0 + simulation.seed),
         pieces: Vec::new(),
+        thrown: true,
     };
     match cover.kind {
         CoverKind::Drum => {
             // Internal pressure tears the thin wall into small curled sheets, not a
             // surviving cylinder. Offset each sheet so the blast spreads them radially.
+            // A wheelie bin's sheets and lid are its own plastic.
+            let bin = super::senda_layout::is_trash_bin(cover.color).then_some(cover.color);
             let phase = breakup.rng.range(0.0, PI * 2.0);
             for i in 0..3 {
                 let angle = phase + (i as f64 * PI * 2.0) / 3.0;
@@ -166,7 +185,7 @@ pub fn break_scenery(
                     FragmentShape::DrumShell,
                     [angle.cos() * cover.w * 0.3, y, angle.sin() * cover.d * 0.3],
                     [w, h, 0.12],
-                    Some(if i == 1 { 0x493e35 } else { 0x765443 }),
+                    Some(bin.unwrap_or(if i == 1 { 0x493e35 } else { 0x765443 })),
                     DebrisMaterial::Metal,
                 );
                 let body = simulation.fragments[scrap].body;
@@ -177,9 +196,14 @@ pub fn break_scenery(
                 FragmentShape::DrumLid,
                 [0.0, cover.h, 0.0],
                 [cover.w * 0.65, 0.16, cover.w * 0.65],
-                Some(0x574e3e),
+                Some(bin.unwrap_or(0x574e3e)),
                 DebrisMaterial::Metal,
             );
+        }
+        CoverKind::Concrete if entry => break_entry(&mut breakup, simulation),
+        CoverKind::Concrete => {
+            let Some(look) = patio else { return false };
+            break_patio_cover(&mut breakup, simulation, look);
         }
         _ => return false,
     }
@@ -215,4 +239,187 @@ pub fn break_scenery(
         }
     }
     true
+}
+
+/// A debris cylinder's drawn shape ([`FragmentShape::Wheel`]) is this wide and tall (m)
+/// before its piece's dimensions scale it.
+const CYLINDER_PIECE: (f64, f64) = (0.96, 0.28);
+/// A post's shaft is this share of its footprint across; a street lamp's globe is as wide
+/// as its footprint and this much taller than wide.
+const POST_SHAFT: f64 = 0.35;
+const LAMP_GLOBE_HEIGHT: f64 = 1.3;
+/// How fast (rad/s) a post a hull pushed over starts turning about its foot.
+const POST_TOPPLE: f64 = 2.2;
+
+/// Whether a piece of debris is one of a pushed-over post's ([`topple_post`]), which lies
+/// under tracks: the only scenery piece shaped as a cylinder. A room's client tells them
+/// from solid debris by this, from the piece's replicated shape and where it came from.
+pub fn lies_under_tracks(shape: Option<FragmentShape>, source: Option<CoverKind>) -> bool {
+    shape == Some(FragmentShape::Wheel) && source.is_some()
+}
+
+/// The post `cover_index`, which a hull pushed over, goes down whole toward `fall` (a
+/// planar direction): its shaft tips about its foot and comes to lie on the ground, and a
+/// street lamp's globe goes with it. The pieces lie where they fall, under any hull that
+/// drives over them, and clear as other scenery's do. The cover itself is already out of the round ([`Simulation::take_cover_out`]).
+pub fn topple_post(simulation: &mut Simulation, cover_index: usize, fall: (f64, f64)) {
+    let cover = simulation.covers[cover_index].clone();
+    let mut breakup = Breakup {
+        cover: &cover,
+        rng: Random::new(cover.id as f64 * 73_856_093.0 + simulation.seed),
+        pieces: Vec::new(),
+        thrown: false,
+    };
+    let length = fall.0.hypot(fall.1).max(1e-6);
+    let (fx, fz) = (fall.0 / length, fall.1 / length);
+    let across = cover.w.max(cover.d);
+    let shaft = across * POST_SHAFT;
+    let cylinder = |width: f64, height: f64| {
+        (
+            [width / CYLINDER_PIECE.0, height / CYLINDER_PIECE.1, width / CYLINDER_PIECE.0],
+            ColliderBuilder::cylinder((height / 2.0) as f32, (width / 2.0) as f32),
+        )
+    };
+    let mut pieces = Vec::new();
+    let (size, collider) = cylinder(shaft, cover.h);
+    pieces.push((cover.h / 2.0, size, cover.color, collider));
+    if street_lamp_look(cover.color).is_some() {
+        let globe = across * LAMP_GLOBE_HEIGHT;
+        let (size, collider) = cylinder(across, globe);
+        pieces.push((cover.h + globe / 2.0, size, STREET_LAMP_GLASS, collider));
+    }
+    for (y, size, color, collider) in pieces {
+        let piece = breakup.piece_with(
+            simulation,
+            FragmentShape::Wheel,
+            [0.0, y, 0.0],
+            size,
+            Some(color),
+            DebrisMaterial::Metal,
+            collider,
+        );
+        // Thin enough for tracks to roll over where it lies: it rests on the ground and
+        // meets nothing else, as a conifer's fallen boughs do. A hull would otherwise
+        // shove so light a piece down the street ahead of it.
+        let handle = simulation.fragments[piece].body;
+        for collider in simulation.world.bodies[handle].colliders().to_vec() {
+            simulation.world.colliders[collider]
+                .set_collision_groups(interaction_groups(group::BOUGH_DEBRIS));
+        }
+        // Turning about the foot: the top leads the way down.
+        let body = &mut simulation.world.bodies[simulation.fragments[piece].body];
+        body.set_angvel(vector(fz * POST_TOPPLE, 0.0, -fx * POST_TOPPLE), true);
+        body.set_linvel(vector(fx * POST_TOPPLE * y, 0.0, fz * POST_TOPPLE * y), true);
+    }
+}
+
+/// A loggia or pergola brought down: its posts or columns, the beam across them and its
+/// roof (a loggia's tile in two halves, a pergola's slats in a few bundles) fall from
+/// where they stood, turned as the cover was, in the house's paint or the stained wood.
+/// Laid out in Senda's design metres, as its model is drawn, and scaled as it stands
+/// ([`SENDA_SCALE`]).
+fn break_patio_cover(breakup: &mut Breakup, simulation: &mut Simulation, look: PatioCover) {
+    let cover = breakup.cover;
+    let (w, d) = (cover.w / SENDA_SCALE, cover.d / SENDA_SCALE);
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // From the box's own frame (+z toward the house) into the world's, about its middle.
+    let place = |x: f64, y: f64, z: f64| [x * cos + z * sin, y, -x * sin + z * cos];
+    let (low, eave) = PATIO_ROOF;
+    let style = SENDA_STYLES[usize::from(cover.house_plan.map_or(0, |plan| plan.style))
+        % SENDA_STYLES.len()];
+    let mut pieces = Vec::new();
+    match look {
+        PatioCover::Loggia => {
+            let (column, beam) = LOGGIA_COLUMN;
+            let cover_w = w - 2.0 * LOGGIA_EAVE;
+            let reach = d - LOGGIA_EAVE;
+            let front = d / 2.0 - reach + column / 2.0;
+            let wall = DebrisMaterial::Concrete;
+            for end in [-1.0, 1.0] {
+                let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
+                pieces.push((FragmentShape::Panel, at, [column, low, column], style.siding, wall, 0.0));
+            }
+            let at = place(0.0, low - beam / 2.0, front);
+            pieces.push((FragmentShape::Panel, at, [cover_w, beam, column], style.siding, wall, 0.0));
+            let pitch = (eave - low).atan2(reach);
+            let slope = reach.hypot(eave - low) + LOGGIA_EAVE;
+            for end in [-1.0, 1.0] {
+                let at = place(end * w / 4.0, (low + eave) / 2.0 + 0.08, 0.0);
+                pieces.push((FragmentShape::Panel, at, [w / 2.0, 0.09, slope], style.roof, wall, pitch));
+            }
+        }
+        PatioCover::Pergola => {
+            let wood = DebrisMaterial::Wood;
+            let cover_w = w - 0.1;
+            let reach = d - 0.1;
+            let front = d / 2.0 - reach + PATIO_POST / 2.0;
+            for end in [-1.0, 1.0] {
+                let at = place(end * (cover_w - PATIO_POST) / 2.0, low / 2.0, front);
+                pieces.push((FragmentShape::Panel, at, [PATIO_POST, low, PATIO_POST], PERGOLA_WOOD, wood, 0.0));
+            }
+            for z in [front, d / 2.0 - 0.06] {
+                let at = place(0.0, low + 0.06, z);
+                pieces.push((FragmentShape::Panel, at, [cover_w, 0.12, 0.1], PERGOLA_WOOD, wood, 0.0));
+            }
+            for x in [-0.3, 0.0, 0.3] {
+                let at = place(x * cover_w, low + 0.15, d / 2.0 - reach / 2.0);
+                pieces.push((FragmentShape::Wood, at, [0.3, 0.06, reach], PERGOLA_WOOD, wood, 0.0));
+            }
+        }
+    }
+    for (shape, at, size, color, material, pitch) in pieces {
+        let (at, size) = (at.map(|v| v * SENDA_SCALE), size.map(|v| v * SENDA_SCALE));
+        let piece = breakup.piece(simulation, shape, at, size, Some(color), material);
+        let body = simulation.fragments[piece].body;
+        let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(-pitch, 0.0, 0.0));
+        simulation.world.bodies[body].set_rotation(to_rotation(rotation), true);
+    }
+}
+
+/// How high (m) an entry's walls stand under its roof, as a share of its height, and how
+/// thick its stucco slabs and its tile fall (m).
+const ENTRY_WALL_SHARE: f64 = 0.78;
+const ENTRY_SLAB: f64 = 0.15;
+const ENTRY_TILE: f64 = 0.09;
+
+/// An office and entry brought down: its stucco front in two slabs, its side wall between
+/// the room and the porch bay, and its tile roof in two halves fall from where they stood,
+/// turned as the cover was, in its house's paint and tile. Nothing stays standing: the
+/// house's own front stands behind it. Laid out in Senda's design metres, as its model is
+/// drawn, and scaled as it stands ([`SENDA_SCALE`]).
+fn break_entry(breakup: &mut Breakup, simulation: &mut Simulation) {
+    let cover = breakup.cover;
+    let (w, d, h) = (
+        cover.w / SENDA_SCALE,
+        cover.d / SENDA_SCALE,
+        cover.h / SENDA_SCALE,
+    );
+    let turn = cover_turn(cover.kind, cover.house_plan);
+    let (sin, cos) = turn.sin_cos();
+    // From the box's own frame (+z out from the house) into the world's, about its middle.
+    let place = |x: f64, y: f64, z: f64| [x * cos + z * sin, y, -x * sin + z * cos];
+    let style = SENDA_STYLES[usize::from(cover.house_plan.map_or(0, |plan| plan.style))
+        % SENDA_STYLES.len()];
+    let wall = h * ENTRY_WALL_SHARE;
+    let stucco = DebrisMaterial::Concrete;
+    let mut pieces = Vec::new();
+    for side in [-1.0, 1.0] {
+        let at = place(side * w / 4.0, wall / 2.0, (d - ENTRY_SLAB) / 2.0);
+        pieces.push((at, [w / 2.0, wall, ENTRY_SLAB], style.siding, 0.0));
+    }
+    let at = place(0.0, wall / 2.0, 0.0);
+    pieces.push((at, [ENTRY_SLAB, wall, d], style.siding, 0.0));
+    let pitch = ((h - wall) / d).atan();
+    for side in [-1.0, 1.0] {
+        let at = place(side * w / 4.0, (h + wall) / 2.0, 0.0);
+        pieces.push((at, [w / 2.0, ENTRY_TILE, d], style.roof, pitch));
+    }
+    for (at, size, color, pitch) in pieces {
+        let (at, size) = (at.map(|v| v * SENDA_SCALE), size.map(|v| v * SENDA_SCALE));
+        let piece = breakup.piece(simulation, FragmentShape::Panel, at, size, Some(color), stucco);
+        let body = simulation.fragments[piece].body;
+        let rotation = Quat4::yaw(turn).multiply(Quat4::from_euler_xyz(pitch, 0.0, 0.0));
+        simulation.world.bodies[body].set_rotation(to_rotation(rotation), true);
+    }
 }

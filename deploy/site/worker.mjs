@@ -1,8 +1,9 @@
 // The site's Worker, for the dev site and production. Static assets serve everything
-// except the engine binaries, the shell's font collection, its shader tables and the
-// game page, which `run_worker_first` routes here: Cloudflare compresses those on every
-// request (the tables 32-45% larger than Brotli-11), so precompress.mjs stores Brotli and
-// gzip copies at deploy time and this script sends the one the client accepts.
+// except the engine binaries, the shell's font collection, its shader tables, the house
+// models and the game page, which `run_worker_first` routes here: Cloudflare compresses
+// the first three and the page on every request (the tables 32-45% larger than
+// Brotli-11) and the models not at all, so precompress.mjs stores Brotli and gzip copies
+// at deploy time and this script sends the one the client accepts.
 //
 // The game page comes this way for its ETag. A browser asks for the page again at every
 // visit, and Cloudflare sends its own compressed copy of an HTML file without one, so
@@ -17,6 +18,8 @@ const contentTypes = {
   ".wasm": "application/wasm",
   ".ttc": "font/collection",
   ".json": "application/json",
+  // The Neighborhood's house models, packed (scripts/pack-houses.ts).
+  ".bin": "application/octet-stream",
 };
 const KEPT_FOR_GOOD = "public, max-age=31536000, immutable, no-transform";
 

@@ -12,7 +12,11 @@
 //! - `hold(ms)`: hold the shell's clock at `ms`, so each frame steps the game to the
 //!   time the check picks; `hold(null)` lets it run again;
 //! - `debug(name, ...args)`: a promise of what a debug [`Command`] returned (up to three
-//!   arguments), run before the next frame.
+//!   arguments), run before the next frame. Two arrange single player for repeatable
+//!   captures, and a room page refuses them: `debug("place", x, z, heading)` sets the
+//!   player's tank down at rest at world `(x, z)` metres facing `heading` degrees (90 is
+//!   east, +x), turret along the hull; `debug("calm", on)` holds the bots still and
+//!   silent and makes every tank immune while on, the player's turret keeping its aim.
 //!
 //! The old page's development `window.sloppy` (`35afd91`'s `src/diagnostics.ts`) is the
 //! model. Natively, and in a page without the flag, all of this does nothing.
@@ -196,6 +200,17 @@ pub enum Command {
         jitter: f64,
         stall: f64,
     },
+    /// `place(x, z, heading)`: set the player's tank down at rest at world `(x, z)`
+    /// (metres) facing `heading` (degrees on the call, 0 = +z, 90 = +x east; radians
+    /// here), turret along the hull (`Game::place_player`). Single player only.
+    Place {
+        x: f64,
+        z: f64,
+        heading: f64,
+    },
+    /// `calm(on)`: bots hold still and do not fire and no tank takes damage while on;
+    /// the player's turret keeps its aim (`Game::set_calm`). Single player only.
+    Calm(bool),
 }
 
 impl Command {
@@ -237,8 +252,27 @@ impl Command {
                 jitter: number(1, 0.0)?,
                 stall: number(2, 0.0)?,
             },
+            "place" => {
+                let required = |index: usize| {
+                    args.get(index)
+                        .and_then(Value::as_f64)
+                        .ok_or_else(|| format!("place: argument {index} is not a number"))
+                };
+                Self::Place {
+                    x: required(0)?,
+                    z: required(1)?,
+                    heading: required(2)?.to_radians(),
+                }
+            }
+            "calm" => Self::Calm(flag()?),
             _ => return Err(format!("no debug command {name}")),
         })
+    }
+
+    /// A room page runs this command: only the network tools, since a room's world is
+    /// the server's (no placing, no calm field).
+    pub fn in_rooms(&self) -> bool {
+        matches!(self, Self::Latency { .. })
     }
 }
 
@@ -622,5 +656,41 @@ mod tests {
         );
         assert!(Command::parse("zoom", &["far".into()]).is_err());
         assert!(Command::parse("teleport", &[]).is_err());
+    }
+
+    #[test]
+    fn place_and_calm_read_degrees_and_switches() {
+        assert_eq!(
+            Command::parse("place", &[10.into(), (-16.5).into(), 90.into()]),
+            Ok(Command::Place {
+                x: 10.0,
+                z: -16.5,
+                heading: std::f64::consts::FRAC_PI_2
+            })
+        );
+        assert!(Command::parse("place", &[10.into(), 16.into()]).is_err());
+        assert!(Command::parse("place", &["east".into(), 16.into(), 90.into()]).is_err());
+        assert_eq!(Command::parse("calm", &[]), Ok(Command::Calm(true)));
+        assert_eq!(
+            Command::parse("calm", &[Value::Bool(false)]),
+            Ok(Command::Calm(false))
+        );
+        assert!(Command::parse("calm", &["yes".into()]).is_err());
+    }
+
+    #[test]
+    fn a_room_refuses_everything_but_the_network_tools() {
+        let place = Command::parse("place", &[0.into(), 0.into(), 0.into()]).unwrap();
+        assert!(!place.in_rooms());
+        assert!(!Command::Calm(true).in_rooms());
+        assert!(!Command::KillHuman.in_rooms());
+        assert!(
+            Command::Latency {
+                latency: 50.0,
+                jitter: 0.0,
+                stall: 0.0
+            }
+            .in_rooms()
+        );
     }
 }

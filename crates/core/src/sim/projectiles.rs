@@ -320,9 +320,11 @@ enum Contact {
 
 /// How far out (m) from the centre, along either axis, a shell leaves the arena: past the
 /// boundary walls' outer face (a shell may clear a low harbour wall) it can meet nothing
-/// more, so it ends there rather than flying out its lifetime.
+/// more, so it ends there rather than flying out its lifetime. A map larger than the
+/// standard arena is laid out at the standard size and scaled whole, its walls too; a
+/// compact yard keeps the standard walls.
 pub fn arena_edge(map_scale: f64) -> f64 {
-    ARENA * map_scale + BOUNDARY_THICKNESS
+    ARENA * map_scale + BOUNDARY_THICKNESS * map_scale.max(1.0)
 }
 
 /// How far (m) a shell at `x`, `z` flies along the unit `direction` before it leaves the

@@ -20,6 +20,9 @@ pub mod model_data;
 pub mod quarry_barrier_shapes;
 pub mod quarry_layout;
 pub mod quarry_rock_shape;
+pub mod senda_entries;
+pub mod senda_layout;
+pub mod senda_yards;
 pub mod timber_layout;
 pub mod tree_layout;
 pub mod tree_proportions;
@@ -56,6 +59,7 @@ beyond_geometry! {
     pub mod physics;
     pub mod pickups;
     pub mod projectiles;
+    pub mod ramming;
     pub mod render_state;
     pub mod round_recap;
     pub mod scenery_pieces;

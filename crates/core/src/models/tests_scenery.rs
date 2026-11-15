@@ -49,7 +49,12 @@ fn scenery_build_times() {
         start.elapsed().as_secs_f64() * 1e3
     );
     assert_eq!(ground.len(), soil.len());
-    for theme in [MapTheme::Village, MapTheme::Harbor, MapTheme::Quarry] {
+    for theme in [
+        MapTheme::Village,
+        MapTheme::Harbor,
+        MapTheme::Quarry,
+        MapTheme::Neighborhood,
+    ] {
         let start = Instant::now();
         let scenery = build_scenery(theme);
         let elapsed = start.elapsed();
@@ -227,7 +232,12 @@ fn rock_footing_adds_no_draw() {
 /// that draws them is built, so they must be exactly what it draws.
 #[test]
 fn scenery_texture_files_are_what_each_scenery_draws() {
-    for theme in [MapTheme::Village, MapTheme::Harbor, MapTheme::Quarry] {
+    for theme in [
+        MapTheme::Village,
+        MapTheme::Harbor,
+        MapTheme::Quarry,
+        MapTheme::Neighborhood,
+    ] {
         let drawn: BTreeSet<&str> = node_textures(build_scenery(theme).root())
             .into_iter()
             .filter_map(|source| match source {

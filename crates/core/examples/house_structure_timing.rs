@@ -94,7 +94,7 @@ fn main() {
             .map(|_| {
                 let start = Instant::now();
                 let mut group = Node::group("");
-                structural_house(&mut group, c.x, c.z, c.w, c.d, c.h, &broken);
+                structural_house(&mut group, c.x, c.z, c.w, c.d, c.h, None, &broken);
                 std::hint::black_box(group);
                 start.elapsed().as_secs_f64() * 1e3
             })
@@ -126,7 +126,7 @@ fn main() {
     let samples = (0..ROUNDS / 4)
         .map(|_| {
             let start = Instant::now();
-            std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, &slope));
+            std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, None, &slope));
             start.elapsed().as_secs_f64() * 1e3
         })
         .collect();
@@ -140,7 +140,7 @@ fn main() {
         .map(|_| {
             let start = Instant::now();
             for parts in &bodies {
-                std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, parts));
+                std::hint::black_box(house_debris(c.x, c.z, c.w, c.d, c.h, None, parts));
             }
             start.elapsed().as_secs_f64() * 1e3
         })

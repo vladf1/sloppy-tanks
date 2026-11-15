@@ -36,6 +36,7 @@ fn scenery_file(theme: MapTheme) -> &'static str {
         MapTheme::Village => "scenery-village",
         MapTheme::Harbor => "scenery-harbor",
         MapTheme::Quarry => "scenery-quarry",
+        MapTheme::Neighborhood => "scenery-neighborhood",
     }
 }
 

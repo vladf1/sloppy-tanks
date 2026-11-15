@@ -27,6 +27,10 @@ impl RoomHost for MatchRoom {
         out.extend(self.host.drain_output());
     }
 
+    fn round_built(&mut self, now_ms: u64) {
+        self.host.round_built(now_ms);
+    }
+
     fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput) {
         self.host.disconnect(connection, now_ms);
         out.extend(self.host.drain_output());

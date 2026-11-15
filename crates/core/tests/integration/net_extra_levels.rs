@@ -29,11 +29,11 @@ fn create(map: &str) -> Value {
 #[test]
 fn every_extra_level_offered_by_the_menu_has_a_matching_level() {
     for option in MAP_OPTIONS {
-        if !option.extra {
-            assert!(MAPS.iter().any(|map| map.id == option.id));
+        // A standard map is built in, or brings streets of its own (the Neighborhood).
+        if !option.extra && MAPS.iter().any(|map| map.id == option.id) {
             continue;
         }
-        let level = extra_level(option.id).expect("an extra level has a setup");
+        let level = extra_level(option.id).expect("a map without a built-in arena has a setup");
         let map = level.custom_map.flatten().expect("its own arena");
         // Its map id names the replicated theme, which clients validate against map ids.
         assert_eq!(map.id, option.id);

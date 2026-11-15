@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Home lab</title>
+    <style>
+      body {
+        margin: 0;
+        background: #222;
+      }
+      canvas {
+        display: block;
+      }
+      #status {
+        position: fixed;
+        top: 4px;
+        left: 6px;
+        color: #fff;
+        font: 12px monospace;
+      }
+    </style>
+  </head>
+  <body data-state="loading">
+    <canvas id="lab" width="1500" height="700"></canvas>
+    <p id="status">Loading…</p>
+    <script type="module" src="./home-lab.ts"></script>
+  </body>
+</html>

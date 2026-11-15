@@ -248,6 +248,7 @@ fn world(map: MapId, theme: MapTheme, stones: impl Fn(&Node, &str) -> bool) -> W
             h: cover.h,
             color: cover.color,
             timber_join: None,
+            house_plan: cover.house_plan,
             broken: Default::default(),
             cracked: Default::default(),
         };
