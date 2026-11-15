@@ -63,9 +63,9 @@ const LEAST_YARD: f64 = 1.0;
 const PASSAGE: f64 = 4.5;
 /// The steps (m) in which a yard is cut short.
 const YARD_STEP: f64 = 0.25;
-/// The little park on the outside of Neblina's bend is walled behind, from the free back
-/// corner of the lot either side of it: those corners lie within this far (m) of its
-/// middle.
+/// The little park on the outside of Neblina's bend opens behind onto the field between
+/// the free back corners of the lots either side of it: those corners lie within this far
+/// (m) of its middle.
 const PARK_REACH: f64 = 14.0;
 /// Two houses share a lot line when they face within this (the cosine of the angle
 /// between their fronts) and stand this far apart (m) at most across their fronts.
@@ -269,7 +269,8 @@ fn pickup_spots() -> Vec<DVec2> {
 
 /// The free back corners of the two lots either side of the little park on the outside
 /// of Neblina's bend ([`bend_park`]), the last of Neblina's west row and the first of
-/// Gaviota's south row: its back wall runs between them.
+/// Gaviota's south row: its open back, onto the field behind, runs between them, with
+/// no wall, a way through for a tank.
 pub fn park_corners(lots: &[Lot]) -> Option<(DVec2, DVec2)> {
     let park = bend_park();
     let mut corners: Vec<(f64, DVec2, DVec2)> = lots
@@ -511,8 +512,7 @@ fn backs_onto_open_ground(row: Row) -> bool {
 /// Every lot's walls as whole lines: its back wall corner to corner (a view fence where
 /// it backs onto open ground), each side lot line once from its back wall to its gate
 /// line (block between neighbours, a view fence on a row's end toward the street or the
-/// hillside), and its two gate returns from the house's side walls to the lot lines; and
-/// the bend park's back wall.
+/// hillside), and its two gate returns from the house's side walls to the lot lines.
 pub fn yard_wall_lines(lots: &[Lot]) -> Vec<YardWall> {
     let mut walls = Vec::new();
     for (i, lot) in lots.iter().enumerate() {
@@ -559,14 +559,8 @@ pub fn yard_wall_lines(lots: &[Lot]) -> Vec<YardWall> {
             }
         }
     }
-    // The bend park's back wall closes it from the field behind.
-    if let Some((a, b)) = park_corners(lots) {
-        walls.push(YardWall {
-            a,
-            b,
-            look: WallLook::Block,
-        });
-    }
+    // The bend park stays open behind ([`park_corners`]): no wall between its lots' back
+    // corners, so it is a tank's way between the field and Neblina's bend.
     walls
 }
 

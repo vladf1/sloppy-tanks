@@ -3568,11 +3568,13 @@ impl Outer {
         if outer <= 0.0 || is_senda_paved(p.x, p.y) {
             return (0.0, 0.0);
         }
-        if self.park.as_ref().is_some_and(|park| park.contains(p, 0.6)) {
+        let park = self.park.as_ref().map_or(1.0, |park| park.mat_room(p));
+        if park <= 0.0 {
             return (0.0, 0.0);
         }
         let south = (zone.south / outer).clamp(0.0, 1.0);
         let mut w = outer
+            * park
             * rise((-lines.lot(p).0 - WALL_FOOT - 0.2) / MAT_RISE)
             * rise((self.inside(p) - 0.4) / MAT_RISE);
         // Where a walk cuts across it, the mat slopes down to the paving over a couple of
@@ -5093,10 +5095,185 @@ impl Park {
         line.push(self.at(side, self.half_depth));
         line
     }
+
+    /// Its two benches and the way each faces: on the walk's outer edge behind the lawn,
+    /// facing it, either side of the way in from the open back.
+    fn benches(&self) -> [(DVec2, DVec2); 2] {
+        let behind = 1.5 * std::f64::consts::PI;
+        [behind - PARK_BENCH_TURN, behind + PARK_BENCH_TURN].map(|theta| {
+            let r = self.lawn(theta) + PARK_WALK + 0.55;
+            let at = self.at(theta.cos() * r, theta.sin() * r);
+            (at, (self.middle - at).normalize())
+        })
+    }
+
+    /// Its open back onto the field, from one lot's back corner to the other's, and the
+    /// way in from it.
+    fn back(&self) -> (DVec2, DVec2, DVec2) {
+        let (a, b) = (self.corners[1], self.corners[2]);
+        let inward = left((b - a).normalize());
+        let inward = if inward.dot(self.middle - a) < 0.0 {
+            -inward
+        } else {
+            inward
+        };
+        (a, b, inward)
+    }
+
+    /// Where `p` lies from the open back: how far (m) along it from its first corner,
+    /// and how far in front of it (negative out on the field).
+    fn back_frame(&self, p: DVec2) -> (f64, f64) {
+        let (a, b, inward) = self.back();
+        ((p - a).dot((b - a).normalize()), (p - a).dot(inward))
+    }
+
+    /// How far (m) in front of the open back the mulch's edge lies `s` metres along it
+    /// (negative out on the field): wandering either way of the back's line, and drawn
+    /// in toward the lots' corners, so the field's grass meets their walls there.
+    fn mulch_edge(&self, s: f64) -> f64 {
+        let (a, b, _) = self.back();
+        let s = s.clamp(0.0, a.distance(b));
+        let taper = rise(s.min(a.distance(b) - s) / PARK_EDGE_TAPER);
+        let wander = 0.5 * (s * 1.31 + 0.4).sin()
+            + 0.3 * (s * 2.77 + 1.9).sin()
+            + 0.2 * (s * 4.9 + 0.7).sin();
+        let (_, fade, grain) = PARK_EDGE;
+        let corner = (0.5 + grain) * fade;
+        corner + (PARK_EDGE.0 * wander - corner) * taper
+    }
+
+    /// How much of the park's bark mulch lies at `p`, from 0 to 1: all of it in the park
+    /// but toward its open back, where it thins out into the field's grass along
+    /// [`Park::mulch_edge`], the grass coming through in tufts here and there.
+    fn mulch(&self, p: DVec2) -> f64 {
+        let (s, d) = self.back_frame(p);
+        let (_, fade, grain) = PARK_EDGE;
+        let tufts = grain * (2.0 * hash(p.x * 5.3 + p.y * 3.1) - 1.0);
+        rise((d - self.mulch_edge(s)) / fade + 0.5 + tufts)
+    }
+
+    /// How much of the outer slopes' mat the park leaves standing at `p`: none in it, and
+    /// over its open back the mat sinking away under the mulch as the mulch comes in
+    /// ([`Park::mulch`]), so the field's groundcover itself meets the mulch along its
+    /// mounds and no strip of bare ground opens between them.
+    fn mat_room(&self, p: DVec2) -> f64 {
+        let (a, b, _) = self.back();
+        let (s, d) = self.back_frame(p);
+        if (0.0..=a.distance(b)).contains(&s) {
+            let end = self.mulch_edge(s) + PARK_EDGE.1 * PARK_MAT_UNDER;
+            rise((end - d) / MAT_RISE)
+        } else if self.contains(p, 0.6) {
+            0.0
+        } else {
+            1.0
+        }
+    }
+}
+
+/// The bend park's open back: how far (m) its mulch's edge wanders either way of the
+/// line between its lots' back corners, over how much (m) the mulch fades into the
+/// ground beneath, and how much (a share of that) the grass tufts through it; over how
+/// far (m) from each corner the edge comes in to meet it; and the grid (m) the edge is
+/// drawn on.
+const PARK_EDGE: (f64, f64, f64) = (0.7, 1.0, 0.15);
+const PARK_EDGE_TAPER: f64 = 1.5;
+const PARK_EDGE_STEP: f64 = 0.4;
+/// How far (a share of the mulch's fade) past the mulch's edge the field's mat sinks out
+/// of sight under it.
+const PARK_MAT_UNDER: f64 = 0.3;
+/// How many rows the mulch takes from its edge's band to the sidewalk.
+const PARK_MULCH_ROWS: usize = 2;
+
+/// The bend park's bark mulch: between its lot lines from the sidewalk to its open back,
+/// where its edge ([`Park::mulch`]) fades into the colour the planted ground beneath is
+/// drawn in ([`planted_drawn`]), so no line shows where the mesh ends. Over the edge's band
+/// a fine grid, the rest of the park in a few rows of the same columns.
+fn park_mulch(park: &Park, lines: &Lines) -> Mesh {
+    let hills = Hills::new();
+    let [front_a, a, b, front_b] = park.corners;
+    let columns = (a.distance(b) / PARK_EDGE_STEP).ceil() as usize;
+    let (wander, fade, grain) = PARK_EDGE;
+    let reach = wander + (0.5 + grain) * fade;
+    let band = (2.0 * reach / PARK_EDGE_STEP).ceil() as usize;
+    let mut positions: Vec<f64> = Vec::new();
+    let mut colors: Vec<[f32; 3]> = Vec::new();
+    for i in 0..=columns {
+        let share = i as f64 / columns as f64;
+        let (back, front) = (a.lerp(b, share), front_a.lerp(front_b, share));
+        let depth = back.distance(front);
+        let inward = (front - back) / depth;
+        let band_rows = (0..=band).map(|k| -reach + 2.0 * reach * k as f64 / band as f64);
+        let rest = (1..=PARK_MULCH_ROWS)
+            .map(|k| reach + (depth - reach) * k as f64 / PARK_MULCH_ROWS as f64);
+        for d in band_rows.chain(rest) {
+            let p = back + inward * d;
+            positions.extend([p.x, 0.026, p.y]);
+            let mulch = lawn_tone(p, PARK_MULCH_TINT);
+            let w = park.mulch(p) as f32;
+            colors.push(if w >= 1.0 {
+                mulch
+            } else {
+                let under = planted_drawn(p, &hills, lines);
+                std::array::from_fn(|c| under[c] + (mulch[c] - under[c]) * w)
+            });
+        }
+    }
+    let rows = band + 1 + PARK_MULCH_ROWS;
+    let point = |k: u32| DVec2::new(positions[k as usize * 3], positions[k as usize * 3 + 2]);
+    let mut indices: Vec<u32> = Vec::new();
+    for i in 0..columns {
+        for j in 0..rows - 1 {
+            let k = |i: usize, j: usize| (i * rows + j) as u32;
+            for [p, q, r] in [
+                [k(i, j), k(i + 1, j), k(i + 1, j + 1)],
+                [k(i, j), k(i + 1, j + 1), k(i, j + 1)],
+            ] {
+                // Up-facing when the corners turn clockwise seen from above (+z south).
+                let (pa, pb, pc) = (point(p), point(q), point(r));
+                let turn = (pb.y - pa.y) * (pc.x - pa.x) - (pb.x - pa.x) * (pc.y - pa.y);
+                indices.extend(if turn > 0.0 { [p, q, r] } else { [p, r, q] });
+            }
+        }
+    }
+    let count = positions.len() / 3;
+    let normals: Vec<f64> = (0..count).flat_map(|_| [0.0, 1.0, 0.0]).collect();
+    let mut mesh = Mesh::from_f64(&positions, &normals, &vec![0.0; count * 2], Some(indices));
+    ground_uvs(&mut mesh, 0.0, 0.0);
+    mesh.colors = colors;
+    mesh
+}
+
+/// The colour the planted ground ([`planted_ground`]) is drawn in at `p`: its grid's
+/// corners' [`ground_seen`] as its triangles blend them, each cell split from its
+/// `(i, j)` corner to its `(i + 1, j + 1)` one.
+fn planted_drawn(p: DVec2, hills: &Hills, lines: &Lines) -> [f32; 3] {
+    let reach = ARENA + PLANTED_REACH;
+    let (gx, gz) = ((p.x + reach) / PLANTED_STEP, (p.y + reach) / PLANTED_STEP);
+    let (i, j) = (gx.floor(), gz.floor());
+    let (u, v) = ((gx - i) as f32, (gz - j) as f32);
+    let corner = |di: f64, dj: f64| {
+        let at = DVec2::new(
+            -reach + (i + di) * PLANTED_STEP,
+            -reach + (j + dj) * PLANTED_STEP,
+        );
+        ground_seen(at, hills, lines)
+    };
+    let (first, last) = (corner(0.0, 0.0), corner(1.0, 1.0));
+    if u >= v {
+        let next = corner(1.0, 0.0);
+        std::array::from_fn(|c| {
+            first[c] + (next[c] - first[c]) * (u - v) + (last[c] - first[c]) * v
+        })
+    } else {
+        let next = corner(0.0, 1.0);
+        std::array::from_fn(|c| {
+            first[c] + (next[c] - first[c]) * (v - u) + (last[c] - first[c]) * u
+        })
+    }
 }
 
 /// The bend park's frame: between the free side lot lines of the lots either side of it,
-/// from Neblina's sidewalk to its back wall ([`park_corners`]).
+/// from Neblina's sidewalk to its open back ([`park_corners`]).
 fn bend_park(lines: &Lines) -> Option<Park> {
     let (a, b) = park_corners(&lines.lots)?;
     let sidewalk = |corner: DVec2| {
@@ -5132,21 +5309,10 @@ fn bend_park_grounds(group: &mut Node, lines: &Lines, lawn: &Arc<crate::scene::M
     let Some(park) = bend_park(lines) else {
         return;
     };
-    let mut mulch = quad(park.corners, 0.026);
-    ground_uvs(&mut mulch, 0.0, 0.0);
-    mulch.colors = mulch
-        .positions
-        .iter()
-        .map(|p| {
-            lawn_tone(
-                DVec2::new(f64::from(p[0]), f64::from(p[2])),
-                PARK_MULCH_TINT,
-            )
-        })
-        .collect();
-    group
-        .children
-        .push(shadow_receiver(Arc::new(mulch), lawn.clone()));
+    group.children.push(shadow_receiver(
+        Arc::new(park_mulch(&park, lines)),
+        lawn.clone(),
+    ));
     let rim = |theta: f64| {
         let r = park.lawn(theta);
         park.at(theta.cos() * r, theta.sin() * r)
@@ -5168,20 +5334,15 @@ fn bend_park_grounds(group: &mut Node, lines: &Lines, lawn: &Arc<crate::scene::M
     ));
 }
 
-/// The bend park's furniture: two benches on the walk's outer edge behind the lawn
-/// facing it, a bank of cluster mailboxes by the sidewalk, and a tall lamp at the walk's
-/// mouth.
+/// The bend park's furniture: two benches on the walk's outer edge behind the lawn facing
+/// it, either side of the way in from the field ([`Park::benches`]); a bank of cluster
+/// mailboxes by the sidewalk, and a tall lamp at the walk's mouth.
 fn bend_park_props(group: &mut Node, lines: &Lines, globe: &Arc<Mesh>) {
     let Some(park) = bend_park(lines) else {
         return;
     };
-    for theta in [
-        1.5 * std::f64::consts::PI - 0.55,
-        1.5 * std::f64::consts::PI + 0.55,
-    ] {
-        let r = park.lawn(theta) + PARK_WALK + 0.55;
-        let at = park.at(theta.cos() * r, theta.sin() * r);
-        bench(group, at, (park.middle - at).normalize());
+    for (at, facing) in park.benches() {
+        bench(group, at, facing);
     }
     let mailbox = park.at(park.half_width * 0.15, park.half_depth - 1.1);
     mailbox_bank(group, mailbox, park.out);
@@ -5495,7 +5656,8 @@ fn bench(group: &mut Node, at: DVec2, facing: DVec2) {
     }
 }
 
-/// Whether `p` lies in the bend park's planting beds: inside it, off its lawn and walk.
+/// Whether `p` lies in the bend park's planting beds: inside it on its mulch, off its
+/// lawn and walk and off the way in from its open back ([`PARK_WAY_IN`]).
 fn in_park_beds(park: &Park, p: DVec2) -> bool {
     let local = p - park.middle;
     let (u, v) = (local.dot(park.across), local.dot(park.out));
@@ -5504,9 +5666,26 @@ fn in_park_beds(park: &Park, p: DVec2) -> bool {
     let walk = Line(park.walk());
     u.abs() < park.half_width - 0.3
         && v.abs() < park.half_depth - 0.6
+        && !(v < 0.0 && u.abs() < PARK_WAY_IN)
         && r > park.lawn(theta) + 0.25
         && walk.distance(p) > PARK_WALK / 2.0 + 0.25
+        && park.mulch(p) >= 0.9
+        && park
+            .benches()
+            .iter()
+            .all(|(at, _)| at.distance(p) > PARK_BENCH_ROOM)
 }
+
+/// How far (rad) either side of straight behind the lawn the bend park's benches stand,
+/// either side of the way in ([`PARK_WAY_IN`]), and the room (m) its planting keeps from
+/// each.
+const PARK_BENCH_TURN: f64 = 0.85;
+const PARK_BENCH_ROOM: f64 = 1.0;
+
+/// Half the width (m) of the way in from the bend park's open back to its walk, which
+/// its planting and benches keep off: room for the widest tank to drive in from the field
+/// past the grasses, as through a gap in a bed.
+const PARK_WAY_IN: f64 = 2.0;
 
 /// The dark mulch basins along the bank's crest beside Senda Parkway's path, half discs
 /// opening down the bank, wherever the bank is wide enough.

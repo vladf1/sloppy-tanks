@@ -473,6 +473,83 @@ fn a_walled_paseo_leads_from_the_west_field_through_neblinas_west_row() {
 }
 
 #[test]
+fn the_bend_park_opens_onto_the_field_behind_it_a_tanks_way_through() {
+    // No wall closes the little park at Neblina's bend from the field behind it: between
+    // the back corners of the lots either side, nothing stands, and a lane from the field
+    // through the opening to the park's walk keeps 4.5 m clear of every cover (the
+    // widest tank is under 2 m across), and the bots drive it straight.
+    let houses = senda_houses();
+    let lots = senda_lots(&houses);
+    let (a, b) = park_corners(&lots).expect("the bend park has an open back");
+    let layout = senda_design_layout();
+    // A metre in from each corner, past the side fences' ends.
+    for k in 2..=18 {
+        let p = a.lerp(b, f64::from(k) / 20.0);
+        for c in &layout {
+            assert!(
+                cover_distance(c, p) > 0.5,
+                "{:?} at {},{} stands in the park's open back at {p:?}",
+                c.kind,
+                c.x,
+                c.z
+            );
+        }
+    }
+    let middle = (a + b) / 2.0;
+    let mut inward = left((b - a).normalize());
+    if inward.dot(bend_park() - middle) < 0.0 {
+        inward = -inward;
+    }
+    // From the field 6 m behind the opening to the walk round the back of the park's lawn.
+    let (field, walk) = (middle - inward * 6.0, middle + inward * 2.5);
+    for k in 0..=20 {
+        let p = field.lerp(walk, f64::from(k) / 20.0);
+        for c in &layout {
+            let room = cover_distance(c, p);
+            assert!(
+                room >= 2.25,
+                "{:?} at {},{} stands {room:.2} m from the way into the park at {p:?}",
+                c.kind,
+                c.x,
+                c.z
+            );
+        }
+    }
+    // The bots drive it both ways, crossing the open back between its corners rather than
+    // round by the street, on the navigation's square grid no further than its steps
+    // across and along make it.
+    let mut sim = senda(23.0);
+    let along = (b - a).normalize();
+    for (from, to) in [(field, walk), (walk, field)] {
+        let (from, to) = (world(from), world(to));
+        let path = sim.nav.find(from, to);
+        assert!(
+            path.last().is_some_and(|end| distance(*end, to) < ARRIVAL),
+            "no way from {from:?} to {to:?} through the park's open back"
+        );
+        let route: Vec<DVec2> = std::iter::once(from)
+            .chain(path.iter().copied())
+            .map(design)
+            .collect();
+        let crosses = route.windows(2).any(|pair| {
+            let (d0, d1) = ((pair[0] - a).dot(inward), (pair[1] - a).dot(inward));
+            let p = pair[0].lerp(pair[1], d0 / (d0 - d1));
+            d0 * d1 <= 0.0 && d0 != d1 && (0.0..a.distance(b)).contains(&(p - a).dot(along))
+        });
+        assert!(
+            crosses,
+            "the way from {from:?} to {to:?} goes round: {path:?}"
+        );
+        let length = route_length(from, &path);
+        let steps = (to.x - from.x).abs() + (to.z - from.z).abs();
+        assert!(
+            length < steps + 3.0,
+            "the way through the park's open back runs {length:.1} m: {path:?}"
+        );
+    }
+}
+
+#[test]
 fn the_greenbelt_opens_onto_neblina_between_the_corner_lots() {
     // On Neblina's east side, south of Rumbo's corner lot and short of Gaviota's first
     // lot at the bend, no house stands: the greenbelt meets the street there.
@@ -946,7 +1023,7 @@ fn the_lots_are_walled_behind_and_between_and_their_gates_close_the_side_yards()
 }
 
 #[test]
-fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_the_park_walled() {
+fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_the_park_open() {
     let houses = senda_houses();
     let lots = senda_lots(&houses);
     // The tract's back yards run 1.5-6 m from the house to the block wall, 1-3.2 m at
@@ -979,11 +1056,13 @@ fn the_back_yards_run_one_to_three_metres_but_leave_the_greenbelt_its_lane_and_t
     );
     // (Across the greenbelt the back walls keep a tank's lane between them:
     // `the_greenbelt_lane_runs_open_from_neblina_to_the_hillside`.)
-    let (a, b) = park_corners(&lots).expect("the bend park has a back wall");
+    // (The bend park between two lots opens onto the field behind:
+    // `the_bend_park_opens_onto_the_field_behind_it_a_tanks_way_through`.)
+    let (a, b) = park_corners(&lots).expect("the bend park has an open back");
     let park = bend_park();
     assert!(
         a.distance(park) < 14.0 && b.distance(park) < 14.0 && a.distance(b) > 4.0,
-        "the bend park's back wall runs from {a:?} to {b:?}"
+        "the bend park's open back runs from {a:?} to {b:?}"
     );
 }
 
