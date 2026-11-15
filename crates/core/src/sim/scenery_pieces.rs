@@ -251,6 +251,13 @@ const LAMP_GLOBE_HEIGHT: f64 = 1.3;
 /// How fast (rad/s) a post a hull pushed over starts turning about its foot.
 const POST_TOPPLE: f64 = 2.2;
 
+/// Whether a piece of debris is one of a pushed-over post's ([`topple_post`]), which lies
+/// under tracks: the only scenery piece shaped as a cylinder. A room's client tells them
+/// from solid debris by this, from the piece's replicated shape and where it came from.
+pub fn lies_under_tracks(shape: Option<FragmentShape>, source: Option<CoverKind>) -> bool {
+    shape == Some(FragmentShape::Wheel) && source.is_some()
+}
+
 /// The post `cover_index`, which a hull pushed over, goes down whole toward `fall` (a
 /// planar direction): its shaft tips about its foot and comes to lie on the ground, and a
 /// street lamp's globe goes with it. The pieces lie where they fall, under any hull that

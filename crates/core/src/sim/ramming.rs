@@ -17,7 +17,7 @@ use super::structure::PartSet;
 use super::tank_dimensions::tank_hull;
 use super::tree_proportions::tree_proportions;
 use super::tree_structure::{TREE_BUTT, TREE_STUMP};
-use super::types::{Cover, CoverKind, SimEvent, SimEventType};
+use super::types::{Cover, CoverKind, SimEvent, SimEventType, VehicleKind};
 
 /// A tree goes down to any hull when its trunk is at most this thick (m, its radius at
 /// the butt): a parkway's or a median's young tree, not a village's or an old oak.
@@ -64,23 +64,137 @@ impl ThinCover {
     }
 }
 
+/// What the rule reads of a cover, on the host or of a replicated one.
+#[derive(Clone, Copy, Debug)]
+pub struct ThinShape {
+    pub kind: CoverKind,
+    /// It stands as a structure of parts (a tree does).
+    pub structure: bool,
+    pub destructible: bool,
+    /// It is movable cover (a barrel).
+    pub movable: bool,
+    pub x: f64,
+    pub z: f64,
+    pub w: f64,
+    pub d: f64,
+    pub h: f64,
+}
+
+impl ThinShape {
+    /// The radius (m) a hull meets this cover at, if a hull runs it down.
+    pub fn radius(&self) -> Option<f64> {
+        match self.kind {
+            CoverKind::Tree if self.structure => {
+                let tree = tree_proportions(self.x, self.z, self.w, self.d, self.h);
+                (tree.radius <= RAM_TRUNK_RADIUS).then_some(tree.stump_radius)
+            }
+            // A barrel is no post: it rolls, and bursts when it breaks.
+            CoverKind::Drum => None,
+            _ if !self.structure
+                && self.destructible
+                && !self.movable
+                && self.w.max(self.d) <= RAM_POST_WIDTH =>
+            {
+                Some(self.w.max(self.d) / 2.0)
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The radius (m) a hull meets `cover` at, if a hull runs it down.
 fn thin_radius(cover: &Cover) -> Option<f64> {
-    match cover.kind {
-        CoverKind::Tree if cover.structure.is_some() => {
-            let tree = tree_proportions(cover.x, cover.z, cover.w, cover.d, cover.h);
-            (tree.radius <= RAM_TRUNK_RADIUS).then_some(tree.stump_radius)
+    ThinShape {
+        kind: cover.kind,
+        structure: cover.structure.is_some(),
+        destructible: cover.destructible,
+        movable: cover.motion.is_some(),
+        x: cover.x,
+        z: cover.z,
+        w: cover.w,
+        d: cover.d,
+        h: cover.h,
+    }
+    .radius()
+}
+
+/// A hull moving fast enough to run thin cover down, and where it is about to be.
+#[derive(Clone, Copy, Debug)]
+pub struct RamHull {
+    kind: VehicleKind,
+    position: Vec2,
+    velocity: Vec2,
+    speed: f64,
+    sin: f64,
+    cos: f64,
+}
+
+impl RamHull {
+    /// The hull of `kind` at `position` turned to `heading`, moving at `velocity` (after
+    /// this tick's drive, before the physics step); none when it is too slow to knock
+    /// anything down.
+    pub fn moving(kind: VehicleKind, position: Vec2, heading: f64, velocity: Vec2) -> Option<Self> {
+        let speed = velocity.x.hypot(velocity.z);
+        let (sin, cos) = heading.sin_cos();
+        (speed >= RAM_MIN_SPEED).then_some(Self {
+            kind,
+            position,
+            velocity,
+            speed,
+            sin,
+            cos,
+        })
+    }
+
+    /// How far (m) from the hull's place, along either axis, cover of `radius` can stand
+    /// and still be met.
+    pub fn reach(&self, radius: f64) -> f64 {
+        let hull = tank_hull(self.kind);
+        (hull.size.x / 2.0).hypot(hull.size.z / 2.0)
+            + hull.center.x.hypot(hull.center.z)
+            + self.speed * RAM_LOOKAHEAD
+            + radius
+    }
+
+    /// Into the hull's frame: z along its bow, x to its right.
+    fn local(&self, x: f64, z: f64) -> Vec2 {
+        Vec2::new(x * self.cos - z * self.sin, x * self.sin + z * self.cos)
+    }
+
+    /// Whether the hull is about to drive into cover of `radius` standing at `at`, and
+    /// if so the planar direction that cover goes over in: ahead of the hull and off the
+    /// side it stands on.
+    pub fn meets(&self, at: Vec2, radius: f64) -> Option<Vec2> {
+        let hull = tank_hull(self.kind);
+        let to = Vec2::new(at.x - self.position.x, at.z - self.position.z);
+        let reach = self.reach(radius);
+        if to.x.abs() > reach || to.z.abs() > reach {
+            return None;
         }
-        // A barrel is no post: it rolls, and bursts when it breaks.
-        CoverKind::Drum => None,
-        _ if cover.structure.is_none()
-            && cover.destructible
-            && cover.motion.is_none()
-            && cover.w.max(cover.d) <= RAM_POST_WIDTH =>
-        {
-            Some(cover.w.max(cover.d) / 2.0)
+        // Only what the hull drives at: one it slides along or backs away from stays.
+        let travel = Vec2::new(self.velocity.x / self.speed, self.velocity.z / self.speed);
+        if to.x * travel.x + to.z * travel.z <= 0.0 {
+            return None;
         }
-        _ => None,
+        // Inside the hull's box, grown by the cover's radius, now or where it will be.
+        let half = Vec2::new(hull.size.x / 2.0, hull.size.z / 2.0);
+        let inside = |ahead: f64| {
+            let at = self.local(to.x - self.velocity.x * ahead, to.z - self.velocity.z * ahead);
+            (at.x - hull.center.x).abs() <= half.x + radius + RAM_MARGIN
+                && (at.z - hull.center.z).abs() <= half.z + radius + RAM_MARGIN
+        };
+        if !inside(0.0) && !inside(RAM_LOOKAHEAD) {
+            return None;
+        }
+        let side = self.local(to.x, to.z).x - hull.center.x;
+        let right = Vec2::new(self.cos, -self.sin);
+        let lean = if side < 0.0 { -RAM_SIDEWAYS } else { RAM_SIDEWAYS };
+        Some(Vec2::new(travel.x + right.x * lean, travel.z + right.z * lean))
+    }
+
+    /// The share of its speed the hull keeps after running `struck` covers down.
+    pub fn speed_kept(&self, struck: i32) -> f64 {
+        (1.0 - (RAM_DRAG / vehicle(self.kind).mass).min(RAM_MOST_DRAG)).powi(struck)
     }
 }
 
@@ -121,47 +235,27 @@ fn run_down_ahead_of(simulation: &mut Simulation, index: usize, thin: &[(usize, 
         return;
     }
     let body = &simulation.world.bodies[tank.body];
-    let velocity = from_vector(body.linvel()).planar();
-    let speed = velocity.x.hypot(velocity.z);
-    if speed < RAM_MIN_SPEED {
+    let Some(hull) = RamHull::moving(
+        tank.kind,
+        from_vector(body.translation()).planar(),
+        tank.heading,
+        from_vector(body.linvel()).planar(),
+    ) else {
         return;
-    }
-    let position = from_vector(body.translation()).planar();
-    let hull = tank_hull(tank.kind);
-    let (sin, cos) = tank.heading.sin_cos();
-    // The hull's frame: z along its bow, x to its right.
-    let local = |x: f64, z: f64| Vec2::new(x * cos - z * sin, x * sin + z * cos);
-    let half = Vec2::new(hull.size.x / 2.0, hull.size.z / 2.0);
-    let reach = half.x.hypot(half.z) + hull.center.x.hypot(hull.center.z) + speed * RAM_LOOKAHEAD;
-    let travel = Vec2::new(velocity.x / speed, velocity.z / speed);
-    let (id, team, mass) = (tank.id, tank.team, vehicle(tank.kind).mass);
+    };
+    let (id, team) = (tank.id, tank.team);
     let mut struck = 0;
     for &(cover, radius) in thin {
         let c = &simulation.covers[cover];
-        let to = Vec2::new(c.x - position.x, c.z - position.z);
-        if to.x.abs() > reach + radius || to.z.abs() > reach + radius || !stands(c) {
+        let at = Vec2::new(c.x, c.z);
+        if !stands(c) {
             continue;
         }
-        // Only what the hull drives at: one it slides along or backs away from stays.
-        if to.x * travel.x + to.z * travel.z <= 0.0 {
+        let Some(fall) = hull.meets(at, radius) else {
             continue;
-        }
-        // Inside the hull's box, grown by the cover's radius, now or where it will be.
-        let meets = |ahead: f64| {
-            let at = local(to.x - velocity.x * ahead, to.z - velocity.z * ahead);
-            (at.x - hull.center.x).abs() <= half.x + radius + RAM_MARGIN
-                && (at.z - hull.center.z).abs() <= half.z + radius + RAM_MARGIN
         };
-        if !meets(0.0) && !meets(RAM_LOOKAHEAD) {
-            continue;
-        }
-        // It goes over ahead of the hull and off the side it stands on.
-        let side = local(to.x, to.z).x - hull.center.x;
-        let right = Vec2::new(cos, -sin);
-        let lean = if side < 0.0 { -RAM_SIDEWAYS } else { RAM_SIDEWAYS };
-        let fall = Vec2::new(travel.x + right.x * lean, travel.z + right.z * lean);
         let from = Point3::new(c.x - fall.x, RAM_HEIGHT, c.z - fall.z);
-        let (kind, color, cover_id, at, top) = (c.kind, c.color, c.id, Vec2::new(c.x, c.z), c.h);
+        let (kind, color, cover_id, top) = (c.kind, c.color, c.id, c.h);
         if c.structure.is_some() {
             let stood = c.alive;
             simulation.run_down_structure(
@@ -194,7 +288,7 @@ fn run_down_ahead_of(simulation: &mut Simulation, index: usize, thin: &[(usize, 
         struck += 1;
     }
     if struck > 0 {
-        let kept = (1.0 - (RAM_DRAG / mass).min(RAM_MOST_DRAG)).powi(struck);
+        let kept = hull.speed_kept(struck);
         let body = &mut simulation.world.bodies[simulation.tanks[index].body];
         let velocity = body.linvel();
         body.set_linvel(
