@@ -12,6 +12,7 @@
     "directory": "../../dist",
     "binding": "ASSETS",
     "run_worker_first": [
+      "/",
       "/assets/*.wasm",
       "/assets/*.json",
       "/assets/fonts/*.ttc",

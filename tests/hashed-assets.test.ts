@@ -4,14 +4,11 @@ import { hashedName, runtimeFiles } from "../scripts/hashed-assets";
 
 test("the page's runtime files are the shell's and the renderer's, not the licences", () => {
   const files = runtimeFiles();
-  for (const path of [
-    "fonts/interface.ttc",
-    "previews/tanks.webp",
-    "audio/shot.mp3",
-    "textures/houses/brick.webp",
-  ]) {
+  for (const path of ["fonts/interface.ttc", "previews/tanks.webp", "textures/houses/brick.webp"]) {
     assert.ok(files.includes(path), path);
   }
+  // The page makes its sounds (src/sounds.ts); the MP3s are the native apps'.
+  assert.ok(!files.some((path) => path.startsWith("audio/")));
   assert.ok(!files.some((path) => /LICENSE|\.md$|\.txt$/.test(path)));
 });
 
