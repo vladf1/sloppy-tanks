@@ -231,7 +231,20 @@ fn rooted_stumps_block_every_chassis_after_debris_cleanup_and_leave_the_crown_sp
         (VehicleKind::Heavy, -FRAC_PI_2),
     ] {
         let mut s = arena();
-        let tree = cover(&mut s, CoverKind::Tree, 0.0, 0.0);
+        // A tree as thick as the arena's: a hull runs a thinner one down, stump and all
+        // (`sim::ramming`).
+        let tree = s.add_cover(&CoverDef::new(
+            CoverKind::Tree,
+            0.0,
+            0.0,
+            2.6,
+            2.6,
+            6.0,
+            40.0,
+            0x92734e,
+        ));
+        s.nav.rebuild(&s.covers, None);
+        s.world.step();
         s.damage_cover(tree, 1000.0, 999, Team::Blue, None, None);
         // Isolate the permanent stump from the felled tree.
         remove_all_fragments(&mut s);

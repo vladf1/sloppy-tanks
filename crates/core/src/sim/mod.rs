@@ -59,6 +59,7 @@ beyond_geometry! {
     pub mod physics;
     pub mod pickups;
     pub mod projectiles;
+    pub mod ramming;
     pub mod render_state;
     pub mod round_recap;
     pub mod scenery_pieces;

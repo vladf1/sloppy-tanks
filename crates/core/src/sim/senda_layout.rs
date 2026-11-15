@@ -1270,6 +1270,8 @@ pub const WAY_LAMP_HEIGHT: f64 = 4.6;
 /// across that a shell or two brings down. Its colour marks its look (a row's lamp, a
 /// tall one) and is its painted metal, which its scrap falls in.
 pub const STREET_LAMP_COLORS: [u32; 2] = [0x2a3a2e, 0x2a3a2f];
+/// A street lamp's glass globe.
+pub const STREET_LAMP_GLASS: u32 = 0xf2eee2;
 const LAMP_POLE_BOX: f64 = 0.3;
 const LAMP_HEALTH: f64 = 40.0;
 

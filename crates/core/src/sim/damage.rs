@@ -202,6 +202,44 @@ impl Simulation {
         self.events.push(death);
     }
 
+    /// Take a cover that is not a structure out of the round: it no longer stands, counts
+    /// as destroyed (for `owner`'s record when a recorded tank of `team` did it), leaves
+    /// the physics world and frees the routes it blocked. Returns its pose if it was a
+    /// movable one, where it stood when it went. Shows and sounds nothing.
+    pub fn take_cover_out(&mut self, cover_index: usize, owner: u32, team: Team) -> Option<CoverPose> {
+        let cover = &self.covers[cover_index];
+        let body = cover.body;
+        let pose = cover.motion.map(|_| {
+            let rigid_body = &self.world.bodies[body];
+            CoverPose {
+                position: from_vector(rigid_body.translation()),
+                rotation: from_rotation(*rigid_body.rotation()),
+            }
+        });
+        let cover = &mut self.covers[cover_index];
+        if let Some(pose) = pose {
+            cover.x = pose.position.x;
+            cover.z = pose.position.z;
+        }
+        cover.alive = false;
+        cover.hp = cover.hp.min(0.0);
+        self.destroyed += 1;
+        if self
+            .tanks
+            .iter()
+            .any(|tank| self.records(tank) && tank.id == owner && tank.team == team)
+        {
+            self.combat_record.cover_destroyed += 1;
+        }
+        for &collider in self.world.bodies[body].colliders() {
+            self.cover_by_collider.remove(&collider);
+        }
+        self.remove_body(body);
+        let region = moved_cover_region(&self.covers[cover_index]);
+        self.nav.rebuild(&self.covers, Some(region));
+        pose
+    }
+
     /// Damage a cover: impact marks, destruction, debris, rubble and drum chains.
     pub fn damage_cover(
         &mut self,
@@ -234,34 +272,7 @@ impl Simulation {
         if cover.hp > 0.0 {
             return;
         }
-        let body = cover.body;
-        let pose = cover.motion.map(|_| {
-            let rigid_body = &self.world.bodies[body];
-            CoverPose {
-                position: from_vector(rigid_body.translation()),
-                rotation: from_rotation(*rigid_body.rotation()),
-            }
-        });
-        let cover = &mut self.covers[cover_index];
-        if let Some(pose) = pose {
-            cover.x = pose.position.x;
-            cover.z = pose.position.z;
-        }
-        cover.alive = false;
-        self.destroyed += 1;
-        if self
-            .tanks
-            .iter()
-            .any(|tank| self.records(tank) && tank.id == owner && tank.team == team)
-        {
-            self.combat_record.cover_destroyed += 1;
-        }
-        for &collider in self.world.bodies[body].colliders() {
-            self.cover_by_collider.remove(&collider);
-        }
-        self.remove_body(body);
-        let region = moved_cover_region(&self.covers[cover_index]);
-        self.nav.rebuild(&self.covers, Some(region));
+        let pose = self.take_cover_out(cover_index, owner, team);
         let cover = &self.covers[cover_index];
         let (kind, x, z, w, d, h, color, id) = (
             cover.kind,

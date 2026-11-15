@@ -33,6 +33,7 @@ use super::physics::{
 };
 use super::pickups::collect_pickup;
 use super::projectiles::step_projectiles;
+use super::ramming::{ThinCover, run_down_thin_cover};
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::shooter_rewind::ShooterRewind;
@@ -303,6 +304,8 @@ pub(crate) struct Scratch {
     pub structure_hits: Vec<(usize, f64, f64)>,
     /// The landed structure debris a blast may throw: id, and index when listed.
     pub thrown_debris: Vec<(u32, usize)>,
+    /// The round's thin cover, which hulls run down ([`run_down_thin_cover`]).
+    pub thin_cover: ThinCover,
     /// A route a bot is weighing, swapped into its brain when kept.
     pub path: Vec<Vec2>,
     /// The other resting pieces of one ruin.
@@ -466,6 +469,7 @@ impl Simulation {
         self.world = arena_world(map.scale.unwrap_or(1.0));
         self.contact_forces.clear();
         self.debris_contacts.clear();
+        self.scratch.thin_cover.forget();
         self.movable_covers.clear();
         self.rng = Random::new(self.seed);
         self.next_id = 1;
@@ -897,6 +901,7 @@ impl Simulation {
                 place_mine(self, i);
             }
         }
+        run_down_thin_cover(self);
         self.world.step_with_events(&(), &self.contact_forces);
         drain_debris_contacts(self);
         update_movable_cover(self);
