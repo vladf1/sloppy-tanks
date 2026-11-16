@@ -200,12 +200,14 @@ const ZOOM_GAP: f32 = 8.0;
 /// the 44-point minimum a thumb needs), their centres' distance from the stick's (the
 /// stick's ring, shifted under a thumb by `STICK_ANCHOR_SHIFT`, stays clear of them),
 /// and their places on that circle, turned this far left from straight up: the ammo key
-/// over the stick, the mine on its upper-left shoulder as on a tablet. Held upright the
-/// mine stays clear of the drive stick's square.
+/// over the stick, the mine low at its left, level with the stick's lower half. The
+/// mine stands a little nearer, so held upright it fits between the two sticks, clear
+/// of the drive stick's square.
 pub const PHONE_THUMB_KEY_RADIUS: f32 = 26.0;
 const PHONE_THUMB_KEY_REACH: f32 = 116.0;
+const PHONE_MINE_REACH: f32 = 110.0;
 const PHONE_AMMO_TURN: f32 = 15.0_f32.to_radians();
-const PHONE_MINE_TURN: f32 = 60.0_f32.to_radians();
+const PHONE_MINE_TURN: f32 = 117.0_f32.to_radians();
 
 /// Where the touch controls sit, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,9 +246,13 @@ impl TouchLayout {
                     Vec2::splat(PHONE_STICK_SIZE),
                 ),
                 fire,
-                mine: Some(phone_thumb_key(fire, PHONE_MINE_TURN)),
+                mine: Some(phone_thumb_key(fire, PHONE_MINE_REACH, PHONE_MINE_TURN)),
                 mine_radius: PHONE_THUMB_KEY_RADIUS,
-                ammo: Some(phone_thumb_key(fire, PHONE_AMMO_TURN)),
+                ammo: Some(phone_thumb_key(
+                    fire,
+                    PHONE_THUMB_KEY_REACH,
+                    PHONE_AMMO_TURN,
+                )),
                 zoom_in: bar.zoom_in,
                 zoom_out: bar.zoom_out,
             };
@@ -290,10 +296,10 @@ impl TouchLayout {
     }
 }
 
-/// A phone's right-thumb key's centre on the circle round its `fire` stick, turned
-/// `turn` radians left from straight up: where the thumb rolls off the stick.
-fn phone_thumb_key(fire: Rect, turn: f32) -> Pos2 {
-    fire.center() - PHONE_THUMB_KEY_REACH * vec2(turn.sin(), turn.cos())
+/// A phone's right-thumb key's centre `reach` from its `fire` stick's, turned `turn`
+/// radians left from straight up: where the thumb rolls off the stick.
+fn phone_thumb_key(fire: Rect, reach: f32, turn: f32) -> Pos2 {
+    fire.center() - reach * vec2(turn.sin(), turn.cos())
 }
 
 /// The tank panel's distance from the drive stick and from the mine button
@@ -666,7 +672,8 @@ mod tests {
                     "{size:?}: under the feed"
                 );
             }
-            // A thumb's width between the two keys.
+            // The mine sits low beside the stick, a thumb's width from the ammo key.
+            assert!(mine.y > layout.fire.center().y && mine.x < layout.fire.left());
             assert!(ammo.distance(mine) >= 2.0 * PHONE_THUMB_KEY_RADIUS + 20.0);
 
             // A tap on the mine drops one; the ammo key's finger is egui's.
