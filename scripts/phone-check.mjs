@@ -1,11 +1,11 @@
 // The phone edition in headless Chrome as a phone (a 393×852 screen, a coarse pointer,
 // three device pixels a point), held upright and sideways: Battle Setup offers only the
-// tank, the map, the format and the tabs, every choice on screen and taken by a tap, with
-// Easy bots; GO plays with the overhead camera out at 40 m (52 upright), no mine button,
-// the top row's zoom keys, the ammo key loading the next round under a driving thumb,
-// the drive stick and a finger on the arena firing at once; the top row's pause, END
-// BATTLE, the battle report and BATTLE SETUP. `?phone` asks for the edition on a desktop
-// page too. Real multi-touch through CDP touch events (`fingers`).
+// tank, the map, the format, the difficulty (Easy until stepped) and the tabs, every
+// choice on screen and taken by a tap; GO plays with the overhead camera out at 40 m (52
+// upright), no mine button, the top row's zoom keys, the ammo key loading the next round
+// under a driving thumb, the drive stick and a finger on the arena firing at once; the
+// top row's pause, END BATTLE, the battle report and BATTLE SETUP. `?phone` asks for the
+// edition on a desktop page too. Real multi-touch through CDP touch events (`fingers`).
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
@@ -24,7 +24,7 @@ mkdirSync(out, { recursive: true });
 const browser = await launchChrome();
 const errors = [];
 const SCREEN = { width: 393, height: 852 };
-/** Everything the phone's Battle Setup offers. */
+/** Everything the phone's Battle Setup offers, besides its difficulty key. */
 const SETUP = [
   "SINGLE PLAYER",
   "MULTIPLAYER",
@@ -55,17 +55,18 @@ const settled = async (page, ms) => {
 const widgets = (page) => page.evaluate(() => window.sloppyShell.widgets());
 
 /** Battle Setup shows exactly the phone's choices, each inside `viewport`. */
-async function phoneSetup(page, viewport, what) {
+async function phoneSetup(page, viewport, what, difficulty = "Easy") {
+  const offered = [...SETUP, `Difficulty: ${difficulty}`];
   await untilState(page, (state) => state.ready, { what: `${what}: the arena ready` });
   // A sheet that has just opened lists its widgets a frame later.
   let shown = await widgets(page);
-  for (let frame = 0; frame < 30 && shown.length < SETUP.length; frame += 1) {
+  for (let frame = 0; frame < 30 && shown.length < offered.length; frame += 1) {
     await nextFrame(page);
     shown = await widgets(page);
   }
   assert.deepEqual(
     shown.map((widget) => widget.label).sort(),
-    [...SETUP].sort(),
+    offered.sort(),
     `${what}: Battle Setup's choices`,
   );
   for (const widget of shown) {
@@ -96,7 +97,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   await phoneSetup(page, viewport, name);
   let state = await nextFrame(page, ["debug"]);
   assert.equal(state.touchScreen, true, `${name}: a phone plays by touch`);
-  assert.equal(state.extras.debug.difficulty, "easy", `${name}: a phone's bots are Easy`);
+  assert.equal(state.extras.debug.difficulty, "easy", `${name}: a phone's bots start Easy`);
   await shot("setup");
 
   // Every choice takes a tap.
@@ -110,11 +111,15 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
     { what: `${name}: the tapped choices` },
   );
   await tapWidget(page, touch, "Team Battle");
-  await untilState(page, (state) => state.prefs.gameMode === "team" && state.ready, {
-    timeout: 60000,
-    what: `${name}: Team Battle on the chosen arena`,
-  });
-  await phoneSetup(page, viewport, `${name} after the choices`);
+  // The difficulty key steps Easy to Normal.
+  await tapWidget(page, touch, "Difficulty: Easy");
+  await untilState(
+    page,
+    (state) =>
+      state.prefs.gameMode === "team" && state.prefs.phoneDifficulty === "normal" && state.ready,
+    { timeout: 60000, what: `${name}: Team Battle on the chosen arena with Normal bots` },
+  );
+  await phoneSetup(page, viewport, `${name} after the choices`, "Normal");
 
   // GO: the phone's camera, no mine button, the top row's keys.
   await tapWidget(page, touch, "GO!");
@@ -124,6 +129,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   });
   assert.equal(state.extras.debug.mapMode, mapId, `${name}: the chosen arena`);
   assert.equal(state.extras.debug.human.kind, tankKind, `${name}: the chosen tank`);
+  assert.equal(state.extras.debug.difficulty, "normal", `${name}: the chosen difficulty`);
   assert.equal(state.extras.debug.view.zoom, zoom, `${name}: the phone's camera`);
   const layout = state.touchLayout;
   assert.equal(layout.mine, null, `${name}: a phone has no mine button`);
@@ -199,7 +205,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   await shot("report");
   await tapWidget(page, touch, "BATTLE SETUP");
   await untilState(page, (state) => !state.inRound, { what: `${name}: Battle Setup again` });
-  await phoneSetup(page, viewport, `${name} back from the report`);
+  await phoneSetup(page, viewport, `${name} back from the report`, "Normal");
   assert.equal((await nextFrame(page)).error, null, `${name}: renderer errors`);
   await context.close();
 }

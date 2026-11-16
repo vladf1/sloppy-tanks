@@ -3293,6 +3293,8 @@ const PHONE_TRAY_BORDER: f32 = 1.0;
 const PHONE_LABEL: f32 = 26.0;
 const PHONE_TABS: f32 = 50.0;
 const PHONE_FORMATS: f32 = 50.0;
+/// Upright, the difficulty key's row under the formats.
+const PHONE_DIFFICULTY_ROW: f32 = 44.0;
 const PHONE_UPRIGHT_GO: f32 = 64.0;
 /// Held sideways, the last row: the formats' (or the room's status) well, as tall as a
 /// format key and its padding (`.phone .start .battle-choice .choice-card`), and beside it
@@ -3414,12 +3416,13 @@ fn phone_tab_dress(upright: bool) -> TabDress {
     }
 }
 
-/// Battle Setup on a phone (`.phone` rules in `style.css`): the tank, the map and the
-/// battle format, single player's bots always Easy, and multiplayer one action that joins
-/// the busiest open room or creates one; no difficulty, room list, name or Settings.
-/// Held upright the tank comes first, over the tabs, the maps stack, and GO sits at the
+/// Battle Setup on a phone (`.phone` rules in `style.css`): the tank, the map, the
+/// battle format and single player's difficulty, one key that steps through the levels,
+/// and multiplayer one action that joins the busiest open room or creates one (with Easy
+/// bots); no room list, name or Settings. Held upright the tank comes first, over the
+/// tabs, the maps stack, the difficulty has a row under the formats, and GO sits at the
 /// bottom under the thumb; held sideways the tabs head the sheet and each choice is one
-/// row, GO beside the formats.
+/// row, the difficulty and GO beside the formats.
 fn phone_setup(
     context: &egui::Context,
     state: &mut UiState,
@@ -3471,7 +3474,13 @@ fn phone_setup(
         // The tanks' and the maps' wells, and upright the formats'.
         + 2.0 * WELL_PADDING * if upright { 3.0 } else { 2.0 }
         + if upright {
-            logo.y + PHONE_LOGO_BELOW + 2.0 * PHONE_GAP + PHONE_FORMATS + 2.0 * PHONE_TRAY_BORDER
+            logo.y
+                + PHONE_LOGO_BELOW
+                + 2.0 * PHONE_GAP
+                + PHONE_FORMATS
+                + CARD_GAP
+                + PHONE_DIFFICULTY_ROW
+                + 2.0 * PHONE_TRAY_BORDER
         } else {
             0.0
         };
@@ -3701,7 +3710,13 @@ fn phone_setup(
                         (
                             Rect::from_min_size(
                                 pos2(inner.left(), y),
-                                vec2(inner.width(), formats_height + 2.0 * WELL_PADDING),
+                                vec2(
+                                    inner.width(),
+                                    formats_height
+                                        + CARD_GAP
+                                        + PHONE_DIFFICULTY_ROW
+                                        + 2.0 * WELL_PADDING,
+                                ),
                             ),
                             Rect::from_min_max(
                                 pos2(inner.left(), inner.bottom() - action_row),
@@ -3741,13 +3756,34 @@ fn phone_setup(
                     }
                     well(choices);
                     let keys = choices.shrink(WELL_PADDING);
-                    for (battle, rect) in BATTLE_FORMATS.iter().zip(cells(
-                        keys.top(),
-                        keys.left(),
-                        keys.width(),
-                        2,
-                        keys.height(),
-                    )) {
+                    // Upright the formats share a row over the difficulty's; sideways the
+                    // difficulty is a third key beside them.
+                    let (format_cells, difficulty) = if upright {
+                        let difficulty = Rect::from_min_max(
+                            pos2(keys.left(), keys.bottom() - PHONE_DIFFICULTY_ROW),
+                            keys.max,
+                        );
+                        let formats = Rect::from_min_max(
+                            keys.min,
+                            pos2(keys.right(), difficulty.top() - CARD_GAP),
+                        );
+                        let row = cells(
+                            formats.top(),
+                            formats.left(),
+                            formats.width(),
+                            2,
+                            formats.height(),
+                        );
+                        (row.collect::<Vec<_>>(), difficulty)
+                    } else {
+                        let mut row: Vec<Rect> =
+                            cells(keys.top(), keys.left(), keys.width(), 3, keys.height())
+                                .collect();
+                        let difficulty = row.pop().expect("three keys");
+                        (row, difficulty)
+                    };
+                    phone_difficulty_key(ui, &painter, difficulty, prefs);
+                    for (battle, rect) in BATTLE_FORMATS.iter().zip(format_cells) {
                         let unavailable = battle.unavailable_on(options.map_mode);
                         let id = Id::unique(("setup battle", battle.mode));
                         let sense = if unavailable.is_some() {
@@ -3788,6 +3824,55 @@ fn phone_setup(
                 });
         });
 }
+
+/// A phone's difficulty key: BOTS over the level's name, with its strength bars; a tap
+/// steps to the next level, Hard back to Easy. One key, not three, fits beside the
+/// formats on a phone held sideways.
+fn phone_difficulty_key(ui: &mut egui::Ui, painter: &Painter, rect: Rect, prefs: &mut Preferences) {
+    let difficulty = prefs.difficulty_on(true);
+    let level = DIFFICULTY_OPTIONS
+        .iter()
+        .position(|option| option.difficulty == difficulty)
+        .unwrap_or(0);
+    let option = &DIFFICULTY_OPTIONS[level];
+    let response = ui.interact(rect, Id::unique("phone difficulty"), Sense::click());
+    paint::labelled(&response, true, &format!("Difficulty: {}", option.name));
+    if response.clicked() {
+        let next = &DIFFICULTY_OPTIONS[(level + 1) % DIFFICULTY_OPTIONS.len()];
+        prefs.set_difficulty_on(true, next.difficulty);
+    }
+    choice_frame(painter, rect, false, false);
+    let bars = Rect::from_min_size(
+        pos2(
+            rect.right() - 12.0 - PHONE_DIFFICULTY_BARS.x,
+            rect.center().y - PHONE_DIFFICULTY_BARS.y / 2.0,
+        ),
+        PHONE_DIFFICULTY_BARS,
+    );
+    difficulty_bars(painter, bars, level, true);
+    let left = rect.left() + 12.0;
+    paint::text(
+        painter,
+        pos2(left, rect.center().y - 9.0),
+        Align2::LEFT_CENTER,
+        "BOTS",
+        bold_font(10.0),
+        TEXT_LABEL,
+        1.2,
+    );
+    paint::shadowed(
+        painter,
+        pos2(left, rect.center().y + 7.0),
+        Align2::LEFT_CENTER,
+        &paint::upper(option.name),
+        display_font(19.0),
+        Color32::WHITE,
+        0.5,
+    );
+}
+
+/// The difficulty key's strength bars.
+const PHONE_DIFFICULTY_BARS: Vec2 = vec2(22.0, 20.0);
 
 /// A phone's tank card, which tells the tanks apart at a glance: the name, the tank large,
 /// the heavier ones larger, and its weight, a word and up to three steps in its class's
