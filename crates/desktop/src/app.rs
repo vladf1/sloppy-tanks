@@ -688,6 +688,8 @@ impl Session {
         {
             crate::ios::attach_to_scene(&window);
             crate::ios::listen_for_keys(&window);
+            let (width, height, _) = css_size(&window);
+            crate::touch::fit_screen(width, height);
         }
         let mut rooms = RoomsState::default();
         if let Some(directory) = &options.directory {
@@ -844,6 +846,12 @@ impl Session {
         match event {
             WindowEvent::CloseRequested => return true,
             WindowEvent::Resized(size) => {
+                // An iPhone Duo's hinge moves the window to its other screen.
+                #[cfg(target_os = "ios")]
+                {
+                    let (width, height, _) = css_size(&self.window);
+                    crate::touch::fit_screen(width, height);
+                }
                 self.minimized = size.width == 0 || size.height == 0;
                 self.hidden_changed();
                 self.resize();

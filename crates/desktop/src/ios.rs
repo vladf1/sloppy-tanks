@@ -76,7 +76,7 @@ pub fn safe_area_insets(window: &Window) -> Option<egui::SafeAreaInsets> {
         (insets, orientation)
     };
     let upright_insets = insets.left == 0.0 && insets.right == 0.0;
-    if is_phone() && SIDEWAYS.contains(&orientation) && upright_insets {
+    if crate::touch::phone() && SIDEWAYS.contains(&orientation) && upright_insets {
         let side = insets.top;
         let bottom = if insets.bottom > 0.0 {
             SIDEWAYS_HOME_INDICATOR

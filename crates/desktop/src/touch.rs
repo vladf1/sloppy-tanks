@@ -8,9 +8,11 @@
 //! arena never reaches egui, so a second finger still presses the HUD's buttons while
 //! a thumb drives, and one that lands on a menu or a HUD button stays egui's.
 //!
-//! The device's class is decided once, when the app starts (`player-preferences.ts`,
+//! The device's class is decided when the app starts (`player-preferences.ts`,
 //! `index.html`'s head script): it picks the phone edition, the graphics the engine
-//! starts with and whether the overhead reticle shows.
+//! starts with and whether the overhead reticle shows. An iPhone Duo decides it again
+//! when it moves between its screens ([`fit_screen`]): the small outer one plays the
+//! phone edition, the large inner one the iPad's layout.
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -67,8 +69,8 @@ pub fn device() -> DeviceClass {
     }
 }
 
-/// The phone edition: an iPhone, a coarse pointer on a small screen, or `?phone`
-/// (`--phone`).
+/// The phone edition: an iPhone's screen, a coarse pointer on a small screen, or
+/// `?phone` (`--phone`).
 pub fn phone() -> bool {
     device() == DeviceClass::Phone
 }
@@ -77,8 +79,10 @@ const DESKTOP: u8 = 0;
 const TABLET: u8 = 1;
 const PHONE: u8 = 2;
 /// A coarse pointer on a screen whose shorter side is under this many CSS pixels is a
-/// phone. The screen's, not the window's: turning the phone keeps the same edition.
-#[cfg(target_arch = "wasm32")]
+/// phone, and so is an iPhone's screen under this many points (an iPhone Duo's outer
+/// screen is 466 wide, its inner one 669 tall). The screen's, not the window's: turning
+/// the phone keeps the same edition.
+#[cfg(any(target_arch = "wasm32", target_os = "ios", test))]
 const PHONE_SCREEN_SIDE: i32 = 600;
 
 static DEVICE: AtomicU8 = AtomicU8::new(if cfg!(target_os = "ios") {
@@ -86,6 +90,12 @@ static DEVICE: AtomicU8 = AtomicU8::new(if cfg!(target_os = "ios") {
 } else {
     DESKTOP
 });
+/// Whether the app runs on an iPhone (UIKit's phone idiom), whose screen picks the
+/// edition ([`fit_screen`]), and whether `--phone` asked for the phone edition anyway.
+#[cfg(target_os = "ios")]
+static IPHONE: AtomicBool = AtomicBool::new(false);
+#[cfg(target_os = "ios")]
+static PHONE_ASKED: AtomicBool = AtomicBool::new(false);
 static TOUCH_DETECTED: AtomicBool = AtomicBool::new(cfg!(target_os = "ios"));
 static SETTING: AtomicU8 = AtomicU8::new(0);
 
@@ -112,8 +122,9 @@ pub fn set_setting(touch: TouchSetting) {
 /// primary pointer (a tablet, a car's screen) or iPadOS Safari, which presents itself as
 /// a Mac with touch points; otherwise a desktop. A touch laptop's primary pointer is
 /// fine, so on Auto it plays with keyboard and mouse until a finger touches the page
-/// ([`touched`]). The iOS app is a phone on an iPhone and a tablet on an iPad. `phone`
-/// (`?phone`) asks for the phone edition anywhere.
+/// ([`touched`]). The iOS app is a phone on an iPhone and a tablet on an iPad, until
+/// [`fit_screen`] measures the iPhone's screen. `phone` (`?phone`) asks for the phone
+/// edition anywhere.
 pub fn detect(phone: bool) {
     #[cfg(target_arch = "wasm32")]
     let (phone, touch) = {
@@ -147,7 +158,12 @@ pub fn detect(phone: bool) {
     };
     // The iOS app is one bundle for both: an iPhone plays the phone edition.
     #[cfg(target_os = "ios")]
-    let phone = phone || crate::ios::is_phone();
+    let phone = {
+        let iphone = crate::ios::is_phone();
+        IPHONE.store(iphone, Ordering::Relaxed);
+        PHONE_ASKED.store(phone, Ordering::Relaxed);
+        phone || iphone
+    };
     #[cfg(not(target_arch = "wasm32"))]
     let touch = cfg!(target_os = "ios");
     let class = if phone {
@@ -159,6 +175,30 @@ pub fn detect(phone: bool) {
     };
     DEVICE.store(class, Ordering::Relaxed);
     TOUCH_DETECTED.store(touch, Ordering::Relaxed);
+}
+
+/// Decide again from the size of the screen an iPhone shows the window on, in points:
+/// an iPhone Duo moves the app between a phone-sized outer screen and a tablet-sized
+/// inner one as its hinge opens and closes, and winit reports that as a resize.
+#[cfg(target_os = "ios")]
+pub fn fit_screen(width: f64, height: f64) {
+    // A window with no size (one off screen) keeps the edition it had.
+    let measured = width > 0.0 && height > 0.0;
+    if !measured || !IPHONE.load(Ordering::Relaxed) || PHONE_ASKED.load(Ordering::Relaxed) {
+        return;
+    }
+    let class = if phone_screen(width, height) {
+        PHONE
+    } else {
+        TABLET
+    };
+    DEVICE.store(class, Ordering::Relaxed);
+}
+
+/// Whether an iPhone screen of `width` by `height` points plays the phone edition.
+#[cfg(any(target_os = "ios", test))]
+fn phone_screen(width: f64, height: f64) -> bool {
+    width.min(height) < f64::from(PHONE_SCREEN_SIDE)
 }
 
 /// An iPhone's browser cannot hide its bars for a page, so the phone edition's Battle
@@ -503,6 +543,23 @@ mod tests {
     use sloppy_render::presentation::aim_assist::AimMode;
     use winit::dpi::PhysicalPosition;
     use winit::event::DeviceId;
+
+    /// An iPhone Duo plays the phone edition on its outer screen and the iPad's layout
+    /// on its inner one, either way up; every other iPhone stays a phone.
+    #[test]
+    fn an_iphone_duo_plays_the_tablet_layout_on_its_inner_screen() {
+        for (width, height) in [
+            (466.0, 678.0),
+            (678.0, 466.0),
+            (402.0, 874.0),
+            (440.0, 956.0),
+        ] {
+            assert!(phone_screen(width, height), "{width}×{height}");
+        }
+        for (width, height) in [(669.0, 951.0), (951.0, 669.0)] {
+            assert!(!phone_screen(width, height), "{width}×{height}");
+        }
+    }
 
     fn touch(id: u64, phase: TouchPhase, x: f64, y: f64) -> Touch {
         Touch {
