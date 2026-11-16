@@ -1,10 +1,11 @@
 // The phone edition in headless Chrome as a phone (a 393×852 screen, a coarse pointer,
 // three device pixels a point), held upright and sideways: Battle Setup offers only the
 // tank, the map, the format and the tabs, every choice on screen and taken by a tap, with
-// Easy bots; GO plays with the overhead camera out at 40 m, no mine button, the top row's
-// zoom keys, the ammo key loading the next round under a driving thumb, the drive stick
-// and a finger on the arena firing at once; the top row's pause, END BATTLE, the battle
-// report and BATTLE SETUP. `?phone` asks for the edition on a desktop page too. Real multi-touch through CDP touch events (`fingers`).
+// Easy bots; GO plays with the overhead camera out at 40 m (52 upright), no mine button,
+// the top row's zoom keys, the ammo key loading the next round under a driving thumb,
+// the drive stick and a finger on the arena firing at once; the top row's pause, END
+// BATTLE, the battle report and BATTLE SETUP. `?phone` asks for the edition on a desktop
+// page too. Real multi-touch through CDP touch events (`fingers`).
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
@@ -38,8 +39,10 @@ const SETUP = [
   "Solo Assault",
   "GO!",
 ];
-/** The phone's own camera distance (`PHONE_ZOOM`) and the zoom keys' step. */
+/** The phone's own camera distance (`PHONE_ZOOM`; upright the farthest, 52) and the
+ * zoom keys' step. */
 const PHONE_ZOOM = 40;
+const PHONE_UPRIGHT_ZOOM = 52;
 const ZOOM_STEP = 2;
 const middle = (area) => [area.x + area.width / 2, area.y + area.height / 2];
 const shots = (debug) => debug.combatRecord.shots;
@@ -87,6 +90,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   const page = await context.newPage();
   collectErrors(page, errors, { consoleErrors: true, prefix: `[${name}] ` });
   const shot = (step) => page.screenshot({ path: `${out}/${name}-${step}.png` });
+  const zoom = viewport.height > viewport.width ? PHONE_UPRIGHT_ZOOM : PHONE_ZOOM;
   await openShell(page);
   const touch = await fingers(page);
   await phoneSetup(page, viewport, name);
@@ -120,7 +124,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   });
   assert.equal(state.extras.debug.mapMode, mapId, `${name}: the chosen arena`);
   assert.equal(state.extras.debug.human.kind, tankKind, `${name}: the chosen tank`);
-  assert.equal(state.extras.debug.view.zoom, PHONE_ZOOM, `${name}: the phone's camera`);
+  assert.equal(state.extras.debug.view.zoom, zoom, `${name}: the phone's camera`);
   const layout = state.touchLayout;
   assert.equal(layout.mine, null, `${name}: a phone has no mine button`);
   // An egui area lists its widgets from its second frame on.
@@ -156,12 +160,12 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
 
   // The top row's zoom keys step the camera in and out again.
   await touch.tap(1, ...middle(layout.zoomIn));
-  await untilState(page, (state) => state.extras.debug.view.zoom === PHONE_ZOOM - ZOOM_STEP, {
+  await untilState(page, (state) => state.extras.debug.view.zoom === zoom - ZOOM_STEP, {
     extras: ["debug"],
     what: `${name}: the zoom-in key`,
   });
   await touch.tap(2, ...middle(layout.zoomOut));
-  await untilState(page, (state) => state.extras.debug.view.zoom === PHONE_ZOOM, {
+  await untilState(page, (state) => state.extras.debug.view.zoom === zoom, {
     extras: ["debug"],
     what: `${name}: the zoom-out key`,
   });
