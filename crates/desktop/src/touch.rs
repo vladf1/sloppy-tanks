@@ -226,6 +226,9 @@ pub const ZOOM_RADIUS: f32 = 26.0;
 /// edge where that is further in.
 const SIDE: f32 = 24.0;
 const BOTTOM: f32 = 28.0;
+/// How far a stick's name tag reaches below its square, which the safe area keeps too
+/// (an iPhone Duo's inner screen has the sticks right on its edge).
+pub const STICK_TAG_BELOW: f32 = 6.0;
 /// A phone's smaller stick, nearer its corner.
 pub const PHONE_STICK_SIZE: f32 = 150.0;
 const PHONE_STICK_MARGIN: f32 = 12.0;
@@ -273,7 +276,7 @@ impl TouchLayout {
         }
         let left = (viewport.left() + SIDE).max(content.left());
         let right = (viewport.right() - SIDE).min(content.right());
-        let bottom = (viewport.bottom() - BOTTOM).min(content.bottom());
+        let bottom = (viewport.bottom() - BOTTOM).min(content.bottom() - STICK_TAG_BELOW);
         let fire = Rect::from_min_max(
             pos2(right - STICK_SIZE, bottom - STICK_SIZE),
             pos2(right, bottom),
@@ -600,7 +603,8 @@ mod tests {
         assert!(layout.zoom_out.center().distance(mine) > ZOOM_RADIUS + MINE_RADIUS);
         let (from, to) = layout.panel_span(1156.0);
         assert!(from >= layout.stick.right() && to <= mine.x - MINE_RADIUS);
-        // A safe area further in than the margins moves them in.
+        // A safe area further in than the margins moves them in, with the sticks' name
+        // tags inside it too.
         let content = Rect::from_min_max(pos2(0.0, 24.0), pos2(1180.0, 800.0));
         assert_eq!(
             TouchLayout::new(screen, content, false).stick.bottom(),
@@ -609,7 +613,7 @@ mod tests {
         let content = Rect::from_min_max(pos2(30.0, 0.0), pos2(1180.0, 780.0));
         assert_eq!(
             TouchLayout::new(screen, content, false).stick.left_bottom(),
-            pos2(30.0, 780.0)
+            pos2(30.0, 780.0 - STICK_TAG_BELOW)
         );
     }
 
