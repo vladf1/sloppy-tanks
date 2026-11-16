@@ -2,10 +2,11 @@
 // three device pixels a point), held upright and sideways: Battle Setup offers only the
 // tank, the map, the format, the difficulty (Easy until stepped) and the tabs, every
 // choice on screen and taken by a tap; GO plays with the overhead camera out at 40 m (52
-// upright), no mine button, the top row's zoom keys, the ammo key loading the next round
-// under a driving thumb, the drive stick and a finger on the arena firing at once; the
-// top row's pause, END BATTLE, the battle report and BATTLE SETUP. `?phone` asks for the
-// edition on a desktop page too. Real multi-touch through CDP touch events (`fingers`).
+// upright), the top row's zoom keys, the ammo key loading the next round under a driving
+// thumb and the mine button beside it, the drive stick and a finger on the arena firing
+// at once; the top row's pause, END BATTLE, the battle report and BATTLE SETUP. `?phone`
+// asks for the edition on a desktop page too. Real multi-touch through CDP touch events
+// (`fingers`).
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
@@ -121,7 +122,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   );
   await phoneSetup(page, viewport, `${name} after the choices`, "Normal");
 
-  // GO: the phone's camera, no mine button, the top row's keys.
+  // GO: the phone's camera, the top row's keys and the right thumb's two.
   await tapWidget(page, touch, "GO!");
   state = await untilState(page, (state) => state.inRound && state.touchControls, {
     extras: ["debug"],
@@ -132,7 +133,7 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   assert.equal(state.extras.debug.difficulty, "normal", `${name}: the chosen difficulty`);
   assert.equal(state.extras.debug.view.zoom, zoom, `${name}: the phone's camera`);
   const layout = state.touchLayout;
-  assert.equal(layout.mine, null, `${name}: a phone has no mine button`);
+  assert.ok(layout.mine, `${name}: a phone's mine button`);
   // An egui area lists its widgets from its second frame on.
   await page.waitForTimeout(500);
   const labels = (await widgets(page)).map((widget) => widget.label).sort();
@@ -163,6 +164,15 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   );
   await shot("ammo");
   await touch.end(5);
+
+  // The mine button beside it drops a mine and shows its cooldown.
+  await touch.tap(7, ...layout.mine);
+  await untilState(page, (state) => state.extras.debug.human.mineCooldown > 0, {
+    extras: ["debug"],
+    what: `${name}: the mine button drops a mine`,
+  });
+  await page.waitForTimeout(300);
+  await shot("mine");
 
   // The top row's zoom keys step the camera in and out again.
   await touch.tap(1, ...middle(layout.zoomIn));
@@ -233,7 +243,7 @@ try {
     const state = await untilState(page, (state) => state.inRound && state.touchControls, {
       what: "?phone: the round",
     });
-    assert.equal(state.touchLayout.mine, null, "?phone: the phone's controls");
+    assert.ok(state.touchLayout.ammo && state.touchLayout.mine, "?phone: the phone's controls");
     await page.screenshot({ path: `${out}/forced-round.png` });
     await context.close();
   }

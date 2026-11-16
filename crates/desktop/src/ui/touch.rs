@@ -27,8 +27,8 @@ const KNOB_RADIUS: f32 = 27.0;
 const KNOB_RIM: f32 = 2.0;
 const KNOB_LIGHT_TOP: f32 = 0.28;
 const KNOB_GRIP: f32 = 17.0;
-/// The mine key's navy face inside its gold rim.
-const MINE_FACE: f32 = 34.4;
+/// The mine key's navy face inside its gold rim, as a share of the key's radius.
+const MINE_FACE: f32 = 34.4 / MINE_RADIUS;
 /// Seconds the fire hint shows each time the controls appear, and its fade.
 const HINT_SECONDS: f64 = 9.0;
 const HINT_FADE: f64 = 0.5;
@@ -84,7 +84,7 @@ pub fn controls(
         } else {
             1.0
         };
-        mine_key(&painter, art, mine, cooldown, ready);
+        mine_key(&painter, art, mine, layout.mine_radius, cooldown, ready);
     }
     // The first-person view sits in the turret and has no zoom.
     if !crate::touch::phone() && !touch.first_person {
@@ -413,39 +413,39 @@ fn stick(
     painter.galley(tag.min + vec2(12.0, 3.0), text, Color32::WHITE);
 }
 
-/// The mine key: armed, or its rim refilling while the seconds count down.
-fn mine_key(painter: &Painter, art: &Art, center: Pos2, cooldown: f64, ready: f32) {
+/// The mine key of `radius` (a tablet's [`MINE_RADIUS`], a phone's smaller): armed, or
+/// its rim refilling while the seconds count down. A smaller key scales its icon and
+/// type with it.
+fn mine_key(painter: &Painter, art: &Art, center: Pos2, radius: f32, cooldown: f64, ready: f32) {
     let cooling = cooldown > 0.0;
-    drop_shadow(painter, center, MINE_RADIUS);
-    painter.circle_filled(center, MINE_RADIUS, hexa(0xffffff, 0.12));
+    let scale = radius / MINE_RADIUS;
+    let face = MINE_FACE * radius;
+    drop_shadow(painter, center, radius);
+    painter.circle_filled(center, radius, hexa(0xffffff, 0.12));
     paint::arc(
         painter,
         center,
-        MINE_RADIUS - 1.5,
+        radius - 1.5,
         0.0,
         std::f32::consts::TAU * ready,
         Stroke::new(3.0, GOLD),
     );
     if cooling {
-        painter.circle_filled(center, MINE_FACE, hex(0x13294a));
-        painter.circle_stroke(
-            center,
-            MINE_RADIUS - 0.5,
-            Stroke::new(1.0, hexa(0xbfe2ff, 0.27)),
-        );
+        painter.circle_filled(center, face, hex(0x13294a));
+        painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, hexa(0xbfe2ff, 0.27)));
     } else {
         painter.add(paint::radial(
             center,
-            Vec2::splat(MINE_FACE),
+            Vec2::splat(face),
             &[(0.0, hex(0x183460)), (1.0, hex(0x0b1a33))],
         ));
         painter.add(paint::radial(
-            center - vec2(0.0, MINE_RADIUS * 0.56),
-            vec2(MINE_RADIUS * 0.6, MINE_RADIUS * 0.4),
+            center - vec2(0.0, radius * 0.56),
+            vec2(radius * 0.6, radius * 0.4),
             &[(0.0, hexa(0xffffff, 0.12)), (1.0, Color32::TRANSPARENT)],
         ));
     }
-    let icon = Rect::from_center_size(center - vec2(0.0, 7.0), Vec2::splat(26.0));
+    let icon = Rect::from_center_size(center - vec2(0.0, 7.0 * scale), Vec2::splat(26.0 * scale));
     if !cooling {
         art.icon(
             painter,
@@ -467,10 +467,10 @@ fn mine_key(painter: &Painter, art: &Art, center: Pos2, cooldown: f64, ready: f3
     };
     paint::text(
         painter,
-        center + vec2(0.0, 15.0),
+        center + vec2(0.0, 15.0 * scale),
         Align2::CENTER_CENTER,
         &label,
-        bold_font(12.0),
+        bold_font((12.0 * scale).max(10.0)),
         if cooling {
             hex(0xa1b4c6)
         } else {
