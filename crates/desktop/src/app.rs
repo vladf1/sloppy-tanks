@@ -998,6 +998,11 @@ impl Session {
                     self.input.controls.select_ammo(slot);
                 }
             }
+            Action::NextAmmo => {
+                if self.phase == MatchPhase::Playing && self.alive {
+                    self.input.controls.next_ammo();
+                }
+            }
             Action::ToggleView => {
                 self.first_person = self.game.toggle_first_person();
                 self.save_camera();

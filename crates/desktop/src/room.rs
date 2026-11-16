@@ -600,6 +600,11 @@ impl RoomSession {
                     self.input.controls.select_ammo(slot);
                 }
             }
+            Action::NextAmmo => {
+                if self.menu.in_battle() {
+                    self.input.controls.next_ammo();
+                }
+            }
             Action::ToggleView => {
                 if self.menu.in_battle() {
                     self.first_person = self.game.toggle_first_person();

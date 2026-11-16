@@ -41,6 +41,8 @@ pub enum Action {
     /// The respawn card picked the next life's tank.
     NextTank(VehicleKind),
     SelectAmmo(u8),
+    /// A phone's ammo key: the next stocked round.
+    NextAmmo,
     ToggleView,
     ToggleFullscreen,
     OpenSettings,

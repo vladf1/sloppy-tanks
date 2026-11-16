@@ -245,6 +245,11 @@ impl Controls {
         self.mine = true;
     }
 
+    /// A phone's ammo key: load the next stocked round, as E does.
+    pub fn next_ammo(&mut self) {
+        self.ammo_step = 1;
+    }
+
     /// The touch zoom keys: metres out (positive) or in.
     pub fn zoom_by(&mut self, metres: f64) {
         self.zoom += metres;
@@ -484,6 +489,14 @@ mod tests {
         assert!(controls.take_input().left);
         controls.key(KeyCode::ArrowLeft, ElementState::Released, false, true);
         assert!(!controls.take_input().left);
+    }
+
+    #[test]
+    fn the_ammo_key_steps_to_the_next_round_once() {
+        let mut controls = Controls::default();
+        controls.next_ammo();
+        assert_eq!(controls.take_input().ammo_step, 1);
+        assert_eq!(controls.take_input().ammo_step, 0, "one tap, one step");
     }
 
     #[test]

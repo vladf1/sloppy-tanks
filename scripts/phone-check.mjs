@@ -2,9 +2,9 @@
 // three device pixels a point), held upright and sideways: Battle Setup offers only the
 // tank, the map, the format and the tabs, every choice on screen and taken by a tap, with
 // Easy bots; GO plays with the overhead camera out at 40 m, no mine button, the top row's
-// zoom keys, the drive stick and a finger on the arena firing at once; the top row's
-// pause, END BATTLE, the battle report and BATTLE SETUP. `?phone` asks for the edition
-// on a desktop page too. Real multi-touch through CDP touch events (`fingers`).
+// zoom keys, the ammo key loading the next round under a driving thumb, the drive stick
+// and a finger on the arena firing at once; the top row's pause, END BATTLE, the battle
+// report and BATTLE SETUP. `?phone` asks for the edition on a desktop page too. Real multi-touch through CDP touch events (`fingers`).
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
@@ -33,6 +33,7 @@ const SETUP = [
   "Pine Village",
   "Harbor Havoc",
   "Dusty Dig",
+  "Neighborhood",
   "Team Battle",
   "Solo Assault",
   "GO!",
@@ -125,8 +126,33 @@ async function playPhone(name, viewport, [tank, tankKind], [map, mapId]) {
   // An egui area lists its widgets from its second frame on.
   await page.waitForTimeout(500);
   const labels = (await widgets(page)).map((widget) => widget.label).sort();
-  assert.deepEqual(labels, ["Pause", "Switch view"], `${name}: the top row's buttons`);
+  assert.deepEqual(
+    labels,
+    ["Next ammo", "Pause", "Switch view"],
+    `${name}: the top row's buttons and the ammo key`,
+  );
   await shot("round");
+
+  // The ammo key over the fire stick: with crates' rounds aboard a tap loads the next
+  // one, while a thumb drives.
+  assert.ok(layout.ammo, `${name}: a phone's ammo key`);
+  await page.evaluate(() => window.sloppyShell.debug("giveAmmo", 3));
+  const loaded = async () =>
+    (await nextFrame(page, ["hud"])).extras.hud.human.ammo.find((slot) => slot.selected).weapon;
+  const first = await loaded();
+  const drive = middle(layout.stick);
+  await touch.start(5, ...drive);
+  await touch.move(5, drive[0] + 40, drive[1]);
+  await touch.tap(6, ...layout.ammo);
+  await untilState(
+    page,
+    (state) =>
+      state.extras.hud.human.ammo.find((slot) => slot.selected).weapon !== first &&
+      state.stickPush !== null,
+    { extras: ["hud"], what: `${name}: the ammo key loads the next round under a driving thumb` },
+  );
+  await shot("ammo");
+  await touch.end(5);
 
   // The top row's zoom keys step the camera in and out again.
   await touch.tap(1, ...middle(layout.zoomIn));
