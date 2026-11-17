@@ -1233,11 +1233,6 @@ pub(super) fn free_corner(context: &egui::Context) -> Option<FreeCorner> {
     context.data(|data| data.get_temp(Id::unique("free corner")))
 }
 
-/// The kill feed's width on a desktop or tablet.
-fn feed_width(screen: Rect) -> f32 {
-    336.0_f32.min(screen.width() * 0.42)
-}
-
 /// The type of the kill feed's bot tags.
 const FEED_TAG_SIZE: f32 = 9.5;
 
