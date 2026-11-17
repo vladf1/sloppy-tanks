@@ -208,7 +208,7 @@ pub struct View<'a> {
     pub in_round: bool,
     pub phase: MatchPhase,
     pub prefs: &'a Preferences,
-    /// The release and commit line under Battle Setup.
+    /// The release and commit line under Battle Setup and in Settings.
     pub build: &'a str,
     /// Extra levels may be chosen (`--debug`).
     pub debug: bool,
