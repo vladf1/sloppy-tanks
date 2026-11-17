@@ -1646,6 +1646,12 @@ fn joined<R>(parts: &[&str], draw: impl FnOnce(&str) -> R) -> R {
     })
 }
 
+/// The kill list's place and width, and the least gap it keeps from the kill feed.
+const PLAYERS_LEFT: f32 = 16.0;
+const PLAYERS_TOP: f32 = 88.0;
+const PLAYERS_WIDTH: f32 = 224.0;
+const PLAYERS_GAP: f32 = 8.0;
+
 /// The compact kill list beside the HUD during a battle.
 fn players<'a>(context: &egui::Context, menu: &'a RoomMenu, state: &'a UiState) {
     let Some(lobby) = &menu.lobby else { return };
@@ -1670,14 +1676,22 @@ fn players<'a>(context: &egui::Context, menu: &'a RoomMenu, state: &'a UiState) 
             (player.team.index(), player.slot)
         });
     });
+    // Under a narrow screen's stacked toolbar, and only where it clears the kill feed.
+    let corner = hud::free_corner(context);
+    let top = corner.map_or(PLAYERS_TOP, |corner| corner.top.max(PLAYERS_TOP));
+    if corner.is_some_and(|corner| PLAYERS_LEFT + PLAYERS_WIDTH + PLAYERS_GAP > corner.right) {
+        return;
+    }
     let count = lobby.players.len();
     let mut digits = [0; DIGITS];
     egui::Area::new(Id::unique("room players"))
-        .anchor(Align2::LEFT_TOP, [16.0, 88.0])
+        .anchor(Align2::LEFT_TOP, [PLAYERS_LEFT, top])
         .interactable(false)
         .show(context, |ui| {
-            let rect =
-                Rect::from_min_size(ui.cursor().min, vec2(224.0, 44.0 + count as f32 * 27.0));
+            let rect = Rect::from_min_size(
+                ui.cursor().min,
+                vec2(PLAYERS_WIDTH, 44.0 + count as f32 * 27.0),
+            );
             let painter = ui.painter();
             paint::rounded_vgradient(
                 painter,

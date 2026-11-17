@@ -229,6 +229,15 @@ pub fn hud(
         painter.clone()
     };
     kill_feed(&feed_painter, art, screen, feed_top, state);
+    let free = FreeCorner {
+        top: if stacked {
+            toolbar_top + tools.y * zoom + STACK_GAP
+        } else {
+            screen.top()
+        },
+        right: screen.right() - (EDGE + feed_width(screen)) * zoom,
+    };
+    context.data_mut(|data| data.insert_temp(Id::unique("free corner"), free));
     if playing {
         toast(&painter, screen, state);
         toolbar(
@@ -1200,6 +1209,25 @@ fn toolbar(
         });
 }
 
+/// The top-left room the score bar, the toolbar and the kill feed leave a room's player
+/// list: below the toolbar where a narrow screen stacks it under the score, and left of
+/// the feed's column.
+#[derive(Clone, Copy)]
+pub(super) struct FreeCorner {
+    pub top: f32,
+    pub right: f32,
+}
+
+/// The room the last frame's HUD left in the top-left corner.
+pub(super) fn free_corner(context: &egui::Context) -> Option<FreeCorner> {
+    context.data(|data| data.get_temp(Id::unique("free corner")))
+}
+
+/// The kill feed's width on a desktop or tablet.
+fn feed_width(screen: Rect) -> f32 {
+    336.0_f32.min(screen.width() * 0.42)
+}
+
 /// The type of the kill feed's bot tags.
 const FEED_TAG_SIZE: f32 = 9.5;
 
@@ -1214,7 +1242,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             screen.right() - 8.0,
         )
     } else {
-        (336.0_f32.min(screen.width() * 0.42), screen.right() - EDGE)
+        (feed_width(screen), screen.right() - EDGE)
     };
     let row_height = 30.0;
     let lines = if state.cockpit { 2 } else { super::FEED_LINES };
