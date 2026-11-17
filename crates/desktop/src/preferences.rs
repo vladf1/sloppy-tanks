@@ -37,6 +37,10 @@ pub struct Preferences {
     pub map: MapId,
     #[serde(deserialize_with = "or_default")]
     pub difficulty: Difficulty,
+    /// Single player's difficulty on a phone, apart from a larger screen's: phones
+    /// played only Easy while their saves kept the shared default, Normal.
+    #[serde(deserialize_with = "phone_difficulty")]
+    pub phone_difficulty: Difficulty,
     pub first_person: bool,
     pub zoom: Option<f64>,
     pub volume: f64,
@@ -73,6 +77,7 @@ impl Default for Preferences {
             game_mode: GameMode::Team,
             map: MapId::Village,
             difficulty: Difficulty::Normal,
+            phone_difficulty: Difficulty::Easy,
             first_person: false,
             zoom: None,
             volume: sloppy_web::catalog::DEFAULT_VOLUME,
@@ -172,6 +177,7 @@ impl Preferences {
             game_mode,
             map,
             difficulty,
+            phone_difficulty,
             first_person,
             zoom,
             volume,
@@ -186,6 +192,7 @@ impl Preferences {
             game_mode: *game_mode,
             map: *map,
             difficulty: *difficulty,
+            phone_difficulty: *phone_difficulty,
             first_person: *first_person,
             zoom: *zoom,
             volume: *volume,
@@ -248,6 +255,7 @@ impl Preferences {
                 .and_then(|id| MapId::parse(&id))
                 .unwrap_or(defaults.map),
             difficulty: named(value("difficulty"), &DIFFICULTIES).unwrap_or(defaults.difficulty),
+            phone_difficulty: defaults.phone_difficulty,
             first_person: is("camera", "first-person"),
             zoom: number("zoom"),
             volume: number("volume").map_or(defaults.volume, |volume| volume.clamp(0.0, 1.0)),
@@ -280,21 +288,36 @@ impl Preferences {
     }
 
     /// The choices as single player plays them, on `human_team`: an extra level only
-    /// where extra levels are offered, and as its own team battle. A phone's bots are
-    /// always Easy; the saved difficulty stays for a larger screen.
+    /// where extra levels are offered, and as its own team battle, at this device's
+    /// difficulty ([`Preferences::difficulty_on`]).
     pub fn game_options(&self, human_team: Team, extra_levels: bool) -> GameOptions {
         GameOptions {
             human_kind: self.tank,
             human_team,
             game_mode: self.game_mode,
             map_mode: self.map,
-            difficulty: if crate::touch::phone() {
-                Difficulty::Easy
-            } else {
-                self.difficulty
-            },
+            difficulty: self.difficulty_on(crate::touch::phone()),
         }
         .offered(extra_levels)
+    }
+
+    /// Single player's difficulty on a `phone` or a larger screen: each keeps its own,
+    /// so a phone starts on Easy whatever a larger screen chose.
+    pub fn difficulty_on(&self, phone: bool) -> Difficulty {
+        if phone {
+            self.phone_difficulty
+        } else {
+            self.difficulty
+        }
+    }
+
+    /// Choose single player's difficulty on a `phone` or a larger screen.
+    pub fn set_difficulty_on(&mut self, phone: bool, difficulty: Difficulty) {
+        if phone {
+            self.phone_difficulty = difficulty;
+        } else {
+            self.difficulty = difficulty;
+        }
     }
 }
 
@@ -306,6 +329,12 @@ where
 {
     let value = Value::deserialize(deserializer)?;
     Ok(T::deserialize(value).unwrap_or_default())
+}
+
+/// A phone's difficulty; one the file names wrongly is a phone's default, Easy.
+fn phone_difficulty<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Difficulty, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    Ok(Difficulty::deserialize(value).unwrap_or(Difficulty::Easy))
 }
 
 fn playable_tank<'de, D: Deserializer<'de>>(deserializer: D) -> Result<VehicleKind, D::Error> {
@@ -368,6 +397,30 @@ mod tests {
         assert_eq!(Preferences::read("not json"), Preferences::default());
     }
 
+    /// A phone keeps its own single-player difficulty, Easy until chosen, saved beside
+    /// a larger screen's: a save from before phones could choose (the shared field at
+    /// Normal) still plays Easy there.
+    #[test]
+    fn a_phone_keeps_its_own_difficulty_starting_on_easy() {
+        let old_save = Preferences::read(r#"{"difficulty": "normal", "map": "harbor"}"#);
+        assert_eq!(old_save.difficulty_on(true), Difficulty::Easy);
+        assert_eq!(old_save.difficulty_on(false), Difficulty::Normal);
+
+        let mut prefs = Preferences::default();
+        prefs.set_difficulty_on(true, Difficulty::Hard);
+        assert_eq!(prefs.difficulty_on(true), Difficulty::Hard);
+        assert_eq!(
+            prefs.difficulty_on(false),
+            Difficulty::Normal,
+            "the larger screen's stays"
+        );
+        let text = serde_json::to_string(&prefs).unwrap();
+        assert!(text.contains(r#""phoneDifficulty":"hard""#));
+        assert_eq!(Preferences::read(&text), prefs);
+        let edited = Preferences::read(r#"{"phoneDifficulty": "insane"}"#);
+        assert_eq!(edited.difficulty_on(true), Difficulty::Easy);
+    }
+
     #[test]
     fn a_copy_matches_its_source_and_keeps_its_own_name_text() {
         let source = Preferences {
@@ -427,6 +480,7 @@ mod tests {
                 game_mode: GameMode::Solo,
                 map: MapId::StressTest,
                 difficulty: Difficulty::Hard,
+                phone_difficulty: Difficulty::Easy,
                 first_person: true,
                 zoom: Some(41.5),
                 volume: 0.25,

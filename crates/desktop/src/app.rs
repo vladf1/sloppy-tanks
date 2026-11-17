@@ -22,6 +22,7 @@ use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
 use sloppy_render::presentation::generated::theme_bakes;
+use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::quality::DeviceClass;
 use sloppy_web::events::EventBatch;
 use sloppy_web::hud::Loading;
@@ -402,6 +403,24 @@ pub fn render_target(window: &Arc<Window>) -> Result<RenderTarget, String> {
 /// A phone's overhead camera starts this far out until the player zooms
 /// (`startingCamera`): its small screen shows more of the arena than the default's.
 const PHONE_ZOOM: f64 = 40.0;
+/// Held upright a phone starts at the farthest zoom instead. Its view is narrow: at
+/// 40 m a 393×852 screen spans 17 m across at the tank (sideways 80 m, a 1440×900
+/// window at the default 34 m 50 m), and in seeded bots-only matches only 45% of the
+/// tanks that hit another stood inside that view, against 89% sideways and 82% in the
+/// desktop window. From 52 m it spans 22 m and shows 60%; the damage ring points at
+/// the rest. The camera keeps its fixed offset: this is only where it starts.
+const PHONE_UPRIGHT_ZOOM: f64 = CAMERA.max_zoom;
+
+/// Where the overhead camera starts on a `device` whose screen is `width` by `height`
+/// before the player has zoomed: a phone's own distance, the engine's default
+/// elsewhere.
+fn starting_zoom(device: DeviceClass, width: f64, height: f64) -> Option<f64> {
+    (device == DeviceClass::Phone).then_some(if height > width {
+        PHONE_UPRIGHT_ZOOM
+    } else {
+        PHONE_ZOOM
+    })
+}
 
 /// The view configuration both engines take for `window`, with the player's camera
 /// and graphics choices.
@@ -413,9 +432,7 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         css_height: Some(height),
         pixel_ratio: Some(scale),
         first_person: prefs.first_person,
-        zoom: prefs
-            .zoom
-            .or((device == DeviceClass::Phone).then_some(PHONE_ZOOM)),
+        zoom: prefs.zoom.or(starting_zoom(device, width, height)),
         // Touch devices draw no overhead reticle (`startingCamera`): a finger aims
         // where it is, so the mark sat under it and stuck where it lifted.
         hide_reticle: device != DeviceClass::Desktop,
@@ -1030,6 +1047,11 @@ impl Session {
                     self.input.controls.select_ammo(slot);
                 }
             }
+            Action::NextAmmo => {
+                if self.phase == MatchPhase::Playing && self.alive {
+                    self.input.controls.next_ammo();
+                }
+            }
             Action::ToggleView => {
                 self.first_person = self.game.toggle_first_person();
                 self.save_camera();
@@ -1614,6 +1636,22 @@ pub(crate) fn install_imported_home() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A phone held upright starts at the farthest zoom, sideways at its own; other
+    /// devices keep the engine's default.
+    #[test]
+    fn an_upright_phone_starts_farther_out() {
+        assert_eq!(
+            starting_zoom(DeviceClass::Phone, 393.0, 852.0),
+            Some(CAMERA.max_zoom)
+        );
+        assert_eq!(
+            starting_zoom(DeviceClass::Phone, 852.0, 393.0),
+            Some(PHONE_ZOOM)
+        );
+        assert_eq!(starting_zoom(DeviceClass::Tablet, 820.0, 1180.0), None);
+        assert_eq!(starting_zoom(DeviceClass::Desktop, 1440.0, 900.0), None);
+    }
 
     fn status(compiled: u32, remaining: u32, ready: bool) -> PrepareStatus {
         PrepareStatus {

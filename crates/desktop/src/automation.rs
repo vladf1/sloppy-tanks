@@ -108,6 +108,8 @@ pub struct TouchControls {
     pub fire: Area,
     /// The mine button's centre, where the edition has one.
     pub mine: Option<[f32; 2]>,
+    /// A phone's ammo key's centre.
+    pub ammo: Option<[f32; 2]>,
     pub zoom_in: Area,
     pub zoom_out: Area,
 }
@@ -118,6 +120,7 @@ impl From<&crate::touch::TouchLayout> for TouchControls {
             stick: layout.stick.into(),
             fire: layout.fire.into(),
             mine: layout.mine.map(|mine| [mine.x, mine.y]),
+            ammo: layout.ammo.map(|ammo| [ammo.x, ammo.y]),
             zoom_in: layout.zoom_in.into(),
             zoom_out: layout.zoom_out.into(),
         }

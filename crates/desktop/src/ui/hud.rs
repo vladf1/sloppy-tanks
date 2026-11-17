@@ -239,6 +239,15 @@ pub fn hud(
         painter.clone()
     };
     kill_feed(&feed_painter, art, screen, feed_top, state);
+    let free = FreeCorner {
+        top: if stacked {
+            toolbar_top + tools.y * zoom + STACK_GAP
+        } else {
+            screen.top()
+        },
+        right: screen.right() - (EDGE + feed_width(screen)) * zoom,
+    };
+    context.data_mut(|data| data.insert_temp(Id::unique("free corner"), free));
     if playing {
         toast(&painter, screen, state);
         toolbar(
@@ -334,6 +343,9 @@ fn phone_hud(
     }
     if let Some(touch) = state.touch.filter(|_| playing) {
         super::touch::controls(context, art, state, &touch, &painter);
+        if touch.acting && state.settings_draft.is_none() {
+            phone_ammo_key(context, art, human, actions);
+        }
     }
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
     if human.alive {
@@ -609,6 +621,66 @@ fn phone_keys(
             if keys.upright {
                 divider(keys.pause.left(), keys.pause);
             }
+        });
+}
+
+/// The phone's ammo key over its fire stick: the loaded round's icon in its colour and
+/// how many remain, and a tap loads the next stocked round (as E does). With nothing
+/// but Standard shells it stays in place, dim, so the field never shifts when a crate
+/// fills it; a tank with a fixed gun (the TOW carrier) carries no rounds and has none.
+fn phone_ammo_key(context: &egui::Context, art: &Art, human: &HudHuman, actions: &mut Vec<Action>) {
+    let Some(center) = crate::touch::TouchLayout::of(context).ammo else {
+        return;
+    };
+    let Some((option, slot)) = AMMO_OPTIONS
+        .iter()
+        .zip(&human.ammo)
+        .find(|(_, slot)| slot.selected)
+    else {
+        return;
+    };
+    let radius = crate::touch::PHONE_THUMB_KEY_RADIUS;
+    let rect = Rect::from_center_size(center, Vec2::splat(2.0 * radius));
+    let choice = human.ammo.iter().filter(|slot| slot.available).count() > 1;
+    egui::Area::new(Id::unique("phone ammo key"))
+        .fixed_pos(rect.min)
+        .order(Order::Middle)
+        .show(context, |ui| {
+            let (_, response) = ui.allocate_exact_size(rect.size(), Sense::click());
+            paint::labelled(&response, choice, "Next ammo");
+            if choice && response.clicked() {
+                actions.push(Action::NextAmmo);
+            }
+            let painter = ui.painter();
+            let color = hex(option.color());
+            painter.circle_filled(center + vec2(0.0, 4.0), radius, hexa(0x000000, 0.25));
+            painter.add(paint::radial(
+                center,
+                Vec2::splat(radius),
+                &[(0.0, hexa(0x183460, 0.92)), (1.0, hexa(0x0b1a33, 0.95))],
+            ));
+            // A loaded special round rims the key in its colour; Standard alone is a
+            // faint rim with nothing to switch to.
+            let (rim, ink) = if choice {
+                (Stroke::new(2.5, color), 1.0)
+            } else {
+                (Stroke::new(1.0, theme::PLATE_EDGE), 0.5)
+            };
+            painter.circle_stroke(center, radius - 1.25, rim);
+            art.icon(
+                painter,
+                option.weapon.as_str(),
+                Rect::from_center_size(center - vec2(0.0, 7.0), Vec2::splat(20.0)),
+                fade(color, ink),
+            );
+            count_mark(
+                painter,
+                center + vec2(0.0, 12.0),
+                Align2::CENTER_CENTER,
+                slot.count,
+                12.0,
+                fade(Color32::WHITE, ink),
+            );
         });
 }
 
@@ -1145,6 +1217,20 @@ fn toolbar(
                 }
             }
         });
+}
+
+/// The top-left room the score bar, the toolbar and the kill feed leave a room's player
+/// list: below the toolbar where a narrow screen stacks it under the score, and left of
+/// the feed's column.
+#[derive(Clone, Copy)]
+pub(super) struct FreeCorner {
+    pub top: f32,
+    pub right: f32,
+}
+
+/// The room the last frame's HUD left in the top-left corner.
+pub(super) fn free_corner(context: &egui::Context) -> Option<FreeCorner> {
+    context.data(|data| data.get_temp(Id::unique("free corner")))
 }
 
 /// The type of the kill feed's bot tags.

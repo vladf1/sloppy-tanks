@@ -1,7 +1,9 @@
 //! Touch play in the iOS app and on a page's touch screen (`touch-controls.ts`): the drive
 //! stick in the bottom-left corner, the fire stick in the bottom-right with the mine
-//! button beside it and the zoom pair over it (a phone's edition has no mines, and its
-//! zoom pair joins the top row), and a finger anywhere else on the arena aims there and
+//! button beside it and the zoom pair over it (a phone's smaller mine button shares the
+//! fire stick's shoulder with an ammo key, which egui draws and presses as a HUD button,
+//! and its zoom pair joins the top row), and a finger anywhere else on the arena aims
+//! there and
 //! fires while it is down. The fire stick taps, holds and drags (`input::FireFinger`);
 //! the engine's aim assist (`aim_assist`) turns that into the turret's aim.
 //! Each finger belongs to whatever it first touched: one that lands on a control or the
@@ -237,6 +239,18 @@ const PHONE_STICK_MARGIN: f32 = 12.0;
 const MINE_FROM_FIRE: Vec2 = Vec2::new(-92.0, -92.0);
 /// The gap between the fire stick's square and the zoom pair over it.
 const ZOOM_GAP: f32 = 8.0;
+/// A phone's right-thumb keys round its fire stick: their radius (a 52-point key, past
+/// the 44-point minimum a thumb needs), their centres' distance from the stick's (the
+/// stick's ring, shifted under a thumb by `STICK_ANCHOR_SHIFT`, stays clear of them),
+/// and their places on that circle, turned this far left from straight up: the ammo key
+/// over the stick, the mine low at its left, level with the stick's lower half. The
+/// mine stands a little nearer, so held upright it fits between the two sticks, clear
+/// of the drive stick's square.
+pub const PHONE_THUMB_KEY_RADIUS: f32 = 26.0;
+const PHONE_THUMB_KEY_REACH: f32 = 116.0;
+const PHONE_MINE_REACH: f32 = 110.0;
+const PHONE_AMMO_TURN: f32 = 15.0_f32.to_radians();
+const PHONE_MINE_TURN: f32 = 117.0_f32.to_radians();
 
 /// Where the touch controls sit, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,8 +258,13 @@ pub struct TouchLayout {
     pub stick: Rect,
     /// The fire stick's square, in the bottom-right corner.
     pub fire: Rect,
-    /// The mine button's centre; a phone's edition has no mines.
+    /// The mine button's centre and radius: a tablet's on the fire stick's shoulder, a
+    /// phone's smaller one beside its ammo key.
     pub mine: Option<Pos2>,
+    pub mine_radius: f32,
+    /// A phone's ammo key's centre, over its fire stick; a tablet's rack is in its tank
+    /// panel.
+    pub ammo: Option<Pos2>,
     /// The zoom keys: round keys over the mine button, or a phone's pair in its top row.
     pub zoom_in: Rect,
     pub zoom_out: Rect,
@@ -260,16 +279,23 @@ impl TouchLayout {
             let right = (viewport.right() - PHONE_STICK_MARGIN).min(content.right());
             let bottom = (viewport.bottom() - PHONE_STICK_MARGIN).min(content.bottom());
             let bar = PhoneBar::new(viewport, content);
+            let fire = Rect::from_min_max(
+                pos2(right - PHONE_STICK_SIZE, bottom - PHONE_STICK_SIZE),
+                pos2(right, bottom),
+            );
             return Self {
                 stick: Rect::from_min_size(
                     pos2(left, bottom - PHONE_STICK_SIZE),
                     Vec2::splat(PHONE_STICK_SIZE),
                 ),
-                fire: Rect::from_min_max(
-                    pos2(right - PHONE_STICK_SIZE, bottom - PHONE_STICK_SIZE),
-                    pos2(right, bottom),
-                ),
-                mine: None,
+                fire,
+                mine: Some(phone_thumb_key(fire, PHONE_MINE_REACH, PHONE_MINE_TURN)),
+                mine_radius: PHONE_THUMB_KEY_RADIUS,
+                ammo: Some(phone_thumb_key(
+                    fire,
+                    PHONE_THUMB_KEY_REACH,
+                    PHONE_AMMO_TURN,
+                )),
                 zoom_in: bar.zoom_in,
                 zoom_out: bar.zoom_out,
             };
@@ -290,6 +316,8 @@ impl TouchLayout {
             // The mine rides the fire stick's upper-left shoulder and the zoom pair
             // stands over it, one family of right-thumb buttons.
             mine: Some(fire.center() + MINE_FROM_FIRE),
+            mine_radius: MINE_RADIUS,
+            ammo: None,
             zoom_out: key(zoom_out),
             zoom_in: key(zoom_out - 2.0 * ZOOM_RADIUS - ZOOM_GAP),
         }
@@ -304,11 +332,17 @@ impl TouchLayout {
     pub fn panel_span(&self, right: f32) -> (f32, f32) {
         let end = self
             .mine
-            .map_or(right, |mine| mine.x - MINE_RADIUS - PANEL_MINE_GAP)
+            .map_or(right, |mine| mine.x - self.mine_radius - PANEL_MINE_GAP)
             .min(self.fire.left() - PANEL_STICK_GAP)
             .min(right);
         (self.stick.right() + PANEL_STICK_GAP, end)
     }
+}
+
+/// A phone's right-thumb key's centre `reach` from its `fire` stick's, turned `turn`
+/// radians left from straight up: where the thumb rolls off the stick.
+fn phone_thumb_key(fire: Rect, reach: f32, turn: f32) -> Pos2 {
+    fire.center() - reach * vec2(turn.sin(), turn.cos())
 }
 
 /// The tank panel's distance from the drive stick and from the mine button
@@ -482,7 +516,7 @@ impl Fingers {
                     );
                     let origin = center + shift;
                     controls.begin_drive(touch.id, (origin.x, origin.y), (point.x, point.y));
-                } else if layout.mine.is_some_and(|mine| on(mine, MINE_RADIUS)) {
+                } else if layout.mine.is_some_and(|mine| on(mine, layout.mine_radius)) {
                     if play.mine_ready {
                         controls.drop_mine();
                     }
@@ -618,13 +652,12 @@ mod tests {
     }
 
     /// The phone edition at its smallest screen either way up: the smaller stick in its
-    /// corner, no mine, and the top row's keys thumb-sized, on screen and apart.
+    /// corner, and the top row's keys thumb-sized, on screen and apart.
     #[test]
     fn a_phone_keeps_the_stick_and_its_top_row_apart_both_ways_up() {
         for size in [vec2(852.0, 393.0), vec2(393.0, 852.0)] {
             let screen = Rect::from_min_size(Pos2::ZERO, size);
             let layout = TouchLayout::new(screen, screen, true);
-            assert_eq!(layout.mine, None);
             assert_eq!(layout.stick.left_bottom(), pos2(12.0, size.y - 12.0));
             assert_eq!(layout.stick.width(), PHONE_STICK_SIZE);
             assert_eq!(
@@ -661,6 +694,77 @@ mod tests {
                 assert!(bar.zoom_out.left() > size.x / 2.0);
             }
         }
+    }
+
+    /// A phone's kill feed: under the top row, three rows of 30 points 4 apart
+    /// (`hud::kill_feed`).
+    const PHONE_FEED_DEPTH: f32 = 10.0 + 3.0 * 34.0;
+
+    /// The phone's right-thumb keys at its smallest screen either way up: on screen,
+    /// thumb-sized, a thumb's edge clear of both sticks' squares' circles (where a touch
+    /// takes the fire stick), of the top row and of the kill feed under it.
+    #[test]
+    fn a_phones_thumb_keys_clear_the_sticks_top_row_and_feed() {
+        for size in [vec2(852.0, 393.0), vec2(393.0, 852.0)] {
+            let screen = Rect::from_min_size(Pos2::ZERO, size);
+            let layout = TouchLayout::new(screen, screen, true);
+            let bar = PhoneBar::new(screen, screen);
+            let ammo = layout.ammo.expect("a phone's ammo key");
+            let mine = layout.mine.expect("a phone's mine button");
+            assert_eq!(layout.mine_radius, PHONE_THUMB_KEY_RADIUS);
+            let ring = PHONE_STICK_SIZE / 2.0 + 8.0;
+            for center in [ammo, mine] {
+                let key = Rect::from_center_size(center, Vec2::splat(2.0 * PHONE_THUMB_KEY_RADIUS));
+                assert!(key.width() >= 44.0);
+                assert!(screen.contains_rect(key), "{size:?}: on screen");
+                assert!(
+                    layout.fire.center().distance(center) > ring + PHONE_THUMB_KEY_RADIUS,
+                    "{size:?}: clear of the fire stick"
+                );
+                assert!(
+                    !layout.stick.expand(8.0).intersects(key),
+                    "{size:?}: clear of the drive stick"
+                );
+                for top in [bar.zoom_out, bar.zoom_in, bar.view, bar.pause] {
+                    assert!(!top.intersects(key));
+                }
+                assert!(
+                    key.top() > bar.view.bottom() + PHONE_FEED_DEPTH,
+                    "{size:?}: under the feed"
+                );
+            }
+            // The mine sits low beside the stick, a thumb's width from the ammo key.
+            assert!(mine.y > layout.fire.center().y && mine.x < layout.fire.left());
+            assert!(ammo.distance(mine) >= 2.0 * PHONE_THUMB_KEY_RADIUS + 20.0);
+
+            // A tap on the mine drops one; the ammo key's finger is egui's.
+            let play = Play {
+                layout,
+                first_person: false,
+                mine_ready: true,
+                acting: true,
+            };
+            let ammo_key = Rect::from_center_size(ammo, Vec2::splat(2.0 * PHONE_THUMB_KEY_RADIUS));
+            let mut fingers = Fingers::default();
+            let mut controls = Controls::default();
+            let mut press = |id, at: Pos2| {
+                let touch = touch(id, TouchPhase::Started, f64::from(at.x), f64::from(at.y));
+                fingers.route(
+                    &touch,
+                    1.0,
+                    Some(&play),
+                    |point| ammo_key.contains(point),
+                    size,
+                    &mut controls,
+                )
+            };
+            assert!(!press(1, mine));
+            assert!(press(2, ammo));
+            let input = controls.take_input();
+            assert!(input.mine && !input.fire, "{size:?}: the mine button");
+        }
+        let tablet = Rect::from_min_size(Pos2::ZERO, SCREEN);
+        assert_eq!(TouchLayout::new(tablet, tablet, false).ammo, None);
     }
 
     #[test]
