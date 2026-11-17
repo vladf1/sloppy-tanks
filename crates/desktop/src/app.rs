@@ -107,12 +107,36 @@ enum Mode {
 impl Mode {
     /// The window's size may have changed while the engine started.
     fn resize(&mut self) {
+        #[cfg(target_os = "ios")]
+        if let Some(window) = self.window() {
+            fit_screen(window);
+        }
         match self {
             Mode::Single(session) => session.resize(),
             Mode::Room(room) => room.resize(),
             Mode::Starting(_) => {}
         }
     }
+}
+
+impl Mode {
+    /// The window the engine draws in; none while one starts.
+    #[cfg(target_os = "ios")]
+    fn window(&self) -> Option<&Window> {
+        match self {
+            Mode::Single(session) => Some(&session.window),
+            Mode::Room(room) => Some(&room.window),
+            Mode::Starting(_) => None,
+        }
+    }
+}
+
+/// Decide the iPhone's edition again from the screen the window is on: an iPhone Duo's
+/// hinge moves the window between its screens (`touch::fit_screen`).
+#[cfg(target_os = "ios")]
+fn fit_screen(window: &Window) {
+    let (width, height, _) = css_size(window);
+    crate::touch::fit_screen(width, height);
 }
 
 pub struct App {
@@ -563,6 +587,13 @@ impl ApplicationHandler for App {
             event_loop.exit();
             return;
         }
+        // Before the engine sees the resize, in single player and rooms alike.
+        #[cfg(target_os = "ios")]
+        if let (WindowEvent::Resized(_), Some(window)) =
+            (&event, self.mode.as_ref().and_then(Mode::window))
+        {
+            fit_screen(window);
+        }
         let quit = match &mut self.mode {
             Some(Mode::Single(session)) => session.window_event(&event),
             Some(Mode::Room(room)) => room.window_event(&event),
@@ -688,6 +719,7 @@ impl Session {
         {
             crate::ios::attach_to_scene(&window);
             crate::ios::listen_for_keys(&window);
+            fit_screen(&window);
         }
         let mut rooms = RoomsState::default();
         if let Some(directory) = &options.directory {

@@ -393,7 +393,7 @@ fn stick(
     if phone {
         return;
     }
-    let label = pos2(center.x, square.bottom() + 6.0);
+    let label = pos2(center.x, square.bottom() + crate::touch::STICK_TAG_BELOW);
     let text = paint::galley(
         painter,
         name,
