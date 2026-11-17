@@ -25,6 +25,9 @@ const EDGE: f32 = 16.0;
 const STACK_GAP: f32 = 8.0;
 /// The kill feed's place under the toolbar where they sit side by side.
 const FEED_TOP: f32 = 74.0;
+/// The kill feed's rows outside the phone edition, and their widest share of the screen.
+const FEED_WIDTH: f32 = 336.0;
+const FEED_WIDTH_SHARE: f32 = 0.42;
 /// A phone's feed rows, its notices' place down the screen and their widest.
 const PHONE_FEED_WIDTH: f32 = 300.0;
 const PHONE_TOAST_TOP: f32 = 0.22;
@@ -207,8 +210,15 @@ pub fn hud(
     } else {
         screen.top() + TOOLBAR_TOP
     };
+    // Beside the toolbar the feed sits under it, and under the score bar too where its
+    // rows reach that far left (a centred score on a screen as narrow as an iPhone
+    // Duo's inner one).
+    let under_score =
+        score_right + STACK_GAP * zoom > screen.right() - (EDGE + feed_width(screen)) * zoom;
     let feed_top = if stacked {
         toolbar_top + tools.y + STACK_GAP
+    } else if under_score {
+        (screen.top() + FEED_TOP).max(score.top() + score.height() * fit + STACK_GAP)
     } else {
         screen.top() + FEED_TOP
     };
@@ -1230,6 +1240,11 @@ fn feed_width(screen: Rect) -> f32 {
 
 /// The type of the kill feed's bot tags.
 const FEED_TAG_SIZE: f32 = 9.5;
+
+/// The width of the kill feed's rows outside the phone edition.
+fn feed_width(screen: Rect) -> f32 {
+    FEED_WIDTH.min(screen.width() * FEED_WIDTH_SHARE)
+}
 
 /// The kill feed: killer, weapon, victim, newest on top, one fixed-width steel plate
 /// per row with each side's team as a bright edge at its end. A phone's keeps only the

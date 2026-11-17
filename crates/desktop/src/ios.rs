@@ -48,15 +48,20 @@ unsafe impl objc2::Encode for EdgeInsets {
 /// window the upright insets when the scene turns sideways (62 points at the top and 34
 /// at the bottom, none at the sides, in a 874×402 window): Battle Setup sat under the
 /// Dynamic Island and lost its bottom row. Sideways, a phone keeps both sides clear of
-/// the island and the home indicator's strip at the bottom.
+/// the island and the home indicator's strip at the bottom. An iPhone Duo's outer screen
+/// has its camera in a corner and keeps a strip down that long side upright (84 points
+/// on the right of a 466×678 window); sideways that strip goes where the phone's top
+/// edge went.
 pub fn safe_area_insets(window: &Window) -> Option<egui::SafeAreaInsets> {
     use objc2::msg_send;
     use objc2::rc::Retained;
     use objc2::runtime::AnyObject;
     use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-    /// `UIInterfaceOrientationLandscapeRight` and `…LandscapeLeft`.
-    const SIDEWAYS: [isize; 2] = [3, 4];
+    /// `UIInterfaceOrientationLandscapeRight` (turned counter-clockwise: the phone's top
+    /// edge on the left) and `…LandscapeLeft`.
+    const LANDSCAPE_RIGHT: isize = 3;
+    const SIDEWAYS: [isize; 2] = [LANDSCAPE_RIGHT, 4];
     /// The home indicator's strip at the bottom of a sideways phone, in points.
     const SIDEWAYS_HOME_INDICATOR: f64 = 21.0;
     let handle = window.window_handle().ok()?;
@@ -75,19 +80,29 @@ pub fn safe_area_insets(window: &Window) -> Option<egui::SafeAreaInsets> {
         let orientation: isize = msg_send![&*scene?, interfaceOrientation];
         (insets, orientation)
     };
-    let upright_insets = insets.left == 0.0 && insets.right == 0.0;
-    if is_phone() && SIDEWAYS.contains(&orientation) && upright_insets {
+    let sideways = crate::touch::phone() && SIDEWAYS.contains(&orientation);
+    let bottom = if insets.bottom > 0.0 {
+        SIDEWAYS_HOME_INDICATOR
+    } else {
+        0.0
+    };
+    if sideways && insets.left == 0.0 && insets.right == 0.0 {
         let side = insets.top;
-        let bottom = if insets.bottom > 0.0 {
-            SIDEWAYS_HOME_INDICATOR
-        } else {
-            0.0
-        };
         insets = EdgeInsets {
             top: 0.0,
             left: side,
             bottom,
             right: side,
+        };
+    } else if sideways && insets.left != insets.right {
+        // A corner camera's strip, upright or already turned.
+        let side = insets.left.max(insets.right);
+        let top_edge_left = orientation == LANDSCAPE_RIGHT;
+        insets = EdgeInsets {
+            top: 0.0,
+            left: if top_edge_left { side } else { 0.0 },
+            bottom,
+            right: if top_edge_left { 0.0 } else { side },
         };
     }
     Some(egui::SafeAreaInsets(egui::epaint::MarginF32 {
