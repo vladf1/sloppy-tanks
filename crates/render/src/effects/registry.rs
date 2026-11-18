@@ -227,6 +227,11 @@ pub const PUFF: EffectDefinition = effect("puff", wgsl!("shaders/effects/puff.wg
 pub const STREAK: EffectDefinition = effect("streak", wgsl!("shaders/effects/streak.wgsl"))
     .with_shared_vertex(wgsl!("shaders/effects/streak_vertex.wgsl"));
 
+/// Baked fuel and soot in a wreck opening. One record per visible vent.
+pub const WRECK_FLAME: EffectDefinition =
+    effect("wreck-flame", wgsl!("shaders/effects/wreck_flame.wgsl"))
+        .with_shared_vertex(wgsl!("shaders/effects/wreck_flame_vertex.wgsl"));
+
 /// A blast's ground decals: dust ring, shockwave and scorch. `instance_data` =
 /// (age s, phase rad, kind, strength). No params.
 pub const BLAST_RING: EffectDefinition =
@@ -394,7 +399,7 @@ pub const VEHICLE_PAINT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 20] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 21] = [
     WAVE,
     PULSE,
     PUFF,
@@ -415,6 +420,7 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 20] = [
     VEHICLE_PAINT,
     DEBRIS_CHIP,
     HARBOR_SHORE,
+    WRECK_FLAME,
 ];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.

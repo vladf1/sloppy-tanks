@@ -50,10 +50,9 @@ pub struct WreckVent {
     pub main: bool,
 }
 
-/// Where a wreck piece burns, main blaze first. A hull whose turret flew off roars
-/// out of the open turret ring and licks out of its engine deck; a burnt-out tank
-/// burns in its engine bay and out of the hatches the blast blew open; a Humvee
-/// out of its engine bay and its gunner's ring. Thrown turrets and guns do not burn.
+/// Where a wreck piece burns, main blaze first. A tracked hull that lost its
+/// turret burns only through the exposed turret ring. Intact wrecks burn through
+/// the engine bay and hatches, or the gunner's ring on a Humvee.
 pub fn wreck_vents(kind: VehicleKind, wreck_part: WreckPart) -> &'static [WreckVent] {
     static VENTS: OnceLock<[[Vec<WreckVent>; 2]; 4]> = OnceLock::new();
     let vents = VENTS.get_or_init(|| {
@@ -70,7 +69,7 @@ pub fn wreck_vents(kind: VehicleKind, wreck_part: WreckPart) -> &'static [WreckV
 fn vents(kind: VehicleKind, wreck_part: WreckPart) -> Vec<WreckVent> {
     let flat = |(top, half_size)| (top, half_size, 0.0);
     let openings: Vec<(DVec3, DVec2, f64)> = match wreck_openings(kind) {
-        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring, flat(tank.engine)],
+        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring],
         Some(tank) => [tank.engine]
             .into_iter()
             .chain(tank.hatches)
@@ -417,7 +416,9 @@ mod tests {
             // The turret ring's fire stands in its smouldering well, and a burnout's
             // hatch fires in the hatches whose embers glow.
             let ring = embers(kind, WreckPart::Hull);
-            let vent = wreck_vents(kind, WreckPart::Hull)[0];
+            let [vent] = wreck_vents(kind, WreckPart::Hull) else {
+                panic!("{kind:?}: only the exposed turret well should burn");
+            };
             assert!(
                 (ring.center() - vent.center).xz().length() < 0.01,
                 "{kind:?} {ring:?} {vent:?}"

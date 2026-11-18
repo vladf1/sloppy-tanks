@@ -6,9 +6,10 @@ use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sloppy_core::geometry::{
-    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, tetrahedron_geometry,
+    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, plane_geometry_segments,
+    tetrahedron_geometry,
 };
-use sloppy_core::scene::{Blending, Effect, Material, Side};
+use sloppy_core::scene::{Blending, Effect, Material, Side, TextureRef, Wrap};
 use sloppy_core::sim::PickupKind;
 use sloppy_core::sim::ammunition::PROJECTILE_ORDER;
 use sloppy_core::sim::data::pickup;
@@ -21,7 +22,7 @@ use super::particles::{MAX_PARTICLES, shard_mesh};
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
-use super::registry::{BLAST_RING, DEBRIS_CHIP, DUST, PUFF, STREAK, TRACK_MARK};
+use super::registry::{BLAST_RING, DEBRIS_CHIP, DUST, PUFF, STREAK, TRACK_MARK, WRECK_FLAME};
 use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
 use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
@@ -272,6 +273,27 @@ pub fn pool_descs() -> Vec<PoolDesc> {
                 ..soft_billboard(BLAST_RING.name)
             },
             DECAL_CAPACITY,
+        )
+    });
+    let mut plume = plane_geometry_segments(1.0, 1.0, 1, 8);
+    plume.translate(0.0, 0.5, 0.0);
+    pools.push(PoolDesc {
+        render_order: PUFF_RENDER_ORDER - 1,
+        ..PoolDesc::new(
+            "wreck flames",
+            plume,
+            Material {
+                extra_textures: vec![(
+                    "flow",
+                    TextureRef {
+                        srgb: false,
+                        wrap: Wrap::Clamp,
+                        ..TextureRef::file("textures/effects/wreck-fire.webp")
+                    },
+                )],
+                ..soft_billboard(WRECK_FLAME.name)
+            },
+            super::wreck_fire::FLAME_CAPACITY,
         )
     });
     pools.push(PoolDesc {

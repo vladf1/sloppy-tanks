@@ -356,6 +356,7 @@ impl EffectSystems {
         visit(&mut self.wood.scrap_records);
         visit(&mut self.wood.straw_records);
         visit(&mut self.particles.explosions.rings);
+        visit(&mut self.wrecks.flames);
         visit(&mut self.particles.explosions.puffs);
         visit(&mut self.particles.sparks.records);
     }
@@ -487,6 +488,7 @@ mod browser {
             // then sort all the smoke together for back-to-front blending.
             self.systems.pickups.draw_collections(state, puffs);
             puffs.sort_back_to_front(eye);
+            self.systems.wrecks.flames.sort_back_to_front(eye);
             self.sync(renderer);
         }
 
