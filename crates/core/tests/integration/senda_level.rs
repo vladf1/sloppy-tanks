@@ -1506,6 +1506,73 @@ fn a_turned_house_blocks_navigation_by_its_turned_box() {
 }
 
 #[test]
+fn a_turned_house_post_keeps_its_collider_and_navigation_bounds() {
+    use sloppy_core::sim::house_structure::PartKind;
+    use sloppy_core::sim::physics::vector;
+    use sloppy_core::sim::structure::{MAX_PARTS, PartSet};
+    use sloppy_core::sim::structure_physics::ground_footprints;
+
+    let mut sim = senda(5.0);
+    let house = sim
+        .covers
+        .iter_mut()
+        .find(|c| c.kind == CoverKind::House && c.house_plan.is_some_and(|p| p.angle.abs() >= 20))
+        .expect("a house facing a bend");
+    let state = house.structure.as_mut().unwrap();
+    let layout = &state.layout;
+    let post = layout
+        .parts
+        .iter()
+        .position(|p| p.blocks_ground && p.house().kind == PartKind::Post)
+        .expect("a ground-floor post");
+    let part = &layout.parts[post];
+    let center = part.middle();
+    let half = (part.max - part.min) / 2.0;
+    let collider = &sim.world.colliders[state.colliders[post].unwrap()];
+    let origin = DVec3::new(house.x, 0.0, house.z);
+    let corners = [-1.0, 1.0].map(|x| {
+        [-1.0, 1.0].map(|z| origin + layout.to_world(center + half * DVec3::new(x, 0.0, z)))
+    });
+    let solid = |p: DVec3| {
+        collider
+            .shape()
+            .contains_point(collider.position(), vector(p.x, p.y, p.z))
+    };
+    for &point in corners.iter().flatten() {
+        assert!(
+            solid(point),
+            "the physical post misses its turned corner {point:?}"
+        );
+    }
+    let outside = center + DVec3::X * (half.x + layout.debris.seam + 0.001);
+    assert!(
+        !solid(origin + layout.to_world(outside)),
+        "the post's turned side is too wide"
+    );
+
+    // Replicated sets can have bits beyond this layout. They cannot take down a house.
+    state.gone = PartSet::from_indices(layout.parts.len()..MAX_PARTS);
+    let mut footprints = Vec::new();
+    ground_footprints(house, &mut footprints);
+    assert!(!footprints.is_empty());
+
+    let state = house.structure.as_mut().unwrap();
+    state.gone = PartSet::from_indices((0..state.layout.parts.len()).filter(|&i| i != post));
+    footprints.clear();
+    ground_footprints(house, &mut footprints);
+    let [footprint] = footprints.as_slice() else {
+        panic!("only the post remains")
+    };
+    for point in corners.iter().flatten() {
+        assert!(
+            (point.x - footprint.x).abs() <= footprint.w / 2.0 + 1e-9
+                && (point.z - footprint.z).abs() <= footprint.d / 2.0 + 1e-9,
+            "navigation misses the post's turned corner {point:?}"
+        );
+    }
+}
+
+#[test]
 fn a_patio_loggia_stands_as_cover_and_falls_in_pieces_when_shot() {
     use sloppy_core::sim::FragmentShape;
     use sloppy_core::sim::senda_yards::{LOGGIA_COLOR, PERGOLA_WOOD};
