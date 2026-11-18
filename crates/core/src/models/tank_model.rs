@@ -16,7 +16,7 @@ use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
-    Assembly, RING_Z, ROOF_RISE, assembly, engine_vent, gun_rise, hatch_tops, muzzle_z,
+    Assembly, RING_Z, ROOF_RISE, assembly, engine_vents, gun_rise, hatch_tops, muzzle_z,
     ring_radius, tube_radius, turret_outline,
 };
 use super::tank_kit::Coat;
@@ -468,7 +468,7 @@ pub(super) struct WreckOpenings {
     /// The hole a thrown turret leaves in the roof, and how deep its well is.
     pub(super) ring: (DVec3, DVec2, f64),
     /// The engine deck's grilles.
-    pub(super) engine: (DVec3, DVec2),
+    pub(super) engine: Vec<(DVec3, DVec2)>,
     /// The hatches a burnout blows open, on the turret knocked round on its ring.
     pub(super) hatches: [(DVec3, DVec2); 2],
 }
@@ -483,7 +483,7 @@ pub(super) fn wreck_openings(kind: VehicleKind) -> Option<WreckOpenings> {
             DVec2::splat(ring_opening(&c)),
             c.deck + ROOF_RISE - RING_WELL_FLOOR,
         ),
-        engine: engine_vent(&c),
+        engine: engine_vents(&c),
         hatches: pose.hatches.map(|(top, radius)| {
             (
                 pose.ring + traverse * (top - pose.ring),

@@ -26,7 +26,7 @@ const SILL: f64 = 0.36;
 /// Hood: cowl station, front edge and the drop of its top towards the grille.
 const COWL: f64 = 0.86;
 const HOOD_FRONT: f64 = 2.02;
-const HOOD_SLOPE: f64 = -0.045;
+pub(super) const HOOD_SLOPE: f64 = -0.045;
 const HOOD_CROWN: f64 = 1.12;
 const FENDER_TOP: f64 = 1.07;
 /// Cab roof and the slantback's start.
@@ -55,14 +55,17 @@ fn hood_y(y_at_cowl: f64, z: f64) -> f64 {
     y_at_cowl + HOOD_SLOPE * (z - COWL)
 }
 
-/// The engine bay under the hood's raised centre: the middle of the hood top and
-/// the half size of the crown in plan.
-pub(super) fn engine_bay() -> (DVec3, DVec2) {
-    let middle = (COWL + HOOD_FRONT) / 2.0;
-    (
-        DVec3::new(0.0, hood_y(HOOD_CROWN, middle), middle),
-        DVec2::new(0.56, (HOOD_FRONT - COWL) / 2.0),
-    )
+/// The two louvred hood openings, in the body kit's unstretched frame.
+const HOOD_VENT_X: f64 = 0.86;
+const HOOD_VENT_Z: f64 = 1.2;
+const HOOD_VENT_HALF: DVec2 = DVec2::new(0.14, 0.17);
+
+fn hood_vent_center(x: f64) -> DVec3 {
+    DVec3::new(x, hood_y(FENDER_TOP, HOOD_VENT_Z), HOOD_VENT_Z)
+}
+
+pub(super) fn hood_vents() -> [(DVec3, DVec2); 2] {
+    [-HOOD_VENT_X, HOOD_VENT_X].map(|x| (hood_vent_center(x), HOOD_VENT_HALF))
 }
 
 pub(super) fn body_kit() -> Kit {
@@ -244,12 +247,11 @@ fn hood(kit: &mut Kit) {
         0.018,
         slope_y(HOOD_SLOPE, COWL),
     );
-    // Louvred vents on each fender top and the crown's hinge line.
+    let center = hood_vent_center(HOOD_VENT_X);
+    let half = HOOD_VENT_HALF;
     for side in [DMat4::IDENTITY, mirror_x()] {
-        let z = 1.2;
-        let y = hood_y(FENDER_TOP, z);
-        let vent = side * place([0.86, y, z], [-HOOD_SLOPE, 0.0, 0.0]);
-        kit.block(Role::Gap, [0.28, 0.01, 0.34], vent);
+        let vent = side * place(center.to_array(), [-HOOD_SLOPE, 0.0, 0.0]);
+        kit.block(Role::Gap, [2.0 * half.x, 0.01, 2.0 * half.y], vent);
         for i in 0..5 {
             let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.07], [0.5, 0.0, 0.0]);
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
