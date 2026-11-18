@@ -295,18 +295,20 @@
     <!-- The desktop app's egui shell built for the page (`bun run wasm`): on WebGPU, or
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
          the WebGPU build reloads with it when its engine cannot start after all). Only
-         the chosen build's glue and binary download (a browser with WebGPU starts on
+         the chosen build's glue and menu module download (a browser with WebGPU starts on
          that build while it looks for an adapter); the binary streams into its
          instance while the loading view counts its bytes, and the files the shell takes
-         from the page download beside it. The shell then fetches the textures from the
-         site beside this page and tells the page how it goes
+         from the page download beside it. The gameplay module follows the first menu frame. The shell then fetches the arena's textures and tells the page how it goes
          (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
          `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
     <script type="module">
       import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
       import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+      import webgpuGame from "/src/generated/shell/sloppy-tanks-game.wasm?url";
+      import webglGame from "/src/generated/shell-webgl/sloppy-tanks-webgl-game.wasm?url";
       import webgpuShaders from "/src/generated/shaders/webgpu.json?url";
       import webglShaders from "/src/generated/shaders/webgl.json?url";
+      import { installGameCode } from "/src/game-code.ts";
       import { startGeometryCache } from "/src/geometry-cache.ts";
       import { SOUNDS, soundFile } from "/src/sounds.ts";
 
@@ -549,11 +551,15 @@
         )
           .split(",")
           .map(Number);
-        const webglBuild = () => [
-          import("/src/shell-glue-webgl.ts"),
-          download(webglBinary, webglBytes),
-          shaderTables(webglShaders),
-        ];
+        let gameUrl = webgpuGame;
+        const webglBuild = () => {
+          gameUrl = webglGame;
+          return [
+            import("/src/shell-glue-webgl.ts"),
+            download(webglBinary, webglBytes),
+            shaderTables(webglShaders),
+          ];
+        };
         // A browser with WebGPU nearly always gives an adapter, but asking takes a while
         // (a cold WebKit spends 75 ms starting its GPU process at the first read of
         // `navigator.gpu`), so the WebGPU build downloads meanwhile and gives way to the
@@ -594,8 +600,21 @@
         }
         if (init) {
           try {
-            await init({ module_or_path: response });
+            // A failed WebGPU device can reload on WebGL before ever drawing a menu.
+            // Only the backend that presents its first frame requests its second file.
+            const firstFrame = new Promise((resolve) =>
+              window.addEventListener("sloppy:first-frame", resolve, { once: true }),
+            );
+            const primary = await init({ module_or_path: response });
             performance.mark("sloppy:shell-started");
+            await firstFrame;
+            try {
+              await installGameCode(gameUrl, primary);
+              primary.game_code_installed();
+              performance.mark("sloppy:game-code-ready");
+            } catch (error) {
+              unloaded(`The gameplay code did not load: ${message(error)}`);
+            }
           } catch (error) {
             if (!(await complete)) {
               unloaded(`The game did not download completely: ${message(error)}`);

@@ -156,6 +156,9 @@ impl App {
     /// Hand the window to the other engine when the one playing asks: a room Battle
     /// Setup chose, or Battle Setup after a room. False when no engine could start.
     fn switch_engine(&mut self) -> bool {
+        if !crate::page::game_code_ready() {
+            return self.started();
+        }
         match self.mode.take() {
             Some(Mode::Single(mut session)) => match session.pending_room.take() {
                 Some(selection) => {
@@ -1114,6 +1117,11 @@ impl Session {
         self.ui.keep_hud(hud);
     }
 
+    #[cfg_attr(
+        target_arch = "wasm32",
+        unsafe(export_name = "sloppy_begin_round"),
+        inline(never)
+    )]
     fn begin_round(&mut self) {
         self.in_round = true;
         self.ui.starting = false;
@@ -1387,6 +1395,11 @@ impl Session {
     }
 
     /// Run a check's debug command on the engine, as the old page's `window.sloppy` did.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        unsafe(export_name = "sloppy_game_command"),
+        inline(never)
+    )]
     fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
         use serde_json::Value;
         if *command == Command::Start {
@@ -1441,14 +1454,37 @@ impl Session {
         })
     }
 
+    // The build moves code reachable only beyond this boundary into the second Wasm.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        unsafe(export_name = "sloppy_advance_game"),
+        inline(never)
+    )]
+    fn advance_game(&mut self, now: f64) -> Result<(), String> {
+        // A room builds its own arena. Keep solo preparation resumable if the
+        // player switches back to the single-player tab.
+        if !self.in_round && self.ui.rooms.multiplayer && !self.ui.starting {
+            return Ok(());
+        }
+        let game = &mut self.game;
+        self.preparation.prebuild(|| game.prebuild_step());
+        if self.in_round {
+            self.battle_frame(now)
+        } else {
+            self.prepare()
+        }
+    }
+
     /// Run a frame and show it; true when the player chose to quit.
     fn redraw(&mut self) -> bool {
         let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
-        for pending in automation::take_commands() {
-            let answer = self.command(&pending.command);
-            pending.answer(answer);
+        if crate::page::game_code_ready() {
+            for pending in automation::take_commands() {
+                let answer = self.command(&pending.command);
+                pending.answer(answer);
+            }
         }
         let playing = self.battle().playing;
         let mut quit = false;
@@ -1463,14 +1499,11 @@ impl Session {
         if !self.frame_shown && self.in_round && self.phase == MatchPhase::Playing {
             self.apply(Action::Pause);
         }
-        if self.failure.is_none() && (self.frame_shown || !self.in_round) {
-            let game = &mut self.game;
-            self.preparation.prebuild(|| game.prebuild_step());
-            let step = if self.in_round {
-                self.battle_frame(now)
-            } else {
-                self.prepare()
-            };
+        if self.failure.is_none()
+            && crate::page::game_code_ready()
+            && (self.frame_shown || !self.in_round)
+        {
+            let step = self.advance_game(now);
             // A prepared Battle Setup runs no engine frame, so a GPU lost behind its menu
             // is noticed here.
             let step = step.and_then(|()| self.game.error().map_or(Ok(()), Err));

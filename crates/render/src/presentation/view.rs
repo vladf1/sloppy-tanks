@@ -1538,6 +1538,11 @@ impl Presentation {
     /// The model of a theme's scenery to register, unless it is cached or the theme
     /// has none: the costliest part of [`Self::build_scenery`], which a build step
     /// takes alone.
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(feature = "specializer")),
+        unsafe(export_name = "sloppy_arena_scenery"),
+        inline(never)
+    )]
     fn scenery_model(&self, theme_name: &str) -> Option<(&'static str, SceneryModel)> {
         let theme = Theme::from_name(theme_name);
         if self.scenery.contains_key(theme.name()) {

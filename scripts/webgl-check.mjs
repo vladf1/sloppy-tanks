@@ -101,6 +101,10 @@ try {
     });
     const shell = await page.evaluate(() => document.documentElement.dataset.shell);
     await page.screenshot({ path: `${out}/${name.replaceAll(" ", "-")}.png` });
+    if (api) {
+      await untilState(page, (state) => state.ready, { what: `${name}: the arena` });
+      wasm.push(api === "WebGPU" ? "sloppy-tanks-game" : "sloppy-tanks-webgl-game");
+    }
     const fetched = wasm.map((part) => downloads.filter((file) => file.includes(part)).length);
     assert.deepEqual(
       fetched,
@@ -120,7 +124,6 @@ try {
     );
     if (api) {
       assert.equal(shell, "ready", `${name}: the shell started`);
-      await untilState(page, (state) => state.ready, { what: `${name}: the arena` });
       await clickWidget(page, "GO!");
       const state = await untilState(page, (state) => state.inRound, {
         extras: ["nerd"],

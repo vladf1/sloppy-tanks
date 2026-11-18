@@ -434,13 +434,7 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
         setup::battle_setup(context, state, &art, view, &mut actions);
         state.rooms.remember_tab();
     } else {
-        match view.phase {
-            MatchPhase::Paused => menus::pause(context, state, &art, view, &mut actions),
-            MatchPhase::Results => recap::results(context, state, &art, view, &mut actions),
-            MatchPhase::Playing | MatchPhase::Ready => {
-                hud::hud(context, state, &art, view, &mut actions);
-            }
-        }
+        draw_battle(context, state, &art, view, &mut actions);
     }
     if state.settings_draft.is_some() {
         menus::settings(context, state, &art, view, &mut actions);
@@ -462,6 +456,28 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
         nerd_stats::link(context, state);
     }
     actions
+}
+
+/// Only a running single-player or room session can present these screens.
+#[cfg_attr(
+    target_arch = "wasm32",
+    unsafe(export_name = "sloppy_draw_battle"),
+    inline(never)
+)]
+fn draw_battle(
+    context: &egui::Context,
+    state: &mut UiState,
+    art: &icons::Art,
+    view: &View,
+    actions: &mut Vec<Action>,
+) {
+    match view.phase {
+        MatchPhase::Paused => menus::pause(context, state, art, view, actions),
+        MatchPhase::Results => recap::results(context, state, art, view, actions),
+        MatchPhase::Playing | MatchPhase::Ready => {
+            hud::hud(context, state, art, view, actions);
+        }
+    }
 }
 
 #[cfg(test)]

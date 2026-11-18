@@ -42,8 +42,9 @@
 // returning players keep the binary they have.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion, geometryVersion, shaderTablesKey } from "./content-version.mjs";
 
@@ -107,11 +108,7 @@ function run(command, args) {
       env: { ...process.env, ...profileSettings, ...stamps },
     });
     child.on("error", (error) =>
-      reject(
-        new Error(
-          `${command}: ${error.message}. Install Rust with the wasm32-unknown-unknown target and wasm-bindgen-cli 0.2.130.`,
-        ),
-      ),
+      reject(new Error(`${command}: ${error.message}. See the build prerequisites in README.md.`)),
     );
     child.on("exit", (status) =>
       status === 0 ? resolve() : reject(new Error(`${command} exited with ${status}`)),
@@ -144,6 +141,50 @@ async function build({ package: name, binary, features, targetDir = "target", di
     "--out-name",
     outName,
   ]);
+}
+
+// Only the two shell builds have an interactive menu before gameplay. The tool
+// computes the safe cut for this exact linked binary, including all indirect calls.
+async function splitShell({ dir, outName }) {
+  const scratch = await mkdtemp(join(tmpdir(), "sloppy-wasm-split-"));
+  const binary = resolve(root, dir, outName + "_bg.wasm");
+  const named = join(scratch, "named.wasm");
+  const functions = join(scratch, "game.txt");
+  const primary = resolve(root, dir, outName + "-menu.tmp");
+  try {
+    await run("cargo", [
+      "run",
+      "--quiet",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      "tools/wasm-split/Cargo.toml",
+      "--target-dir",
+      "target/wasm-split-tool",
+      "--",
+      binary,
+      named,
+      functions,
+    ]);
+    await run("wasm-split", [
+      "--enable-simd",
+      "--enable-bulk-memory",
+      "--enable-nontrapping-float-to-int",
+      "--enable-reference-types",
+      "--no-placeholders",
+      "--strip-debug",
+      "--split-funcs",
+      "@" + functions,
+      named,
+      "-o1",
+      primary,
+      "-o2",
+      resolve(root, dir, outName + "-game.wasm"),
+    ]);
+    await rename(primary, binary);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
 
 const webglGlue = existsSync(
@@ -198,6 +239,7 @@ try {
   if (backends.length > 0) await shaderTables(backends);
   for (const target of builds) {
     await build(target);
+    if (target === SHELL || target === SHELL_WEBGL) await splitShell(target);
   }
 } catch (error) {
   console.error(error.message);

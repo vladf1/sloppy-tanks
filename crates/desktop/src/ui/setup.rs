@@ -1379,6 +1379,8 @@ const STATUS_SWEEP_TRAVEL: f32 = 4.65;
 fn status_text(state: &UiState) -> Option<&str> {
     if state.ready && !state.starting {
         None
+    } else if !crate::page::game_code_ready() {
+        Some("Downloading gameplay…")
     } else if state.starting {
         Some("Rolling out…")
     } else if state.status.is_empty() {
@@ -4015,15 +4017,8 @@ fn format_key(painter: &Painter, rect: Rect, battle: &BattleFormat, selected: bo
 /// While the arena prepares, a slim pill over GO's top edge with the status and its
 /// progress, so it takes no row of its own; gone once the arena is ready.
 fn phone_status_pill(painter: &Painter, go: Rect, state: &UiState, time: f64) {
-    if state.ready && !state.starting {
+    let Some(status) = status_text(state) else {
         return;
-    }
-    let status = if state.starting {
-        "Rolling out…"
-    } else if state.status.is_empty() {
-        "Loading game…"
-    } else {
-        &state.status
     };
     let font = bold_font(11.0);
     let text_width = paint::text_width(painter, status, font.clone(), 0.2);

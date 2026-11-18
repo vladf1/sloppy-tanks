@@ -21,6 +21,7 @@ use std::cell::Cell;
 thread_local! {
     /// The first frame has been presented and the page told.
     static PRESENTED: Cell<bool> = const { Cell::new(false) };
+    static GAME_CODE_READY: Cell<bool> = const { Cell::new(false) };
 }
 
 /// The page's release and commit, from its `<meta name="sloppy-build">`
@@ -44,6 +45,11 @@ pub fn frame_presented() {
     if !PRESENTED.replace(true) {
         set_state("ready");
         mark("sloppy:first-frame");
+        if let Some(window) = web_sys::window()
+            && let Ok(event) = web_sys::Event::new("sloppy:first-frame")
+        {
+            let _ = window.dispatch_event(&event);
+        }
     }
 }
 
@@ -91,4 +97,18 @@ fn mark(name: &str) {
     if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
         let _ = performance.mark(name);
     }
+}
+
+/// The page calls this after installing the gameplay functions into this instance.
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn game_code_installed() {
+    GAME_CODE_READY.set(true);
+}
+
+pub fn game_code_ready() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return GAME_CODE_READY.get();
+    #[cfg(not(target_arch = "wasm32"))]
+    true
 }

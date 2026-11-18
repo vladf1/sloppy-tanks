@@ -1,0 +1,12 @@
+[package]
+name = "sloppy-wasm-split"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A host build tool with its own lockfile. Its dependencies are independent of the
+# game's content version and the compiler inputs that key players' geometry caches.
+[workspace]
+
+[dependencies]
+walrus = "=0.27.3"

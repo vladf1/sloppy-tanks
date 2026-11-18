@@ -26,6 +26,7 @@ pub(super) enum BuildStage {
     /// Built, and the arena's pipelines asked for.
     #[default]
     Done,
+    RoundTextures,
     /// The theme's scenery model, unless a round of the theme built it before: the
     /// costliest piece, which only the core models can split further.
     SceneryModel,
@@ -89,14 +90,7 @@ impl Presentation {
         self.branches.clear();
         self.sample_models.clear();
         self.renderer.reset_round();
-        self.show_floors(state);
-        // The round's texture files download from now, not as each model that draws
-        // them is registered: the scenery's come only after its model, a build's
-        // costliest piece.
-        if let Some(theme) = Theme::from_name(&state.map_theme).map_theme() {
-            self.renderer.prefetch_textures(&round_texture_files(theme));
-        }
-        self.build = BuildStage::SceneryModel;
+        self.build = BuildStage::RoundTextures;
         self.cache_wait_since = Some(geometry_cache::now());
     }
 
@@ -115,9 +109,23 @@ impl Presentation {
     /// Build the next piece of the round [`Self::begin_build`] began, each a few
     /// milliseconds but the scenery's; true once it is built and its preparation has
     /// begun ([`Self::prepare_step`] may run). `state` is the one the build began with.
+    #[cfg_attr(
+        all(target_arch = "wasm32", not(feature = "specializer")),
+        unsafe(export_name = "sloppy_build_arena"),
+        inline(never)
+    )]
     pub fn build_step(&mut self, state: &RenderState) -> bool {
         self.build = match std::mem::take(&mut self.build) {
             BuildStage::Done => BuildStage::Done,
+            BuildStage::RoundTextures => {
+                // Battle Setup may still be waiting for the gameplay module when it
+                // creates this view. Fetch only the arena we actually start building.
+                self.show_floors(state);
+                if let Some(theme) = Theme::from_name(&state.map_theme).map_theme() {
+                    self.renderer.prefetch_textures(&round_texture_files(theme));
+                }
+                BuildStage::SceneryModel
+            }
             BuildStage::SceneryModel if self.awaiting_cached_scenery(state) => {
                 BuildStage::SceneryModel
             }

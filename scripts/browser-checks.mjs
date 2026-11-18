@@ -17,6 +17,7 @@ const checks = [
   { script: "touch-check.mjs" },
   { script: "phone-check.mjs" },
   { script: "webgl-check.mjs" },
+  { script: "wasm-split-check.mjs" },
   { script: "firefox-check.mjs" },
   { script: "text-fields-check.mjs" },
   { script: "fixtures-check.mjs" },

@@ -160,6 +160,17 @@ async function noRendererErrors(pages, when) {
 try {
   // A creates a humans-only room on the Blue team; its battle starts at once.
   const a = await player("a", { pointerLock: false });
+  // A slow second module must leave the directory and name editor interactive.
+  // CREATE ROOM retains its selection until the room engine can take the window.
+  const heldGame = Promise.withResolvers();
+  await a.route(
+    /-game(?:-[\w-]+)?\.wasm$/,
+    async (route) => {
+      await heldGame.promise;
+      await route.continue();
+    },
+    { times: 1 },
+  );
   await openShell(a, `directory=${server.directory}&multiplayer`);
   await untilState(a, (state) => state.multiplayerTab, { what: "the Multiplayer tab" });
   // A plays under a name it types in place of the drawn one.
@@ -171,6 +182,8 @@ try {
   });
   await clickWidget(a, "Blue");
   await clickWidget(a, "CREATE ROOM");
+  assert.equal((await nextFrame(a)).engine, "single");
+  heldGame.resolve();
   let aState = await inRoom(a);
   const room = aState.room.code;
   assert.match(room, /^[A-Z0-9]{8}$/);

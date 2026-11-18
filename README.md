@@ -7,7 +7,7 @@ A browser tank game with destructible cover, team battles and solo survival. The
 Use [Bun](https://bun.sh/docs/installation) 1.4.4 and Rust through [rustup](https://rustup.rs). On macOS:
 
 ```sh
-brew install rustup                 # once per machine
+brew install rustup binaryen        # wasm-split builds the two browser modules
 curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
 export PATH="$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
@@ -456,9 +456,12 @@ still need that update to take effect; client-only files (`crates/render`,
 `crates/web`, `crates/desktop`) never do. See `crates/server/README.md` for the
 updater, auto-update and the SSH fallback.
 
-`DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
-with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
-the fonts and tank previews `index.html` downloads with it (the page makes its sounds
+`DEPLOY_BASE` controls the Vite asset URLs. Each graphics backend has two content-hashed WebAssembly files. The first runs Battle Setup.
+After its first frame the page streams the gameplay module into the same instance’s function table.
+Map and tank choices remain available during the download, and GO waits for the selected arena.
+The build uses Binaryen’s `wasm-split` (CI uses version 132) and the host tool in
+`tools/wasm-split/`, which keeps callbacks and functions reachable before gameplay in the first
+file. Bake workers reuse that module. Other runtime assets include the textures, fonts and tank previews `index.html` downloads with it (the page makes its sounds
 itself, from the formulas in `src/sounds.ts`). Its shader stages come
 as a hashed JSON file of their own, one per graphics backend, which `bun run wasm`
 generates (`crates/render/src/shader/tables.rs`). Those files keep

@@ -48,8 +48,8 @@ const texturePaths = [
  * base (`assets/…`), the dev site's build from the importing file (`./…`). The glue is
  * `shell-glue-*` since the boot script moved into the page, `sloppy-tanks-*` before. */
 const backends = [
-  { id: "webgpu", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-(?!webgl-)[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks_bg-[\w-]+\.wasm/ },
-  { id: "webgl", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-webgl-[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks-webgl_bg-[\w-]+\.wasm/ },
+  { id: "webgpu", game: /assets\/sloppy-tanks-game-[\w-]+\.wasm/, glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-(?!webgl-)[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks_bg-[\w-]+\.wasm/ },
+  { id: "webgl", game: /assets\/sloppy-tanks-webgl-game-[\w-]+\.wasm/, glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-webgl-[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks-webgl_bg-[\w-]+\.wasm/ },
 ];
 
 function curlText(url) {
@@ -96,12 +96,14 @@ function discover(deployment) {
       const glue = found(mainText, backend.glue, `the ${backend.id} shell glue`, deployment, main);
       const glueText = curlText(urlFor(deployment, glue));
       const wasm = found(glueText, backend.wasm, `the ${backend.id} Wasm`, deployment, glue);
+      const game = mainText.match(backend.game)?.[0];
       return [
         backend.id,
         [
           ...shared,
           { path: glue, type: "code", label: `Shell glue (${backend.id})` },
           { path: wasm, type: "wasm", label: `Shell Wasm (${backend.id})` },
+          ...(game ? [{ path: game, type: "wasm", label: `Gameplay Wasm (${backend.id})` }] : []),
         ],
       ];
     }),

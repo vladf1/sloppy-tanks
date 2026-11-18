@@ -317,6 +317,11 @@ impl RoomSession {
 
     /// Socket events, the engine's timers and the work they cause. Runs every redraw
     /// and between them, so a hidden window keeps its seat.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        unsafe(export_name = "sloppy_room_network"),
+        inline(never)
+    )]
     pub fn network(&mut self) {
         let now = now_ms();
         while let Some(event) = self.sockets.next_event() {
@@ -834,6 +839,11 @@ impl RoomSession {
     }
 
     /// Run a frame and show it; true when the player chose to quit.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        unsafe(export_name = "sloppy_room_redraw"),
+        inline(never)
+    )]
     fn redraw(&mut self) -> bool {
         let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);

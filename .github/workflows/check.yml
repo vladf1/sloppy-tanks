@@ -49,6 +49,12 @@ jobs:
         with:
           cargo-cache: site
           wasm-bindgen: "true"
+      - name: Install Binaryen wasm-split
+        run: |
+          curl --fail --location --silent --show-error -o "$RUNNER_TEMP/binaryen.tar.gz" https://github.com/WebAssembly/binaryen/releases/download/version_132/binaryen-version_132-x86_64-linux.tar.gz
+          echo "195ddc94f9bc89f45abdabb0b9eea86023d727ba90eac8b35b80f2544fc30572  $RUNNER_TEMP/binaryen.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/binaryen.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/binaryen-version_132/bin" >> "$GITHUB_PATH"
       # Pull requests have no inputs, so these are empty, which every reader treats as unset.
       - run: bun run check:site
         env:
