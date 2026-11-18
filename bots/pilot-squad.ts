@@ -143,6 +143,9 @@ export class PilotSquad {
     if (!room || !server) {
       return;
     }
+    if ((this.creating || this.endedAt.size > 0) && !this.refreshReports()) {
+      return;
+    }
     while (this.seats.length < this.config.pilots) {
       this.seats.push(new PilotSeat(this.setup(this.seats.length, room, server), this.host));
     }
@@ -201,6 +204,7 @@ export class PilotSquad {
   }
 
   summary() {
+    this.refreshReports();
     return {
       room: this.room ?? null,
       server: this.server ?? null,
@@ -215,6 +219,16 @@ export class PilotSquad {
         report: seat.report ?? null,
       })),
     };
+  }
+
+  private refreshReports(): boolean {
+    try {
+      for (const seat of this.seats) seat.refreshReport();
+      return true;
+    } catch (error) {
+      this.recover(error);
+      return false;
+    }
   }
 
   private currentEngine(): PilotEngine {

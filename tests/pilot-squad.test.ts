@@ -1,4 +1,4 @@
-import { test } from "bun:test";
+import { spyOn, test } from "bun:test";
 import assert from "node:assert/strict";
 import type {
   PilotAction,
@@ -175,6 +175,21 @@ function server(...rooms: [code: string, reserved: number][]): DirectoryServer {
     })),
   };
 }
+
+test("pilots play between report reads", () => {
+  const engine = new FakeEngine();
+  const reports = spyOn(engine, "report");
+  const squad = squadOf(2, engine, { now: 0 }, "ABCD2345");
+  const servers = [server(["ABCD2345", 2])];
+  squad.maintain(servers);
+  for (let frame = 0; frame < 30; frame++) squad.tick();
+  assert.equal(reports.mock.calls.length, 0);
+  engine.pilots.get(1)!.phase = "playing";
+  assert.equal(squad.summary().pilots[0].report?.phase, "playing");
+  assert.equal(reports.mock.calls.length, 2);
+  squad.maintain(servers);
+  assert.equal(reports.mock.calls.length, 2, "seated pilots need no placement reports");
+});
 
 test("a room that turns one pilot away keeps the squad's other pilots playing there", () => {
   const engine = new FakeEngine();
