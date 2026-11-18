@@ -680,6 +680,7 @@ impl Library {
 struct TankView {
     kind: VehicleKind,
     team: Team,
+    human: bool,
     instance: InstanceId,
     bar: InstanceId,
     /// Whether the bar would show without cover in the way: the tank is alive and the
@@ -1844,6 +1845,7 @@ impl Presentation {
             TankView {
                 kind: tank.kind,
                 team: tank.team,
+                human: tank.human,
                 instance,
                 bar,
                 bar_shown: false,
@@ -2637,11 +2639,10 @@ impl Presentation {
         let look_yaw = self.rig.first_person.yaw;
         let playing = state.match_state.phase == MatchPhase::Playing;
         for tank in &state.tanks {
-            // Reinforcements arrive after reset; build their visuals on first sight.
-            let rebuild = self
-                .tanks
-                .get(&tank.id)
-                .is_none_or(|view| view.kind != tank.kind || view.team != tank.team);
+            // A room can hand an existing tank to a new driver with a different livery.
+            let rebuild = self.tanks.get(&tank.id).is_none_or(|view| {
+                view.kind != tank.kind || view.team != tank.team || view.human != tank.human
+            });
             if rebuild {
                 self.add_tank(tank);
             }

@@ -67,6 +67,7 @@ pub enum MeshKind {
     SetupSky,
     SetupLand,
     GradientPolygon,
+    LoadedAmmoFace,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by

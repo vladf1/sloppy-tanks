@@ -26,6 +26,7 @@ pub struct TankInspection {
     pub bar_shown: bool,
     /// Rank chevrons shown on the health bar.
     pub chevrons: usize,
+    pub crew_livery: bool,
     pub position: Vec3,
     pub bar_position: Vec3,
     /// Render-only suspension angles (radians).
@@ -130,12 +131,14 @@ impl Presentation {
                     .filter(|&&joint| joint_shown(&bar, joint))
                     .count()
             });
-            let (hull, turret) = library.tanks.get(&(view.kind, view.team)).map_or(
-                (Quat::IDENTITY, Quat::IDENTITY),
+            let (hull, turret, crew_livery) = library.tanks.get(&(view.kind, view.team)).map_or(
+                (Quat::IDENTITY, Quat::IDENTITY, false),
                 |tank| {
                     (
                         rotation(model.overrides.get(tank.hull.index).copied().flatten()),
                         rotation(model.overrides.get(tank.turret.index).copied().flatten()),
+                        tank.liveries[sloppy_core::models::part::CREW_LIVERY]
+                            .is_some_and(|joint| joint_shown(&model, joint)),
                     )
                 },
             );
@@ -145,6 +148,7 @@ impl Presentation {
                 shown: model.visible && view.world.w_axis.w != 0.0,
                 bar_shown: bar.visible,
                 chevrons,
+                crew_livery,
                 position: model.world.w_axis.truncate(),
                 bar_position: bar.world.w_axis.truncate(),
                 pitch: suspension.pitch.angle,
