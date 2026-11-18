@@ -26,7 +26,7 @@ const SILL: f64 = 0.36;
 /// Hood: cowl station, front edge and the drop of its top towards the grille.
 const COWL: f64 = 0.86;
 const HOOD_FRONT: f64 = 2.02;
-const HOOD_SLOPE: f64 = -0.045;
+pub(super) const HOOD_SLOPE: f64 = -0.045;
 const HOOD_CROWN: f64 = 1.12;
 const FENDER_TOP: f64 = 1.07;
 /// Cab roof and the slantback's start.

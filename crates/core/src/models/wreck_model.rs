@@ -35,6 +35,15 @@ pub use crate::sim::types::WreckPart;
 /// they rest where the live vehicle stood.
 const INTACT_CENTER: DVec3 = DVec3::new(0.0, 0.55, 0.0);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum VentShape {
+    Round,
+    /// The long edge rises by this much per metre along the vehicle's Z axis.
+    Rectangle {
+        slope: f64,
+    },
+}
+
 /// An opening a burning wreck's fire comes out of, in the wreck piece's own
 /// centred frame before the vehicle scale (the frame [`wreck_model`] builds in).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -43,6 +52,7 @@ pub struct WreckVent {
     pub center: DVec3,
     /// Its half size across (x) and along (z) the vehicle.
     pub half_size: DVec2,
+    pub shape: VentShape,
     /// How deep its floor lies below its top: zero for grilles and hatches on a
     /// flat deck, the well's depth for the open turret ring.
     pub depth: f64,
@@ -67,27 +77,46 @@ pub fn wreck_vents(kind: VehicleKind, wreck_part: WreckPart) -> &'static [WreckV
 }
 
 fn vents(kind: VehicleKind, wreck_part: WreckPart) -> Vec<WreckVent> {
-    let flat = |(top, half_size)| (top, half_size, 0.0);
-    let openings: Vec<(DVec3, DVec2, f64)> = match wreck_openings(kind) {
-        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring],
-        Some(tank) => [tank.engine]
-            .into_iter()
-            .chain(tank.hatches)
-            .map(flat)
-            .collect(),
-        None => humvee_wreck_openings().map(flat).to_vec(),
+    let offset = wreck_center(kind, wreck_part);
+    let vent = |(top, half_size): (DVec3, DVec2), shape, depth, main| WreckVent {
+        center: top - offset,
+        half_size,
+        shape,
+        depth,
+        main,
     };
-    let center = wreck_center(kind, wreck_part);
-    openings
-        .into_iter()
-        .enumerate()
-        .map(|(i, (top, half_size, depth))| WreckVent {
-            center: top - center,
-            half_size,
-            depth,
-            main: i == 0,
-        })
-        .collect()
+    match wreck_openings(kind) {
+        Some(tank) if wreck_part == WreckPart::Hull => {
+            let (top, size, depth) = tank.ring;
+            vec![vent((top, size), VentShape::Round, depth, true)]
+        }
+        Some(tank) => {
+            // The largest grille feeds the smoke column. Keep a separate source
+            // on each other grille so the steel between them stays clear.
+            let mut grilles = tank.engine;
+            grilles.sort_by(|a, b| b.1.element_product().total_cmp(&a.1.element_product()));
+            grilles
+                .into_iter()
+                .enumerate()
+                .map(|(i, g)| vent(g, VentShape::Rectangle { slope: 0.0 }, 0.0, i == 0))
+                .chain(tank.hatches.map(|h| vent(h, VentShape::Round, 0.0, false)))
+                .collect()
+        }
+        None => {
+            let [hood, ring] = humvee_wreck_openings();
+            vec![
+                vent(
+                    hood,
+                    VentShape::Rectangle {
+                        slope: super::humvee_model::HOOD_SLOPE,
+                    },
+                    0.0,
+                    true,
+                ),
+                vent(ring, VentShape::Round, 0.0, false),
+            ]
+        }
+    }
 }
 
 /// The point a wreck piece is centred on (`build_wreck`): a whole wreck's fixed
@@ -411,6 +440,11 @@ mod tests {
                 assert!(wreck_vents(kind, part).is_empty());
             }
             if kind == VehicleKind::Humvee {
+                let [hood, ring] = wreck_vents(kind, WreckPart::Intact) else {
+                    panic!("hood and gunner's ring");
+                };
+                assert!(matches!(hood.shape, VentShape::Rectangle { slope } if slope < 0.0));
+                assert_eq!(ring.shape, VentShape::Round);
                 continue;
             }
             // The turret ring's fire stands in its smouldering well, and a burnout's
@@ -433,9 +467,22 @@ mod tests {
                 "{kind:?} {ring:?} {vent:?}"
             );
             let hatches = embers(kind, WreckPart::Intact);
-            let [_, first, second] = wreck_vents(kind, WreckPart::Intact) else {
+            let [grilles @ .., first, second] = wreck_vents(kind, WreckPart::Intact) else {
                 panic!("{kind:?}: engine deck and two hatches");
             };
+            assert_eq!(vent.shape, VentShape::Round);
+            assert!(grilles.len() >= 2);
+            for (i, a) in grilles.iter().enumerate() {
+                assert_eq!(a.shape, VentShape::Rectangle { slope: 0.0 });
+                for b in &grilles[i + 1..] {
+                    let gap = (a.center - b.center).xz().abs() - a.half_size - b.half_size;
+                    assert!(gap.max_element() > 0.0, "metal separates the grilles");
+                }
+            }
+            assert_eq!(
+                (first.shape, second.shape),
+                (VentShape::Round, VentShape::Round)
+            );
             let middle = (first.center + second.center) / 2.0;
             assert!((hatches.center() - middle).xz().length() < 0.03, "{kind:?}");
         }

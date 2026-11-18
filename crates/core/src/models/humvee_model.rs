@@ -107,6 +107,9 @@ impl Palette {
     }
 }
 
+/// Rise per metre forward on the lengthened hood.
+pub(super) const HOOD_SLOPE: f64 = body::HOOD_SLOPE / HUMVEE_BODY_LENGTH_SCALE;
+
 /// The openings a burning Humvee wreck's fire comes out of, in the vehicle's frame
 /// before its scale, each as the centre of its top and its half size in plan: the
 /// engine bay under the hood and the gunner's ring in the roof.

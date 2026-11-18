@@ -69,6 +69,7 @@ struct EffectVertex {
     extra1: vec4f,
     // World translation of the instance, for per-instance variation.
     instance_origin: vec3f,
+    instance_basis: mat3x3f,
     // Four floats per drawn instance: set by presentation, or packed from the
     // mesh's per-instance attributes for InstancedMesh parts.
     instance_data: vec4f,
@@ -125,6 +126,7 @@ fn effect_input(input: VertexIn, instance: Instance) -> EffectVertex {
     v.extra0 = vertex_extra0(input);
     v.extra1 = vertex_extra1(input);
     v.instance_origin = instance.world[3].xyz;
+    v.instance_basis = mat3x3f(instance.world[0].xyz, instance.world[1].xyz, instance.world[2].xyz);
     v.instance_data = instance.data;
     return v;
 }
