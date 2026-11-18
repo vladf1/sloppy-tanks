@@ -93,11 +93,11 @@ static AUTHORED_HULLS: Mutex<Vec<(Vec<u32>, SharedShape)>> = Mutex::new(Vec::new
 
 /// A convex hull from xyz triples.
 pub fn convex_hull(points: &[f32]) -> ColliderBuilder {
-    let key: Vec<u32> = points.iter().map(|value| value.to_bits()).collect();
+    let key: &[u32] = bytemuck::cast_slice(points);
     let built = |hulls: &[(Vec<u32>, SharedShape)]| {
         hulls
             .iter()
-            .find(|(other, _)| *other == key)
+            .find(|(other, _)| other.as_slice() == key)
             .map(|(_, shape)| shape.clone())
     };
     if let Some(shape) = built(&AUTHORED_HULLS.lock().expect("authored hulls")) {
@@ -113,7 +113,7 @@ pub fn convex_hull(points: &[f32]) -> ColliderBuilder {
     AUTHORED_HULLS
         .lock()
         .expect("authored hulls")
-        .push((key, shape.clone()));
+        .push((key.to_vec(), shape.clone()));
     ColliderBuilder::new(shape)
 }
 
