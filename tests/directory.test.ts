@@ -158,11 +158,13 @@ test("a client that names its content version gets only that version's servers",
     contentVersion: version,
   });
   const servers = Array.from({ length: 20 }, (_, n) => listed(n % 2 ? "aaaaaaaa" : "bbbbbbbb", n));
-  const mine = listServers(servers, "aaaaaaaa");
+  const mine = listServers(servers, { contentVersion: "aaaaaaaa" });
   assert.equal(mine.length, 10);
   assert.ok(mine.every((entry) => entry.contentVersion === "aaaaaaaa"));
   // Builds that name none read at most sixteen servers before rejecting the list.
   assert.equal(listServers(servers).length, MAX_UNFILTERED_SERVERS);
+  // The overview sees every server.
+  assert.equal(listServers(servers, { all: true }).length, 20);
 });
 
 /** A body of `chunks` chunks of `chunkBytes` bytes each that counts how many the reader

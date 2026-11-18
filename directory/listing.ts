@@ -191,13 +191,17 @@ function fail(field: string): never {
  * A client that names its `contentVersion` gets only that version's servers, the only ones it
  * can join, so neither the count of other versions' servers nor their rooms (maps it may not
  * know) reach it; a client that names none, as builds before it did not, gets at most
- * MAX_UNFILTERED_SERVERS.
+ * MAX_UNFILTERED_SERVERS. The overview asks for `all`, which no game client sends.
  */
-export function listServers(servers: ListedServer[], contentVersion?: string): ListedServer[] {
+export function listServers(
+  servers: ListedServer[],
+  { contentVersion, all = false }: { contentVersion?: string; all?: boolean } = {},
+): ListedServer[] {
   const sorted = [...servers].sort(
     (a, b) => a.rooms.length - b.rooms.length || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0),
   );
-  return contentVersion === undefined
-    ? sorted.slice(0, MAX_UNFILTERED_SERVERS)
-    : sorted.filter((server) => server.contentVersion === contentVersion);
+  if (contentVersion !== undefined) {
+    return sorted.filter((server) => server.contentVersion === contentVersion);
+  }
+  return all ? sorted : sorted.slice(0, MAX_UNFILTERED_SERVERS);
 }

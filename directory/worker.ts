@@ -8,9 +8,10 @@
  *   runs several content versions announces each to `/v/<contentVersion>/servers`, listed
  *   at `wss://a-b-c-d.nip.io/v/<contentVersion>`, at most MAX_ENTRIES_PER_MACHINE of them.
  *   Replies 204.
- * - `GET /servers?environment=production|dev[&contentVersion=<hex>]` from the page (or
+ * - `GET /servers?environment=production|dev[&contentVersion=<hex>|&all=1]` from the page (or
  *   anyone): `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first,
- *   only that content version's when the request names one.
+ *   only that content version's when the request names one; every version's, uncapped, with
+ *   `all=1` (the overview).
  * - `GET /`: the overview page, static files in public/ that read these lists.
  * - `POST /traces?id=<id>` from a page opened with `?trace`: its trace as text, at most
  *   MAX_TRACE_BYTES, replacing that id's earlier upload; `GET /traces` lists the latest
@@ -119,8 +120,9 @@ export default {
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(environment));
     if (request.method === "GET") {
       const contentVersion = url.searchParams.get("contentVersion") ?? undefined;
+      const all = url.searchParams.get("all") === "1";
       return Response.json(
-        { servers: await directory.servers(contentVersion) },
+        { servers: await directory.servers({ contentVersion, all }) },
         { headers: HEADERS },
       );
     }
@@ -203,7 +205,7 @@ export class Directory extends DurableObject<Env> {
     return true;
   }
 
-  servers(contentVersion?: string): ListedServer[] {
+  servers(which: { contentVersion?: string; all?: boolean }): ListedServer[] {
     this.dropExpired();
     const rows = this.ctx.storage.sql
       .exec<{ url: string; seen: number; announcement: string }>(
@@ -216,7 +218,7 @@ export class Directory extends DurableObject<Env> {
         seen,
         url,
       })),
-      contentVersion,
+      which,
     );
   }
 
