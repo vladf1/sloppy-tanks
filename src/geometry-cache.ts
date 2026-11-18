@@ -100,25 +100,29 @@ export function startGeometryCache(): void {
     waiting.clear();
   };
   const ask = (request: WorkerRequest, transfer: Transferable[] = []) => {
-    if (!worker) {
-      worker = new Worker(new URL("./geometry-worker.ts", import.meta.url), { type: "module" });
-      worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
-        // Dropped once answered: the reply holds the file's bytes until the shell takes them.
-        const key = `${data.op}:${data.name}`;
-        const reply = waiting.get(key);
-        waiting.delete(key);
-        reply?.resolve(data);
-      };
-      worker.onerror = workerFailed;
-      worker.onmessageerror = workerFailed;
-    }
     const reply = new Promise<WorkerReply>((resolve, reject) =>
       waiting.set(`${request.op}:${request.name}`, {
         resolve,
         reject: () => reject(new Error("the cache worker failed")),
       }),
     );
-    worker.postMessage(request, transfer);
+    try {
+      if (!worker) {
+        worker = new Worker(new URL("./geometry-worker.ts", import.meta.url), { type: "module" });
+        worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
+          // Dropped once answered: the reply holds the file's bytes until the shell takes them.
+          const key = `${data.op}:${data.name}`;
+          const pending = waiting.get(key);
+          waiting.delete(key);
+          pending?.resolve(data);
+        };
+        worker.onerror = workerFailed;
+        worker.onmessageerror = workerFailed;
+      }
+      worker.postMessage(request, transfer);
+    } catch {
+      workerFailed();
+    }
     return reply;
   };
 

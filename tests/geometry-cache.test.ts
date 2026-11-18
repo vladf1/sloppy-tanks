@@ -62,6 +62,35 @@ beforeEach(() => {
 
 const remembered = () => JSON.parse(memory["sloppy-geometry"] ?? "{}");
 
+test.each(["construct", "send"])(
+  "a worker that cannot %s leaves startup reads to the page",
+  async (failure) => {
+    memory["sloppy-geometry"] = JSON.stringify({ stored: true, theme: "scenery-village" });
+    stored.set("vehicles", new ArrayBuffer(8));
+    stored.set("scenery-village", new ArrayBuffer(16));
+    class FailingWorker extends StubWorker {
+      constructor() {
+        super();
+        if (failure === "construct") throw new Error("no worker");
+      }
+      override postMessage(request: WorkerRequest) {
+        // Vehicles are already waiting when the next send fails.
+        if (request.name === "scenery-village") throw new Error("cannot send");
+        super.postMessage(request);
+      }
+    }
+    Object.assign(globalThis, { Worker: FailingWorker });
+    startGeometryCache();
+    const cache = globalThis.sloppyGeometry!;
+    await Promise.all([cache.request("vehicles"), cache.request("scenery-village")]);
+    assert.equal(cache.take("vehicles")?.byteLength, 8);
+    assert.equal(cache.take("scenery-village")?.byteLength, 16);
+    await cache.request("scenery-desert");
+    assert.deepEqual(pageReads.sort(), ["scenery-desert", "scenery-village", "vehicles"]);
+    if (failure === "send") assert.ok(StubWorker.last?.terminated);
+  },
+);
+
 test("a failed worker settles its requests and the page reads and writes instead", async () => {
   memory["sloppy-geometry"] = JSON.stringify({ stored: true, theme: "scenery-village" });
   stored.set("vehicles", new ArrayBuffer(8));
