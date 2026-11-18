@@ -850,8 +850,15 @@ impl Structure {
     /// Part `index`'s box as world offsets (min, max) from the ground centre.
     pub fn world_box(&self, index: usize) -> (DVec3, DVec3) {
         let part = self.part(index);
-        let (a, b) = (self.to_world(part.min), self.to_world(part.max));
-        (a.min(b), a.max(b))
+        let center = self.to_world(part.middle());
+        let half = (part.max - part.min) / 2.0;
+        let (sin, cos) = self.yaw.sin_cos();
+        let extent = DVec3::new(
+            half.x * cos.abs() + half.z * sin.abs(),
+            half.y,
+            half.x * sin.abs() + half.z * cos.abs(),
+        );
+        (center - extent, center + extent)
     }
 
     pub fn design(&self) -> Option<&HouseDesign> {

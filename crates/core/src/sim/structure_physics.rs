@@ -476,29 +476,28 @@ fn part_shape(layout: &Structure, index: usize, inset: f64) -> (Pose, SharedShap
                 rotation,
             } => {
                 let half = (*half - DVec3::splat(inset)).max(DVec3::splat(0.01));
-                if *rotation == glam::DQuat::IDENTITY {
-                    // Square to the build frame: square to the world, a quarter turn
-                    // swapping its sides, so it stays an axis-aligned box.
-                    let (a, b) = (layout.to_world(*center - half), layout.to_world(*center + half));
-                    let (min, max) = (a.min(b), a.max(b));
-                    let (half, center) = ((max - min) / 2.0, (min + max) / 2.0);
-                    (
-                        Pose::from_translation(vector(center.x, center.y, center.z)),
-                        SharedShape::cuboid(half.x as f32, half.y as f32, half.z as f32),
-                    )
+                let (center, half, rotation) = if *rotation == glam::DQuat::IDENTITY
+                    && layout.yaw % std::f64::consts::FRAC_PI_2 == 0.0
+                {
+                    // Keep cardinal parts axis-aligned, as the solver meets them.
+                    let (a, b) = (
+                        layout.to_world(*center - half),
+                        layout.to_world(*center + half),
+                    );
+                    ((a + b) / 2.0, (b - a).abs() / 2.0, Rotation::IDENTITY)
                 } else {
-                    let center = layout.to_world(*center);
                     let rotation = Rotation::from_xyzw(
                         rotation.x as f32,
                         rotation.y as f32,
                         rotation.z as f32,
                         rotation.w as f32,
                     );
-                    (
-                        Pose::from_parts(vector(center.x, center.y, center.z), turn * rotation),
-                        SharedShape::cuboid(half.x as f32, half.y as f32, half.z as f32),
-                    )
-                }
+                    (layout.to_world(*center), half, turn * rotation)
+                };
+                (
+                    Pose::from_parts(vector(center.x, center.y, center.z), rotation),
+                    SharedShape::cuboid(half.x as f32, half.y as f32, half.z as f32),
+                )
             }
             PartShape::Hull(points) => {
                 let center = points.iter().copied().sum::<DVec3>() / points.len() as f64;
@@ -595,10 +594,12 @@ pub fn ground_footprints(cover: &Cover, out: &mut Vec<Footprint>) {
         return;
     };
     let layout = &state.layout;
-    let open = (0..layout.parts.len())
-        .any(|index| state.gone.contains(index) && layout.parts[index].blocks_ground);
-    if !open {
-        if state.gone.len() < layout.parts.len() {
+    let gone = state
+        .gone
+        .iter()
+        .take_while(|&index| index < layout.parts.len());
+    if !gone.clone().any(|index| layout.parts[index].blocks_ground) {
+        if gone.count() < layout.parts.len() {
             let turn = box_turn(cover.kind, cover.house_plan);
             if turn == 0.0 {
                 out.push(Footprint::from(cover));
