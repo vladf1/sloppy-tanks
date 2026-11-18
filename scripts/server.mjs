@@ -172,14 +172,20 @@ async function publish() {
   );
   // CI's image of the same server build when there is one (build-server-image.mjs then
   // pushes nothing), else the one just pushed.
-  const source = [`${SERVER_IMAGE}:${build}`, `${SERVER_IMAGE}:dev-${build}`].find(inRegistry);
-  const promoted =
-    result.status === 0 && source
-      ? spawnSync(process.execPath, ["scripts/promote-server.mjs", "dev", source], {
-          cwd: repo,
-          stdio: "inherit",
-        })
-      : result;
+  const source =
+    result.status === 0
+      ? [`${SERVER_IMAGE}:${build}`, `${SERVER_IMAGE}:dev-${build}`].find(inRegistry)
+      : undefined;
+  if (result.status === 0 && !source) {
+    console.error(`The registry holds no image of server build ${build} after the push.`);
+    process.exit(1);
+  }
+  const promoted = source
+    ? spawnSync(process.execPath, ["scripts/promote-server.mjs", "dev", source], {
+        cwd: repo,
+        stdio: "inherit",
+      })
+    : result;
   if (promoted.status !== 0) {
     console.error(
       "Publishing needs Docker logged in to ghcr.io with a token that can write packages:\n" +

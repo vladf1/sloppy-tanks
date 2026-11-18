@@ -69,7 +69,6 @@ Settings come from the environment:
 | `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                                                 |
 | `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none                                  |
 | `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL`; it titles the dashboard |
-| `PUBLIC_PATH`        | none                 | The path its proxy serves it under (`/v/<content version>`), part of its listed address      |
 
 A malformed value stops startup instead of silently turning a limit off. A loopback
 listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
@@ -212,10 +211,12 @@ created ([Machines](#machines)):
   the machine runs, `/etc/containers/systemd/sloppy-tanks-<content version>.container`,
   from which systemd generates `sloppy-tanks-<content version>.service`. Each runs its
   pinned image ID, so a crash or reboot restarts exactly what was running and never
-  needs the registry, on its own loopback port from 8787 with `PUBLIC_PATH=/v/<content
-version>`, a read-only root, no capabilities, no new privileges and a 300 MB memory
-  cap without swap (an idle server holds 5-20 MB; a machine runs up to five). Output
-  goes to the unit's journal. Podman has no daemon: besides the containers, only a
+  needs the registry, on its own loopback port from 8787, with a read-only root, no
+  capabilities, no new privileges and a 300 MB memory cap without swap (an idle server
+  holds 5-20 MB; a machine runs up to five). Its settings are the machine's `server.env`
+  with `DIRECTORY_URL` extended by `/v/<content version>`, which the directory lists it
+  under: server builds from before machines ran several versions announce there too. Its
+  output goes to the unit's journal. Podman has no daemon: besides the containers, only a
   small `conmon` process per container stays running.
 - `caddy.container` runs Caddy's official image, pinned by version and digest. Both
   kinds of container use host networking, so the servers keep their loopback listeners
@@ -223,7 +224,9 @@ version>`, a read-only root, no capabilities, no new privileges and a 300 MB mem
   `ufw`. Caddy's config, `/etc/sloppy-tanks/caddy/Caddyfile`, is written by the updater
   around the machine's nip.io name (`/etc/sloppy-tanks/site`): each running version
   under `/v/<content version>/`, with the prefix stripped, and the newest at the root,
-  where the scripts check `/health`. Its certificates stay in `/var/lib/caddy/` across
+  where the scripts check `/health`. Caddy reloads it when a version starts or stops, and
+  keeps the WebSockets of the old config open for up to four hours (`stream_close_delay`),
+  so the reload ends no match. Its certificates stay in `/var/lib/caddy/` across
   restarts. To upgrade Caddy, change the image in `caddy.container` and create the
   machines again.
 - `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that starts,

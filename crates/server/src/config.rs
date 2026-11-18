@@ -8,8 +8,6 @@ const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8787;
 /// Commits show abbreviated, like the page's `/health`.
 const SHORT_COMMIT_LENGTH: usize = 7;
-/// Far above `/v/` and a content version.
-const MAX_PUBLIC_PATH: usize = 128;
 
 /// What the server image was built from, for `/health`. The image sets it as
 /// environment (`Dockerfile`) rather than the binary embedding it, so a new commit
@@ -60,9 +58,6 @@ pub struct Settings {
     pub directory: Option<DirectoryUrl>,
     /// `SERVER_ENVIRONMENT`, when set: production, dev or app-store.
     pub environment: Option<String>,
-    /// `PUBLIC_PATH`: the path Caddy serves this server under (`/v/<content version>`, one
-    /// per version a machine runs), which players' addresses carry; empty at the root.
-    pub public_path: String,
     pub build: BuildInfo,
 }
 
@@ -130,12 +125,6 @@ impl Settings {
                 ))?)
             }
         };
-        let public_path = lookup("PUBLIC_PATH").unwrap_or_default();
-        if !public_path.is_empty() && !is_public_path(&public_path) {
-            return Err(
-                "PUBLIC_PATH must be a path such as /v/0123abcd, without a trailing slash".into(),
-            );
-        }
         Ok(Self {
             host,
             port,
@@ -143,24 +132,9 @@ impl Settings {
             trust_proxy,
             directory,
             environment,
-            public_path,
             build: BuildInfo::from_env(&lookup),
         })
     }
-}
-
-/// `/segment[/segment...]` of letters, digits, `-`, `_` and `.` (no `.` or `..`), at most
-/// [`MAX_PUBLIC_PATH`] bytes: what a proxy routes by and an address can carry unescaped.
-fn is_public_path(path: &str) -> bool {
-    path.len() <= MAX_PUBLIC_PATH
-        && path.strip_prefix('/').is_some_and(|rest| {
-            rest.split('/').all(|segment| {
-                !matches!(segment, "" | "." | "..")
-                    && segment
-                        .chars()
-                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-            })
-        })
 }
 
 #[cfg(test)]
@@ -244,22 +218,6 @@ mod tests {
             (Some("dev"), None)
         );
         assert!(settings(&[("SERVER_ENVIRONMENT", "Staging?")]).is_err());
-    }
-
-    #[test]
-    fn reads_the_path_its_proxy_serves_it_under() {
-        assert_eq!(settings(&[]).unwrap().public_path, "");
-        let path = |value| settings(&[("PUBLIC_PATH", value)]).map(|s| s.public_path);
-        assert_eq!(path("").unwrap(), "");
-        assert_eq!(
-            path("/v/2d68366184e7ee8bd34ef6d9").unwrap(),
-            "/v/2d68366184e7ee8bd34ef6d9"
-        );
-        for bad in [
-            "v/abc", "/v/abc/", "/", "//v", "/v/a?b", "/v/a b", "/v/..", "/v/%2e",
-        ] {
-            assert!(path(bad).is_err(), "{bad}");
-        }
     }
 
     #[test]

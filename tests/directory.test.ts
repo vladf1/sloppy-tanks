@@ -9,6 +9,9 @@ import {
   parseEnvironment,
   readBody,
   serverUrl,
+  announcedVersion,
+  machineOf,
+  MAX_UNFILTERED_SERVERS,
   type ListedServer,
 } from "../directory/listing";
 import type { RoomListing } from "../directory/room-listing";
@@ -126,29 +129,40 @@ test("an announcement keeps its declared /health fields and rooms checked as the
   }
 });
 
-test("a server behind its version's path is listed at that path, and at no other", () => {
-  const behind = parseAnnouncement(
-    JSON.stringify({ ...health, path: `/v/${health.contentVersion}`, rooms: [] }),
-  );
-  assert.ok(behind);
-  assert.equal(
-    serverUrl("wss://45-63-62-42.nip.io", behind),
-    `wss://45-63-62-42.nip.io/v/${health.contentVersion}`,
-  );
-  const atRoot = parseAnnouncement(JSON.stringify({ ...health, rooms: [] }));
-  assert.ok(atRoot);
-  assert.equal(serverUrl("wss://45-63-62-42.nip.io", atRoot), "wss://45-63-62-42.nip.io");
-  for (const [contentVersion, path] of [
-    [health.contentVersion, "/v/0000000000000000000000ff"],
-    [health.contentVersion, `/v/${health.contentVersion}/`],
-    [health.contentVersion, "/elsewhere"],
-    [health.contentVersion, ""],
-    ["../other", "/v/../other"],
-    ["ABCDEF12", "/v/ABCDEF12"],
+test("a machine announces each version it runs under that version's path, and no other", () => {
+  const announced = parseAnnouncement(JSON.stringify({ ...health, rooms: [] }));
+  assert.ok(announced);
+  const base = "wss://45-63-62-42.nip.io";
+  assert.equal(announcedVersion("/servers"), "");
+  assert.equal(serverUrl(base, "", announced), base);
+  const version = announcedVersion(`/v/${health.contentVersion}/servers`);
+  assert.equal(version, health.contentVersion);
+  assert.equal(serverUrl(base, version!, announced), `${base}/v/${health.contentVersion}`);
+  assert.equal(serverUrl(base, "0000000000000000000000ff", announced), undefined);
+  for (const path of [
+    "/v/ABCDEF12/servers",
+    "/v/../servers",
+    "/v/12/servers",
+    "/v/abcdef12",
+    "/x",
   ]) {
-    const body = JSON.stringify({ ...health, contentVersion, path, rooms: [] });
-    assert.equal(parseAnnouncement(body), undefined, path);
+    assert.equal(announcedVersion(path), undefined, path);
   }
+  assert.equal(machineOf(`${base}/v/${health.contentVersion}`), base);
+  assert.equal(machineOf(base), base);
+});
+
+test("a client that names its content version gets only that version's servers", () => {
+  const listed = (version: string, n: number) => ({
+    ...server(`wss://45-63-62-${n}.nip.io/v/${version}`, []),
+    contentVersion: version,
+  });
+  const servers = Array.from({ length: 20 }, (_, n) => listed(n % 2 ? "aaaaaaaa" : "bbbbbbbb", n));
+  const mine = listServers(servers, "aaaaaaaa");
+  assert.equal(mine.length, 10);
+  assert.ok(mine.every((entry) => entry.contentVersion === "aaaaaaaa"));
+  // Builds that name none read at most sixteen servers before rejecting the list.
+  assert.equal(listServers(servers).length, MAX_UNFILTERED_SERVERS);
 });
 
 /** A body of `chunks` chunks of `chunkBytes` bytes each that counts how many the reader

@@ -4,11 +4,13 @@
  *
  * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields, start
  *   time and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
- *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself, followed by
- *   `/v/<contentVersion>` when it names that path (one of several versions on a machine).
+ *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. A machine that
+ *   runs several content versions announces each to `/v/<contentVersion>/servers`, listed
+ *   at `wss://a-b-c-d.nip.io/v/<contentVersion>`, at most MAX_ENTRIES_PER_MACHINE of them.
  *   Replies 204.
- * - `GET /servers?environment=production|dev` from the page (or anyone):
- *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.
+ * - `GET /servers?environment=production|dev[&contentVersion=<hex>]` from the page (or
+ *   anyone): `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first,
+ *   only that content version's when the request names one.
  * - `GET /`: the overview page, static files in public/ that read these lists.
  * - `POST /traces?id=<id>` from a page opened with `?trace`: its trace as text, at most
  *   MAX_TRACE_BYTES, replacing that id's earlier upload; `GET /traces` lists the latest
@@ -26,7 +28,10 @@ import {
   ENTRY_TTL_MS,
   ENVIRONMENTS,
   MAX_BODY_BYTES,
+  MAX_ENTRIES_PER_MACHINE,
+  announcedVersion,
   listServers,
+  machineOf,
   nipUrl,
   parseAnnouncement,
   parseEnvironment,
@@ -54,6 +59,7 @@ function text(message: string, status: number): Response {
 
 async function announce(
   request: Request,
+  version: string,
   directory: DurableObjectStub<Directory>,
 ): Promise<Response> {
   const base = nipUrl(request.headers.get("CF-Connecting-IP"));
@@ -68,7 +74,13 @@ async function announce(
   if (!announcement) {
     return text("the body must be a JSON object with a rooms array", 400);
   }
-  await directory.announce(serverUrl(base, announcement), announcement);
+  const url = serverUrl(base, version, announcement);
+  if (!url) {
+    return text("a server announces under its own content version", 400);
+  }
+  if (!(await directory.announce(url, announcement))) {
+    return text(`a machine lists at most ${MAX_ENTRIES_PER_MACHINE} servers`, 429);
+  }
   return new Response(null, { status: 204, headers: HEADERS });
 }
 
@@ -96,7 +108,8 @@ export default {
     if (url.pathname === "/traces") {
       return traces(request, url, env);
     }
-    if (url.pathname !== "/servers") {
+    const version = announcedVersion(url.pathname);
+    if (version === undefined || (version !== "" && request.method !== "PUT")) {
       return text("Not found", 404);
     }
     const environment = parseEnvironment(url.searchParams.get("environment"));
@@ -105,10 +118,14 @@ export default {
     }
     const directory = env.DIRECTORY.get(env.DIRECTORY.idFromName(environment));
     if (request.method === "GET") {
-      return Response.json({ servers: await directory.servers() }, { headers: HEADERS });
+      const contentVersion = url.searchParams.get("contentVersion") ?? undefined;
+      return Response.json(
+        { servers: await directory.servers(contentVersion) },
+        { headers: HEADERS },
+      );
     }
     if (request.method === "PUT") {
-      return announce(request, directory);
+      return announce(request, version, directory);
     }
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -167,17 +184,26 @@ export class Directory extends DurableObject<Env> {
       .toArray();
   }
 
-  announce(url: string, announcement: Announcement): void {
+  /** Stores the announcement, unless it would give its machine more than
+   * MAX_ENTRIES_PER_MACHINE entries. */
+  announce(url: string, announcement: Announcement): boolean {
     this.dropExpired();
+    const machine = machineOf(url);
+    const others = this.ctx.storage.sql
+      .exec<{ url: string }>("SELECT url FROM servers")
+      .toArray()
+      .filter((row) => row.url !== url && machineOf(row.url) === machine).length;
+    if (others >= MAX_ENTRIES_PER_MACHINE) return false;
     this.ctx.storage.sql.exec(
       "INSERT OR REPLACE INTO servers (url, seen, announcement) VALUES (?, ?, ?)",
       url,
       Date.now(),
       JSON.stringify(announcement),
     );
+    return true;
   }
 
-  servers(): ListedServer[] {
+  servers(contentVersion?: string): ListedServer[] {
     this.dropExpired();
     const rows = this.ctx.storage.sql
       .exec<{ url: string; seen: number; announcement: string }>(
@@ -190,6 +216,7 @@ export class Directory extends DurableObject<Env> {
         seen,
         url,
       })),
+      contentVersion,
     );
   }
 

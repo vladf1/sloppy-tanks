@@ -57,7 +57,7 @@ case $1 in
     echo "$image $port" >"$F/services/$2" ;;
   stop) rm -f "$F/services/$2" ;;
   is-active) [[ $2 == --quiet ]] && shift; [[ $2 == caddy ]] || [[ -f $F/services/$2 ]] ;;
-  reload) echo reload >>"$F/caddy-reloads" ;;
+  reload) [[ -f $F/reload-fails ]] && exit 1; echo reload >>"$F/caddy-reloads" ;;
   *) echo "fake systemctl: $*" >&2; exit 1 ;;
 esac
 `;
@@ -117,7 +117,10 @@ beforeEach(() => {
 afterEach(() => rmSync(scratch, { recursive: true, force: true }));
 
 function environment(name: string) {
-  writeFileSync(join(root, "etc/sloppy-tanks/server.env"), `SERVER_ENVIRONMENT=${name}\n`);
+  writeFileSync(
+    join(root, "etc/sloppy-tanks/server.env"),
+    `SERVER_ENVIRONMENT=${name}\nDIRECTORY_URL=https://directory.example/\n`,
+  );
 }
 
 const hex = (seed: string, length: number) => seed.repeat(length).slice(0, length);
@@ -185,16 +188,23 @@ test("a machine runs every listed version on its own port and path, the newest a
     "sloppy-tanks-aaaaaaaa": `${idOf("aaaaaaaa", "b1")} 8787`,
     "sloppy-tanks-bbbbbbbb": `${idOf("bbbbbbbb", "b1")} 8788`,
   });
-  assert.match(
-    unitFile("aaaaaaaa"),
-    /^Environment=HOST=127\.0\.0\.1 PORT=8787 PUBLIC_PATH=\/v\/aaaaaaaa$/m,
-  );
+  assert.match(unitFile("aaaaaaaa"), /^Environment=HOST=127\.0\.0\.1 PORT=8787$/m);
   assert.match(unitFile("bbbbbbbb"), /^ContainerName=sloppy-tanks-bbbbbbbb$/m);
+  // Each server announces where the directory lists it at its version's path, whatever
+  // build it is.
+  const settings = join(root, "var/lib/sloppy-tanks/versions/aaaaaaaa/server.env");
+  assert.ok(unitFile("aaaaaaaa").includes(`\nEnvironmentFile=${settings}\n`));
+  assert.equal(
+    readFileSync(settings, "utf8"),
+    "SERVER_ENVIRONMENT=production\nDIRECTORY_URL=https://directory.example/v/aaaaaaaa\n",
+  );
   const config = caddyfile();
   assert.match(config, /^45-63-56-58\.nip\.io \{$/m);
   assert.match(config, /handle_path \/v\/aaaaaaaa\* \{\n\t\treverse_proxy 127\.0\.0\.1:8787 /);
   assert.match(config, /handle_path \/v\/bbbbbbbb\* \{\n\t\treverse_proxy 127\.0\.0\.1:8788 /);
   assert.match(config, /\thandle \{\n\t\treverse_proxy 127\.0\.0\.1:8787 /);
+  // A reload for another version leaves every match's WebSocket open.
+  assert.equal(config.match(/stream_close_delay 14400s/g)?.length, 3);
 });
 
 test("a version pushed out of the list stops once nobody plays on it, and a new one starts at once", () => {
@@ -255,12 +265,14 @@ test("an image that fails its health check is stopped and not tried again until 
   const a = image("aaaaaaaa", "b1");
   writeFileSync(join(fake, "broken"), `${idOf("aaaaaaaa", "b1")}\n`);
   publish("production", [a], "1");
-  run("pull");
+  assert.equal(run("pull").status, 1, "a pull reports the version it could not start");
   assert.deepEqual(services(), {});
   assert.ok(!existsSync(join(root, "etc/containers/systemd/sloppy-tanks-aaaaaaaa.container")));
   assert.match(caddyfile(), /respond "No game server runs here yet" 503/);
   const again = run("auto");
+  assert.equal(again.status, 0);
   assert.doesNotMatch(again.output, /Starting/);
+  assert.equal(run("pull").status, 1);
   publish("production", [image("aaaaaaaa", "b2")], "2");
   assert.equal(run("auto").status, 0);
   assert.equal(services()["sloppy-tanks-aaaaaaaa"], `${idOf("aaaaaaaa", "b2")} 8787`);
@@ -290,4 +302,44 @@ test("an image another environment's checkout loads runs as its version and hold
   // The site's root serves what was deployed, which the deploy then checks.
   assert.match(caddyfile(), /\thandle \{\n\t\treverse_proxy 127\.0\.0\.1:8788 /);
   assert.match(run("auto").output, /Holding: SSH deploy/);
+});
+
+test("a failed switch keeps the image to roll back to", () => {
+  publish("production", [image("aaaaaaaa", "b1")], "1");
+  assert.equal(run("pull").status, 0);
+  publish("production", [image("aaaaaaaa", "b2")], "2");
+  assert.equal(run("auto").status, 0);
+  writeFileSync(join(fake, "broken"), `${idOf("aaaaaaaa", "b3")}\n`);
+  publish("production", [image("aaaaaaaa", "b3")], "3");
+  assert.equal(run("auto").status, 0);
+  assert.equal(services()["sloppy-tanks-aaaaaaaa"], `${idOf("aaaaaaaa", "b2")} 8787`);
+  assert.equal(run("rollback").status, 0);
+  assert.equal(services()["sloppy-tanks-aaaaaaaa"], `${idOf("aaaaaaaa", "b1")} 8787`);
+});
+
+test("an SSH deploy of another unlisted version replaces the last one", () => {
+  publish("production", [image("aaaaaaaa", "b1")], "1");
+  assert.equal(run("pull").status, 0);
+  for (const content of ["bbbbbbbb", "cccccccc"]) {
+    image(content, "b9");
+    appendFileSync(join(fake, "local"), `sloppy-tanks-server:${content} ${idOf(content, "b9")}\n`);
+    assert.equal(run("local", `sloppy-tanks-server:${content}`).status, 0);
+  }
+  assert.deepEqual(Object.keys(services()).sort(), [
+    "sloppy-tanks-aaaaaaaa",
+    "sloppy-tanks-cccccccc",
+  ]);
+});
+
+test("a Caddy reload that fails is tried again at the next check", () => {
+  publish("production", [image("aaaaaaaa", "b1")], "1");
+  assert.equal(run("pull").status, 0);
+  const before = caddyfile();
+  writeFileSync(join(fake, "reload-fails"), "");
+  publish("production", [image("bbbbbbbb", "b1"), image("aaaaaaaa", "b1")], "2");
+  assert.match(run("auto").output, /Caddy did not reload/);
+  assert.equal(caddyfile(), before);
+  rmSync(join(fake, "reload-fails"));
+  assert.equal(run("auto").status, 0);
+  assert.match(caddyfile(), /handle_path \/v\/bbbbbbbb\*/);
 });

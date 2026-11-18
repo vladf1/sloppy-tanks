@@ -29,7 +29,9 @@ function docker(args, options = {}) {
   return spawnSync("docker", args, { cwd: repo, encoding: "utf8", ...options });
 }
 
-/** The labels and root digest of an image in the registry, or nothing when it holds none. */
+/** The labels and root digest of an image in the registry, or nothing when it holds none.
+ * Any other failure stops the promotion: read as an empty list, a registry hiccup would push
+ * a tag that drops every version kept so far. */
 function inspect(ref) {
   const result = docker([
     "buildx",
@@ -39,7 +41,11 @@ function inspect(ref) {
     "--format",
     '{"manifest":{{json .Manifest}},"image":{{json .Image}}}',
   ]);
-  if (result.status !== 0) return undefined;
+  if (result.status !== 0) {
+    if (/: not found\s*$/.test(result.stderr)) return undefined;
+    console.error(`Could not read ${ref}:\n${result.stderr}`);
+    process.exit(1);
+  }
   const { manifest, image } = JSON.parse(result.stdout);
   // A manifest list maps each platform to its config; the image has only linux/amd64.
   const labels = (image.config ?? image["linux/amd64"]?.config)?.Labels ?? {};

@@ -77,9 +77,6 @@ pub struct ServerOptions {
     pub directory: Option<DirectoryOptions>,
     /// The environment this server serves (`SERVER_ENVIRONMENT`), which titles the dashboard.
     pub environment: Option<String>,
-    /// The path its proxy serves it under (`PUBLIC_PATH`), part of its address in
-    /// `/servers` and in its announcements; empty at the root.
-    pub public_path: String,
     /// The names its rooms seat players under.
     pub names: NameRule,
 }
@@ -94,7 +91,6 @@ impl ServerOptions {
             build: BuildInfo::default(),
             directory: None,
             environment: None,
-            public_path: String::new(),
             names: NameRule::Typed,
         }
     }
@@ -511,10 +507,6 @@ struct Listing<'a> {
     /// From the latest `/stats` sample; none in the first ten seconds.
     #[serde(flatten)]
     load: Option<Load>,
-    /// The path the directory adds to the address it lists this server at
-    /// (`PUBLIC_PATH`), since it names the address by the announcing machine's IP alone.
-    #[serde(skip_serializing_if = "str::is_empty")]
-    path: &'a str,
     rooms: Vec<RoomListing>,
 }
 
@@ -546,7 +538,6 @@ fn listing(shared: &Shared) -> Listing<'_> {
         health: health(&shared.options.build),
         started_at: iso_time(started_ms),
         load,
-        path: &shared.options.public_path,
         rooms: shared.catalog.lock().expect("catalog").list(now, true),
     }
 }
@@ -677,8 +668,7 @@ async fn route(
             if path == "/servers" {
                 let servers = Servers {
                     servers: [ListedServer {
-                        url: public_url(shared.options.trust_proxy, headers)
-                            + &shared.options.public_path,
+                        url: public_url(shared.options.trust_proxy, headers),
                         listing: listing(shared),
                     }],
                 };

@@ -8,6 +8,7 @@ use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use serde_json::Value;
+use sloppy_core::net::protocol::CONTENT_VERSION;
 use sloppy_core::net::room_list::{ServerList, split_address};
 
 use crate::tasks::Background;
@@ -47,7 +48,9 @@ pub fn default_directory() -> String {
 }
 
 /// The directory's `/servers` address for `base`: `http:` or `https:` without
-/// credentials, query or fragment, and anything but a local server needs `https:`.
+/// credentials, query or fragment, and anything but a local server needs `https:`. It
+/// asks for this build's content version only, the only servers it can join: machines run
+/// several versions, and other versions' rooms may name maps this build does not know.
 pub fn servers_address(base: &str) -> Result<String, String> {
     let invalid = || format!("Invalid server directory address: {base}");
     let (scheme, host) = split_address(base).ok_or_else(invalid)?;
@@ -56,7 +59,7 @@ pub fn servers_address(base: &str) -> Result<String, String> {
         return Err(invalid());
     }
     Ok(format!(
-        "{}/servers?environment={ENVIRONMENT}",
+        "{}/servers?environment={ENVIRONMENT}&contentVersion={CONTENT_VERSION}",
         base.trim_end_matches('/')
     ))
 }
@@ -188,17 +191,18 @@ mod tests {
 
     #[test]
     fn the_directory_needs_https_except_on_this_machine() {
+        let query = format!("environment=production&contentVersion={CONTENT_VERSION}");
         assert_eq!(
             servers_address("https://dir.example/").unwrap(),
-            "https://dir.example/servers?environment=production"
+            format!("https://dir.example/servers?{query}")
         );
         assert_eq!(
             servers_address("http://127.0.0.1:8790").unwrap(),
-            "http://127.0.0.1:8790/servers?environment=production"
+            format!("http://127.0.0.1:8790/servers?{query}")
         );
         assert_eq!(
             servers_address("http://[::1]:8790").unwrap(),
-            "http://[::1]:8790/servers?environment=production"
+            format!("http://[::1]:8790/servers?{query}")
         );
         assert!(servers_address("http://dir.example").is_err());
         assert!(servers_address("https://dir.example/?a=b").is_err());

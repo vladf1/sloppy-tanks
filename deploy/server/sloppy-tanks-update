@@ -139,13 +139,22 @@ free_port() {
   return 1
 }
 
-# Writes the version's Quadlet unit for IMAGE from the template; systemd sees it only
-# after regenerating its units.
+# Writes the version's Quadlet unit for IMAGE from the template, and its settings: the
+# machine's server.env, with the directory's /v/<content version>/servers as where it
+# announces, so the directory lists it at that path on this machine. Server builds from
+# before machines ran several versions know nothing of paths, but take their
+# DIRECTORY_URL as given. systemd sees the unit only after regenerating its units.
 write_unit() {
-  local content=$1 image=$2 port
+  local content=$1 image=$2 port directory settings
   port=$(port_of "$content")
+  settings=$(version_dir "$content")/server.env
+  directory=$(sed -n 's/^DIRECTORY_URL=//p' "$CONFIG/server.env" 2>/dev/null || true)
+  {
+    grep -v '^DIRECTORY_URL=' "$CONFIG/server.env" 2>/dev/null || true
+    if [[ -n $directory ]]; then echo "DIRECTORY_URL=${directory%/}/v/$content"; fi
+  } >"$settings"
   sed -e "s/@CONTENT@/$content/g" -e "s/@PORT@/$port/g" -e "s/@IMAGE@/$image/g" \
-    "$TEMPLATE" >"$QUADLET/$(unit "$content").container.new"
+    -e "s|@SETTINGS@|$settings|g" "$TEMPLATE" >"$QUADLET/$(unit "$content").container.new"
   mv -f "$QUADLET/$(unit "$content").container.new" "$QUADLET/$(unit "$content").container"
   systemctl daemon-reload
 }
@@ -209,10 +218,6 @@ switch_version() {
     echo "$(unit "$content") already runs $(describe "$new")"
     return 0
   fi
-  if [[ -n $current && $current != "$new" ]]; then
-    write_file "$dir/previous" "$current"
-    podman tag "$current" "$PINNED:$content-previous"
-  fi
   write_file "$dir/image" "$new"
   podman tag "$new" "$PINNED:$content"
   write_unit "$content" "$new"
@@ -220,6 +225,11 @@ switch_version() {
   systemctl restart "$(unit "$content")"
   if healthy "$(port_of "$content")" "$new"; then
     echo "$(unit "$content") runs $(describe "$new")"
+    # Only now does the image it replaced become the one to roll back to.
+    if [[ -n $current && $current != "$new" ]]; then
+      write_file "$dir/previous" "$current"
+      podman tag "$current" "$PINNED:$content-previous"
+    fi
     rm -f "$dir/failed" "$dir/pending"
     return 0
   fi
@@ -239,18 +249,26 @@ switch_version() {
   return 1
 }
 
-# Runs IMAGE as its content version's server now: switching the one running, or
-# starting one.
+# Runs IMAGE as its content version's server now (an SSH deploy or a pulled tag),
+# switching the one running or starting one, and serves it at the root. A version started
+# this way that the tag does not list is an override: the next override replaces it, so
+# repeated deploys of unlisted versions do not pile up.
 run_now() {
-  local image=$1 content
+  local image=$1 content other
   content=$(label "$image" $LABELS.content-version)
   check_content "$content"
   if [[ -f $(version_dir "$content")/image ]]; then
     switch_version "$content" "$image"
   else
     start_version "$content" "$image"
+    touch "$(version_dir "$content")/override"
   fi
   write_file "$root_file" "$content"
+  for other in $(running); do
+    if [[ $other != "$content" && -f $(version_dir "$other")/override ]] && ! is_wanted "$other"; then
+      stop_version "$other"
+    fi
+  done
 }
 
 stop_version() {
@@ -273,14 +291,20 @@ write_caddyfile() {
   site=$(cat "$CONFIG/site")
   root=$(read_file "$root_file")
   if [[ -z $root || ! -f $(version_dir "$root")/image ]]; then
-    root=$(for content in $(wanted) $(running); do
-      if [[ -f $(version_dir "$content")/image ]]; then echo "$content"; fi
-    done | head -n 1)
+    root=""
+    for content in $(wanted) $(running); do
+      if [[ -f $(version_dir "$content")/image ]]; then
+        root=$content
+        break
+      fi
+    done
   fi
   # X-Client-Port (with X-Forwarded-For) names the player's end of Caddy's socket to the
-  # server, which reads its TCP round trip and retransmissions from it.
+  # server, which reads its TCP round trip and retransmissions from it. A reload unloads the
+  # old config, whose WebSockets Caddy would close at once: the delay keeps every match
+  # going, on any version, for up to a room's lifetime.
   proxy() {
-    printf '\t\treverse_proxy 127.0.0.1:%s {\n\t\t\theader_up X-Client-Port {remote_port}\n\t\t}\n' "$1"
+    printf '\t\treverse_proxy 127.0.0.1:%s {\n\t\t\theader_up X-Client-Port {remote_port}\n\t\t\tstream_close_delay %ss\n\t\t}\n' "$1" "$MAX_WAIT_SECONDS"
   }
   new=$(
     echo "# Written by sloppy-tanks-update for the servers running now."
@@ -300,9 +324,16 @@ write_caddyfile() {
   )
   if [[ $new == "$(read_file "$CADDYFILE")" ]]; then return 0; fi
   mkdir -p "$(dirname "$CADDYFILE")"
+  local applied
+  applied=$(read_file "$CADDYFILE")
   printf '%s\n' "$new" >"$CADDYFILE.new"
   mv -f "$CADDYFILE.new" "$CADDYFILE"
-  if systemctl is-active --quiet caddy; then systemctl reload caddy; fi
+  if systemctl is-active --quiet caddy && ! systemctl reload caddy; then
+    # Put back what Caddy still runs, so the next check finds a change and tries again.
+    printf '%s\n' "$applied" >"$CADDYFILE"
+    echo "Caddy did not reload its config; trying again at the next check" >&2
+    return 1
+  fi
 }
 
 # Untags the server images no version runs, could roll back to or is listed to start,
@@ -403,32 +434,34 @@ may_change() {
 
 # Brings the servers in line with wanted: starts listed versions, switches a listed
 # version to its listed image and stops versions no longer listed, the last two once
-# may_change allows. `now` (a pull) waits for nobody.
+# may_change allows. `now` (a pull) waits for nobody. Fails when a listed image does not
+# run, now or after an earlier failed health check.
 reconcile() {
-  local mode=$1 content image dir changed=0 pending
-  while read -r content image; do
+  local mode=$1 content image dir changed=0 failed=0 pending
+  # The list arrives on its own descriptor, so nothing the loop runs can read from it.
+  while read -r content image <&3; do
     [[ -n $content ]] || continue
     dir=$(version_dir "$content")
-    rm -f "$dir/retiring"
-    if [[ ! -f $dir/image ]]; then
-      if [[ $image != "$(read_file "$dir/failed")" ]]; then
-        start_version "$content" "$image" || true
-        changed=1
-      fi
-    elif [[ $image != "$(read_file "$dir/image")" && $image != "$(read_file "$dir/failed")" ]]; then
+    rm -f "$dir/retiring" "$dir/override"
+    if [[ $image == "$(read_file "$dir/failed")" ]]; then
+      failed=1
+    elif [[ ! -f $dir/image ]]; then
+      start_version "$content" "$image" || failed=1
+      changed=1
+    elif [[ $image != "$(read_file "$dir/image")" ]]; then
       pending=$(read_file "$dir/pending")
       if [[ ${pending%% *} != "$image" ]]; then
         write_file "$dir/pending" "$image $(date +%s)"
         echo "New image for $(unit "$content"): $(describe "$image")"
       fi
       if may_change "$content" "$mode" "$dir/pending"; then
-        switch_version "$content" "$image" || true
+        switch_version "$content" "$image" || failed=1
         changed=1
       fi
     else
       rm -f "$dir/pending"
     fi
-  done <"${wanted_file}"
+  done 3<"$wanted_file"
   for content in $(running); do
     is_wanted "$content" && continue
     dir=$(version_dir "$content")
@@ -443,8 +476,9 @@ reconcile() {
   done
   content=$(wanted | head -n 1)
   if [[ -n $content && -f $(version_dir "$content")/image ]]; then write_file "$root_file" "$content"; fi
-  write_caddyfile
+  write_caddyfile || failed=1
   if ((changed)); then remove_old_images; fi
+  return "$failed"
 }
 
 # The timer's check. It follows the tag unless a hold is set, reading the tag again only
@@ -474,7 +508,8 @@ auto() {
   fi
   check_worked
   if [[ -f $hold_file ]]; then return 0; fi
-  reconcile wait
+  # A failed image waits for the tag to list another; the journal has said why.
+  reconcile wait || true
 }
 
 status() {
