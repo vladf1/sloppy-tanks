@@ -346,11 +346,12 @@ impl RoomSession {
         self.pumping = true;
         loop {
             let actions = self.game.take_room_actions();
-            for action in &actions {
+            let actions_empty = actions.is_empty();
+            for action in actions {
                 self.perform(action);
             }
             let notices = self.game.take_room_notices();
-            let done = actions.is_empty() && notices.is_empty();
+            let done = actions_empty && notices.is_empty();
             for notice in notices {
                 self.handle(notice);
             }
@@ -373,17 +374,14 @@ impl RoomSession {
         self.sockets.close_all_and_wait();
     }
 
-    fn perform(&mut self, action: &ClientAction) {
+    fn perform(&mut self, action: ClientAction) {
         match action {
-            ClientAction::OpenSocket { socket, url } => self.sockets.open(*socket, url.clone()),
-            ClientAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
-            ClientAction::CloseSocket { socket } => self.sockets.close(*socket),
+            ClientAction::OpenSocket { socket, url } => self.sockets.open(socket, url),
+            ClientAction::Send { socket, text } => self.sockets.send(socket, text),
+            ClientAction::CloseSocket { socket } => self.sockets.close(socket),
             ClientAction::SaveSeat { token, room_epoch } => {
-                let seat = SavedSeat {
-                    token: token.clone(),
-                    room_epoch: room_epoch.clone(),
-                };
-                self.seats.save(&self.selection, seat);
+                self.seats
+                    .save(&self.selection, SavedSeat { token, room_epoch });
             }
             ClientAction::ForgetSeat => self.seats.forget(&self.selection),
         }
