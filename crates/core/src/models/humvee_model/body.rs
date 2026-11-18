@@ -55,14 +55,17 @@ fn hood_y(y_at_cowl: f64, z: f64) -> f64 {
     y_at_cowl + HOOD_SLOPE * (z - COWL)
 }
 
-/// The engine bay under the hood's raised centre: the middle of the hood top and
-/// the half size of the crown in plan.
-pub(super) fn engine_bay() -> (DVec3, DVec2) {
-    let middle = (COWL + HOOD_FRONT) / 2.0;
-    (
-        DVec3::new(0.0, hood_y(HOOD_CROWN, middle), middle),
-        DVec2::new(0.56, (HOOD_FRONT - COWL) / 2.0),
-    )
+/// The two louvred hood openings, in the body kit's unstretched frame.
+const HOOD_VENT_Z: f64 = 1.2;
+const HOOD_VENT_HALF: DVec2 = DVec2::new(0.14, 0.17);
+
+pub(super) fn hood_vents() -> [(DVec3, DVec2); 2] {
+    [-0.86, 0.86].map(|x| {
+        (
+            DVec3::new(x, hood_y(FENDER_TOP, HOOD_VENT_Z), HOOD_VENT_Z),
+            HOOD_VENT_HALF,
+        )
+    })
 }
 
 pub(super) fn body_kit() -> Kit {
@@ -244,16 +247,15 @@ fn hood(kit: &mut Kit) {
         0.018,
         slope_y(HOOD_SLOPE, COWL),
     );
-    // Louvred vents on each fender top and the crown's hinge line.
-    for side in [DMat4::IDENTITY, mirror_x()] {
-        let z = 1.2;
-        let y = hood_y(FENDER_TOP, z);
-        let vent = side * place([0.86, y, z], [-HOOD_SLOPE, 0.0, 0.0]);
-        kit.block(Role::Gap, [0.28, 0.01, 0.34], vent);
+    for (center, half) in hood_vents() {
+        let vent = place(center.to_array(), [-HOOD_SLOPE, 0.0, 0.0]);
+        kit.block(Role::Gap, [2.0 * half.x, 0.01, 2.0 * half.y], vent);
         for i in 0..5 {
             let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.07], [0.5, 0.0, 0.0]);
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
         }
+    }
+    for side in [DMat4::IDENTITY, mirror_x()] {
         // Rubber hood latch at the front of each fender.
         let latch = side * at([1.088, 0.955, 1.86]);
         kit.block(Role::Gap, [0.016, 0.09, 0.035], latch);

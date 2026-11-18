@@ -39,5 +39,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let width = mix(f.tint.x, 0.5, above);
     let opening = 1.0 - smoothstep(width * 0.83, width, abs(uv.x - 0.5));
     (*s).color = light / max(opacity, 0.001);
-    (*s).opacity = f.tint.a * opacity * opening * (1.0 - smoothstep(0.82, 1.0, uv.y));
+    // Incoming gas is patchy at a shallow vent; its heat sets how far down
+    // each tongue stays luminous as it meets the metal.
+    let root_heat = near.r * 0.6 + far.g * 0.4;
+    let foot = smoothstep(0.015, 0.17, uv.y - 0.09 * (1.0 - root_heat));
+    (*s).opacity = f.tint.a * opacity * mix(1.0, foot, f.instance_data.z) * opening * (1.0 - smoothstep(0.82, 1.0, uv.y));
 }

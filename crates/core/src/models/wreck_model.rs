@@ -103,16 +103,13 @@ fn vents(kind: VehicleKind, wreck_part: WreckPart) -> Vec<WreckVent> {
                 .collect()
         }
         None => {
-            let [hood, ring] = humvee_wreck_openings();
+            let [left, right, ring] = humvee_wreck_openings();
+            let hood = VentShape::Rectangle {
+                slope: super::humvee_model::HOOD_SLOPE,
+            };
             vec![
-                vent(
-                    hood,
-                    VentShape::Rectangle {
-                        slope: super::humvee_model::HOOD_SLOPE,
-                    },
-                    0.0,
-                    true,
-                ),
+                vent(left, hood, 0.0, true),
+                vent(right, hood, 0.0, false),
                 vent(ring, VentShape::Round, 0.0, false),
             ]
         }
@@ -440,10 +437,13 @@ mod tests {
                 assert!(wreck_vents(kind, part).is_empty());
             }
             if kind == VehicleKind::Humvee {
-                let [hood, ring] = wreck_vents(kind, WreckPart::Intact) else {
-                    panic!("hood and gunner's ring");
+                let [left, right, ring] = wreck_vents(kind, WreckPart::Intact) else {
+                    panic!("two hood vents and the gunner's ring");
                 };
-                assert!(matches!(hood.shape, VentShape::Rectangle { slope } if slope < 0.0));
+                assert!(matches!(left.shape, VentShape::Rectangle { slope } if slope < 0.0));
+                assert_eq!(left.shape, right.shape);
+                assert!(left.center.x + left.half_size.x < 0.0);
+                assert!(right.center.x - right.half_size.x > 0.0);
                 assert_eq!(ring.shape, VentShape::Round);
                 continue;
             }
