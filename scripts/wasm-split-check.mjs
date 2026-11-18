@@ -34,10 +34,15 @@ async function heldRound(browser, query) {
     await clickWidget(page, "Settings");
     await untilState(page, (state) => state.settings);
     await clickWidget(page, "Close");
+    await untilState(page, (state) => !state.settings);
+    await nextFrame(page);
     await clickWidget(page, "Harbor Havoc");
+    await untilState(page, (state) => state.prefs.map === "harbor");
     await clickWidget(page, "SKIPPER");
     await clickWidget(page, "Hard");
     await page.setViewportSize({ width: 1240, height: 810 });
+    await nextFrame(page);
+    await nextFrame(page);
     await clickWidget(page, "GO!");
     let state = await nextFrame(page);
     assert.equal(state.inRound, false);

@@ -160,7 +160,7 @@ impl App {
             return self.started();
         }
         match self.mode.take() {
-            Some(Mode::Single(mut session)) => match session.pending_room.take() {
+            Some(Mode::Single(mut session)) => match session.ui.rooms.pending.take() {
                 Some(selection) => {
                     let shell = session.into_shell();
                     crate::surface_layers::release(&shell.window);
@@ -576,8 +576,6 @@ struct Session {
     parts: FrameParts,
     /// Seats rooms gave this run, kept for the next room.
     seats: SavedSeats,
-    /// CREATE ROOM or JOIN ROOM: the app hands the window to the room.
-    pending_room: Option<RoomSelection>,
 }
 
 impl ApplicationHandler for App {
@@ -842,7 +840,6 @@ impl Session {
             frame_log: frame_log.then(FrameLog::new),
             parts: FrameParts::default(),
             seats,
-            pending_room: None,
             prefs,
         };
         session.ui.starting = autoplay;
@@ -1074,7 +1071,7 @@ impl Session {
             Action::JoinRoom(selection) => {
                 self.prefs.player_name.clone_from(&selection.choice.name);
                 self.prefs.save();
-                self.pending_room = Some(*selection);
+                self.ui.rooms.pending = Some(*selection);
             }
             // A room's own menu.
             Action::RoomStart
@@ -1463,7 +1460,11 @@ impl Session {
     fn advance_game(&mut self, now: f64) -> Result<(), String> {
         // A room builds its own arena. Keep solo preparation resumable if the
         // player switches back to the single-player tab.
-        if !self.in_round && self.ui.rooms.multiplayer && !self.ui.starting {
+        if cfg!(target_arch = "wasm32")
+            && !self.in_round
+            && self.ui.rooms.multiplayer
+            && !self.ui.starting
+        {
             return Ok(());
         }
         let game = &mut self.game;

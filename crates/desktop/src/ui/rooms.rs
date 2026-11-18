@@ -91,6 +91,8 @@ enum ListState {
 pub struct RoomsState {
     /// The Multiplayer tab is the one showing.
     pub multiplayer: bool,
+    /// The room to enter when the gameplay module is available.
+    pub pending: Option<RoomSelection>,
     /// The directory's base address (`--directory`, else the build's).
     pub directory: String,
     request: Option<DirectoryRequest>,
@@ -131,6 +133,7 @@ impl Default for RoomsState {
     fn default() -> Self {
         Self {
             multiplayer: false,
+            pending: None,
             directory: directory::default_directory(),
             request: None,
             next_poll: None,
@@ -209,6 +212,9 @@ impl RoomsState {
     pub fn remember_tab(&mut self) {
         if *self.addressed.get_or_insert(self.multiplayer) != self.multiplayer {
             self.addressed = Some(self.multiplayer);
+            if !self.multiplayer {
+                self.pending = None;
+            }
             links::show(if self.multiplayer {
                 Place::Multiplayer
             } else {
@@ -345,6 +351,12 @@ impl RoomsState {
 
     /// The status line and its hint: what the action button will do, or what is wrong.
     fn prompt(&self) -> (String, String) {
+        if let Some(selection) = &self.pending {
+            return (
+                "Downloading gameplay…".into(),
+                format!("Joining room {} when ready.", selection.room),
+            );
+        }
         match &self.state {
             ListState::Loading if self.list.servers.is_empty() => (
                 "Looking for rooms…".into(),
@@ -1107,7 +1119,13 @@ pub fn multiplayer(
 /// glass and grey type, and offline a lock and why under its name. An App Store app the
 /// servers have moved past offers UPDATE instead, which opens its App Store page: the
 /// servers play only the latest release.
-fn room_action(ui: &mut egui::Ui, art: &Art, rect: Rect, state: &RoomsState) -> bool {
+fn room_action(ui: &mut egui::Ui, art: &Art, rect: Rect, state: &mut RoomsState) -> bool {
+    if state.pending.is_some() {
+        if paint::action_button(ui, art, rect, "CANCEL", ROOM_ACTION_LETTERING, true).clicked() {
+            state.pending = None;
+        }
+        return false;
+    }
     let joining = !state.selected.is_empty();
     let label = if joining { "JOIN ROOM" } else { "CREATE ROOM" };
     if joining || state.list.new_room_server().is_some() {

@@ -182,7 +182,14 @@ try {
   });
   await clickWidget(a, "Blue");
   await clickWidget(a, "CREATE ROOM");
+  await clickWidget(a, "CANCEL");
+  await clickWidget(a, "CREATE ROOM");
+  await clickWidget(a, "SINGLE PLAYER");
+  await untilState(a, (state) => !state.multiplayerTab);
+  await clickWidget(a, "MULTIPLAYER");
+  await clickWidget(a, "CREATE ROOM");
   assert.equal((await nextFrame(a)).engine, "single");
+  assert.equal(await openSockets(a), 0, "no connection before the gameplay module is ready");
   heldGame.resolve();
   let aState = await inRoom(a);
   const room = aState.room.code;

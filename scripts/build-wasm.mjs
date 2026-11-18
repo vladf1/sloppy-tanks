@@ -187,8 +187,8 @@ async function splitShell({ dir, outName }) {
   }
 }
 
-const webglGlue = existsSync(
-  fileURLToPath(new URL(`../${SHELL_WEBGL.dir}/${SHELL_WEBGL.outName}.js`, import.meta.url)),
+const webglBuilt = [".js", "_bg.wasm", "-game.wasm"].every((suffix) =>
+  existsSync(resolve(root, SHELL_WEBGL.dir, SHELL_WEBGL.outName + suffix)),
 );
 const builds = process.argv.includes("--labs")
   ? [LABS]
@@ -198,7 +198,7 @@ const builds = process.argv.includes("--labs")
       ? [SHELL_WEBGL]
       : process.argv.includes("--all")
         ? [SHELL, SHELL_WEBGL, ENGINE]
-        : webglGlue
+        : webglBuilt
           ? [SHELL]
           : [SHELL, SHELL_WEBGL];
 // Shader tables ------------------------------------------------------------------------
