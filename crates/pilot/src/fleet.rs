@@ -160,12 +160,8 @@ impl Fleet {
     }
 
     pub fn report(&self, handle: u32, now_ms: f64) -> String {
-        self.pilots
-            .get(&handle)
-            .map_or(Value::Null, |pilot| {
-                serde_json::to_value(pilot.report(now_ms)).unwrap_or(Value::Null)
-            })
-            .to_string()
+        serde_json::to_string(&self.pilots.get(&handle).map(|pilot| pilot.report(now_ms)))
+            .expect("pilot reports serialize")
     }
 
     pub fn remove(&mut self, handle: u32) {

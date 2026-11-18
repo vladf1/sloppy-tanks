@@ -155,7 +155,12 @@ test(
     const hunter = new PilotSeat(setup("hunter", "hunt:vlad", 2), host);
     const seats = [player, hunter];
     player.start();
-    const timer = setInterval(() => seats.forEach((seat) => seat.tick()), FRAME_MS);
+    const timer = setInterval(() => {
+      for (const seat of seats) {
+        seat.tick();
+        seat.refreshReport();
+      }
+    }, FRAME_MS);
     try {
       await until(
         () => player.report?.phase === "playing",

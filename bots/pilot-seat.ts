@@ -78,6 +78,12 @@ export class PilotSeat {
   tick(): void {
     if (this.handle) {
       this.perform(this.host.engine().tick(this.handle, this.host.now()));
+    }
+  }
+
+  /** Refresh the operator's report and the phase used to place seats. */
+  refreshReport(): void {
+    if (this.handle) {
       this.report = this.host.engine().report(this.handle, this.host.now()) ?? this.report;
     }
   }
