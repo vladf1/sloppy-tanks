@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
-use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
+use super::theme::{GOLD, GOLD_HOT, RED, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
 use crate::preferences::{Preferences, TouchSetting};
 use sloppy_core::sim::{GameMode, Team};
@@ -42,8 +42,12 @@ const END_BATTLE_HAIRLINE: f32 = 12.0;
 /// The corner X (`.dialog-close`): its side and its inset from the plate's top-right.
 const CLOSE_SIZE: f32 = 32.0;
 const CLOSE_INSET: f32 = 12.0;
+/// Between Settings' build line and the corner X.
+const BUILD_LINE_GAP: f32 = 12.0;
 /// The eyebrow's line over a dialog's title (`dialog_head`).
 const EYEBROW_LINE: f32 = 22.0;
+/// A dialog's title line, in the display face at 50 points.
+const TITLE_LINE: f32 = 58.0;
 /// The space between a phone's title and its score when they share a row.
 const TITLE_GAP: f32 = 16.0;
 /// Settings beside its rows (`.settings`), and its padding. A screen narrower than this
@@ -429,7 +433,7 @@ pub fn dialog_head(
             hud.human_team,
         );
     }
-    EYEBROW_LINE + 58.0
+    EYEBROW_LINE + TITLE_LINE
 }
 
 /// A phone's dialog head (`.phone .menu.compact .dialog-title`): the title and its score
@@ -456,7 +460,7 @@ fn phone_head(
             Color32::WHITE,
             1.0,
         );
-        return 58.0;
+        return TITLE_LINE;
     };
     let names = &hud.team_names;
     let plates = score_plates_width(painter, scores, names, hud.human_team);
@@ -471,7 +475,7 @@ fn phone_head(
             origin.y + 3.0,
             left,
             pos2(left + row, origin.y + 29.0),
-            58.0,
+            TITLE_LINE,
         )
     } else {
         (
@@ -1311,10 +1315,10 @@ fn switch(ui: &mut Ui, painter: &Painter, rect: Rect, id: &str, on: &mut bool) {
 }
 
 /// Settings: sound, touch controls, graphics, fullscreen, the debug tools and the
-/// privacy and support pages. Nothing changes until SAVE; CANCEL, Esc or the X leave every
-/// setting as it was. A screen too short for it scrolls the rows, as the page's
-/// dialog does, rather than shrinking its type, and keeps SAVE and CANCEL under
-/// them on screen.
+/// privacy and support pages, with the build line beside the X. Nothing changes until
+/// SAVE; CANCEL, Esc or the X leave every setting as it was. A screen too short for it
+/// scrolls the rows, as the page's dialog does, rather than shrinking its type, and
+/// keeps SAVE and CANCEL under them on screen.
 pub fn settings(
     context: &egui::Context,
     state: &mut UiState,
@@ -1424,33 +1428,35 @@ fn settings_body(
 ) -> f32 {
     let painter = ui.painter().clone();
     let painter = &painter;
-    let eyebrow = if view.room {
-        "MULTIPLAYER"
-    } else if view.in_round {
-        "SINGLE PLAYER"
-    } else {
-        "BATTLE SETUP"
-    };
-    let head = dialog_head(
+    // No eyebrow: it could only name where Settings opened from, and the settings are
+    // the same from everywhere.
+    paint::shadowed(
         painter,
         origin,
-        width,
-        eyebrow,
+        Align2::LEFT_TOP,
         "SETTINGS",
+        display_font(50.0),
         Color32::WHITE,
-        None,
+        1.0,
     );
-    if paint::close_button(
-        ui,
-        art,
-        close_rect(origin, width, padding),
-        Id::unique("settings close"),
-    )
-    .on_hover_text("Close without saving (Esc)")
-    .clicked()
+    let corner = close_rect(origin, width, padding);
+    if paint::close_button(ui, art, corner, Id::unique("settings close"))
+        .on_hover_text("Close without saving (Esc)")
+        .clicked()
     {
         *close = Some(false);
     }
+    // Battle Setup's build line, which a phone's menu covers there: beside the X, where
+    // it takes no row of its own.
+    paint::text(
+        painter,
+        corner.left_center() - vec2(BUILD_LINE_GAP, 0.0),
+        Align2::RIGHT_CENTER,
+        view.build,
+        egui::FontId::proportional(11.0),
+        paint::fade(TEXT_DIM, 0.7),
+        0.4,
+    );
     let control_width = if stacked {
         width
     } else {
@@ -1471,7 +1477,7 @@ fn settings_body(
     } else {
         "SOUND"
     };
-    let mut y = rows.group(painter, origin.y + head + FIRST_GROUP_GAP, group);
+    let mut y = rows.group(painter, origin.y + TITLE_LINE + FIRST_GROUP_GAP, group);
     slider(
         ui,
         painter,

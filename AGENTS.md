@@ -625,8 +625,9 @@ offline.
   suitable HTML entries there and smoke-test their deployed assets and
   behavior; asset generators are automation tools, not test pages.
 - Keep dev pages free of build footers and navigation overlays. The game's Battle
-  Setup shows one build line (release version and commit); build time and the rest
-  belong in `/health` (`scripts/page-health.ts`, on production too).
+  Setup shows one build line (release version and commit), which Settings repeats
+  beside its X; build time and the rest belong in `/health`
+  (`scripts/page-health.ts`, on production too).
 - The release version is `MAJOR.MINOR.PATCH.BUILD` (`scripts/release-version.mjs`):
   `version` in package.json, bumped by hand, plus the deploy workflow's
   `github.run_number`, so only main's deploys have the fourth part. `/health` reports
