@@ -41,6 +41,9 @@ const SMOKE_CYCLE: f64 = 3.4;
 /// The smoke column's height over a puff's trip (m), and how much faster than
 /// its puffs the column first climbs off a fire that has just caught.
 const COLUMN_HEIGHT: f64 = 8.5;
+/// The column starts this far above the ring (m), over the flame tips, so the
+/// flames show below their smoke from the overhead camera.
+const COLUMN_BASE: f64 = 1.6;
 const COLUMN_GROWTH: f64 = 1.6;
 /// A wreck whose hull piece is not found burns out of its middle.
 static UNFOUND_VENTS: [WreckVent; 1] = [WreckVent {
@@ -59,8 +62,8 @@ const UPTURNED: f32 = -0.3;
 const FLAME_SINK: f32 = 0.04;
 /// The baked plume (generate-wreck-fire.mjs). Its full width includes room
 /// for eddies to roll outward above the lip. The aperture clips it below.
-const PLUME_DIAMETERS: f32 = 2.0;
-const MAIN_FLAME_HEIGHT: f32 = 2.30;
+const PLUME_DIAMETERS: f32 = 2.5;
+const MAIN_FLAME_HEIGHT: f32 = 3.8;
 const VENT_FLAME_HEIGHT: f32 = 1.45;
 const VENT_FIRE: f64 = 0.8;
 const PLUME_FRAMES: f64 = 144.0;
@@ -106,8 +109,8 @@ const DIE_DOWN_RATE: f64 = 4.0;
 /// The smoke left once the fire has died down, thinning on until the hull is gone.
 const DIED_DOWN_SMOKE: f64 = 0.45;
 /// Oily black smoke at the fire, paling to grey as it climbs and spreads.
-const SOOT: u32 = 0x3b3734;
-const SOOT_HIGH: u32 = 0x8c8a88;
+const SOOT: u32 = 0x1f1d1c;
+const SOOT_HIGH: u32 = 0x757371;
 /// A burnout's fire against a cook-off's: the hull burns from the inside, out
 /// of every hatch, so it reads as dead from across the field.
 const BURNOUT_FIRE: f64 = 0.85;
@@ -516,7 +519,7 @@ fn draw(
         let lean = a * a * SMOKE_CYCLE * 0.9;
         let position = Vec3::new(
             top.x + (WIND[0] * lean + swirl) as f32,
-            top.y + (0.6 + COLUMN_HEIGHT * rise) as f32,
+            top.y + (COLUMN_BASE + COLUMN_HEIGHT * rise) as f32,
             top.z + (WIND[1] * lean - swirl * 0.6) as f32,
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
@@ -526,7 +529,7 @@ fn draw(
         // puff shows only once the column has climbed to it.
         let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
         let opacity =
-            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.35, 1.0)) * 0.93;
+            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.35, 1.0)) * 0.85;
         smoke_puff(
             puffs,
             position,
@@ -537,7 +540,7 @@ fn draw(
             0.0,
             (smoothstep(a, 0.35, 1.0) * 0.8) as f32,
             (0.08 + 0.3 * a) as f32,
-            (fire * (1.0 - a).powi(8) * 0.32) as f32,
+            (fire * (1.0 - a).powi(6) * 0.55) as f32,
         );
     }
     trail(burner, &burner.trail, burner.trail_count, puffs, soot);

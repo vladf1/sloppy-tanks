@@ -18,7 +18,7 @@ fn plume_emission(heat: f32) -> vec3f {
     // Cooler gas loses its blue and then green emission first.
     let h = max(heat - 0.07, 0.0);
     let h2 = h * h;
-    return vec3f(7.2 * h, 0.34 * h + 4.8 * h2, 0.035 * h + 3.1 * h2 * h2);
+    return vec3f(8.64 * h, 0.408 * h + 5.76 * h2, 0.042 * h + 3.72 * h2 * h2);
 }
 
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
