@@ -110,15 +110,14 @@ pub fn paint_mesh(node: &mut Node) {
     let Some(drawable) = &mut node.drawable else {
         return;
     };
-    let source = drawable.material.clone();
-    let painted = vertex_material(&source);
-    if Arc::ptr_eq(&painted, &source) {
+    let source = &drawable.material;
+    let painted = vertex_material(source);
+    if Arc::ptr_eq(&painted, source) {
         return;
     }
     let [r, g, b] = hex_to_linear(source.color.0);
-    let mut mesh = (*drawable.mesh).clone();
+    let mesh = Arc::make_mut(&mut drawable.mesh);
     mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
-    drawable.mesh = Arc::new(mesh);
     drawable.material = painted;
 }
 
