@@ -334,6 +334,7 @@ write_caddyfile() {
     echo "Caddy did not reload its config; trying again at the next check" >&2
     return 1
   fi
+  echo "Caddy routes /v/ to $(running | wc -l | tr -d ' ') versions, the root to ${root:-none}"
 }
 
 # Untags the server images no version runs, could roll back to or is listed to start,
