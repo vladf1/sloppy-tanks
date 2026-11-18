@@ -586,17 +586,19 @@ offline.
   the repository directory.
 - `deploy:dev` first publishes the dev site's own multiplayer server
   (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
-  `dev-<serverBuild>`, never the bare build tag CI reuses, and moves `:dev`, which the
-  dev machines check every 10 seconds), which runs on its own Vultr
+  `dev-<serverBuild>`, never the bare build tag CI reuses, and adds it to the versions
+  `:dev` lists, which the dev machines check every 10 seconds), which runs on its own Vultr
   machines (the other `server:*` commands run over SSH on every machine the server
   directory lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
   `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
-  shell are outside it. Each machine runs its server as a container image under
-  Podman, behind Caddy's own container: CI pushes one image per server build and,
-  after the site deploy, moves `:production` to main's. Production then needs
+  shell are outside it. Each machine runs a server container per content version its
+  environment's tag lists (the last five, `scripts/promote-server.mjs`), each under
+  `/v/<content version>` behind Caddy's own container: CI pushes one image per server
+  build and, after the site deploy, adds main's to `:production`, and the Apps workflow
+  adds each TestFlight build's to `:app-store`. Production then needs
   `bun run server:update` only where auto-update is off (it is on by default;
   `server:status` shows it); ask before running it.
   `bun run server:deploy` from `main` is the SSH fallback when CI or the

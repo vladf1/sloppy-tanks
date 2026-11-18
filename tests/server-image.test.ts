@@ -48,28 +48,21 @@ function buildImage(args: string[], published: string[]): string[][] {
 
 const tags = (command: string[]) =>
   command.flatMap((arg, index) => (command[index - 1] === "--tag" ? [arg] : []));
-const devPublish = ["--registry", SERVER_IMAGE, "--push", "--dev", "--tag", "dev"];
+const devPublish = ["--registry", SERVER_IMAGE, "--push", "--dev"];
 
 test("a dev publish tags its build dev-<build>, never the bare build CI takes", async () => {
   const build = await serverBuild();
   const commands = buildImage(devPublish, []);
   const pushes = commands.filter((command) => command[0] === "build");
   assert.equal(pushes.length, 1);
-  assert.deepEqual(tags(pushes[0]), [`${SERVER_IMAGE}:dev-${build}`, `${SERVER_IMAGE}:dev`]);
+  assert.deepEqual(tags(pushes[0]), [`${SERVER_IMAGE}:dev-${build}`]);
 });
 
-test("a dev publish points :dev at CI's image of the same server build", async () => {
+test("a dev publish of a server build CI pushed pushes nothing of its own", async () => {
   const build = await serverBuild();
   const commands = buildImage(devPublish, [`${SERVER_IMAGE}:${build}`]);
-  assert.deepEqual(commands.at(-1), [
-    "buildx",
-    "imagetools",
-    "create",
-    "--tag",
-    `${SERVER_IMAGE}:dev`,
-    `${SERVER_IMAGE}:${build}`,
-  ]);
   assert.ok(!commands.some((command) => command[0] === "build"));
+  assert.ok(!commands.some((command) => command.includes("create")));
 });
 
 test("CI builds its own image rather than adopting a dev publish of the build", async () => {

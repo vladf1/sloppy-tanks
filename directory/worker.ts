@@ -4,7 +4,9 @@
  *
  * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields, start
  *   time and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
- *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. Replies 204.
+ *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself, followed by
+ *   `/v/<contentVersion>` when it names that path (one of several versions on a machine).
+ *   Replies 204.
  * - `GET /servers?environment=production|dev` from the page (or anyone):
  *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.
  * - `GET /`: the overview page, static files in public/ that read these lists.
@@ -29,6 +31,7 @@ import {
   parseAnnouncement,
   parseEnvironment,
   readBody,
+  serverUrl,
   type Announcement,
   type ListedServer,
 } from "./listing";
@@ -53,8 +56,8 @@ async function announce(
   request: Request,
   directory: DurableObjectStub<Directory>,
 ): Promise<Response> {
-  const url = nipUrl(request.headers.get("CF-Connecting-IP"));
-  if (!url) {
+  const base = nipUrl(request.headers.get("CF-Connecting-IP"));
+  if (!base) {
     return text("announce over IPv4", 400);
   }
   const body = await readBody(request, MAX_BODY_BYTES);
@@ -65,7 +68,7 @@ async function announce(
   if (!announcement) {
     return text("the body must be a JSON object with a rooms array", 400);
   }
-  await directory.announce(url, announcement);
+  await directory.announce(serverUrl(base, announcement), announcement);
   return new Response(null, { status: 204, headers: HEADERS });
 }
 

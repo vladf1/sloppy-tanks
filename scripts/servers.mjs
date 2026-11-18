@@ -8,10 +8,45 @@ import { isIP } from "node:net";
  * scripts need: they reach a machine over SSH as root at that address and check its server
  * through that name.
  */
-/** The server's container image in the GitHub Container Registry. CI pushes it and moves
- * :production, `bun scripts/server.mjs publish --dev` pushes a checkout's build and moves
- * :dev, and the machines pull it (deploy/server/sloppy-tanks-update names it too). */
+/** The server's container image in the GitHub Container Registry. CI pushes it and
+ * promotes it to :production and :app-store, `bun scripts/server.mjs publish --dev`
+ * pushes a checkout's build and promotes it to :dev (scripts/promote-server.mjs), and the
+ * machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
+
+/** The label on an environment's tag that lists the content versions its machines run
+ * (scripts/promote-server.mjs writes it, deploy/server/sloppy-tanks-update reads it). */
+export const VERSIONS_LABEL = "me.fridman.sloppy-tanks.versions";
+/** How many content versions an environment keeps running: an App Store version keeps its
+ * server while newer ones reach TestFlight and App Review, and the iOS and Mac apps may be
+ * released apart. The updater runs no more than this. */
+export const KEPT_VERSIONS = 5;
+
+/** The versions VERSIONS_LABEL lists, newest first: `<content>@<digest>` separated by
+ * spaces. */
+export function parseVersions(text) {
+  return text
+    .split(" ")
+    .filter(Boolean)
+    .map((entry) => {
+      const match = entry.match(/^([0-9a-f]{8,64})@(sha256:[0-9a-f]{64})$/);
+      if (!match) throw new Error(`Not a listed version: ${entry}`);
+      return { content: match[1], digest: match[2] };
+    });
+}
+
+export function formatVersions(versions) {
+  return versions.map(({ content, digest }) => `${content}@${digest}`).join(" ");
+}
+
+/** The list with `added` first, in place of another image of its content version, and the
+ * oldest beyond KEPT_VERSIONS dropped. */
+export function addVersion(versions, added) {
+  return [added, ...versions.filter(({ content }) => content !== added.content)].slice(
+    0,
+    KEPT_VERSIONS,
+  );
+}
 
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
  * pages of its site read every server's rooms from there, each under its environment, the
@@ -64,9 +99,9 @@ export function option(args, name) {
   return value;
 }
 
-/** The machines the directory lists for `role`, an environment; with `ip`, that one
- * machine, listed or not (one whose server is down, or still booting). Listing none is an
- * error unless `noneListed` allows it. */
+/** The machines the directory lists for `role`, an environment, each once however many
+ * versions it runs; with `ip`, that one machine, listed or not (one whose server is down,
+ * or still booting). Listing none is an error unless `noneListed` allows it. */
 export async function gameServers(role, ip, noneListed = false) {
   if (ip) return [serverMachine(role, ip)];
   const list = `${DIRECTORY_URL}/servers?environment=${role}`;
@@ -76,9 +111,17 @@ export async function gameServers(role, ip, noneListed = false) {
   if (!servers.length && !noneListed) {
     throw new Error(`${list} lists no running server; name a machine with --ip`);
   }
-  return servers.map(({ url }) =>
-    serverMachine(role, url.match(/^wss:\/\/([\d-]+)\.nip\.io$/)[1].replaceAll("-", ".")),
+  return [...new Set(servers.map(({ url }) => machineAddress(url)))].map((address) =>
+    serverMachine(role, address),
   );
+}
+
+/** The IPv4 address of the machine a listed server runs on: one entry per content version
+ * it runs (`wss://1-2-3-4.nip.io/v/<content version>`), or one at its root. */
+export function machineAddress(url) {
+  const match = url.match(/^wss:\/\/(\d+-\d+-\d+-\d+)\.nip\.io(?:\/v\/[0-9a-f]+)?$/);
+  if (!match) throw new Error(`Not a game server address: ${url}`);
+  return match[1].replaceAll("-", ".");
 }
 
 /** How the scripts reach the machine at `ip` and what it serves. */
@@ -93,9 +136,10 @@ export function serverMachine(role, ip) {
     ssh: `root@${ip}`,
     /** The name Caddy serves and obtains a certificate for. */
     site,
-    /** The WebSocket address players reach the server by. */
+    /** The machine's root, where Caddy serves its newest version (players reach each
+     * version under `/v/<content version>`). */
     url: `wss://${site}`,
-    /** Where the scripts check the server through Caddy. */
+    /** Where the scripts check the newest version through Caddy. */
     checkUrl: `https://${site}`,
   };
 }

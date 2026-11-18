@@ -69,6 +69,7 @@ Settings come from the environment:
 | `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                                                 |
 | `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none                                  |
 | `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL`; it titles the dashboard |
+| `PUBLIC_PATH`        | none                 | The path its proxy serves it under (`/v/<content version>`), part of its listed address      |
 
 A malformed value stops startup instead of silently turning a limit off. A loopback
 listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
@@ -162,14 +163,24 @@ The `server` job in `.github/workflows/check.yml` builds the binary once, runs t
 page-shell tests against it, then builds the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag                   | Moved by                                         | Meaning                                       |
-| --------------------- | ------------------------------------------------ | --------------------------------------------- |
-| `<serverBuild>`       | main's first build of it                         | One image per server build (`/health`'s hash) |
-| `pr-<number>`         | each pull request push                           | That pull request's latest server             |
-| `main`, `sha-…`       | each push to `main`                              | Main's latest server, and per commit          |
-| `production`          | the deploy workflow, after the site deploys      | What production should run                    |
-| `app-store-candidate` | the Apps workflow, after both TestFlight uploads | What the App Store candidate machine runs     |
-| `app-store`           | `bun run server:release-app`                     | What the App Store machines should run        |
+| Tag             | Moved by                                         | Meaning                                       |
+| --------------- | ------------------------------------------------ | --------------------------------------------- |
+| `<serverBuild>` | main's first build of it                         | One image per server build (`/health`'s hash) |
+| `pr-<number>`   | each pull request push                           | That pull request's latest server             |
+| `main`, `sha-…` | each push to `main`                              | Main's latest server, and per commit          |
+| `production`    | the deploy workflow, after the site deploys      | The versions production runs                  |
+| `app-store`     | the Apps workflow, after both TestFlight uploads | The versions the App Store machines run       |
+| `dev`           | `server:publish --dev` (`deploy:dev`)            | The versions the dev machines run             |
+
+The three environment tags list content versions rather than name one image. Each points
+at its newest server image, restamped with the label `me.fridman.sloppy-tanks.versions`:
+the last five content versions published to the environment, newest first, each as
+`<content version>@<digest>` of its server image. `scripts/promote-server.mjs` is the only
+thing that moves them: it puts the new image first, in place of an older image of the same
+content version (a server-only change), and drops the oldest beyond five. Every machine of
+the environment runs a server for each version listed, so a page or app keeps a server of
+its own content version while newer ones are deployed, and only an app more than five
+versions behind is told to update.
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
@@ -179,10 +190,10 @@ first ships a server build a pull request already built, it restamps that image'
 release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
 
-The dev servers follow the same package's `dev` tag. `server:publish --dev`, which
-`deploy:dev` runs, points it at the package's image of the checkout's server build when
-there is one (CI's `<serverBuild>`, or an earlier publish's), and otherwise pushes the
-checkout's build as `dev-<serverBuild>` and `dev`. A dev build never takes the bare
+`server:publish --dev`, which `deploy:dev` runs, adds to `dev` the package's image of the
+checkout's server build when there is one (CI's `<serverBuild>`, or an earlier
+publish's), and otherwise pushes the checkout's build as `dev-<serverBuild>` and adds
+that. A dev build never takes the bare
 `<serverBuild>` tag: CI only retags an image it finds there, so a developer's build,
 possibly from uncommitted files and their own toolchain, could reach `production`.
 
@@ -196,41 +207,47 @@ created ([Machines](#machines)):
   nip.io name into the Caddyfile, installs Podman from Ubuntu's archive, the units and
   the updater, turns off SSH password login, allows only SSH, 80 and 443 through `ufw`
   and starts the image the machine follows.
-- `sloppy-tanks.container` is the server's Quadlet unit in
-  `/etc/containers/systemd/`, from which systemd generates `sloppy-tanks.service`.
-  It runs the image on loopback port 8787 with a read-only root, no capabilities, no new privileges and a 700 MB memory cap without
-  swap. Output goes to the unit's journal. It runs the image ID pinned in
-  `/var/lib/sloppy-tanks/image`, which the updater copies into the drop-in
-  `sloppy-tanks.container.d/image.conf`, so a crash or reboot restarts exactly what
-  was running and never needs the registry. Podman has no daemon: besides the
-  containers, only a small `conmon` process per container stays running.
+- `sloppy-tanks.container` is the template of a version's server unit, installed in
+  `/etc/sloppy-tanks/`. The updater writes one Quadlet unit from it per content version
+  the machine runs, `/etc/containers/systemd/sloppy-tanks-<content version>.container`,
+  from which systemd generates `sloppy-tanks-<content version>.service`. Each runs its
+  pinned image ID, so a crash or reboot restarts exactly what was running and never
+  needs the registry, on its own loopback port from 8787 with `PUBLIC_PATH=/v/<content
+version>`, a read-only root, no capabilities, no new privileges and a 300 MB memory
+  cap without swap (an idle server holds 5-20 MB; a machine runs up to five). Output
+  goes to the unit's journal. Podman has no daemon: besides the containers, only a
+  small `conmon` process per container stays running.
 - `caddy.container` runs Caddy's official image, pinned by version and digest. Both
-  containers use host networking, so the server keeps its loopback listener behind
-  Caddy, Caddy sees players' real addresses, and Podman publishes no ports around
-  `ufw`. Caddy's config is `/etc/sloppy-tanks/caddy/Caddyfile`; its certificates
-  stay in `/var/lib/caddy/` across restarts. To upgrade Caddy, change the image in
-  `caddy.container` and create the machines again.
-- `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that
-  changes the pin. It pins the new image, restarts the service and waits up to 60
-  seconds for `/health` to report the image's content version and server build
-  (its labels); otherwise it restores the previous image. It keeps the current and
-  previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
-  the rest.
+  kinds of container use host networking, so the servers keep their loopback listeners
+  behind Caddy, Caddy sees players' real addresses, and Podman publishes no ports around
+  `ufw`. Caddy's config, `/etc/sloppy-tanks/caddy/Caddyfile`, is written by the updater
+  around the machine's nip.io name (`/etc/sloppy-tanks/site`): each running version
+  under `/v/<content version>/`, with the prefix stripped, and the newest at the root,
+  where the scripts check `/health`. Its certificates stay in `/var/lib/caddy/` across
+  restarts. To upgrade Caddy, change the image in `caddy.container` and create the
+  machines again.
+- `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that starts,
+  switches or stops a server. It pins an image in the version's unit, restarts it and
+  waits up to 60 seconds for `/health` on its port to report the image's content version
+  and server build (its labels); otherwise it restores the previous image, or removes a
+  new version's unit. It keeps each version's current, previous and listed images
+  (tagged `sloppy-tanks-pinned:<content version>…`) and prunes the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
-  environment (`SERVER_ENVIRONMENT`), `:production` or `:dev`, every 10 seconds. A check reads the tag's digest
-  with two small requests (an anonymous token and the manifest's headers) and pulls
-  only when it has moved; one that cannot reach the registry changes nothing, and the
+  environment (`SERVER_ENVIRONMENT`: `:production`, `:dev` or `:app-store`) every 10
+  seconds. A check reads the tag's digest with two small requests (an anonymous token and
+  the manifest's headers) and pulls the tag and the versions it lists only when it has
+  moved; one that cannot reach the registry changes nothing, and the
   journal hears only when checks start failing or work again. `bootstrap.sh` turns it
   on; `server:auto-update off` turns it off until `on` or the machine is created again.
 
 ### Deploying
 
 ```sh
-bun run server:update                # pull :production and switch now
-bun run server:update --image pr-12  # pull another tag (or full image name) and pin it
+bun run server:update                # follow :production now, waiting for nobody
+bun run server:update --image pr-12  # run another tag (or full image name) as its version, and hold
 bun run server:update --dev --image pr-12   # try a pull request's server on the dev server
-bun run server:publish --dev         # build here, push it as :dev, wait for the dev servers
-bun run server:rollback              # switch back to the previous image
+bun run server:publish --dev         # build here, add it to :dev, wait for the dev servers
+bun run server:rollback              # switch the newest version back to its previous image
 bun run server:auto-update on|off    # follow the environment's tag by itself (default), or not
 bun run server:auto-update resume    # lift a hold (below) so auto-update follows again
 bun run server:deploy                # SSH fallback: build here, copy the image, switch
@@ -240,25 +257,26 @@ Each acts on production's machine; `--dev` picks the dev site's and `--app-store
 App Store apps' ([App Store machines](#app-store-machines)).
 
 With auto-update on, as every machine is by default, production's timer checks
-`:production` every 10 seconds. A new image waits until nobody holds a seat (the
-`players` count in `/stats`), or at most four hours for a server-only change and ten
-minutes after a content change, when the new site is already sending visitors a
-reload message. Anything other than following
-`:production` leaves a hold: an SSH deploy, a rollback or pulling another tag pins
-that image, and auto-update skips its checks until `server:auto-update resume` or
-`server:update`. An image that fails its health check is not tried again until the
-tag moves or `server:update` pulls it. `server:status` shows the pinned and previous
-image, any hold, pending update or failed image, and auto-update's latest checks.
+`:production` every 10 seconds. A newly listed version starts at once beside the others
+(no one plays on it yet). A version pushed out of the list, and a listed version whose
+image changed (a server-only change), wait until nobody holds a seat on its server (the
+`players` count in `/stats`), or at most four hours, a room's lifetime; then the server
+stops, or restarts on the new image. Anything other than following `:production` leaves
+a hold: an SSH deploy, a rollback or running another tag pins that image, and auto-update
+skips its checks until `server:auto-update resume` or `server:update`. An image that fails
+its health check is not tried again until the tag lists another image of its version.
+`server:status` shows each version's port, pinned and previous image, any pending
+update, stop or failed image, the hold, and auto-update's latest checks.
 
-Dev's machines check `:dev` every 10 seconds and switch as soon as it moves, without
-looking at who is playing. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
+Dev's machines check `:dev` every 10 seconds and start, switch and stop versions as soon
+as it moves, without looking at who is playing. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
 or `server:update --dev --image`) lasts until the next publish moves `:dev`.
 
-`server:publish --dev` runs `server:deploy-check`, points `:dev` at the package's image
-of the checkout's server build if it has one, or else builds the image here with Docker
-and pushes it as `dev-<serverBuild>` and `:dev`, then waits until every dev server the
-directory lists reports the checkout's build through Caddy: the next check, then the
-restart. It pushes before it looks: with no dev server listed (none exists, or one is
+`server:publish --dev` runs `server:deploy-check`, adds to `:dev` the package's image of
+the checkout's server build if it has one, or else builds the image here with Docker,
+pushes it as `dev-<serverBuild>` and adds that, then waits until every dev server the
+directory lists reports the checkout's build at its root through Caddy: the next check,
+then the start. It pushes before it looks: with no dev server listed (none exists, or one is
 still booting) it has nothing to wait for, and a booting machine starts the build by
 itself. It needs no SSH, but Docker logged in to ghcr.io with a token that can
 write packages, once:
@@ -272,7 +290,8 @@ GHCR takes only classic tokens, which `gh`'s is; a classic personal access token
 `write:packages` works too.
 
 `server:deploy` builds the image here with Docker (`server:build-docker-image`),
-streams it to the machine with `docker save | ssh podman load` and switches to it,
+streams it to the machine with `docker save | ssh podman load` and runs it as its content
+version's server, which the root then serves,
 so it needs neither GitHub nor the registry. It first runs `server:deploy-check`
 (rustfmt, clippy and tests for only `sloppy-core` and `sloppy-server`), and for
 production it refuses a checkout that is not a clean `origin/main`; `--force`
@@ -284,7 +303,7 @@ Caddy.
 uploads the dev site; it never touches production's machine. It refuses to upload a
 build without the multiplayer entry.
 
-A restart or deploy ends every live room. Stopping the container sends `SIGTERM`
+A restart or deploy ends the live rooms of the version it replaces. Stopping a container sends `SIGTERM`
 and allows 10 seconds before killing it; the graceful handler sends `room-reset`
 and close code 1012, so players see the room-ended message. After a crash, clients reconnect by themselves and find a fresh
 lobby. Stop load tests before deploying.
@@ -296,10 +315,11 @@ startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
 `/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
 `deploy/server/bootstrap.sh` from the repository's `main`, which sets the machine up and
-starts the image its environment follows (`:production`, or dev's latest publish on
-`:dev`). The server appears in the directory under its environment within a few minutes,
-once Caddy has its certificate, with no SSH from here; from then on `deploy:dev` and the
-other `server:*` commands reach it. A dev machine created before anything was published
+starts a server for each version its environment's tag lists. The servers appear in the
+directory under their environment within a few minutes, once Caddy has its certificate,
+each at `wss://<address>.nip.io/v/<content version>`, with no SSH from here; from then on
+`deploy:dev` and the other `server:*` commands reach the machine, once however many
+versions it runs. A dev machine created before anything was published
 to `:dev` starts production's image instead, so it is up and listed, and switches to the
 first publish within 10 seconds; that fallback is no hold, since it still follows `:dev`.
 
@@ -307,7 +327,7 @@ Machines are never set up again in place: a changed `deploy/server/` file reache
 machine once it is on `main` and the machine is created again, by destroying it and
 deploying a new one with the same startup script, or by Vultr's Reinstall, which keeps
 the address. To retire a machine, destroy it: it leaves the directory 45 seconds after
-its server stops. The scripts trust a new machine's host key on first contact and refuse
+its servers stop. The scripts trust a new machine's host key on first contact and refuse
 a changed one, so after a Reinstall, or a new machine at an old address, remove the old
 key with `ssh-keygen -R <ip>`.
 
@@ -318,41 +338,21 @@ content change on main, while the App Store's apps change only when Apple releas
 version and players install it, so they play in an environment of their own, `app-store`
 (the build sets `SLOPPY_SERVER_ENVIRONMENT`), whose machines follow `:app-store`. Create
 one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the first
-release it runs production's image.
+upload it runs production's image.
 
-A version must also play online before its release, for TestFlight's testers and for App
-Review, while the released one keeps its servers. So the environment has a second machine,
-the candidate, created from `deploy/server/cloud-init/app-store-candidate.yaml`: its
-`server.env` names the tag it follows (`SERVER_IMAGE_TAG=app-store-candidate`) instead of
-its environment's. An app joins only servers of its own content version, so both versions
-share the environment's list and nothing else tells the machines apart. Each run of the Apps
-workflow that uploads to TestFlight points `:app-store-candidate` at its commit's server
-image, `sha-<commit>` (the run fails before building when main's build has not pushed it
-yet), and the candidate machine switches to it once its rooms are empty, or after ten
-minutes. Do not run it again while a version waits for review or release: the builds Apple
-holds would lose their server.
+Each run of the Apps workflow that uploads to TestFlight adds its commit's server image,
+`sha-<commit>`, to `:app-store` once both uploads succeed (the run fails before building
+when main's build has not pushed it yet). The machines start it beside the versions they
+already run, so TestFlight's testers and App Review play the build online at once, and the
+released apps keep their servers. Apple may approve and release the iOS and the Mac
+version apart, each whenever it is ready, with nothing to run here: every version of the
+last five uploads has its server, and an app of an older one finds none, says so, and
+offers UPDATE, which opens its App Store page. Single player keeps working. App Store
+rooms seat drawn names only, whichever version they play.
 
-When Apple has approved the iOS and the Mac version, release both together in App Store
-Connect (each set to release manually) and, once the App Store offers them, run:
-
-```sh
-bun run server:release-app                  # :app-store := :app-store-candidate, then wait
-bun run server:release-app --image sha-<commit>   # release another commit's server
-```
-
-It needs Docker logged in to ghcr.io like `server:publish`, and waits until every App
-Store machine reports the released content version: each switches once its rooms are
-empty, or after ten minutes. The candidate machine already runs it, and both then serve
-the release until the next TestFlight upload. With `--image` of another version, a
-machine that plays the candidate's, or comes to while the command waits, is taken for
-the candidate machine and not waited for. A released image stays as it is: a later server-only fix reaches the App Store
-machines with the next release, or with `--image`. Only the latest release plays online:
-an older app then finds no server of its version, says so, and offers UPDATE, which opens
-its App Store page, so release the server only after the store offers the update.
-Single player keeps working. `server:update`, `rollback`, `deploy`, `auto-update`,
-`status`, `logs` and `stats` take `--app-store` as they take `--dev` and act on both
-kinds of machine (`--ip` names one);
-`server:deploy --app-store` refuses a checkout's build without `--force`.
+`server:update`, `rollback`, `deploy`, `auto-update`, `status`, `logs` and `stats` take
+`--app-store` as they take `--dev` (`--ip` names one machine); `server:deploy
+--app-store` refuses a checkout's build without `--force`.
 
 ## Monitoring
 

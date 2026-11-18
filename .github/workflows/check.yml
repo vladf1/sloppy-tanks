@@ -2,7 +2,7 @@
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the deploy workflow calls it with the production site settings and deploys
 # only after every job here passes. Beside its gate script, the server job publishes the
-# multiplayer server's Docker image, which the deploy workflow promotes to :production.
+# multiplayer server's Docker image, which the deploy workflow adds to :production.
 name: Code quality
 
 on:

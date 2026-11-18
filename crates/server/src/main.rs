@@ -36,6 +36,7 @@ async fn serve(settings: Settings) -> ExitCode {
     options.build = settings.build;
     options.directory = settings.directory.map(DirectoryOptions::new);
     options.environment = settings.environment;
+    options.public_path = settings.public_path;
     if let Some(max_rooms) = settings.max_rooms {
         options.max_rooms = max_rooms;
     }

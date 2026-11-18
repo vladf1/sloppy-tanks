@@ -63,19 +63,23 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
-  # After the site is live, point :production at this commit's server image. The VPS
-  # pulls it on `bun run server:update`, or by itself when auto-update is on
-  # (crates/server/README.md); nothing here connects to the server.
+  # After the site is live, add this commit's server image to the versions :production
+  # lists. The machines start it by themselves when auto-update is on, or on
+  # `bun run server:update` (crates/server/README.md); nothing here connects to them.
   promote-server:
     needs: [check, deploy]
     runs-on: ubuntu-24.04
     permissions:
       packages: write
     steps:
-      - name: Point :production at this commit's server image
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+      - name: Add this commit's server image to :production
         run: |
           echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
-          docker buildx imagetools create --tag ghcr.io/vladf1/sloppy-tanks-server:production "$IMAGE"
+          bun scripts/promote-server.mjs production "$IMAGE"
         env:
           IMAGE: ${{ needs.check.outputs.server-image }}
           TOKEN: ${{ secrets.GITHUB_TOKEN }}

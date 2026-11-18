@@ -1,7 +1,18 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DIRECTORY_URL, option, SERVER_IMAGE, serverMachine } from "../scripts/servers.mjs";
+import {
+  addVersion,
+  DIRECTORY_URL,
+  formatVersions,
+  KEPT_VERSIONS,
+  machineAddress,
+  option,
+  parseVersions,
+  SERVER_IMAGE,
+  serverMachine,
+  VERSIONS_LABEL,
+} from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -38,7 +49,7 @@ test("the production build, the traffic bots, the pilots and the startup scripts
     read("../crates/pilot/src/command_line.rs").match(/DEFAULT_DIRECTORY: &str = "([^"]+)"/)?.[1],
     DIRECTORY_URL,
   );
-  for (const name of ["production", "dev", "app-store", "app-store-candidate"]) {
+  for (const name of ["production", "dev", "app-store"]) {
     assert.equal(
       read(`../deploy/server/cloud-init/${name}.yaml`).match(/DIRECTORY_URL=(\S+)/)?.[1],
       DIRECTORY_URL,
@@ -57,20 +68,54 @@ test("the machines pull the image CI and the dev publish push", () => {
   );
 });
 
-test("the App Store candidate machine lists under app-store and follows the tag the Apps workflow moves", () => {
-  const script = read("../deploy/server/cloud-init/app-store-candidate.yaml");
-  assert.equal(script.match(/SERVER_ENVIRONMENT=(\S+)/)?.[1], "app-store");
-  const tag = script.match(/SERVER_IMAGE_TAG=(\S+)/)?.[1];
-  assert.equal(tag, "app-store-candidate");
-  // The Apps workflow moves it, release-app releases it and the updater follows it.
-  assert.ok(read("../.github/workflows/desktop.yml").includes(`--tag ${SERVER_IMAGE}:${tag} `));
-  assert.ok(read("../scripts/server.mjs").includes("`${SERVER_IMAGE}:" + tag + "`"));
-  assert.match(
-    read("../deploy/server/sloppy-tanks-update"),
-    /^follow=\$REGISTRY:\$\{image_tag:-\$\{environment:-production\}\}$/m,
+test("the machines run the versions the promote script lists, as many as it keeps", () => {
+  const updater = read("../deploy/server/sloppy-tanks-update");
+  assert.equal(updater.match(/^VERSIONS_LABEL=(\S+)$/m)?.[1], VERSIONS_LABEL);
+  assert.equal(Number(updater.match(/^MAX_VERSIONS=(\d+)$/m)?.[1]), KEPT_VERSIONS);
+  // Every environment follows the tag named after it, which only the promote script moves.
+  assert.match(updater, /^follow=\$REGISTRY:\$\{environment:-production\}$/m);
+  assert.ok(read("../.github/workflows/deploy.yml").includes("promote-server.mjs production "));
+  assert.ok(read("../.github/workflows/desktop.yml").includes("promote-server.mjs app-store "));
+  assert.ok(read("../scripts/server.mjs").includes('"scripts/promote-server.mjs", "dev"'));
+});
+
+test("a promotion puts the new version first, replaces an older image of it and keeps five", () => {
+  const digest = (n: number) => `sha256:${String(n).repeat(64).slice(0, 64)}`;
+  const version = (content: string, n: number) => ({ content, digest: digest(n) });
+  const kept = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd", "eeeeeeee"].map(version);
+  assert.deepEqual(addVersion(kept, version("ffffffff", 9)), [
+    version("ffffffff", 9),
+    ...kept.slice(0, 4),
+  ]);
+  // A server-only change of a kept version moves it to the front with its new image.
+  assert.deepEqual(addVersion(kept, version("cccccccc", 7)), [
+    version("cccccccc", 7),
+    ...kept.filter(({ content }) => content !== "cccccccc"),
+  ]);
+  assert.deepEqual(addVersion([], version("aaaaaaaa", 1)), [version("aaaaaaaa", 1)]);
+  assert.deepEqual(parseVersions(formatVersions(kept)), kept);
+  assert.deepEqual(parseVersions(""), []);
+  for (const label of [
+    "aaaaaaaa",
+    "AAAAAAAA@" + digest(1),
+    "aaaaaaaa@sha256:12",
+    "../x@" + digest(1),
+  ]) {
+    assert.throws(() => parseVersions(label), /Not a listed version/, label);
+  }
+});
+
+test("a machine is listed once whatever versions it runs", () => {
+  assert.equal(machineAddress("wss://45-63-56-58.nip.io"), "45.63.56.58");
+  assert.equal(
+    machineAddress("wss://45-63-56-58.nip.io/v/2d68366184e7ee8bd34ef6d9"),
+    "45.63.56.58",
   );
-  // Only the candidate names a tag; the others follow their environment's.
-  for (const name of ["production", "dev", "app-store"]) {
-    assert.doesNotMatch(read(`../deploy/server/cloud-init/${name}.yaml`), /SERVER_IMAGE_TAG/);
+  for (const url of [
+    "ws://45-63-56-58.nip.io",
+    "wss://example.com",
+    "wss://45-63-56-58.nip.io/x",
+  ]) {
+    assert.throws(() => machineAddress(url), /Not a game server address/, url);
   }
 });

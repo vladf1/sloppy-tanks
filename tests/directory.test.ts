@@ -8,6 +8,7 @@ import {
   parseAnnouncement,
   parseEnvironment,
   readBody,
+  serverUrl,
   type ListedServer,
 } from "../directory/listing";
 import type { RoomListing } from "../directory/room-listing";
@@ -122,6 +123,31 @@ test("an announcement keeps its declared /health fields and rooms checked as the
     ...malformed.map((b) => JSON.stringify(b)),
   ]) {
     assert.equal(parseAnnouncement(text), undefined, text);
+  }
+});
+
+test("a server behind its version's path is listed at that path, and at no other", () => {
+  const behind = parseAnnouncement(
+    JSON.stringify({ ...health, path: `/v/${health.contentVersion}`, rooms: [] }),
+  );
+  assert.ok(behind);
+  assert.equal(
+    serverUrl("wss://45-63-62-42.nip.io", behind),
+    `wss://45-63-62-42.nip.io/v/${health.contentVersion}`,
+  );
+  const atRoot = parseAnnouncement(JSON.stringify({ ...health, rooms: [] }));
+  assert.ok(atRoot);
+  assert.equal(serverUrl("wss://45-63-62-42.nip.io", atRoot), "wss://45-63-62-42.nip.io");
+  for (const [contentVersion, path] of [
+    [health.contentVersion, "/v/0000000000000000000000ff"],
+    [health.contentVersion, `/v/${health.contentVersion}/`],
+    [health.contentVersion, "/elsewhere"],
+    [health.contentVersion, ""],
+    ["../other", "/v/../other"],
+    ["ABCDEF12", "/v/ABCDEF12"],
+  ]) {
+    const body = JSON.stringify({ ...health, contentVersion, path, rooms: [] });
+    assert.equal(parseAnnouncement(body), undefined, path);
   }
 });
 

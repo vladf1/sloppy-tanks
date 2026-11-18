@@ -31,6 +31,9 @@ export interface Announcement {
   cpus?: number;
   rssMB?: number;
   hostMemoryMB?: number;
+  /** `/v/<contentVersion>` from a machine that runs several content versions, each behind
+   * its own path (deploy/server/sloppy-tanks-update); none from one at the root. */
+  path?: string;
   rooms: RoomListing[];
 }
 export interface ServerEntry extends Announcement {
@@ -92,6 +95,18 @@ export async function readBody(
   return body;
 }
 
+/** A content version as content-version.mjs writes it: lowercase hex. */
+const CONTENT_VERSION = /^[0-9a-f]{8,64}$/;
+
+/**
+ * Where players reach a server: the nip.io name of the address it announced from, plus the
+ * path it runs behind on a machine that runs several versions. The only path a server may
+ * name is its own version's, so an entry still reaches nothing but that machine.
+ */
+export function serverUrl(base: string, announcement: Announcement): string {
+  return base + (announcement.path ?? "");
+}
+
 /** A short text field, or undefined when `value` is not one. */
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length >= 1 && value.length <= 128 ? value : undefined;
@@ -117,10 +132,18 @@ export function parseAnnouncement(body: string): Announcement | undefined {
     if (startedAt !== undefined && Number.isNaN(Date.parse(startedAt))) fail("startedAt");
     const cpus = optionalAmount("cpus", MAX_CPUS);
     if (cpus !== undefined && !Number.isInteger(cpus)) fail("cpus");
+    const contentVersion = text(value.contentVersion) ?? fail("contentVersion");
+    const path = optional("path");
+    if (
+      path !== undefined &&
+      !(CONTENT_VERSION.test(contentVersion) && path === `/v/${contentVersion}`)
+    ) {
+      fail("path");
+    }
     return {
       version: optional("version"),
       protocol: value.protocol as number,
-      contentVersion: text(value.contentVersion) ?? fail("contentVersion"),
+      contentVersion,
       serverBuild: text(value.serverBuild) ?? fail("serverBuild"),
       commit: optional("commit"),
       dirty: value.dirty as boolean | undefined,
@@ -130,6 +153,7 @@ export function parseAnnouncement(body: string): Announcement | undefined {
       cpus,
       rssMB: optionalAmount("rssMB", MAX_MEMORY_MB),
       hostMemoryMB: optionalAmount("hostMemoryMB", MAX_MEMORY_MB),
+      path,
       rooms: readRooms(value.rooms),
     };
   } catch {

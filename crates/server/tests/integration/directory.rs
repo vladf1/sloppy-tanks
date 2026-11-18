@@ -171,6 +171,10 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
         assert!(first.body["serverBuild"].is_string());
         assert!(first.body["startedAt"].as_str().unwrap().ends_with('Z'));
         assert_eq!(first.body["rooms"], Value::Array(Vec::new()));
+        assert!(
+            first.body.get("path").is_none(),
+            "a server at the root names no path"
+        );
     }
 
     let mut socket = join(&base, "LISTROOM").await;
@@ -307,5 +311,35 @@ async fn logs_only_when_announcing_starts_failing_or_works_again() {
         lines_with(&lines, "cannot announce to the server directory").len(),
         1
     );
+    server.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_server_under_a_path_announces_it_and_lists_its_address_with_it() {
+    let (directory, url) = FakeDirectory::start(204).await;
+    let lines = Lines::default();
+    let mut options = options(&lines);
+    options.public_path = "/v/0123abcd".into();
+    options.directory = Some(DirectoryOptions {
+        check: CHECK,
+        interval: INTERVAL,
+        timeout: Duration::from_secs(2),
+        ..DirectoryOptions::new(DirectoryUrl::parse(&url).unwrap())
+    });
+    let server = MultiplayerServer::listen(options, MatchRoom::new, "127.0.0.1:0")
+        .await
+        .unwrap();
+    let base = server.local_addr().to_string();
+    let first = directory
+        .wait_for(0, "the first announcement", |_| true)
+        .await;
+    assert_eq!(
+        directory.received.lock().unwrap()[first].body["path"],
+        "/v/0123abcd"
+    );
+    let servers = get(&base, "/servers", &[]).await;
+    let body: Value = serde_json::from_str(&servers.body).unwrap();
+    assert_eq!(body["servers"][0]["url"], format!("ws://{base}/v/0123abcd"));
+    assert_eq!(body["servers"][0]["path"], "/v/0123abcd");
     server.close().await;
 }
