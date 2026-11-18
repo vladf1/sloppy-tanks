@@ -56,16 +56,16 @@ fn hood_y(y_at_cowl: f64, z: f64) -> f64 {
 }
 
 /// The two louvred hood openings, in the body kit's unstretched frame.
+const HOOD_VENT_X: f64 = 0.86;
 const HOOD_VENT_Z: f64 = 1.2;
 const HOOD_VENT_HALF: DVec2 = DVec2::new(0.14, 0.17);
 
+fn hood_vent_center(x: f64) -> DVec3 {
+    DVec3::new(x, hood_y(FENDER_TOP, HOOD_VENT_Z), HOOD_VENT_Z)
+}
+
 pub(super) fn hood_vents() -> [(DVec3, DVec2); 2] {
-    [-0.86, 0.86].map(|x| {
-        (
-            DVec3::new(x, hood_y(FENDER_TOP, HOOD_VENT_Z), HOOD_VENT_Z),
-            HOOD_VENT_HALF,
-        )
-    })
+    [-HOOD_VENT_X, HOOD_VENT_X].map(|x| (hood_vent_center(x), HOOD_VENT_HALF))
 }
 
 pub(super) fn body_kit() -> Kit {
@@ -247,15 +247,15 @@ fn hood(kit: &mut Kit) {
         0.018,
         slope_y(HOOD_SLOPE, COWL),
     );
-    for (center, half) in hood_vents() {
-        let vent = place(center.to_array(), [-HOOD_SLOPE, 0.0, 0.0]);
+    let center = hood_vent_center(HOOD_VENT_X);
+    let half = HOOD_VENT_HALF;
+    for side in [DMat4::IDENTITY, mirror_x()] {
+        let vent = side * place(center.to_array(), [-HOOD_SLOPE, 0.0, 0.0]);
         kit.block(Role::Gap, [2.0 * half.x, 0.01, 2.0 * half.y], vent);
         for i in 0..5 {
             let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.07], [0.5, 0.0, 0.0]);
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
         }
-    }
-    for side in [DMat4::IDENTITY, mirror_x()] {
         // Rubber hood latch at the front of each fender.
         let latch = side * at([1.088, 0.955, 1.86]);
         kit.block(Role::Gap, [0.016, 0.09, 0.035], latch);
