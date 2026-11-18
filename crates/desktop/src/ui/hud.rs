@@ -2345,7 +2345,15 @@ fn count_mark(
 /// The loaded round's slot face: navy from top to bottom, under the round's colour as a
 /// soft light spreading from its top edge 30% of the way along (`radial-gradient(ellipse
 /// 90% 80% at 30% 0, …)`), as one mesh inside the slot's rounded corners.
-fn loaded_face(rect: Rect, color: Color32) -> Shape {
+fn loaded_face(context: &egui::Context, rect: Rect, color: Color32) -> Shape {
+    let key = paint::key_floats([rect.min.x, rect.min.y, rect.max.x, rect.max.y])
+        .chain([u32::from_le_bytes(color.to_array())]);
+    paint::memo_mesh(context, paint::MeshKind::LoadedAmmoFace, key, || {
+        loaded_face_mesh(rect, color)
+    })
+}
+
+fn loaded_face_mesh(rect: Rect, color: Color32) -> Mesh {
     const COLUMNS: u32 = 16;
     const ROWS: u32 = 12;
     const CORNER_STEPS: u32 = 6;
@@ -2391,7 +2399,7 @@ fn loaded_face(rect: Rect, color: Color32) -> Shape {
             }
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// Ghost sockets side by side share the rack's one channel, split by a hairline that
@@ -2488,7 +2496,7 @@ fn ammo_rack(
                 }
                 .as_shape(rect, radius),
             );
-            painter.add(loaded_face(rect, color));
+            painter.add(loaded_face(painter.ctx(), rect, color));
             painter.rect_stroke(rect, radius, Stroke::new(2.0, color), StrokeKind::Middle);
         } else {
             painter.rect_filled(rect, radius, hex(0x081427));
@@ -3103,6 +3111,25 @@ mod tests {
             }
             assert_eq!(labels.iter().any(|text| text == "FIRST TO 100"), !room);
             assert_eq!(labels.iter().any(|text| text == "YOUR TEAM"), !room);
+        }
+    }
+
+    #[test]
+    fn loaded_ammo_mesh_tracks_the_slot_and_round_color() {
+        let context = egui::Context::default();
+        let face = |rect, color| match loaded_face(&context, rect, color) {
+            Shape::Mesh(mesh) => mesh,
+            _ => unreachable!(),
+        };
+        let rect = Rect::from_min_size(pos2(12.0, 30.0), vec2(80.0, 42.0));
+        let mesh = face(rect, GOLD);
+        assert!(std::sync::Arc::ptr_eq(&mesh, &face(rect, GOLD)));
+        for (rect, color) in [
+            (rect.translate(vec2(3.0, 0.0)), GOLD),
+            (Rect::from_min_size(rect.min, vec2(65.0, 42.0)), GOLD),
+            (rect, Color32::WHITE),
+        ] {
+            assert_eq!(*face(rect, color), loaded_face_mesh(rect, color));
         }
     }
 

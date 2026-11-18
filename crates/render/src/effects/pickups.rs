@@ -513,19 +513,16 @@ impl PickupEffects {
 
     /// Write the collections' beats into `puffs`. They play round the tank that
     /// took the supply, usually the viewer's, so they are written after the pool
-    /// has cleared the sight line to it; returns whether any were.
-    pub fn draw_collections(&self, state: &RenderState, puffs: &mut PoolBuffer) -> bool {
+    /// has cleared the sight line to it.
+    pub fn draw_collections(&self, state: &RenderState, puffs: &mut PoolBuffer) {
         let ground = Ground::from_theme(&state.map_theme);
-        let mut any = false;
         for beat in self.collections.iter().filter(|beat| beat.age >= 0.0) {
             let dust = pale(ground.dust(beat.x, beat.z).map(|c| c as f32), DUST_LIGHTEN);
             match beat.vent {
                 Some(vent) => vent_puffs(beat, vent, dust, puffs),
                 None => landing(beat, dust, puffs),
             }
-            any = true;
         }
-        any
     }
 }
 
@@ -903,7 +900,7 @@ mod tests {
         effects.land(4.0, -2.0, 0.0);
         effects.land(0.0, 0.0, 0.3);
         effects.update(0.1);
-        assert!(effects.draw_collections(&state, &mut puffs));
+        effects.draw_collections(&state, &mut puffs);
         assert_eq!(
             puffs.len(),
             LANDING_PUFFS,
@@ -980,7 +977,7 @@ mod tests {
         effects.vent(0.0, 0.0, [1.0, 0.0], 0xd2622a);
         effects.update(0.2);
         puffs.clear();
-        assert!(effects.draw_collections(&state, &mut puffs));
+        effects.draw_collections(&state, &mut puffs);
         assert_eq!(puffs.len(), VENT_PUFFS + VENT_DUST_PUFFS);
         assert!(
             puffs

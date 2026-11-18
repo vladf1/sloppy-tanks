@@ -12,7 +12,7 @@
 //!   keeps it).
 //! - `debug_set_tank(id, patch)`: `{ hp, xp, protection, shield, shieldPoints,
 //!   rapid, speed, laser, cooldown, mineCooldown, aim, respawn, selectedAmmo, ammo,
-//!   kills, deaths, damageDealt, bestLifeKills, highestRank, name, frozen }`; `frozen`
+//!   kills, deaths, damageDealt, bestLifeKills, highestRank, human, name, frozen }`; `frozen`
 //!   stops a bot deciding and locks it in place.
 //! - `debug_add_tank(team, kind) -> id`, `debug_add_cover(spec) -> id`.
 //! - `debug_damage_tank(id, amount, owner, ownerTeam)` and
@@ -105,6 +105,7 @@ struct TankPatch {
     damage_dealt: Option<f64>,
     best_life_kills: Option<u32>,
     highest_rank: Option<usize>,
+    human: Option<bool>,
     name: Option<String>,
     frozen: Option<bool>,
 }
@@ -313,7 +314,8 @@ impl Game {
             deaths,
             damage_dealt,
             best_life_kills,
-            highest_rank
+            highest_rank,
+            human
         );
         if let Some(name) = patch.name {
             tank.name = name;
@@ -641,7 +643,7 @@ impl Game {
             "theme": inspection.theme,
             "tanks": inspection.tanks.iter().map(|tank| json!({
                 "id": tank.id, "shown": tank.shown, "barShown": tank.bar_shown,
-                "chevrons": tank.chevrons, "position": v3(tank.position),
+                "chevrons": tank.chevrons, "crewLivery": tank.crew_livery, "position": v3(tank.position),
                 "barPosition": v3(tank.bar_position), "pitch": tank.pitch, "roll": tank.roll,
                 "turretTiltError": tank.turret_tilt_error,
                 "turretForwardInHull": v3(tank.turret_forward_in_hull),

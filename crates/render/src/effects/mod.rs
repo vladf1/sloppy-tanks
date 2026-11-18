@@ -483,14 +483,10 @@ mod browser {
                 let keep = self.systems.pickups.columns();
                 super::explosions::clear_sight_line(puffs, eye, target, keep);
             }
-            // Smoke puffs overlap heavily: composite them back to front from this
-            // frame's eye (presentation sets the camera before effects update).
+            // Keep the collection visible around the tank that took the supply,
+            // then sort all the smoke together for back-to-front blending.
+            self.systems.pickups.draw_collections(state, puffs);
             puffs.sort_back_to_front(eye);
-            // A collection's ground beat plays round the tank that took the supply,
-            // so it is added after the sight line to the viewer is cleared.
-            if self.systems.pickups.draw_collections(state, puffs) {
-                puffs.sort_back_to_front(eye);
-            }
             self.sync(renderer);
         }
 

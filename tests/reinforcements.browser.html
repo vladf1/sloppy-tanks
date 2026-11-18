@@ -47,6 +47,14 @@
         draw(game, 1 / 60);
         const human = read.state(game).human;
         const shown = (id) => read.view(game).tanks.find((tank) => tank.id === id);
+        // A filled room reuses the tank ID and chassis when a player takes or leaves a seat.
+        const seat = read.state(game).tanks.find((tank) => !tank.human && tank.kind !== "humvee");
+        check(!shown(seat.id).crewLivery, "A fill bot starts with unit markings");
+        for (const human of [true, false]) {
+          game.debug_set_tank(seat.id, JSON.stringify({ human }));
+          draw(game, 0);
+          check(shown(seat.id).crewLivery === human, "The seat handoff changes the drawn livery");
+        }
         for (let kill = 0; kill < 120; kill++) {
           const victim = read.state(game).tanks.find((t) => !t.human && t.alive);
           check(victim, "An enemy must be available");
