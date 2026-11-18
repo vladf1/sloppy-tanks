@@ -6,8 +6,7 @@ use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sloppy_core::geometry::{
-    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, plane_geometry_segments,
-    tetrahedron_geometry,
+    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, tetrahedron_geometry,
 };
 use sloppy_core::scene::{Blending, Effect, Material, Side, TextureRef, Wrap};
 use sloppy_core::sim::PickupKind;
@@ -275,13 +274,11 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             DECAL_CAPACITY,
         )
     });
-    let mut plume = plane_geometry_segments(1.0, 1.0, 1, 8);
-    plume.translate(0.0, 0.5, 0.0);
     pools.push(PoolDesc {
         render_order: PUFF_RENDER_ORDER - 1,
         ..PoolDesc::new(
             "wreck flames",
-            plume,
+            super::wreck_fire::plume_mesh(),
             Material {
                 extra_textures: vec![(
                     "flow",

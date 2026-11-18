@@ -11,6 +11,7 @@
 
 use glam::{DVec2, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
+use sloppy_core::geometry::{Mesh, plane_geometry_segments};
 use sloppy_core::models::{WreckVent, wreck_vents};
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::debris_cleanup::{DEBRIS_CLEANUP_SECONDS, WRECK_FIRE_DIE_DOWN_SECONDS};
@@ -63,6 +64,8 @@ const FLAME_SINK: f32 = 0.04;
 /// The baked plume (generate-wreck-fire.mjs). Its full width includes room
 /// for eddies to roll outward above the lip. The aperture clips it below.
 const PLUME_DIAMETERS: f32 = 2.5;
+/// Radius of the flame at the well, as a fraction of its inside radius.
+const MOUTH_RADIUS: f32 = 0.94;
 const MAIN_FLAME_HEIGHT: f32 = 3.8;
 const VENT_FLAME_HEIGHT: f32 = 1.45;
 const VENT_FIRE: f64 = 0.8;
@@ -570,7 +573,7 @@ fn draw(
         let height = well_depth + reach * (0.18 + 0.82 * level);
         let width = 2.0 * radius * PLUME_DIAMETERS;
         let world = Mat4::from_scale_rotation_translation(
-            Vec3::new(width, height, 1.0),
+            Vec3::new(width, height, radius * MOUTH_RADIUS),
             Quat::IDENTITY,
             floor,
         );
@@ -582,7 +585,7 @@ fn draw(
         flames.push(record(
             world,
             [
-                0.90 * radius / width,
+                MOUTH_RADIUS * radius / width,
                 well_depth / height,
                 phase as f32,
                 level,
@@ -639,6 +642,26 @@ fn trail(
             if i == 0 { (hot * 0.5) as f32 } else { 0.0 },
         );
     }
+}
+
+/// The front half of the round source, with a wing at each side for gas that
+/// spreads above the rim. X spans the atlas width and Z is in mouth radii.
+pub(super) fn plume_mesh() -> Mesh {
+    const ARC_SEGMENTS: usize = 16;
+    const COLUMNS: usize = ARC_SEGMENTS + 3;
+    let mut mesh = plane_geometry_segments(1.0, 1.0, (COLUMNS - 1) as u32, 8);
+    for (i, (p, uv)) in mesh.positions.iter_mut().zip(&mut mesh.uvs).enumerate() {
+        p[1] = uv[1];
+        let column = i % COLUMNS;
+        if (1..COLUMNS - 1).contains(&column) {
+            let angle = std::f32::consts::PI * ((column - 1) as f32 / ARC_SEGMENTS as f32 - 0.5);
+            let (across, toward_eye) = angle.sin_cos();
+            p[0] = across * MOUTH_RADIUS / (2.0 * PLUME_DIAMETERS);
+            p[2] = toward_eye;
+            uv[0] = 0.5 + p[0];
+        }
+    }
+    mesh
 }
 
 #[cfg(test)]
@@ -802,7 +825,21 @@ mod tests {
         let lip = plume.translation() + axis * plume.world_rows[1][1] * plume.tint[1];
         let expected = burner.position + burner.rotation * (vent.center.as_vec3() * burner.scale);
         assert!(lip.distance(expected) < 1e-4);
-        assert!(plume.tint[0] * plume.world_rows[0][0] < vent.half_size.x as f32 * burner.scale);
+        let mouth_radius = plume.tint[0] * plume.world_rows[0][0];
+        assert!(mouth_radius < vent.half_size.x as f32 * burner.scale);
+        // At the well floor the luminous strip follows the near rim. A flat
+        // strip through the centre cuts a visible chord across the opening.
+        let mesh = plume_mesh();
+        let mut front_depth = 0.0_f32;
+        for p in mesh.positions {
+            let across = p[0] * plume.world_rows[0][0];
+            if p[1] == 0.0 && across.abs() <= mouth_radius {
+                let depth = p[2] * plume.world_rows[2][2];
+                assert!((across.hypot(depth) - mouth_radius).abs() < 1e-4);
+                front_depth = front_depth.max(depth);
+            }
+        }
+        assert!((front_depth - mouth_radius).abs() < 1e-4);
         assert!(plume.translation().distance(lip) > vent.depth as f32 * burner.scale);
     }
 
