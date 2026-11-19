@@ -77,6 +77,13 @@ const kept = !current
     : [{ content: current.labels[CONTENT_LABEL], digest: current.digest }];
 const versions = addVersion(kept, { content, digest: added.digest });
 console.log(`${tag} keeps:\n${versions.map((v) => `  ${v.content} ${v.digest}`).join("\n")}`);
+// A restamp is a new image every time (its build time differs), and machines that predate
+// the list restart their server for any new image: push only when the list changes, as
+// for most merges, which leave the server alone.
+if (formatVersions(versions) === formatVersions(kept)) {
+  console.log(`${tag} already lists ${source} first; nothing to push`);
+  process.exit(0);
+}
 const dockerfile = [
   `FROM ${SERVER_IMAGE}@${added.digest}`,
   `LABEL ${VERSIONS_LABEL}="${formatVersions(versions)}"`,
