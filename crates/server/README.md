@@ -38,12 +38,12 @@ TypeScript traffic bots.
 `bun run server:build` builds `target/server/sloppy-server` with the `server`
 Cargo profile (optimized, unwinding, so one room's panic ends only that room).
 `bun scripts/build-server.mjs --vps` cross-compiles the static
-`x86_64-unknown-linux-musl` binary the server machines run. Install Zig on macOS
-with `brew install zig`. Cargo uses it to compile ring's C and assembly for musl,
-then links the server with Rust's bundled `rust-lld`. On x86-64 Ubuntu, CI installs
-`musl-tools` and sets `CC_x86_64_unknown_linux_musl=musl-gcc` and
-`AR_x86_64_unknown_linux_musl=ar`. The server targets x86-64-v3 (AVX2, BMI2) and
-disables FMA to preserve seeded physics parity.
+`x86_64-unknown-linux-musl` binary the server machines run, the same way on macOS
+and Linux with no cross toolchain: the host's `clang` (Xcode's on a Mac) compiles
+ring's C and assembly without libc headers, rustup's `llvm-tools` archives it (the
+script adds the component when missing), and Rust's bundled `rust-lld` links the
+server. The server targets x86-64-v3 (AVX2, BMI2) and disables FMA to preserve seeded
+physics parity; read the comment in `.cargo/config.toml` before changing either.
 
 `bun run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).

@@ -1,3 +1,0 @@
-#!/bin/sh
-# Zig expects its target spelling after the LLVM triple supplied by cc-rs.
-exec zig cc "$@" -target x86_64-linux-musl

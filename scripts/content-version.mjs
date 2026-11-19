@@ -237,7 +237,6 @@ export async function serverBuild() {
       ".cargo/config.toml",
       "rust-toolchain.toml",
       "scripts/build-server.mjs",
-      "scripts/musl-clang",
       // CI names server images by this hash and skips builds the registry already holds,
       // so the image recipe, its build context and the arguments it gets must change it too.
       "Dockerfile",

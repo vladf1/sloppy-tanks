@@ -100,8 +100,6 @@ jobs:
       image: ${{ steps.image.outputs.image }}
     env:
       SLOPPY_SERVER_VPS: "1"
-      CC_x86_64_unknown_linux_musl: musl-gcc
-      AR_x86_64_unknown_linux_musl: ar
       SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server
       PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
@@ -109,8 +107,6 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: server-image
-      - name: Install the musl C compiler for ring
-        run: sudo apt-get update && sudo apt-get install -y musl-tools
       # Kache restores the optimized server binary (about 50 s to link) when its inputs are
       # unchanged; the Cargo cache keeps only dependencies. The store is keyed by the server
       # build, so it is saved once per new server and an exact hit saves nothing. GC bounds
