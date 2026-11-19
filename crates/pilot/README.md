@@ -71,7 +71,7 @@ server ──binary snapshots──▶ NetworkClient ──RenderState (displaye
 - `src/fleet.rs` and `src/abi.rs`: the pilots behind JSON calls, exported from Wasm with
   no imports, for the pilots Worker (`bots/pilot-engine.ts`, `bots/pilots-worker.ts`).
 - `src/command_line.rs` and `src/native/`: the command line (tokio, tokio-tungstenite and
-  rustls with the server's pure-Rust crypto, a directory lookup over hyper).
+  Rustls with the server's ring provider, a directory lookup over hyper).
 
 ## Run
 

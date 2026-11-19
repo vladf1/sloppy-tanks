@@ -5,8 +5,9 @@ builds and GitHub Pages CI do not install them. This is a separate package, whic
 leaves alone, with its own committed `bun.lock` and isolated linking.
 Only esbuild and workerd may run dependency install scripts in this package.
 
-Install Node.js 22 or newer on PATH for Cloudflare commands (validated with Node
-24). Node is required only for Wrangler; normal game development and CI use Bun.
+Install Node.js 26.13.1 on PATH to match the deployment workflow. On macOS,
+`brew install node` installs Node 26. Check `node --version` if another Node is
+already on PATH. Normal game development and the build checks use Bun.
 From the repository root, use `bun run wrangler` for any Wrangler command:
 
 ```sh

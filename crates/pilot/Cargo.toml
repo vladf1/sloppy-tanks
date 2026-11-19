@@ -24,8 +24,7 @@ rapier3d.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
-# Sockets, TLS and the directory request for the command line. TLS uses the server's
-# pure-Rust crypto provider, so Linux builds need no C toolchain for ring.
+# Sockets, TLS and the directory request for the native command line.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio.workspace = true
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
@@ -35,7 +34,6 @@ hyper-util.workspace = true
 http-body-util.workspace = true
 bytes.workspace = true
 rustls.workspace = true
-rustls-rustcrypto.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
 

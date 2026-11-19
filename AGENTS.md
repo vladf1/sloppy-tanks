@@ -116,7 +116,7 @@ Run `bun install --frozen-lockfile` in every new checkout or worktree. Use `bun 
 for dependency changes. Installs use isolated linking; root dependencies cannot
 run install scripts. Wrangler lives in `tools/deploy/` with a separate lockfile;
 `bun run wrangler` and the Cloudflare deployment commands install it on demand
-with Bun, then run Wrangler on Node.js 22 or newer. This is the sole Node runtime
+with Bun, then run Wrangler on Node.js 26 (the deploy workflow pins 26.13.1). This is the sole Node runtime
 exception while Bun's Undici dispatcher support is incomplete; do not force it onto Bun.
 Only that package trusts `esbuild` and `workerd`. Review a new dependency's install
 script before adding it to `trustedDependencies`. Keep `--no-script` on the native

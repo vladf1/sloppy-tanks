@@ -3,11 +3,12 @@
 rustflags = ["-C", "target-feature=+simd128"]
 
 [target.x86_64-unknown-linux-musl]
-# The VPS server is a static musl binary linked by Rust's bundled lld, so building it
-# on macOS needs no cross toolchain (the server has no C dependencies).
+# Rust's bundled lld links the VPS server into a static musl binary. scripts/build-server.mjs
+# picks the C compiler and archiver for ring (the TLS provider's cryptography).
 linker = "rust-lld"
 # AVX2 and BMI2 (x86-64-v3) made a room's tick 4-7% faster on the VPS's EPYC, and every
 # x86 server CPU since about 2013 has them. FMA must stay off: fused multiply-adds round
 # differently, and with them seeded matches diverged from the baseline (and so from the
 # browser's Wasm) within 100-1000 ticks on every map; without them traces match exactly.
 rustflags = ["-C", "target-cpu=x86-64-v3", "-C", "target-feature=-fma"]
+
