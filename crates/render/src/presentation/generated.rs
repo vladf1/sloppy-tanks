@@ -185,7 +185,7 @@ mod adapter {
             &mut self,
             renderer: &mut Renderer,
             key: &str,
-            rgba: &js_sys::Uint8Array,
+            rgba: js_sys::Uint8Array,
         ) -> Result<bool, String> {
             let size = QUARRY_SOIL_SIZE as u32;
             if rgba.length() != size * size * 4 {
