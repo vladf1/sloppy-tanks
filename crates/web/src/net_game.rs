@@ -441,9 +441,9 @@ impl NetGame {
     pub fn supply_texture(
         &mut self,
         key: &str,
-        rgba: &js_sys::Uint8Array,
+        rgba: js_sys::Uint8Array,
     ) -> Result<bool, PageError> {
-        self.view.supply_texture(key, rgba).map_err(js_error)
+        self.supply_pixels(key, rgba)
     }
 
     /// Bake a claimed texture on the main thread after all (the worker failed).
@@ -683,7 +683,7 @@ impl NetGame {
     }
 
     /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
-    pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
+    pub fn supply_pixels(&mut self, key: &str, rgba: BakedPixels) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 

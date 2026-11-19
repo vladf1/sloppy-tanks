@@ -2657,15 +2657,44 @@ const LOADED_GLOW_DIRECTIONS: usize = 12;
 /// The loaded round's icon, faint in its colour, spread round itself as a glow: the
 /// copies' alphas add up to the blur's weights.
 fn loaded_icon_glow(painter: &Painter, art: &Art, weapon: &str, icon: Rect, color: Color32) {
-    let copies = (0..LOADED_GLOW_RINGS.len() * LOADED_GLOW_DIRECTIONS).map(|copy| {
-        let (distance, share) = LOADED_GLOW_RINGS[copy / LOADED_GLOW_DIRECTIONS];
-        let direction = copy % LOADED_GLOW_DIRECTIONS;
-        let alpha = LOADED_GLOW_OPACITY * share / LOADED_GLOW_DIRECTIONS as f32;
-        let angle = std::f32::consts::TAU * direction as f32 / LOADED_GLOW_DIRECTIONS as f32;
-        let offset = Vec2::angled(angle) * distance;
-        (icon.translate(offset), fade(color, alpha))
-    });
-    art.icon_copies(painter, weapon, copies);
+    if let Some(texture) = art.texture(painter.ctx(), weapon) {
+        painter.add(loaded_glow(painter.ctx(), texture, icon, color));
+    }
+}
+
+fn loaded_glow(
+    context: &egui::Context,
+    texture: egui::TextureId,
+    icon: Rect,
+    color: Color32,
+) -> Shape {
+    let (kind, id) = match texture {
+        egui::TextureId::Managed(id) => (0, id),
+        egui::TextureId::User(id) => (1, id),
+    };
+    let key = paint::key_floats([icon.min.x, icon.min.y, icon.max.x, icon.max.y]).chain([
+        u32::from_le_bytes(color.to_array()),
+        kind,
+        id as u32,
+        (id >> 32) as u32,
+    ]);
+    paint::memo_mesh(context, paint::MeshKind::LoadedAmmoGlow, key, || {
+        let copies = LOADED_GLOW_RINGS.len() * LOADED_GLOW_DIRECTIONS;
+        let mut mesh = Mesh::with_texture(texture);
+        mesh.reserve_vertices(copies * 4);
+        mesh.reserve_triangles(copies * 2);
+        let uv = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
+        for (distance, share) in LOADED_GLOW_RINGS {
+            let alpha = LOADED_GLOW_OPACITY * share / LOADED_GLOW_DIRECTIONS as f32;
+            for direction in 0..LOADED_GLOW_DIRECTIONS {
+                let angle =
+                    std::f32::consts::TAU * direction as f32 / LOADED_GLOW_DIRECTIONS as f32;
+                let offset = Vec2::angled(angle) * distance;
+                mesh.add_rect_with_uv(icon.translate(offset), uv, fade(color, alpha));
+            }
+        }
+        mesh
+    })
 }
 
 /// The mine socket: armed, or a dial that refills while the seconds count down.
@@ -3130,6 +3159,30 @@ mod tests {
             (rect, Color32::WHITE),
         ] {
             assert_eq!(*face(rect, color), loaded_face_mesh(rect, color));
+        }
+    }
+
+    #[test]
+    fn loaded_ammo_glow_reuses_only_matching_geometry_and_texture() {
+        use egui::TextureId;
+        let context = egui::Context::default();
+        let mesh = |texture, icon, color| match loaded_glow(&context, texture, icon, color) {
+            Shape::Mesh(mesh) => mesh,
+            _ => unreachable!(),
+        };
+        let icon = Rect::from_min_size(pos2(12.0, 30.0), Vec2::splat(22.0));
+        let texture = TextureId::Managed(7);
+        let glow = mesh(texture, icon, GOLD);
+        assert_eq!((glow.vertices.len(), glow.indices.len()), (192, 288));
+        assert!(std::sync::Arc::ptr_eq(&glow, &mesh(texture, icon, GOLD)));
+        for (texture, icon, color) in [
+            (TextureId::Managed(8), icon, GOLD),
+            (texture, icon.translate(vec2(3.0, 0.0)), GOLD),
+            (texture, icon, Color32::WHITE),
+        ] {
+            let changed = mesh(texture, icon, color);
+            assert_ne!(glow, changed);
+            assert_eq!(changed.texture_id, texture);
         }
     }
 

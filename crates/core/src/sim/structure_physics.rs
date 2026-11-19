@@ -1081,7 +1081,7 @@ impl Simulation {
             .any(|part| part.material.breaking == Breaking::Glass)
         {
             let after = state.gone.union(&broken).union(&loose);
-            let way = layout.giving_way(&after, toward(&broken));
+            let way = layout.giving_way_with(&after, toward(&broken), &mut self.scratch.tipping);
             let glass = PartSet::from_indices(way.falling.iter().filter(|&index| {
                 layout.parts[index].material.breaking == Breaking::Glass
             }));
@@ -1130,7 +1130,9 @@ impl Simulation {
             .structure
             .as_ref()
             .map_or(PartSet::EMPTY, |state| state.gone);
-        let way = given_way.unwrap_or_else(|| layout.giving_way(&gone.union(&loose), toward(&broken)));
+        let way = given_way.unwrap_or_else(|| {
+            layout.giving_way_with(&gone.union(&loose), toward(&broken), &mut self.scratch.tipping)
+        });
         let mut left = broken;
         for fall in layout.falls_after(&gone, &loose, way) {
             self.remove_parts(cover, &fall.parts);

@@ -277,16 +277,20 @@ pub fn from_aerial((px, py): (f64, f64)) -> DVec2 {
 #[derive(Clone, Debug)]
 pub struct Line(pub Vec<DVec2>);
 
+fn line_length(points: &[DVec2]) -> f64 {
+    points
+        .windows(2)
+        .map(|pair| pair[0].distance(pair[1]))
+        .sum()
+}
+
 impl Line {
     fn traced(trace: &[(f64, f64)]) -> Self {
         Line(trace.iter().copied().map(from_aerial).collect())
     }
 
     pub fn length(&self) -> f64 {
-        self.0
-            .windows(2)
-            .map(|pair| pair[0].distance(pair[1]))
-            .sum()
+        line_length(&self.0)
     }
 
     /// The point `s` metres along the line and the line's direction there.
@@ -381,11 +385,17 @@ pub enum Street {
 impl Street {
     pub const ALL: [Street; 3] = [Street::SendaParkway, Street::NeblinaGaviota, Street::Rumbo];
 
-    pub fn line(self) -> Line {
-        Line::traced(match self {
-            Street::SendaParkway => SENDA_PARKWAY_TRACE,
-            Street::NeblinaGaviota => NEBLINA_GAVIOTA_TRACE,
-            Street::Rumbo => RUMBO_TRACE,
+    /// The street's immutable centreline in design metres.
+    pub fn line(self) -> &'static Line {
+        use std::sync::OnceLock;
+        static LINES: [OnceLock<Line>; Street::ALL.len()] =
+            [const { OnceLock::new() }; Street::ALL.len()];
+        LINES[self as usize].get_or_init(|| {
+            Line::traced(match self {
+                Street::SendaParkway => SENDA_PARKWAY_TRACE,
+                Street::NeblinaGaviota => NEBLINA_GAVIOTA_TRACE,
+                Street::Rumbo => RUMBO_TRACE,
+            })
         })
     }
 
@@ -811,7 +821,7 @@ impl Footprint {
 
 /// How far along Neblina (from Senda Parkway) it bends east into Gaviota.
 pub fn neblina_bend() -> f64 {
-    Line::traced(&NEBLINA_GAVIOTA_TRACE[..=NEBLINA_BEND]).length()
+    line_length(&Street::NeblinaGaviota.line().0[..=NEBLINA_BEND])
 }
 
 /// The little lawn park with its paths on the outside of Neblina's curve, where the
@@ -1038,7 +1048,7 @@ pub fn oak_site(x: f64, z: f64) -> (f64, f64) {
 fn street_trees(houses: &[SendaHouse]) -> Vec<CoverDef> {
     let paseos = paseos(houses);
     let mut trees: Vec<CoverDef> = Vec::new();
-    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+    let lines = Street::ALL.map(|street| (street, street.line()));
     let lots = super::senda_yards::senda_lots(houses);
     // Each lot's driveway, kerb to garage door, in its own frame: its span across and
     // from its house's front out to the kerb.
@@ -1185,7 +1195,7 @@ pub fn is_street_tree(color: u32) -> bool {
 /// spawn pads and the pickups.
 fn trash_bins(houses: &[SendaHouse]) -> Vec<CoverDef> {
     let paseos = paseos(houses);
-    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+    let lines = Street::ALL.map(|street| (street, street.line()));
     let (w, d, h) = TRASH_BIN;
     let mut bins = Vec::new();
     for house in houses.iter().step_by(TRASH_BIN_HOUSES) {
@@ -1288,7 +1298,7 @@ pub fn street_lamp_look(color: u32) -> Option<bool> {
 /// lamp within [`LAMP_ROOM`] of one already standing (round a corner two rows' lamps, or
 /// a row's and the Way's, would stand together).
 pub fn lamp_sites() -> Vec<(DVec2, bool)> {
-    let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+    let lines = Street::ALL.map(|street| (street, street.line()));
     let mut sites: Vec<(DVec2, bool)> = Vec::new();
     for at in way_lamp_sites() {
         if lamp_clear(at, &lines) {
@@ -1314,7 +1324,7 @@ pub fn lamp_sites() -> Vec<(DVec2, bool)> {
 /// Whether a street lamp may stand at `at`: off every street's asphalt and kerb by
 /// [`LAMP_KERB_ROOM`], off the turning circles, and off the residential streets'
 /// sidewalks, so only in a parkway strip.
-fn lamp_clear(at: DVec2, lines: &[(Street, Line)]) -> bool {
+fn lamp_clear(at: DVec2, lines: &[(Street, &Line)]) -> bool {
     let off_circles = Street::ALL
         .into_iter()
         .filter_map(Street::cul_de_sac)
@@ -2328,8 +2338,20 @@ mod lamp_tests {
     use super::*;
 
     #[test]
+    fn shared_street_lines_keep_each_traced_centreline() {
+        for (street, trace) in [
+            (Street::SendaParkway, SENDA_PARKWAY_TRACE),
+            (Street::NeblinaGaviota, NEBLINA_GAVIOTA_TRACE),
+            (Street::Rumbo, RUMBO_TRACE),
+        ] {
+            assert_eq!(street.line().0, Line::traced(trace).0);
+            assert!(std::ptr::eq(street.line(), street.line()));
+        }
+    }
+
+    #[test]
     fn every_street_lamp_stands_in_a_parkway_strip_and_the_rows_apart() {
-        let lines: Vec<(Street, Line)> = Street::ALL.map(|street| (street, street.line())).into();
+        let lines = Street::ALL.map(|street| (street, street.line()));
         let sites = lamp_sites();
         assert!(
             sites.iter().filter(|(_, tall)| *tall).count() >= 6,

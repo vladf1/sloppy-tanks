@@ -68,7 +68,7 @@ pub type PageError = String;
 #[cfg(target_arch = "wasm32")]
 pub type BakedPixels = js_sys::Uint8Array;
 #[cfg(not(target_arch = "wasm32"))]
-pub type BakedPixels = [u8];
+pub type BakedPixels = Vec<u8>;
 
 #[cfg(target_arch = "wasm32")]
 pub fn js_error(message: impl Into<String>) -> PageError {

@@ -150,10 +150,7 @@ fn every_house_fronts_its_street_with_a_garage_and_the_rows_mix_types_and_mirror
     let mut styles = HashSet::new();
     let mut sides = HashSet::new();
     // How far `p` stands from the nearest kerb, of a street or a turning circle.
-    let streets: Vec<(f64, Line)> = Street::ALL
-        .into_iter()
-        .map(|street| (street.half(), street.line()))
-        .collect();
+    let streets = Street::ALL.map(|street| (street.half(), street.line()));
     let bulbs: Vec<DVec2> = Street::ALL
         .into_iter()
         .filter_map(Street::cul_de_sac)

@@ -891,7 +891,7 @@ const GRASS_COVER_SAMPLES: usize = 6;
 /// slabs and the lots' own ground are not counted, so the grass stays under them.
 struct GroundCover<'a> {
     planted: &'a PlantedGrid,
-    streets: Vec<(Street, Line)>,
+    streets: [(Street, &'static Line); Street::ALL.len()],
     circles: Vec<DVec2>,
     corners: Vec<Corner>,
     flares: Vec<Flare>,
@@ -901,10 +901,7 @@ impl GroundCover<'_> {
     fn new(planted: &PlantedGrid) -> GroundCover<'_> {
         GroundCover {
             planted,
-            streets: Street::ALL
-                .into_iter()
-                .map(|street| (street, street.line()))
-                .collect(),
+            streets: Street::ALL.map(|street| (street, street.line())),
             circles: Street::ALL
                 .into_iter()
                 .filter_map(Street::cul_de_sac)
@@ -1049,9 +1046,9 @@ fn planted_tint(p: DVec2, lines: &Lines) -> [f32; 3] {
 
 /// The street lines and lots the ground's tint follows.
 struct Lines {
-    rumbo: Line,
-    gaviota: Line,
-    way: Line,
+    rumbo: &'static Line,
+    gaviota: &'static Line,
+    way: &'static Line,
     /// How far along Neblina it bends into Gaviota: past it the slope south of
     /// Gaviota's south row runs down toward Gardenia, before it the field behind
     /// Neblina's west row.
@@ -1939,7 +1936,7 @@ struct Corner {
     centre: DVec2,
     main_at: f64,
     side_at: f64,
-    main_line: Line,
+    main_line: &'static Line,
     /// The edges of the walks the corner slab lies between, as the walks' ribbons run.
     main_inner: Line,
     main_outer: Line,
@@ -3509,7 +3506,7 @@ struct Outer {
     boundary: Vec<DVec2>,
     pads: Vec<DVec2>,
     pickups: Vec<DVec2>,
-    streets: Vec<(f64, Line)>,
+    streets: [(f64, &'static Line); Street::ALL.len()],
     park: Option<Park>,
     paseos: Vec<Line>,
 }
@@ -3529,17 +3526,14 @@ impl Outer {
                 .iter()
                 .map(|pickup| DVec2::new(pickup.x, pickup.z))
                 .collect(),
-            streets: Street::ALL
-                .into_iter()
-                .map(|street| {
-                    let reach = if street == Street::SendaParkway {
-                        street.half() + WAY_PARKWAY + WAY_PATH
-                    } else {
-                        street.half() + PARKWAY + SIDEWALK
-                    };
-                    (reach, street.line())
-                })
-                .collect(),
+            streets: Street::ALL.map(|street| {
+                let reach = if street == Street::SendaParkway {
+                    street.half() + WAY_PARKWAY + WAY_PATH
+                } else {
+                    street.half() + PARKWAY + SIDEWALK
+                };
+                (reach, street.line())
+            }),
             park: bend_park(lines),
             paseos: paseo_ways(),
         }
@@ -4178,7 +4172,7 @@ fn hillside_trails() -> Vec<Vec<DVec2>> {
 /// turning up the bank at its ends, and the straight spur walks from it up to the Way's
 /// path every few lots.
 fn bank_trails(lines: &Lines) -> (Vec<DVec2>, Vec<Vec<DVec2>>) {
-    let (way, rumbo) = (&lines.way, &lines.rumbo);
+    let (way, rumbo) = (lines.way, lines.rumbo);
     let top = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH;
     // The bank's foot and top across from a spot on Rumbo, found by stepping up from
     // the back walls' mulch toward the Way.
@@ -5726,7 +5720,7 @@ fn crest_basins(group: &mut Node, lines: &Lines) {
 /// and the way down the bank from each: one every [`CREST_BASIN`] spacing where the bank
 /// between the path and Rumbo's back walls is wide enough, inside the arena.
 fn crest_basin_sites(lines: &Lines) -> Vec<(DVec2, DVec2)> {
-    let way = &lines.way;
+    let way = lines.way;
     let top = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + 0.15;
     let mut sites = Vec::new();
     let mut s = 0.0;
@@ -6014,7 +6008,7 @@ struct Belt {
     boundary: Vec<DVec2>,
     /// The stretches of the level's wall that face south or west, each with the way out.
     walls: Vec<(Line, DVec2)>,
-    way: Line,
+    way: &'static Line,
 }
 
 impl Belt {
@@ -6689,10 +6683,7 @@ fn shrubs() -> Node {
         .flat_map(|team| spawn_positions(team, 1.0))
         .map(|spawn| DVec2::new(spawn.x, spawn.z))
         .collect();
-    let streets: Vec<(f64, Line)> = Street::ALL
-        .into_iter()
-        .map(|street| (street.half(), street.line()))
-        .collect();
+    let streets = Street::ALL.map(|street| (street.half(), street.line()));
     let way_reach = Street::SendaParkway.half() + WAY_PARKWAY + WAY_PATH + SHRUB_PAVING_ROOM;
     let paseos = paseo_ways();
     let open = |p: DVec2| {
@@ -6725,7 +6716,7 @@ fn shrubs() -> Node {
     contour_rows(
         &mut group,
         &bush,
-        &lines.way,
+        lines.way,
         -1.0,
         (top + CREST_BASIN.0 + 0.9, ARENA),
         &CONTOUR_LEAVES,
@@ -6749,7 +6740,7 @@ fn shrubs() -> Node {
     contour_rows(
         &mut group,
         &bush,
-        &lines.way,
+        lines.way,
         1.0,
         (across, ARENA),
         &CONTOUR_LEAVES,

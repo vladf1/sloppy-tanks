@@ -5,6 +5,7 @@
 //! color share one white vertex-color material (and one draw); team paint keeps its
 //! emissive glow as a material uniform. Parts of other materials merge per material.
 
+use std::borrow::Borrow;
 use std::sync::{Arc, Mutex};
 
 use glam::DVec3;
@@ -49,15 +50,22 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if !is_paintable(source) {
         return source.clone();
     }
-    shared_vertex_material(Arc::new(painted(source)))
+    shared_vertex_material(&VERTEX_MATERIALS, painted(source))
 }
 
 /// The shared vertex material equal to `material`, which becomes it if none is.
-fn shared_vertex_material(material: Arc<Material>) -> Arc<Material> {
-    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
-    if let Some(held) = materials.iter().find(|held| **held == material) {
+fn shared_vertex_material(
+    cache: &Mutex<Vec<Arc<Material>>>,
+    material: impl Borrow<Material> + Into<Arc<Material>>,
+) -> Arc<Material> {
+    let mut materials = cache.lock().expect("vertex material cache");
+    if let Some(held) = materials
+        .iter()
+        .find(|held| held.as_ref() == material.borrow())
+    {
         return held.clone();
     }
+    let material = material.into();
     materials.push(material.clone());
     material
 }
@@ -76,7 +84,7 @@ pub(super) fn each_vertex_material(visit: &mut dyn FnMut(usize)) {
 /// The vertex material to use for one a model read back from the geometry cache
 /// brings: the shared one equal to it, else this one, shared from now on.
 pub(super) fn adopt_vertex_material(material: Arc<Material>) -> Arc<Material> {
-    shared_vertex_material(material)
+    shared_vertex_material(&VERTEX_MATERIALS, material)
 }
 
 /// A mesh part and the paint to bake into its vertices, if its batch uses a
@@ -110,15 +118,14 @@ pub fn paint_mesh(node: &mut Node) {
     let Some(drawable) = &mut node.drawable else {
         return;
     };
-    let source = drawable.material.clone();
-    let painted = vertex_material(&source);
-    if Arc::ptr_eq(&painted, &source) {
+    let source = &drawable.material;
+    let painted = vertex_material(source);
+    if Arc::ptr_eq(&painted, source) {
         return;
     }
     let [r, g, b] = hex_to_linear(source.color.0);
-    let mut mesh = (*drawable.mesh).clone();
+    let mesh = Arc::make_mut(&mut drawable.mesh);
     mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
-    drawable.mesh = Arc::new(mesh);
     drawable.material = painted;
 }
 
@@ -192,5 +199,32 @@ pub fn batch(group: &mut Node) {
         if let Some(merged) = merge_geometries(&baked.iter().collect::<Vec<_>>()) {
             group.children.push(shadowed(Arc::new(merged), material));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_painted_lookup_reuses_an_equal_decoded_material() {
+        let cache = Mutex::new(Vec::new());
+        let source = Material::standard(0xab3412, 0.2, 0.5);
+        let decoded = Arc::new(painted(&source));
+        let adopted = shared_vertex_material(&cache, decoded.clone());
+        assert!(Arc::ptr_eq(&decoded, &adopted));
+        assert!(Arc::ptr_eq(
+            &decoded,
+            &shared_vertex_material(&cache, painted(&source))
+        ));
+
+        let other_color = Material {
+            color: Color(0x009977),
+            ..source
+        };
+        assert!(Arc::ptr_eq(
+            &decoded,
+            &shared_vertex_material(&cache, painted(&other_color))
+        ));
     }
 }

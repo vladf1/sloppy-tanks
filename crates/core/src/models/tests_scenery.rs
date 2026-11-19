@@ -3,7 +3,7 @@
 //! chimney smoke and rock footings. Scenery looks are judged on screen, not here.
 
 use std::collections::BTreeSet;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use glam::DMat4;
 
@@ -15,6 +15,21 @@ use crate::scene::{Node, TextureSource};
 
 /// Built once for the tests that only read it.
 static HARBOR: LazyLock<HarborScenery> = LazyLock::new(HarborScenery::new);
+
+#[test]
+fn painting_reuses_an_owned_mesh_and_preserves_a_shared_source() {
+    let mesh = Arc::new(crate::geometry::box_geometry(1.0, 1.0, 1.0));
+    let original = Arc::as_ptr(&mesh);
+    let mut owned = shadowed(mesh, paint(0xffffff));
+    let mut shared = owned.clone();
+    super::batching::paint_mesh(&mut shared);
+    assert!(owned.drawable.as_ref().unwrap().mesh.colors.is_empty());
+    super::batching::paint_mesh(&mut owned);
+    let painted = owned.drawable.unwrap().mesh;
+    assert_eq!(Arc::as_ptr(&painted), original);
+    assert_eq!(painted.colors.len(), painted.positions.len());
+    assert_eq!(painted, shared.drawable.unwrap().mesh);
+}
 
 /// The page bakes the soil in row bands (workers, or slices between frames), and
 /// each band first replays the seeded draws of the rows before it, so any split
@@ -30,6 +45,18 @@ fn soil_is_independent_of_the_band_split() {
         whole == split,
         "a band baked alone differs from the whole bake"
     );
+}
+
+/// Workers may write adjacent, unequal bands straight into the final texture.
+#[test]
+fn quarry_workers_write_the_same_rows_as_a_whole_bake() {
+    let accum = sand_accum();
+    let expected = bake_quarry_ground(accum, 3, 8);
+    let mut actual = vec![0xff; expected.len()];
+    let (first, last) = actual.split_at_mut(2 * QUARRY_SOIL_SIZE * 4);
+    write_quarry_ground(accum, 3, first);
+    write_quarry_ground(accum, 5, last);
+    assert!(actual == expected);
 }
 
 /// The full 2048² bake and each theme's build time. Run in release:

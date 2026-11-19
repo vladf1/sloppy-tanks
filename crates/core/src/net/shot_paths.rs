@@ -229,7 +229,20 @@ impl LivePaths {
         count: u64,
         tick: u64,
     ) -> ReadResult<Vec<PathEntry>> {
-        let mut entries = Vec::with_capacity(count.min(MAX_LIVE_PATHS as u64) as usize);
+        let mut entries = Vec::new();
+        self.apply_binary_into(reader, count, tick, &mut entries)?;
+        Ok(entries)
+    }
+
+    /// As [`Self::apply_binary`], appending the decoded entries to a caller's buffer.
+    pub(super) fn apply_binary_into(
+        &mut self,
+        reader: &mut WireReader<'_>,
+        count: u64,
+        tick: u64,
+        entries: &mut Vec<PathEntry>,
+    ) -> ReadResult<()> {
+        entries.reserve(count.min(MAX_LIVE_PATHS as u64) as usize);
         for _ in 0..count {
             let kind = reader.varint()?;
             let entry = match kind {
@@ -270,7 +283,7 @@ impl LivePaths {
             };
             entries.push(entry);
         }
-        Ok(entries)
+        Ok(())
     }
 
     /// The shells at `tick`.

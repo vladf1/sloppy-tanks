@@ -34,7 +34,7 @@ native = ["sloppy-render/native"]
 sloppy-core.workspace = true
 sloppy-render.workspace = true
 glam.workspace = true
-serde.workspace = true
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
