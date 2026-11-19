@@ -78,15 +78,7 @@ pub fn draw_canvas(canvas: &CanvasTexture) -> Result<ImageData, String> {
             )?,
         }
     }
-    let pixels: Vec<u8> = pixmap
-        .pixels()
-        .iter()
-        .flat_map(|pixel| {
-            let color = pixel.demultiply();
-            [color.red(), color.green(), color.blue(), color.alpha()]
-        })
-        .collect();
-    image_data(canvas.width, canvas.height, pixels.as_slice())
+    image_data(canvas.width, canvas.height, pixmap.take_demultiplied())
 }
 
 fn rect_of(rect: &[f64; 4]) -> Option<Rect> {

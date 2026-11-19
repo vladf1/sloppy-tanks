@@ -702,7 +702,7 @@ impl RoomSession {
             self.bake = None;
             match baked {
                 Ok(pixels) => {
-                    if let Err(error) = self.game.supply_pixels(&key, &pixels) {
+                    if let Err(error) = self.game.supply_pixels(&key, pixels) {
                         report!("{}", engine_error(error));
                     }
                 }

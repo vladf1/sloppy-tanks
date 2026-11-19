@@ -44,7 +44,7 @@ const VALLEY_SIDES: f64 = 26.0;
 
 /// The land past the walls, from Senda Parkway's line.
 pub(super) struct Hills {
-    way: Line,
+    way: &'static Line,
     /// Where the Way's trace ends and its heading there: its valley runs on past it.
     way_end: DVec2,
     way_out: DVec2,

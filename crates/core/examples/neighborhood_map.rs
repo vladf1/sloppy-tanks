@@ -363,17 +363,17 @@ fn main() {
                 .total_cmp(&neblina.at(b).0.distance(from))
         })
         .unwrap();
-    along(&mut svg, &neblina, (junction + 3.0, bend), 21.0, "NEBLINA");
+    along(&mut svg, neblina, (junction + 3.0, bend), 21.0, "NEBLINA");
     along(
         &mut svg,
-        &neblina,
+        neblina,
         (bend + 6.0, neblina.length() - CUL_DE_SAC_RADIUS),
         21.0,
         "GAVIOTA",
     );
     along(
         &mut svg,
-        &rumbo,
+        rumbo,
         (4.0, rumbo.length() - CUL_DE_SAC_RADIUS),
         21.0,
         "RUMBO",
@@ -387,7 +387,7 @@ fn main() {
         })
         .collect();
     if let (Some(&from), Some(&to)) = (shown.first(), shown.last()) {
-        along(&mut svg, &way, (from, to), 25.0, "SENDA PARKWAY");
+        along(&mut svg, way, (from, to), 25.0, "SENDA PARKWAY");
     }
     svg.push_str(&house_labels);
 

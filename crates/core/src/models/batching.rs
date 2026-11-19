@@ -50,12 +50,15 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if !is_paintable(source) {
         return source.clone();
     }
-    shared_vertex_material(painted(source))
+    shared_vertex_material(&VERTEX_MATERIALS, painted(source))
 }
 
 /// The shared vertex material equal to `material`, which becomes it if none is.
-fn shared_vertex_material(material: impl Borrow<Material> + Into<Arc<Material>>) -> Arc<Material> {
-    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
+fn shared_vertex_material(
+    cache: &Mutex<Vec<Arc<Material>>>,
+    material: impl Borrow<Material> + Into<Arc<Material>>,
+) -> Arc<Material> {
+    let mut materials = cache.lock().expect("vertex material cache");
     if let Some(held) = materials
         .iter()
         .find(|held| held.as_ref() == material.borrow())
@@ -81,7 +84,7 @@ pub(super) fn each_vertex_material(visit: &mut dyn FnMut(usize)) {
 /// The vertex material to use for one a model read back from the geometry cache
 /// brings: the shared one equal to it, else this one, shared from now on.
 pub(super) fn adopt_vertex_material(material: Arc<Material>) -> Arc<Material> {
-    shared_vertex_material(material)
+    shared_vertex_material(&VERTEX_MATERIALS, material)
 }
 
 /// A mesh part and the paint to bake into its vertices, if its batch uses a
@@ -206,16 +209,23 @@ mod tests {
 
     #[test]
     fn a_painted_lookup_reuses_an_equal_decoded_material() {
-        let source = Arc::new(Material::standard(0xab3412, 0.12345, 0.54321));
+        let cache = Mutex::new(Vec::new());
+        let source = Material::standard(0xab3412, 0.2, 0.5);
         let decoded = Arc::new(painted(&source));
-        let adopted = adopt_vertex_material(decoded.clone());
+        let adopted = shared_vertex_material(&cache, decoded.clone());
         assert!(Arc::ptr_eq(&decoded, &adopted));
-        assert!(Arc::ptr_eq(&decoded, &vertex_material(&source)));
+        assert!(Arc::ptr_eq(
+            &decoded,
+            &shared_vertex_material(&cache, painted(&source))
+        ));
 
-        let other_color = Arc::new(Material {
+        let other_color = Material {
             color: Color(0x009977),
-            ..(*source).clone()
-        });
-        assert!(Arc::ptr_eq(&decoded, &vertex_material(&other_color)));
+            ..source
+        };
+        assert!(Arc::ptr_eq(
+            &decoded,
+            &shared_vertex_material(&cache, painted(&other_color))
+        ));
     }
 }

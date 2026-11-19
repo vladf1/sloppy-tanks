@@ -214,11 +214,10 @@ mod adapter {
             &mut self,
             renderer: &mut Renderer,
             key: &str,
-            rgba: &std::sync::Arc<[u8]>,
+            rgba: Vec<u8>,
         ) -> Result<bool, String> {
             let size = QUARRY_SOIL_SIZE as u32;
-            let image =
-                image_data(size, size, rgba.clone()).map_err(|error| format!("{key}: {error}"))?;
+            let image = image_data(size, size, rgba).map_err(|error| format!("{key}: {error}"))?;
             let Some(key) = self.take_supplied(key) else {
                 return Ok(false);
             };
@@ -232,7 +231,7 @@ mod adapter {
                 && let Some(pixels) = bake.step(rows)
             {
                 let size = QUARRY_SOIL_SIZE as u32;
-                match image_data(size, size, pixels.as_slice()) {
+                match image_data(size, size, pixels) {
                     Ok(image) => renderer.set_generated_texture(QUARRY_SOIL_TEXTURE, image),
                     Err(error) => report(format!("{QUARRY_SOIL_TEXTURE}: {error:?}")),
                 }

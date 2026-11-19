@@ -913,7 +913,9 @@ impl Game {
     }
 
     /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
-    pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
+    pub fn supply_pixels(&mut self, key: &str, rgba: BakedPixels) -> Result<bool, PageError> {
+        #[cfg(target_arch = "wasm32")]
+        let rgba = &rgba;
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 

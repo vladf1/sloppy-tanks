@@ -1792,7 +1792,7 @@ impl Presentation {
 
     /// The pixels of a claimed bake; `false` when the key was no longer awaited.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn supply_texture(&mut self, key: &str, rgba: &Arc<[u8]>) -> Result<bool, String> {
+    pub fn supply_texture(&mut self, key: &str, rgba: Vec<u8>) -> Result<bool, String> {
         self.textures.supply(&mut self.renderer, key, rgba)
     }
 

@@ -252,7 +252,7 @@ fn main() {
     let houses = senda_houses();
     let lots = senda_lots(&houses);
     let boundary = senda_boundary();
-    let lines: Vec<(Street, Line)> = Street::ALL.map(|s| (s, s.line())).into();
+    let lines = Street::ALL.map(|s| (s, s.line()));
     let way = Street::SendaParkway.line();
     let greenbelt = Line(greenbelt_line(0.0));
     // Which side of Senda Parkway (left of its trace, +1, or right) is north (-z).

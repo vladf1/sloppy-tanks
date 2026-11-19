@@ -87,7 +87,7 @@ pub type ImageData = web_sys::ImageData;
 pub struct ImageData {
     width: u32,
     height: u32,
-    pub pixels: Arc<[u8]>,
+    pub pixels: Arc<Vec<u8>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -103,19 +103,15 @@ impl ImageData {
 
 /// RGBA8 rows (top first) as the pixels a generated texture uploads from.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn image_data(
-    width: u32,
-    height: u32,
-    rgba: impl AsRef<[u8]> + Into<Arc<[u8]>>,
-) -> Result<ImageData, String> {
-    let len = rgba.as_ref().len();
+pub fn image_data(width: u32, height: u32, rgba: Vec<u8>) -> Result<ImageData, String> {
+    let len = rgba.len();
     if len != width as usize * height as usize * 4 {
         return Err(format!("{len} bytes for a {width}x{height} image"));
     }
     Ok(ImageData {
         width,
         height,
-        pixels: rgba.into(),
+        pixels: Arc::new(rgba),
     })
 }
 
@@ -143,7 +139,7 @@ fn decode_file(path: &str) -> Result<ImageData, String> {
     let image = image::load_from_memory(bytes).map_err(|error| format!("{path}: {error}"))?;
     let image = image.into_rgba8();
     let (width, height) = image.dimensions();
-    image_data(width, height, image.as_raw().as_slice())
+    image_data(width, height, image.into_raw())
 }
 
 /// A texture file a page cuts out of another file instead of downloading it: the file
@@ -221,8 +217,8 @@ impl LoadedQueue {
 /// `ImageData` over Wasm memory would by then read whatever reused the freed bytes,
 /// or nothing once the memory grew and detached its buffer.
 #[cfg(target_arch = "wasm32")]
-pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<web_sys::ImageData, JsValue> {
-    let pixels = js_sys::Uint8ClampedArray::from(rgba);
+pub fn image_data(width: u32, height: u32, rgba: Vec<u8>) -> Result<web_sys::ImageData, JsValue> {
+    let pixels = js_sys::Uint8ClampedArray::from(rgba.as_slice());
     web_sys::ImageData::new_with_js_u8_clamped_array_and_sh(&pixels, width, height)
 }
 
@@ -507,7 +503,7 @@ impl TextureStore {
             TextureSource::Generated(name) => {
                 if *name == GROUND_NOISE && !self.generated.contains_key(name) {
                     let size = GROUND_NOISE_SIZE as u32;
-                    match image_data(size, size, ground_noise_pixels().as_slice()) {
+                    match image_data(size, size, ground_noise_pixels()) {
                         Ok(image) => {
                             self.generated.insert(GROUND_NOISE, image);
                         }
@@ -720,4 +716,21 @@ pub fn js_message(value: &JsValue) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn js_message(message: &str) -> String {
     message.to_owned()
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_native_image_shares_the_supplied_pixel_buffer() {
+        let rgba = vec![10, 20, 30, 255, 40, 50, 60, 127];
+        let original = rgba.as_ptr();
+        let image = image_data(1, 2, rgba).unwrap();
+        assert_eq!(image.pixels.as_ptr(), original);
+        assert!(Arc::ptr_eq(&image.pixels, &image.clone().pixels));
+        assert_eq!((image.width(), image.height()), (1, 2));
+        assert_eq!(image.pixels.as_slice(), [10, 20, 30, 255, 40, 50, 60, 127]);
+        assert!(image_data(2, 2, vec![0; 8]).is_err());
+    }
 }

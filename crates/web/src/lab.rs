@@ -147,7 +147,7 @@ impl RenderLab {
         rgba: Vec<u8>,
     ) -> Result<(), JsValue> {
         let name = leak(name);
-        let image = sloppy_render::gpu::image_data(width, height, &rgba)?;
+        let image = sloppy_render::gpu::image_data(width, height, rgba)?;
         self.renderer.set_generated_texture(name, image);
         Ok(())
     }

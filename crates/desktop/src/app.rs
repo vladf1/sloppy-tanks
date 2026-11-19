@@ -1244,7 +1244,7 @@ impl Session {
             match baked {
                 Ok(pixels) => {
                     self.game
-                        .supply_pixels(&bake.key, &pixels)
+                        .supply_pixels(&bake.key, pixels)
                         .map_err(engine_error)?;
                 }
                 Err(_) => self.game.release_texture_bake(&bake.key),

@@ -6,8 +6,6 @@
 //! fails, goes back to the engine, which bakes it in bands between preparation steps.
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::Arc;
-#[cfg(not(target_arch = "wasm32"))]
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
@@ -41,11 +39,9 @@ pub fn start(key: String) -> Option<Bake> {
                 std::thread::available_parallelism().map_or(4, |cores| cores.get().max(2) - 1);
             let row_bytes = QUARRY_SOIL_SIZE * 4;
             let rows_per_band = QUARRY_SOIL_SIZE.div_ceil(bands);
-            let mut image: Arc<[u8]> =
-                std::iter::repeat_n(0, QUARRY_SOIL_SIZE * row_bytes).collect();
-            let rows = Arc::get_mut(&mut image).expect("the bake owns its pixels");
+            let mut image = vec![0u8; QUARRY_SOIL_SIZE * row_bytes];
             std::thread::scope(|scope| {
-                for (band, pixels) in rows.chunks_mut(rows_per_band * row_bytes).enumerate() {
+                for (band, pixels) in image.chunks_mut(rows_per_band * row_bytes).enumerate() {
                     scope.spawn(move || {
                         write_quarry_ground(sand_accum(), band * rows_per_band, pixels)
                     });

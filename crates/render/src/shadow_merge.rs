@@ -184,9 +184,12 @@ pub fn merge_shadows(
         if index_count == 0 {
             continue;
         }
-        // One slot per part, or one per segment of a merged part.
-        let first_slot = merge.slots.len() as u32;
-        if !scenery {
+        // Scenery bakes its transforms into the vertices. Movable models look them up
+        // by slot, one per part or per segment of a merged part.
+        let first_slot = if scenery {
+            0
+        } else {
+            let first = merge.slots.len() as u32;
             match &part.segments {
                 Some(segments) => {
                     for segment_index in 0..segments.len() {
@@ -201,7 +204,8 @@ pub fn merge_shadows(
                     segment: None,
                 }),
             }
-        }
+            first
+        };
         merge.merged[index] = true;
         let side = shadow_side(&part.material);
         let placements = part.instances.as_ref().map_or(1, Vec::len);
