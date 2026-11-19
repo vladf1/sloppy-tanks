@@ -1,6 +1,5 @@
 //! The server directory, read once: which game server hosts a room, or which one a new
-//! room opens on. One GET over HTTPS with the server's TLS setup (Mozilla's roots and the
-//! pure-Rust crypto provider).
+//! room opens on. One GET over HTTPS with the server's TLS setup and Mozilla's roots.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,10 +22,10 @@ pub fn tls_config() -> Arc<rustls::ClientConfig> {
     let roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
-    let provider = Arc::new(rustls_rustcrypto::provider());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .expect("the provider supports TLS 1.2 and 1.3")
+        .expect("ring supports TLS 1.2 and 1.3")
         .with_root_certificates(roots)
         .with_no_client_auth();
     Arc::new(config)

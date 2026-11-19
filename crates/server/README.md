@@ -38,10 +38,12 @@ TypeScript traffic bots.
 `bun run server:build` builds `target/server/sloppy-server` with the `server`
 Cargo profile (optimized, unwinding, so one room's panic ends only that room).
 `bun scripts/build-server.mjs --vps` cross-compiles the static
-`x86_64-unknown-linux-musl` binary the server machines run; Rust's bundled `rust-lld` links
-it (`.cargo/config.toml`), so macOS needs no cross toolchain. It targets x86-64-v3
-(AVX2, BMI2) without FMA, which would change seeded physics results; read the comment
-there before changing either.
+`x86_64-unknown-linux-musl` binary the server machines run. Install Zig on macOS
+with `brew install zig`. Cargo uses it to compile ring's C and assembly for musl,
+then links the server with Rust's bundled `rust-lld`. On x86-64 Ubuntu, CI installs
+`musl-tools` and sets `CC_x86_64_unknown_linux_musl=musl-gcc` and
+`AR_x86_64_unknown_linux_musl=ar`. The server targets x86-64-v3 (AVX2, BMI2) and
+disables FMA to preserve seeded physics parity.
 
 `bun run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
@@ -126,9 +128,9 @@ server is still up; the load figures alone never trigger a send. Each request ha
 seconds. A failing directory is retried at
 every check and logged only when announcing starts failing or works again. The
 directory takes the server's address from the request's source IP, so the server
-connects to it over IPv4 only. TLS is rustls on RustCrypto's pure-Rust cryptography (`rustls-rustcrypto`) with
-Mozilla's root certificates compiled in (`webpki-roots`), which keeps the binary free of
-C code and the image free of a CA store.
+connects to it over IPv4 only. Rustls uses its ring provider and Mozilla's root
+certificates (`webpki-roots`), which are compiled into the binary so the image
+needs no CA store.
 
 The server checks 8-character room codes, protocol/content versions, message sizes
 (4096 bytes) and rates (65 messages/second/socket) before accepting authority. It

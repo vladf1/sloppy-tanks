@@ -163,10 +163,10 @@ fn tls_connector() -> TlsConnector {
     let roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
-    let provider = Arc::new(rustls_rustcrypto::provider());
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .expect("the provider supports TLS 1.2 and 1.3")
+        .expect("ring supports TLS 1.2 and 1.3")
         .with_root_certificates(roots)
         .with_no_client_auth();
     TlsConnector::from(Arc::new(config))

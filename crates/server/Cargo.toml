@@ -30,7 +30,6 @@ sha1_smol.workspace = true
 getrandom.workspace = true
 libc.workspace = true
 rustls.workspace = true
-rustls-rustcrypto.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
 # Masks offensive player names; its word lists stay out of the page's Wasm.

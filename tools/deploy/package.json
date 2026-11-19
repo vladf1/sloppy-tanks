@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "wrangler": "4.161.0"
+    "wrangler": "4.165.0"
   },
   "trustedDependencies": [
     "esbuild",
