@@ -129,7 +129,7 @@ pub use tank_model::{
 };
 pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
 beyond_geometry! {
-    pub use wreck_model::{WreckPart, WreckVent, wreck_model, wreck_vents};
+    pub use wreck_model::{VentShape, WreckPart, WreckVent, wreck_model, wreck_vents};
 }
 
 // Cover, trees and props.

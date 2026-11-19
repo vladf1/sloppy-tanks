@@ -402,6 +402,9 @@ fn driver_station(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     }
 }
 
+const GRILLE_FRAME_WIDTH: f64 = 0.025;
+const GRILLE_RECESS_HEIGHT: f64 = 0.005;
+
 /// An engine-deck grille: a painted frame, a dark recess and tilted louvres,
 /// all lying within the thin layer between roof and hull top. Only upward faces
 /// are drawn; their edges are a few millimetres tall.
@@ -420,7 +423,12 @@ fn grille(kit: &mut Kit, f: &HullFrame, center: DVec2, size: DVec2, slats: u32) 
         );
     };
     flat(kit, Coat::Gunmetal, size / 2.0, f.roof + 0.003);
-    flat(kit, Coat::Dark, size / 2.0 - 0.025, f.roof + 0.005);
+    flat(
+        kit,
+        Coat::Dark,
+        size / 2.0 - GRILLE_FRAME_WIDTH,
+        f.roof + GRILLE_RECESS_HEIGHT,
+    );
     let pitch = (size.y - 0.08) / f64::from(slats);
     let half_x = size.x / 2.0 - 0.035;
     for i in 0..slats {
@@ -588,15 +596,21 @@ fn engine_grilles(c: &Chassis) -> Vec<(DVec2, DVec2, u32)> {
     }
 }
 
-/// The engine deck's grilles as one opening on the roof, its centre and half
-/// size in plan: where a burning wreck's engine fire licks out.
-pub(super) fn engine_vent(c: &Chassis) -> (DVec3, DVec2) {
-    let (lo, hi) = engine_grilles(c).into_iter().fold(
-        (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN)),
-        |(lo, hi), (center, size, _)| (lo.min(center - size / 2.0), hi.max(center + size / 2.0)),
-    );
-    let center = (lo + hi) / 2.0;
-    (v(center.x, c.deck + ROOF_RISE, center.y), (hi - lo) / 2.0)
+/// Individual grille openings, with the solid frame and the metal between doors excluded.
+pub(super) fn engine_vents(c: &Chassis) -> Vec<(DVec3, DVec2)> {
+    engine_grilles(c)
+        .into_iter()
+        .map(|(center, size, _)| {
+            (
+                v(
+                    center.x,
+                    c.deck + ROOF_RISE + GRILLE_RECESS_HEIGHT,
+                    center.y,
+                ),
+                size / 2.0 - GRILLE_FRAME_WIDTH,
+            )
+        })
+        .collect()
 }
 
 fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
