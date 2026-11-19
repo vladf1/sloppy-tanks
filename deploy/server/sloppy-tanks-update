@@ -1,86 +1,100 @@
 #!/usr/bin/env bash
-# Switches the machine's game server to a container image and keeps its pinned-image
-# state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
-# scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
+# Runs the machine's game servers: one container per content version its environment keeps,
+# each on its own loopback port behind Caddy's /v/<content version>/, and keeps their
+# pinned-image state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the
+# server:* scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag, or production's while
-#                                     a dev or App Store machine's tag holds nothing) and
-#                                     switch now
-#   sloppy-tanks-update local IMAGE   switch to an image already loaded here (SSH deploy)
-#   sloppy-tanks-update rollback      switch back to the previous image
-#   sloppy-tanks-update resume        let auto-update follow its tag again
+#   sloppy-tanks-update pull [REF]    with no REF, follow the tag now: start, switch and stop
+#                                     versions without waiting for players; with REF, run
+#                                     that image as its content version's server and hold
+#   sloppy-tanks-update local IMAGE   the same for an image already loaded here (SSH deploy)
+#   sloppy-tanks-update rollback      switch the root version back to its previous image
+#   sloppy-tanks-update resume        let auto-update follow the tag again
 #   sloppy-tanks-update auto          the timer's check (see auto below)
-#   sloppy-tanks-update status
+#   sloppy-tanks-update caddyfile     write Caddy's config for the versions running now
+#   sloppy-tanks-update status | stats
 #
-# The sloppy-tanks unit runs the image ID in /var/lib/sloppy-tanks/image, so a crash or
-# reboot restarts exactly what was running, and only this script changes it, restarting
-# in the same step. The Quadlet unit reads the pin from a drop-in this script writes
-# beside it. A machine follows the tag named after its environment: production's
-# :production, which CI moves; dev's :dev, which `bun scripts/server.mjs publish --dev`
-# moves from a developer's checkout; or app-store's :app-store, the released App Store
-# apps' content version, which `bun scripts/server.mjs release-app` moves. A machine whose
-# server.env names another tag (SERVER_IMAGE_TAG) follows that one instead: the App Store
-# candidate machine lists itself under app-store but follows :app-store-candidate, the
-# latest TestFlight builds' server, which the Apps workflow moves. Anything but
-# `pull` of the followed tag leaves a hold that auto-update respects until `resume` or
-# such a pull, and on dev until the next publish.
+# The machine follows the tag named after its environment (:production, :dev or
+# :app-store, from server.env). Its image carries the
+# label me.fridman.sloppy-tanks.versions, which scripts/promote-server.mjs writes: the
+# newest content versions published to the environment, newest first, each as
+# `<content version>@<digest>` of its server image. Every version listed runs: a player's
+# app or page joins only a server of its own content version, so an App Store version
+# keeps its server after newer ones reach TestFlight, and a deploy no longer restarts the
+# rooms of the version before it. A tag without the label (pushed before the list existed)
+# lists only its own image.
+#
+# A version leaves the list once newer ones push it out; its server stops once its rooms
+# are empty, or after a room's lifetime. A new image of a listed version (a server-only
+# change) replaces its server the same way. Dev switches and stops at once, without
+# looking at who plays. The root of the site serves the newest version (the scripts check
+# /health there). Anything but following the tag leaves a hold that auto-update respects
+# until `resume` or a `pull` of the tag, and on dev until the next publish.
 set -euo pipefail
 
+# Tests run the script under a scratch directory with fake podman, systemctl and curl.
+ROOT=${SLOPPY_TANKS_ROOT:-}
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
-UNIT=sloppy-tanks
-# The server's loopback port (sloppy-tanks.container), which Caddy forwards to.
-PORT=8787
-STATE=/var/lib/sloppy-tanks
-# Local tags that keep the running and previous images from being pruned.
+VERSIONS_LABEL=me.fridman.sloppy-tanks.versions
+# At most this many listed versions run (promote-server.mjs keeps as many).
+MAX_VERSIONS=5
+# Each version's server listens on a loopback port from BASE_PORT, which Caddy forwards to.
+# Servers of versions on their way out keep theirs until they stop, hence the spare ports.
+BASE_PORT=8787
+PORTS=$((2 * MAX_VERSIONS))
+STATE=$ROOT/var/lib/sloppy-tanks
+CONFIG=$ROOT/etc/sloppy-tanks
+QUADLET=$ROOT/etc/containers/systemd
+# The server's unit, with @CONTENT@, @PORT@ and @IMAGE@ for each version.
+TEMPLATE=$CONFIG/sloppy-tanks.container
+CADDYFILE=$CONFIG/caddy/Caddyfile
+# Local tags that keep the images the servers run, could roll back to or will start from
+# being pruned.
 PINNED=sloppy-tanks-pinned
 LABELS=me.fridman.sloppy-tanks
-HEALTH_TIMEOUT_SECONDS=60
-# Auto-update waits for rooms to empty, but not forever. A server-only change can wait out
-# a room's four-hour lifetime; after a content change the live site already sends new
-# visitors a reload message, so it waits only briefly.
-MAX_WAIT_SERVER_ONLY_SECONDS=14400
-MAX_WAIT_CONTENT_SECONDS=600
+HEALTH_TIMEOUT_SECONDS=${SLOPPY_TANKS_HEALTH_TIMEOUT:-60}
+# A server waits for its rooms to empty before it is replaced or stopped, but not forever:
+# at most a room's four-hour lifetime.
+MAX_WAIT_SECONDS=14400
 # Every kind of manifest a tag can name (CI pushes a manifest list, a local push may push
 # an image manifest or an OCI index), so a check reads the digest of whatever is there.
 MANIFEST_TYPES=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
 
 usage() {
-  echo "usage: sloppy-tanks-update pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
+  echo "usage: sloppy-tanks-update pull [REF]|local IMAGE|rollback|resume|auto|caddyfile|status|stats" >&2
   exit 2
 }
 command=${1:-}
-quadlet=/etc/containers/systemd/$UNIT.container
-image_file=$STATE/image
-previous_file=$STATE/previous
+# The versions the tag lists: `<content> <image ID>` lines, newest first.
+wanted_file=$STATE/wanted
+# The version the site's root serves.
+root_file=$STATE/root
 hold_file=$STATE/hold
-pending_file=$STATE/pending
-# The followed tag's manifest digest and image ID at its latest pull.
+# The followed tag's manifest digest at its latest read.
 followed_file=$STATE/followed
 # Present while checks cannot read the followed tag from the registry.
 failing_file=$STATE/check-failing
-# The last image that failed its health check. Auto-update does not try it again, which
-# would restart the server at every check; the next image on the tag, or a `pull`, does.
-failed_file=$STATE/failed
-mkdir -p "$STATE"
+mkdir -p "$STATE/versions"
 
 # The machine's environment (server.env, which the provider's user data writes)
-# names the tag auto-update follows, unless SERVER_IMAGE_TAG there names another.
-environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
-image_tag=$(sed -n 's/^SERVER_IMAGE_TAG=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
-follow=$REGISTRY:${image_tag:-${environment:-production}}
+# names the tag auto-update follows.
+environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' "$CONFIG/server.env" 2>/dev/null || true)
+follow=$REGISTRY:${environment:-production}
 
 # One change at a time. The timer skips a check while another runs.
-exec 9>/run/lock/sloppy-tanks-update.lock
+mkdir -p "$ROOT/run/lock"
+exec 9>"$ROOT/run/lock/sloppy-tanks-update.lock"
 if [[ $command == auto ]]; then
   flock --nonblock 9 || exit 0
 else
   flock 9
 fi
 
-pinned() { [[ -f $1 ]] && sed -n 's/^IMAGE=//p' "$1" || true; }
-pin() { printf 'IMAGE=%s\n' "$2" >"$1.new" && mv -f "$1.new" "$1"; }
-# keep_as FILE TAG IMAGE: pins IMAGE in FILE and tags it $PINNED:TAG, out of a prune's reach.
-keep_as() { pin "$1" "$3"; podman tag "$3" "$PINNED:$2"; }
+# Each version's state lives in versions/<content>/: image and previous (pinned image IDs),
+# port, pending (`<image> <since>`), failed and retiring (`<since>`).
+version_dir() { echo "$STATE/versions/$1"; }
+read_file() { [[ -f $1 ]] && cat "$1" || true; }
+write_file() { printf '%s\n' "$2" >"$1.new" && mv -f "$1.new" "$1"; }
 label() { podman image inspect --format "{{index .Config.Labels \"$2\"}}" "$1" 2>/dev/null || true; }
 # Podman prints IDs without their sha256: prefix but accepts it, and lists them with it.
 image_id() {
@@ -90,25 +104,251 @@ image_id() {
 describe() {
   echo "${1:0:19} (v$(label "$1" $LABELS.release), server build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
 }
+unit() { echo "sloppy-tanks-$1"; }
+port_of() { read_file "$(version_dir "$1")/port"; }
+# The versions with a server here, from their state directories.
+running() {
+  local dir
+  for dir in "$STATE"/versions/*/; do
+    if [[ -f ${dir}image ]]; then basename "$dir"; fi
+  done
+}
+wanted() { [[ -f $wanted_file ]] && cut -d' ' -f1 "$wanted_file" || true; }
+is_wanted() { wanted | grep -qxF "$1"; }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 
-# The Quadlet unit takes the pinned image from a drop-in, which systemd sees only after
-# regenerating the unit.
-use_pin() {
-  mkdir -p "$quadlet.d"
-  printf '[Container]\nImage=%s\n' "$1" >"$quadlet.d/image.conf.new"
-  mv -f "$quadlet.d/image.conf.new" "$quadlet.d/image.conf"
+# A content version names a unit, a path and a directory, so only hex passes.
+check_content() {
+  [[ $1 =~ ^[0-9a-f]{8,64}$ ]] || {
+    echo "Not a content version: '$1'" >&2
+    return 1
+  }
+}
+
+# The lowest port no server here holds.
+free_port() {
+  local port used
+  used=$(for content in $(running); do port_of "$content"; done)
+  for ((port = BASE_PORT; port < BASE_PORT + PORTS; port++)); do
+    grep -qxF "$port" <<<"$used" || {
+      echo "$port"
+      return 0
+    }
+  done
+  echo "No free port for another server (at most $PORTS)" >&2
+  return 1
+}
+
+# Writes the version's Quadlet unit for IMAGE from the template, and its settings: the
+# machine's server.env, with the directory's /v/<content version>/servers as where it
+# announces, so the directory lists it at that path on this machine. Server builds from
+# before machines ran several versions know nothing of paths, but take their
+# DIRECTORY_URL as given. systemd sees the unit only after regenerating its units.
+write_unit() {
+  local content=$1 image=$2 port directory settings
+  port=$(port_of "$content")
+  settings=$(version_dir "$content")/server.env
+  directory=$(sed -n 's/^DIRECTORY_URL=//p' "$CONFIG/server.env" 2>/dev/null || true)
+  {
+    grep -v '^DIRECTORY_URL=' "$CONFIG/server.env" 2>/dev/null || true
+    if [[ -n $directory ]]; then echo "DIRECTORY_URL=${directory%/}/v/$content"; fi
+  } >"$settings"
+  sed -e "s/@CONTENT@/$content/g" -e "s/@PORT@/$port/g" -e "s/@IMAGE@/$image/g" \
+    -e "s|@SETTINGS@|$settings|g" "$TEMPLATE" >"$QUADLET/$(unit "$content").container.new"
+  mv -f "$QUADLET/$(unit "$content").container.new" "$QUADLET/$(unit "$content").container"
   systemctl daemon-reload
 }
 
-# Every load or pull leaves an image tagged with its build, which a plain prune (untagged
-# images only) never frees. Untag the server images the server neither runs nor could
-# roll back to, keeping the followed tag for a pending auto-update, then prune what is
-# left untagged (Caddy's image stays tagged). Podman lists every name of a matching image,
-# so only the registry's tags are considered.
+# /health reports the stamps of the process that answers, so a match means the new
+# container, not the one it replaced, is serving.
+healthy() {
+  local port=$1 image=$2 build content body waited=0
+  build=$(label "$image" $LABELS.server-build)
+  content=$(label "$image" $LABELS.content-version)
+  for (( ; ; waited += 2)); do
+    body=$(curl -fsS --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null | tr -d ' \n' || true)
+    if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* ]]; then
+      return 0
+    fi
+    if ((waited >= HEALTH_TIMEOUT_SECONDS)); then return 1; fi
+    sleep 2
+  done
+}
+
+# The seats taken on a version's server; one that does not answer has nobody to protect.
+# The top-level count: each room in /stats has a "players" field too.
+players() {
+  local players
+  players=$(curl -fsS --max-time 5 "http://127.0.0.1:$(port_of "$1")/stats" 2>/dev/null |
+    python3 -c 'import json, sys; print(int(json.load(sys.stdin)["players"]))' 2>/dev/null || true)
+  echo "${players:-0}"
+}
+
+# Starts a server for a version this machine does not run yet.
+start_version() {
+  local content=$1 image=$2 dir port
+  dir=$(version_dir "$content")
+  port=$(free_port) || return 1
+  mkdir -p "$dir"
+  write_file "$dir/port" "$port"
+  write_file "$dir/image" "$image"
+  podman tag "$image" "$PINNED:$content"
+  write_unit "$content" "$image"
+  echo "Starting $(unit "$content") on port $(port_of "$content"): $(describe "$image")"
+  systemctl restart "$(unit "$content")"
+  if healthy "$(port_of "$content")" "$image"; then
+    echo "$(unit "$content") runs $(describe "$image")"
+    rm -f "$dir/failed"
+    return 0
+  fi
+  echo "$(unit "$content") did not report $(describe "$image") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+  stop_version "$content"
+  mkdir -p "$dir"
+  write_file "$dir/failed" "$image"
+  return 1
+}
+
+# Switches a running version's server to another image of it, restoring the one it ran
+# when the new one fails its health check.
+switch_version() {
+  local content=$1 new=$2 dir current
+  dir=$(version_dir "$content")
+  current=$(read_file "$dir/image")
+  if [[ $new == "$current" ]] && systemctl is-active --quiet "$(unit "$content")"; then
+    echo "$(unit "$content") already runs $(describe "$new")"
+    return 0
+  fi
+  write_file "$dir/image" "$new"
+  podman tag "$new" "$PINNED:$content"
+  write_unit "$content" "$new"
+  echo "Restarting $(unit "$content") on $(describe "$new")"
+  systemctl restart "$(unit "$content")"
+  if healthy "$(port_of "$content")" "$new"; then
+    echo "$(unit "$content") runs $(describe "$new")"
+    # Only now does the image it replaced become the one to roll back to.
+    if [[ -n $current && $current != "$new" ]]; then
+      write_file "$dir/previous" "$current"
+      podman tag "$current" "$PINNED:$content-previous"
+    fi
+    rm -f "$dir/failed" "$dir/pending"
+    return 0
+  fi
+  echo "$(unit "$content") did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+  write_file "$dir/failed" "$new"
+  if [[ -n $current && $current != "$new" ]]; then
+    write_file "$dir/image" "$current"
+    podman tag "$current" "$PINNED:$content"
+    write_unit "$content" "$current"
+    systemctl restart "$(unit "$content")"
+    if healthy "$(port_of "$content")" "$current"; then
+      echo "Rolled back to $(describe "$current")" >&2
+    else
+      echo "The previous image is not healthy either; see journalctl -u $(unit "$content")" >&2
+    fi
+  fi
+  return 1
+}
+
+# Runs IMAGE as its content version's server now (an SSH deploy or a pulled tag),
+# switching the one running or starting one, and serves it at the root. A version started
+# this way that the tag does not list is an override: the next override replaces it, so
+# repeated deploys of unlisted versions do not pile up.
+run_now() {
+  local image=$1 content other
+  content=$(label "$image" $LABELS.content-version)
+  check_content "$content"
+  if [[ -f $(version_dir "$content")/image ]]; then
+    switch_version "$content" "$image"
+  else
+    start_version "$content" "$image"
+    touch "$(version_dir "$content")/override"
+  fi
+  write_file "$root_file" "$content"
+  for other in $(running); do
+    if [[ $other != "$content" && -f $(version_dir "$other")/override ]] && ! is_wanted "$other"; then
+      stop_version "$other"
+    fi
+  done
+}
+
+stop_version() {
+  local content=$1
+  echo "Stopping $(unit "$content")"
+  systemctl stop "$(unit "$content")" || true
+  rm -f "$QUADLET/$(unit "$content").container"
+  systemctl daemon-reload
+  podman image rm "$PINNED:$content" "$PINNED:$content-previous" "$PINNED:$content-listed" \
+    >/dev/null 2>&1 || true
+  rm -rf "$(version_dir "$content")"
+}
+
+# Caddy's config: each running version under /v/<content version>/ (with the prefix
+# stripped, so its server sees the paths it serves at a root), and the root version at
+# the root. The nip.io name of the machine's address is in site (bootstrap.sh). Caddy
+# reloads only when the config changed.
+write_caddyfile() {
+  local site root content new
+  site=$(cat "$CONFIG/site")
+  root=$(read_file "$root_file")
+  if [[ -z $root || ! -f $(version_dir "$root")/image ]]; then
+    root=""
+    for content in $(wanted) $(running); do
+      if [[ -f $(version_dir "$content")/image ]]; then
+        root=$content
+        break
+      fi
+    done
+  fi
+  # X-Client-Port (with X-Forwarded-For) names the player's end of Caddy's socket to the
+  # server, which reads its TCP round trip and retransmissions from it. A reload unloads the
+  # old config, whose WebSockets Caddy would close at once: the delay keeps every match
+  # going, on any version, for up to a room's lifetime.
+  proxy() {
+    printf '\t\treverse_proxy 127.0.0.1:%s {\n\t\t\theader_up X-Client-Port {remote_port}\n\t\t\tstream_close_delay %ss\n\t\t}\n' "$1" "$MAX_WAIT_SECONDS"
+  }
+  new=$(
+    echo "# Written by sloppy-tanks-update for the servers running now."
+    echo "$site {"
+    for content in $(running | sort); do
+      printf '\thandle_path /v/%s* {\n' "$content"
+      proxy "$(port_of "$content")"
+      printf '\t}\n'
+    done
+    printf '\thandle {\n'
+    if [[ -n $root ]]; then
+      proxy "$(port_of "$root")"
+    else
+      printf '\t\trespond "No game server runs here yet" 503\n'
+    fi
+    printf '\t}\n}\n'
+  )
+  if [[ $new == "$(read_file "$CADDYFILE")" ]]; then return 0; fi
+  mkdir -p "$(dirname "$CADDYFILE")"
+  local applied
+  applied=$(read_file "$CADDYFILE")
+  printf '%s\n' "$new" >"$CADDYFILE.new"
+  mv -f "$CADDYFILE.new" "$CADDYFILE"
+  if systemctl is-active --quiet caddy && ! systemctl reload caddy; then
+    # Put back what Caddy still runs, so the next check finds a change and tries again.
+    printf '%s\n' "$applied" >"$CADDYFILE"
+    echo "Caddy did not reload its config; trying again at the next check" >&2
+    return 1
+  fi
+  echo "Caddy routes /v/ to $(running | wc -l | tr -d ' ') versions, the root to ${root:-none}"
+}
+
+# Untags the server images no version runs, could roll back to or is listed to start,
+# then prunes what is left untagged (Caddy's image stays tagged). Podman lists every name
+# of a matching image, so only the registry's tags are considered.
 remove_old_images() {
-  local keep ref id
-  keep=$(pinned "$image_file"; pinned "$previous_file")
+  local keep ref id content
+  keep=$(
+    for content in $(running); do
+      read_file "$(version_dir "$content")/image"
+      read_file "$(version_dir "$content")/previous"
+    done
+    [[ -f $wanted_file ]] && cut -d' ' -f2 "$wanted_file"
+  )
   podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
       if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$follow" ]]; then continue; fi
@@ -128,10 +368,43 @@ remote_digest() {
   [[ -n $token ]] || return 1
   curl -fsS --max-time 5 --head --header "Authorization: Bearer $token" \
     --header "Accept: $MANIFEST_TYPES" "https://$host/v2/$name/manifests/${follow##*:}" 2>/dev/null |
-    tr -d '\r' | sed -n 's/^docker-content-digest: *//Ip' | grep .
+    tr -d '\r' | grep -i '^docker-content-digest:' | sed 's/^[^:]*: *//' | grep .
 }
 
-# A check that cannot reach the registry changes nothing: the pinned image keeps running.
+# Pulls the followed tag and every version its label lists, and writes them to wanted.
+# Fails, changing nothing, when any pull fails.
+read_wanted() {
+  local tagged listed entry content digest image lines=""
+  podman pull --quiet "$follow" >/dev/null || return 1
+  tagged=$(image_id "$follow")
+  listed=$(label "$tagged" "$VERSIONS_LABEL")
+  if [[ -z $listed ]]; then
+    listed="$(label "$tagged" $LABELS.content-version)@self"
+  fi
+  for entry in $listed; do
+    content=${entry%%@*}
+    digest=${entry#*@}
+    check_content "$content" || return 1
+    if [[ $digest == self ]]; then
+      image=$tagged
+    else
+      [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+      podman pull --quiet "$REGISTRY@$digest" >/dev/null || return 1
+      image=$(image_id "$REGISTRY@$digest")
+    fi
+    # The image must be what the list says it is.
+    [[ $(label "$image" $LABELS.content-version) == "$content" ]] || {
+      echo "$REGISTRY@$digest is not content $content" >&2
+      return 1
+    }
+    podman tag "$image" "$PINNED:$content-listed"
+    lines+="$content $image"$'\n'
+  done
+  printf '%s' "$lines" | head -n "$MAX_VERSIONS" >"$wanted_file.new"
+  mv -f "$wanted_file.new" "$wanted_file"
+}
+
+# A check that cannot reach the registry changes nothing: the pinned images keep running.
 # The journal hears when checks start failing and when they work again, not every check.
 check_failed() {
   if [[ ! -f $failing_file ]]; then
@@ -146,79 +419,89 @@ check_worked() {
   fi
 }
 
-# /health reports the stamps of the process that answers, so a match means the new
-# container, not the one it replaced, is serving.
-healthy() {
-  local build content body
-  build=$(label "$1" $LABELS.server-build)
-  content=$(label "$1" $LABELS.content-version)
-  for ((waited = 0; waited < HEALTH_TIMEOUT_SECONDS; waited += 2)); do
-    body=$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | tr -d ' \n' || true)
-    if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* ]]; then
-      return 0
-    fi
-    sleep 2
-  done
+# Whether a version's server may change now: at once on dev or when told to (`now`),
+# otherwise once nobody plays on it or it has waited its maximum since `since_file`.
+may_change() {
+  local content=$1 now_mode=$2 since_file=$3 now first players
+  if [[ $now_mode == now || $environment == dev ]]; then return 0; fi
+  now=$(date +%s)
+  first=$(read_file "$since_file")
+  first=${first##* }
+  players=$(players "$content")
+  if ((players == 0 || now - ${first:-$now} >= MAX_WAIT_SECONDS)); then return 0; fi
+  echo "Waiting: $players playing on $(unit "$content"), $((now - ${first:-$now}))s of ${MAX_WAIT_SECONDS}s"
   return 1
 }
 
-switch_to() {
-  local new=$1 current previous
-  current=$(pinned "$image_file")
-  previous=$(pinned "$previous_file")
-  if [[ $new == "$current" ]] && systemctl is-active --quiet "$UNIT"; then
-    echo "$UNIT already runs $(describe "$new")"
-    return 0
-  fi
-  if [[ -n $current && $current != "$new" ]]; then keep_as "$previous_file" previous "$current"; fi
-  keep_as "$image_file" current "$new"
-  use_pin "$new"
-  echo "Restarting $UNIT on $(describe "$new")"
-  systemctl restart "$UNIT"
-  if healthy "$new"; then
-    echo "$UNIT runs $(describe "$new")"
-    rm -f "$failed_file"
-    remove_old_images
-    return 0
-  fi
-  echo "$UNIT did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
-  echo "$new" >"$failed_file"
-  if [[ -n $current && $current != "$new" ]]; then
-    keep_as "$image_file" current "$current"
-    use_pin "$current"
-    if [[ -n $previous ]]; then keep_as "$previous_file" previous "$previous"; fi
-    systemctl restart "$UNIT"
-    if healthy "$current"; then
-      echo "Rolled back to $(describe "$current")" >&2
+# Brings the servers in line with wanted: starts listed versions, switches a listed
+# version to its listed image and stops versions no longer listed, the last two once
+# may_change allows. `now` (a pull) waits for nobody. Fails when a listed image does not
+# run, now or after an earlier failed health check.
+reconcile() {
+  local mode=$1 content image dir changed=0 failed=0 pending
+  # The list arrives on its own descriptor, so nothing the loop runs can read from it.
+  while read -r content image <&3; do
+    [[ -n $content ]] || continue
+    dir=$(version_dir "$content")
+    rm -f "$dir/retiring" "$dir/override"
+    if [[ $image == "$(read_file "$dir/failed")" ]]; then
+      failed=1
+    elif [[ ! -f $dir/image ]]; then
+      start_version "$content" "$image" || failed=1
+      changed=1
+    elif [[ $image != "$(read_file "$dir/image")" ]]; then
+      pending=$(read_file "$dir/pending")
+      if [[ ${pending%% *} != "$image" ]]; then
+        write_file "$dir/pending" "$image $(date +%s)"
+        echo "New image for $(unit "$content"): $(describe "$image")"
+      fi
+      if may_change "$content" "$mode" "$dir/pending"; then
+        switch_version "$content" "$image" || failed=1
+        changed=1
+      fi
     else
-      echo "The previous image is not healthy either; see journalctl -u $UNIT" >&2
+      rm -f "$dir/pending"
     fi
-  fi
-  return 1
+  done 3<"$wanted_file"
+  for content in $(running); do
+    is_wanted "$content" && continue
+    dir=$(version_dir "$content")
+    [[ -f $dir/retiring ]] || {
+      date +%s >"$dir/retiring"
+      echo "$(unit "$content") is no longer listed; it stops once its rooms are empty"
+    }
+    if may_change "$content" "$mode" "$dir/retiring"; then
+      stop_version "$content"
+      changed=1
+    fi
+  done
+  content=$(wanted | head -n 1)
+  if [[ -n $content && -f $(version_dir "$content")/image ]]; then write_file "$root_file" "$content"; fi
+  write_caddyfile || failed=1
+  if ((changed)); then remove_old_images; fi
+  return "$failed"
 }
 
-# The timer's check. It follows the environment's tag unless a hold is set. Production
-# restarts only when nobody holds a seat or the pending image has waited its maximum. Dev
-# switches as soon as :dev moves, without asking who plays, and a publish there ends a
-# hold: whoever published wants that build running now.
+# The timer's check. It follows the tag unless a hold is set, reading the tag again only
+# after its digest moved. A hold on dev ends with the next publish: whoever published wants
+# that build running now.
 auto() {
   if [[ -f $hold_file && $environment != dev ]]; then
     echo "Holding: $(cat "$hold_file")"
     return 0
   fi
-  local digest followed="" new=""
+  local digest followed=""
   if ! digest=$(remote_digest); then
     check_failed
     return 0
   fi
-  if [[ -f $followed_file ]]; then read -r followed new <"$followed_file" || true; fi
-  if [[ $digest != "$followed" ]]; then
-    if ! podman pull --quiet "$follow" >/dev/null; then
+  followed=$(read_file "$followed_file")
+  if [[ $digest != "$followed" || ! -f $wanted_file ]]; then
+    if ! read_wanted; then
       check_failed
       return 0
     fi
-    new=$(image_id "$follow")
-    echo "$digest $new" >"$followed_file"
+    write_file "$followed_file" "$digest"
     if [[ -f $hold_file ]]; then
       echo "A new $follow ends the hold: $(cat "$hold_file")"
       rm -f "$hold_file"
@@ -226,100 +509,80 @@ auto() {
   fi
   check_worked
   if [[ -f $hold_file ]]; then return 0; fi
-  local current failed="" now first=0 pending=""
-  current=$(pinned "$image_file")
-  if [[ -f $failed_file ]]; then failed=$(cat "$failed_file"); fi
-  if [[ $new == "$current" || $new == "$failed" ]]; then
-    rm -f "$pending_file"
-    return 0
-  fi
-  if [[ $environment == dev ]]; then
-    echo "New image on $follow: $(describe "$new")"
-    switch_to "$new"
-    return
-  fi
-  now=$(date +%s)
-  if [[ -f $pending_file ]]; then read -r pending first <"$pending_file" || true; fi
-  if [[ $pending != "$new" ]]; then
-    first=$now
-    echo "$new $now" >"$pending_file"
-    echo "New image on $follow: $(describe "$new")"
-  fi
-  local max=$MAX_WAIT_SERVER_ONLY_SECONDS
-  if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
-    max=$MAX_WAIT_CONTENT_SECONDS
-  fi
-  # The top-level count: each room in /stats has a "players" field too. A server that
-  # does not answer has nobody to protect.
-  local players
-  players=$(curl -fsS --max-time 5 "http://127.0.0.1:$PORT/stats" 2>/dev/null |
-    python3 -c 'import json, sys; print(int(json.load(sys.stdin)["players"]))' 2>/dev/null || true)
-  players=${players:-0}
-  local waited=$((now - first))
-  if ((players > 0 && waited < max)); then
-    echo "Waiting: $players playing, ${waited}s of ${max}s"
-    return 0
-  fi
-  rm -f "$pending_file"
-  switch_to "$new"
+  # A failed image waits for the tag to list another; the journal has said why.
+  reconcile wait || true
 }
 
 status() {
-  local current previous
-  current=$(pinned "$image_file")
-  previous=$(pinned "$previous_file")
-  echo "service:  $UNIT ($(systemctl is-active "$UNIT" || true))"
-  echo "running:  ${current:+$(describe "$current")}"
-  echo "previous: ${previous:+$(describe "$previous")}"
+  local content dir root
+  root=$(read_file "$root_file")
+  for content in $(running); do
+    dir=$(version_dir "$content")
+    echo "version:  $content on port $(port_of "$content")$([[ $content == "$root" ]] && echo ", at the root")$(is_wanted "$content" || echo ", no longer listed")"
+    echo "  service:  $(unit "$content") ($(systemctl is-active "$(unit "$content")" || true))"
+    echo "  running:  $(describe "$(read_file "$dir/image")")"
+    if [[ -f $dir/previous ]]; then echo "  previous: $(describe "$(read_file "$dir/previous")")"; fi
+    if [[ -f $dir/pending ]]; then
+      local pending
+      pending=$(read_file "$dir/pending")
+      echo "  pending:  $(describe "${pending%% *}") since $(date -u -d "@${pending##* }" +%FT%TZ)"
+    fi
+    if [[ -f $dir/retiring ]]; then echo "  stopping: once empty, waiting since $(date -u -d "@$(cat "$dir/retiring")" +%FT%TZ)"; fi
+    if [[ -f $dir/failed ]]; then echo "  failed:   $(describe "$(read_file "$dir/failed")")"; fi
+  done
+  for content in $(wanted); do
+    if [[ ! -f $(version_dir "$content")/image ]]; then
+      echo "version:  $content listed, not running$([[ -f $(version_dir "$content")/failed ]] && echo " (its image failed its health check)")"
+    fi
+  done
   if [[ -f $hold_file ]]; then echo "hold:     $(cat "$hold_file")"; fi
   echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true), following $follow"
   if [[ -f $failing_file ]]; then
     echo "registry: no answer for $follow since $(date -u -r "$failing_file" +%FT%TZ)"
-  fi
-  if [[ -f $failed_file ]]; then echo "failed:   $(describe "$(cat "$failed_file")")"; fi
-  if [[ -f $pending_file ]]; then
-    local pending first
-    read -r pending first <"$pending_file" || true
-    echo "pending:  $(describe "$pending") since $(date -u -d "@$first" +%FT%TZ)"
   fi
 }
 
 case $command in
   pull)
     requested=${2:-$follow}
-    ref=$requested
-    # Pulling the followed tag records its digest, so a hold set afterwards lasts until the
-    # tag moves again rather than until the next check.
-    digest=""
-    if [[ $ref == "$follow" ]]; then digest=$(remote_digest) || true; fi
-    # A machine created before anything was published to its tag (:dev, :app-store,
-    # :app-store-candidate) runs production's server meanwhile, so it is up and listed;
-    # auto-update still follows its tag and switches to the first publish or release.
-    if [[ $ref == "$follow" && -z $digest && $follow != "$REGISTRY:production" ]]; then
-      ref=$REGISTRY:production
-      echo "Nothing to read on $follow; starting $ref until a publish moves it"
-    fi
-    podman pull --quiet "$ref" >/dev/null
-    new=$(image_id "$ref")
-    if [[ -n $digest ]]; then echo "$digest $new" >"$followed_file"; fi
-    # Only following the tag releases a hold; any other image is a pin. A failed switch
-    # exits here (set -e) and leaves the hold as it was.
-    switch_to "$new"
     if [[ $requested == "$follow" ]]; then
-      rm -f "$hold_file" "$pending_file"
+      digest=$(remote_digest) || true
+      if [[ -z $digest && $follow != "$REGISTRY:production" ]]; then
+        # A machine created before anything was published to its tag (:dev, :app-store)
+        # runs production's server meanwhile, so it is up and listed; auto-update still
+        # follows its tag and switches to the first publish. That is no hold.
+        echo "Nothing to read on $follow; starting $REGISTRY:production until a publish moves it"
+        podman pull --quiet "$REGISTRY:production" >/dev/null
+        run_now "$(image_id "$REGISTRY:production")"
+        write_caddyfile
+        exit 0
+      fi
+      read_wanted
+      if [[ -n $digest ]]; then write_file "$followed_file" "$digest"; fi
+      rm -f "$hold_file"
+      reconcile now
     else
-      hold "Pulled $ref" "$new"
+      podman pull --quiet "$requested" >/dev/null
+      new=$(image_id "$requested")
+      run_now "$new"
+      write_caddyfile
+      hold "Pulled $requested" "$new"
     fi
     ;;
   local)
     new=$(image_id "${2:?local needs an image}")
-    switch_to "$new"
+    run_now "$new"
+    write_caddyfile
     hold "SSH deploy" "$new"
     ;;
   rollback)
-    previous=$(pinned "$previous_file")
-    [[ -n $previous ]] || { echo "No previous image for $UNIT" >&2; exit 1; }
-    switch_to "$previous"
+    content=$(read_file "$root_file")
+    previous=$(read_file "$(version_dir "${content:-none}")/previous")
+    [[ -n $previous ]] || {
+      echo "No previous image for the root version" >&2
+      exit 1
+    }
+    switch_version "$content" "$previous"
     hold "Rollback" "$previous"
     ;;
   resume)
@@ -327,6 +590,14 @@ case $command in
     echo "Auto-update follows $follow again (if enabled)"
     ;;
   auto) auto ;;
+  caddyfile) write_caddyfile ;;
   status) status ;;
+  stats)
+    for content in $(running); do
+      echo "== $content (port $(port_of "$content"))"
+      curl -fsS --max-time 5 "http://127.0.0.1:$(port_of "$content")/stats" || true
+      echo
+    done
+    ;;
   *) usage ;;
 esac

@@ -2,7 +2,8 @@
 # Vultr startup script (cloud-init user data) for an App Store game server: deploy an
 # Ubuntu instance with it and the machine sets itself up (deploy/server/bootstrap.sh),
 # then lists itself in the server directory under app-store, where the App Store apps look.
-# It follows :app-store, the released apps' content version (`bun run server:release-app`).
+# It runs a server for each content version :app-store lists: the latest builds the Apps
+# workflow uploaded to TestFlight, released or not.
 write_files:
   - path: /etc/sloppy-tanks/server.env
     content: |

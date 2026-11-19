@@ -1,36 +1,42 @@
-# Installed to /etc/containers/systemd/ by bootstrap.sh. Quadlet turns it into
-# sloppy-tanks.service, which runs the server under Podman with no daemon beside it.
+# The template of a version's server unit, installed to /etc/sloppy-tanks/ by bootstrap.sh.
+# sloppy-tanks-update writes one Quadlet unit from it per content version the machine runs,
+# /etc/containers/systemd/sloppy-tanks-<content version>.container, filling in @CONTENT@,
+# @PORT@, @IMAGE@ and @SETTINGS@; systemd generates
+# sloppy-tanks-<content version>.service from it, which runs the server under Podman with no
+# daemon beside it.
 [Unit]
-Description=Sloppy Tanks multiplayer server
+Description=Sloppy Tanks multiplayer server, content @CONTENT@
 Wants=network-online.target
 After=network-online.target
 
 [Container]
-ContainerName=sloppy-tanks
-# Image= is the image ID pinned in sloppy-tanks.container.d/image.conf, which only
-# sloppy-tanks-update writes. Until a deploy pins one, Quadlet generates no service.
-# The pinned image is always local, so a crash or reboot never needs the registry.
+ContainerName=sloppy-tanks-@CONTENT@
+# The image ID the updater pinned, always local, so a crash or reboot never needs the
+# registry.
+Image=@IMAGE@
 Pull=never
-# Host networking keeps the listener on loopback behind Caddy, which reaches it there,
-# and leaves no ports to publish past the firewall.
+# Host networking keeps the listener on loopback behind Caddy, which reaches it there and
+# serves it under /v/@CONTENT@/, and leaves no ports to publish past the firewall.
 Network=host
-Environment=HOST=127.0.0.1 PORT=8787
-# The machine's settings: SERVER_ENVIRONMENT (production, dev or app-store) and
-# DIRECTORY_URL, which the server pushes its rooms to. The provider's user data writes it
-# (deploy/server/cloud-init/), with SERVER_IMAGE_TAG for the updater alone
-# (sloppy-tanks-update), which the server does not read.
-EnvironmentFile=/etc/sloppy-tanks/server.env
-# A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
-# cap without swap.
+Environment=HOST=127.0.0.1 PORT=@PORT@
+# The machine's settings, which the provider's user data writes to
+# /etc/sloppy-tanks/server.env (deploy/server/cloud-init/): SERVER_ENVIRONMENT (production,
+# dev or app-store) and DIRECTORY_URL, which the server pushes its rooms to, here
+# DIRECTORY_URL/v/@CONTENT@ so the directory lists this server at /v/@CONTENT@ on the
+# machine.
+EnvironmentFile=@SETTINGS@
+# A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory cap
+# without swap. A machine runs up to five versions (an idle server holds 5-20 MB, a busy
+# one tens), so each is capped well under the machine's 1 GB.
 ReadOnly=true
 ReadOnlyTmpfs=false
 DropCapability=ALL
 NoNewPrivileges=true
-Memory=700m
-PodmanArgs=--memory-swap 700m
+Memory=300m
+PodmanArgs=--memory-swap 300m
 PidsLimit=256
 Ulimit=nofile=65536:65536
-# Output goes straight to the unit's journal, as before (bun run server:logs).
+# Output goes straight to the unit's journal (bun run server:logs).
 LogDriver=passthrough
 # SIGTERM resets rooms and waits up to a second for clients to finish closing.
 StopTimeout=10

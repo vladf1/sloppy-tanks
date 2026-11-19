@@ -8,6 +8,10 @@ import {
   parseAnnouncement,
   parseEnvironment,
   readBody,
+  serverUrl,
+  announcedVersion,
+  machineOf,
+  MAX_UNFILTERED_SERVERS,
   type ListedServer,
 } from "../directory/listing";
 import type { RoomListing } from "../directory/room-listing";
@@ -123,6 +127,44 @@ test("an announcement keeps its declared /health fields and rooms checked as the
   ]) {
     assert.equal(parseAnnouncement(text), undefined, text);
   }
+});
+
+test("a machine announces each version it runs under that version's path, and no other", () => {
+  const announced = parseAnnouncement(JSON.stringify({ ...health, rooms: [] }));
+  assert.ok(announced);
+  const base = "wss://45-63-62-42.nip.io";
+  assert.equal(announcedVersion("/servers"), "");
+  assert.equal(serverUrl(base, "", announced), base);
+  const version = announcedVersion(`/v/${health.contentVersion}/servers`);
+  assert.equal(version, health.contentVersion);
+  assert.equal(serverUrl(base, version!, announced), `${base}/v/${health.contentVersion}`);
+  assert.equal(serverUrl(base, "0000000000000000000000ff", announced), undefined);
+  for (const path of [
+    "/v/ABCDEF12/servers",
+    "/v/../servers",
+    "/v/12/servers",
+    "/v/abcdef12",
+    "/x",
+  ]) {
+    assert.equal(announcedVersion(path), undefined, path);
+  }
+  assert.equal(machineOf(`${base}/v/${health.contentVersion}`), base);
+  assert.equal(machineOf(base), base);
+});
+
+test("a client that names its content version gets only that version's servers", () => {
+  const listed = (version: string, n: number) => ({
+    ...server(`wss://45-63-62-${n}.nip.io/v/${version}`, []),
+    contentVersion: version,
+  });
+  const servers = Array.from({ length: 20 }, (_, n) => listed(n % 2 ? "aaaaaaaa" : "bbbbbbbb", n));
+  const mine = listServers(servers, { contentVersion: "aaaaaaaa" });
+  assert.equal(mine.length, 10);
+  assert.ok(mine.every((entry) => entry.contentVersion === "aaaaaaaa"));
+  // Builds that name none read at most sixteen servers before rejecting the list.
+  assert.equal(listServers(servers).length, MAX_UNFILTERED_SERVERS);
+  // The overview sees every server.
+  assert.equal(listServers(servers, { all: true }).length, 20);
 });
 
 /** A body of `chunks` chunks of `chunkBytes` bytes each that counts how many the reader

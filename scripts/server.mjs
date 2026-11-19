@@ -3,44 +3,38 @@ import { contentVersion, serverBuild } from "./content-version.mjs";
 import { environment, gameServers, option, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate the game server machines, one after another and over SSH except for
- * `publish` and `release-app`: the ones the server directory lists for production, or
- * with `--dev` for the dev site, with `--app-store` for the App Store apps', or with
- * `--ip ADDRESS` that machine, listed or not. See crates/server/README.md.
+ * `publish`: the ones the server directory lists for production, or with `--dev` for the
+ * dev site, with `--app-store` for the App Store apps', or with `--ip ADDRESS` that
+ * machine, listed or not. See crates/server/README.md.
  *
- *   publish --dev            build the image here and push it as :dev, which the dev
- *                            machines follow; wait until each serves it
- *   release-app [--image TAG]
- *                            point :app-store at the App Store build TestFlight has
- *                            (:app-store-candidate, or TAG), which the App Store machines
- *                            follow; wait until each serves it (the candidate machine
- *                            keeps following :app-store-candidate)
- *   update [--image TAG]     pull an image CI published (default the followed tag) and switch
- *   deploy [--force]         build the image here, copy it over SSH and switch (the SSH
+ *   publish --dev            build the image here and add it to :dev, whose versions the dev
+ *                            machines run; wait until each serves it
+ *   update [--image TAG]     follow the tag now (start, switch and stop versions without
+ *                            waiting for players), or run another image CI published and hold
+ *   deploy [--force]         build the image here, copy it over SSH and run it (the SSH
  *                            fallback; for production only from a clean origin/main)
- *   rollback                 switch back to the previous image
+ *   rollback                 switch the newest version back to its previous image
  *   auto-update on|off|resume
  *   status | logs | stats
  *
- * deploy/server/sloppy-tanks-update on the machine does every switch: it restarts the
- * server, checks /health there and restores the previous image if the new one fails.
- * Anything but following the tag leaves a hold that auto-update respects (on dev, until
- * the next publish). */
+ * deploy/server/sloppy-tanks-update on the machine does every change: it runs a server per
+ * content version the tag lists, checks each one's /health and restores the previous image
+ * when a new one fails. Anything but following the tag leaves a hold that auto-update
+ * respects (on dev, until the next publish). */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
-const RELEASE_TIMEOUT_MS = 12 * 60_000;
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
-const role = command === "release-app" ? "app-store" : environment(process.argv);
+const role = environment(process.argv);
 const USAGE =
-  "Usage: bun scripts/server.mjs publish|release-app|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]";
+  "Usage: bun scripts/server.mjs publish|update|deploy|rollback|auto-update|status|logs|stats [--dev|--app-store] [--ip ADDRESS]";
 /** Read before anything is pushed, listed or reached over SSH: a flag without its value
  * stops the command rather than widening it to every machine. */
 const ip = commandOption("--ip");
 const imageArgument = commandOption("--image");
-/** What a publish or release pushed, for every machine to switch to. It pushes before
- * looking for machines: one still booting is not listed yet, and starts it by itself. */
-const published =
-  command === "publish" ? await publish() : command === "release-app" ? release() : undefined;
+/** What a publish pushed, for every machine to serve. It pushes before looking for
+ * machines: one still booting is not listed yet, and starts it by itself. */
+const published = command === "publish" ? await publish() : undefined;
 const servers = await gameServers(role, ip, published !== undefined);
 if (published && servers.length === 0) {
   console.log(`The directory lists no ${role} server; one that boots starts this by itself.`);
@@ -114,11 +108,11 @@ function loadImageOnServer(image) {
 
 /** Builds the server image from this checkout and switches the machine to it. */
 async function deploy() {
-  // App Store machines run the released apps' content version, which a checkout's build
-  // would replace with another.
+  // App Store machines run the versions the Apps workflow uploaded to TestFlight, which a
+  // checkout's build would replace with another.
   if (role === "app-store" && !process.argv.includes("--force")) {
     console.error(
-      "App Store machines run the released apps' server: use release-app (or --force).",
+      "App Store machines run the servers of the apps' builds: run the Apps workflow (or --force).",
     );
     process.exit(1);
   }
@@ -145,8 +139,9 @@ async function deploy() {
   const image = `${SERVER_IMAGE}:${build}`;
   run(process.execPath, ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
   await loadImageOnServer(image);
-  // Restarts the server, ending live rooms (clients get room-reset from the graceful
-  // shutdown), and rolls back if the new image does not report healthy.
+  // Restarts that version's server, ending its live rooms (clients get room-reset from the
+  // graceful shutdown), or starts one, and rolls back if the new image does not report
+  // healthy. The site's root then serves it.
   ssh(`sloppy-tanks-update local ${image}`);
   // The build, not only the content version, so a server-only change cannot pass against
   // the previous process.
@@ -157,10 +152,11 @@ async function deploy() {
   console.log(`The ${server.role} server is live at ${server.url}`);
 }
 
-/** Builds the server image from this checkout and pushes it as dev-<server build> and :dev
- * (or points :dev at an image of that server build the registry already holds). The dev
- * machines check :dev every 10 seconds and switch to it by themselves, so publishing needs
- * registry access but no SSH. Returns what their /health reports once they run it. */
+/** Builds the server image from this checkout and pushes it as dev-<server build> (unless
+ * the registry already holds an image of that server build), then adds it to the versions
+ * :dev lists (scripts/promote-server.mjs). The dev machines check :dev every 10 seconds and
+ * start it by themselves, so publishing needs registry access but no SSH. Returns what
+ * their /health reports once they serve it at their root. */
 async function publish() {
   if (!dev) {
     console.error("publish is for the dev servers (--dev); production runs CI's images.");
@@ -168,68 +164,44 @@ async function publish() {
   }
   const version = await contentVersion();
   const build = await serverBuild();
-  console.log(`Publishing the dev server (content ${version}, build ${build}) as :dev`);
+  console.log(`Publishing the dev server (content ${version}, build ${build}) to :dev`);
   const result = spawnSync(
     process.execPath,
-    [
-      "scripts/build-server-image.mjs",
-      "--registry",
-      SERVER_IMAGE,
-      "--push",
-      "--dev",
-      "--tag",
-      "dev",
-    ],
+    ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE, "--push", "--dev"],
     { cwd: repo, stdio: "inherit" },
   );
-  if (result.status !== 0) {
+  // CI's image of the same server build when there is one (build-server-image.mjs then
+  // pushes nothing), else the one just pushed.
+  const source =
+    result.status === 0
+      ? [`${SERVER_IMAGE}:${build}`, `${SERVER_IMAGE}:dev-${build}`].find(inRegistry)
+      : undefined;
+  if (result.status === 0 && !source) {
+    console.error(`The registry holds no image of server build ${build} after the push.`);
+    process.exit(1);
+  }
+  const promoted = source
+    ? spawnSync(process.execPath, ["scripts/promote-server.mjs", "dev", source], {
+        cwd: repo,
+        stdio: "inherit",
+      })
+    : result;
+  if (promoted.status !== 0) {
     console.error(
       "Publishing needs Docker logged in to ghcr.io with a token that can write packages:\n" +
         "  gh auth refresh -h github.com -s write:packages\n" +
         '  gh auth token | docker login ghcr.io --username "$(gh api user -q .login)" --password-stdin',
     );
-    process.exit(result.status ?? 1);
+    process.exit(promoted.status ?? 1);
   }
   return { version, build };
 }
 
-/** The content version a server image in the registry plays, or nothing when the registry
- * has no such image. */
-function imageContentVersion(image) {
-  const inspected = spawnSync(
-    "docker",
-    ["buildx", "imagetools", "inspect", image, "--format", "{{json .Image}}"],
-    { cwd: repo, encoding: "utf8" },
+/** Whether the registry holds `image`. */
+function inRegistry(image) {
+  return (
+    spawnSync("docker", ["buildx", "imagetools", "inspect", image], { cwd: repo }).status === 0
   );
-  if (inspected.status !== 0) return undefined;
-  const config = JSON.parse(inspected.stdout);
-  // A manifest list maps each platform to its config; the image has only linux/amd64.
-  const labels = (config.config ?? config["linux/amd64"]?.config)?.Labels ?? {};
-  const version = labels["me.fridman.sloppy-tanks.content-version"];
-  if (!version) {
-    console.error(`${image} has no content version label; is it a server image?`);
-    process.exit(1);
-  }
-  return version;
-}
-
-/** Points :app-store at the App Store build's server image, :app-store-candidate (which
- * the Apps workflow moves with each TestFlight upload) unless `--image` names another, and
- * returns the content version the App Store machines then report, beside the candidate's:
- * the candidate machine follows :app-store-candidate, not this release. Needs Docker
- * logged in to ghcr.io with a token that can write packages, as `publish` does. */
-function release() {
-  const candidateImage = `${SERVER_IMAGE}:app-store-candidate`;
-  const source = imageOption() || candidateImage;
-  const version = imageContentVersion(source);
-  if (!version) {
-    console.error(`The registry has no ${source}; run the Apps workflow on main first.`);
-    process.exit(1);
-  }
-  const candidate = source === candidateImage ? version : imageContentVersion(candidateImage);
-  console.log(`Releasing ${source} (content ${version}) to the App Store machines as :app-store`);
-  run("docker", ["buildx", "imagetools", "create", "--tag", `${SERVER_IMAGE}:app-store`, source]);
-  return { version, candidate };
 }
 
 /** A registry tag such as `pr-12`, or a full image name. */
@@ -255,36 +227,12 @@ async function runCommand() {
     case "publish": {
       const { version, build } = published;
       console.log(`Waiting for ${health.origin}, which checks :dev every 10 seconds`);
+      // The newest version listed is the one the site's root serves.
       await waitForHealth(
         (status) => status.contentVersion === version && status.serverBuild === build,
         `content ${version}, build ${build} (bun run server:status --dev shows why not)`,
       );
       console.log(`The dev server is live at ${server.url}`);
-      break;
-    }
-    case "release-app": {
-      // A machine switches once nobody plays on it, at most ten minutes after the tag moves
-      // (sloppy-tanks-update), so this waits a little longer than that.
-      // Nothing tells the candidate machine from the others but what it plays. When the
-      // release is not the candidate (`--image`), a machine that plays the candidate's
-      // version, now or once its own pending update lands, is taken for it: it never
-      // switches to the release, so the wait ends there too.
-      const { version, candidate } = published;
-      console.log(`Waiting for ${health.origin}, which switches once its rooms are empty`);
-      const status = await waitForHealth(
-        ({ contentVersion }) =>
-          contentVersion === version || (candidate !== undefined && contentVersion === candidate),
-        `content ${version} (bun run server:status --app-store shows why not)`,
-        RELEASE_TIMEOUT_MS,
-      );
-      if (status.contentVersion === version) {
-        console.log(`The App Store server at ${server.url} plays the released apps' version`);
-      } else {
-        console.log(
-          `${health.origin} plays the candidate's version (content ${candidate}): not waiting ` +
-            "for it. If it follows :app-store, it switches once its rooms are empty.",
-        );
-      }
       break;
     }
     case "update":
@@ -310,9 +258,9 @@ async function runCommand() {
       ssh("sloppy-tanks-update status");
       break;
     case "status":
-      // The image state and auto-update's latest checks.
+      // Each version's server and image state, and auto-update's latest checks.
       ssh(
-        "systemctl status sloppy-tanks caddy --no-pager; sloppy-tanks-update status && " +
+        "systemctl status caddy --no-pager; sloppy-tanks-update status && " +
           "journalctl -u sloppy-tanks-update -n 5 --no-pager --output cat",
       );
       break;
@@ -321,17 +269,14 @@ async function runCommand() {
         ...SSH_OPTIONS,
         "-t",
         server.ssh,
-        "journalctl -u sloppy-tanks -f -n 50 --output cat",
+        // Every version's server, and the updater starting and stopping them.
+        "journalctl -u 'sloppy-tanks-*' -f -n 50 --output cat",
       ]);
       break;
-    case "stats": {
-      const result = ssh("curl -fsS http://127.0.0.1:8787/stats", {
-        stdio: ["inherit", "pipe", "inherit"],
-        encoding: "utf8",
-      });
-      console.log(JSON.stringify(JSON.parse(result.stdout), null, 2));
+    case "stats":
+      // Each version's /stats on its loopback port.
+      ssh("sloppy-tanks-update stats");
       break;
-    }
     default:
       console.error(USAGE);
       process.exit(1);

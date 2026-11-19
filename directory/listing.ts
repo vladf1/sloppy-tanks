@@ -92,6 +92,48 @@ export async function readBody(
   return body;
 }
 
+/** Servers announce to `/servers`, or from a machine that runs several content versions
+ * (deploy/server/sloppy-tanks-update) to `/v/<content version>/servers`, the path Caddy
+ * serves that version's server under: its DIRECTORY_URL names it, so server builds from
+ * before machines ran several versions announce there too. */
+const VERSION_ANNOUNCEMENT = /^\/v\/([0-9a-f]{8,64})\/servers$/;
+
+/** A machine runs at most five versions, each kept until its rooms empty after newer ones
+ * replace it (scripts/servers.mjs KEPT_VERSIONS); this bounds what one caller can store. */
+export const MAX_ENTRIES_PER_MACHINE = 10;
+/** The most servers a game client built before the directory filtered by content version
+ * reads (MAX_LISTED_SERVERS in `crates/core/src/net/room_list.rs`): more and it rejects
+ * the whole list. */
+export const MAX_UNFILTERED_SERVERS = 16;
+
+/**
+ * The content version an announcement's path names: `""` for `/servers`, the version for
+ * `/v/<content version>/servers`, or undefined for any other path.
+ */
+export function announcedVersion(pathname: string): string | undefined {
+  if (pathname === "/servers") return "";
+  return VERSION_ANNOUNCEMENT.exec(pathname)?.[1];
+}
+
+/**
+ * Where players reach a server: the nip.io name of the address it announced from, under
+ * `/v/<content version>` when it announced there. A server may name only its own content
+ * version, so an entry reaches nothing but that machine's server of that version.
+ */
+export function serverUrl(
+  base: string,
+  version: string,
+  announcement: Announcement,
+): string | undefined {
+  if (version === "") return base;
+  return version === announcement.contentVersion ? `${base}/v/${version}` : undefined;
+}
+
+/** The machine part of a server's url: what MAX_ENTRIES_PER_MACHINE counts by. */
+export function machineOf(url: string): string {
+  return url.replace(/\/v\/[0-9a-f]+$/, "");
+}
+
 /** A short text field, or undefined when `value` is not one. */
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length >= 1 && value.length <= 128 ? value : undefined;
@@ -117,10 +159,11 @@ export function parseAnnouncement(body: string): Announcement | undefined {
     if (startedAt !== undefined && Number.isNaN(Date.parse(startedAt))) fail("startedAt");
     const cpus = optionalAmount("cpus", MAX_CPUS);
     if (cpus !== undefined && !Number.isInteger(cpus)) fail("cpus");
+    const contentVersion = text(value.contentVersion) ?? fail("contentVersion");
     return {
       version: optional("version"),
       protocol: value.protocol as number,
-      contentVersion: text(value.contentVersion) ?? fail("contentVersion"),
+      contentVersion,
       serverBuild: text(value.serverBuild) ?? fail("serverBuild"),
       commit: optional("commit"),
       dirty: value.dirty as boolean | undefined,
@@ -145,9 +188,20 @@ function fail(field: string): never {
 /**
  * The listing the page reads, fewest rooms first: the page creates rooms on the first compatible
  * server, so this order is the whole of the matchmaking. Ties go by url to keep the order stable.
+ * A client that names its `contentVersion` gets only that version's servers, the only ones it
+ * can join, so neither the count of other versions' servers nor their rooms (maps it may not
+ * know) reach it; a client that names none, as builds before it did not, gets at most
+ * MAX_UNFILTERED_SERVERS. The overview asks for `all`, which no game client sends.
  */
-export function listServers(servers: ListedServer[]): ListedServer[] {
-  return [...servers].sort(
+export function listServers(
+  servers: ListedServer[],
+  { contentVersion, all = false }: { contentVersion?: string; all?: boolean } = {},
+): ListedServer[] {
+  const sorted = [...servers].sort(
     (a, b) => a.rooms.length - b.rooms.length || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0),
   );
+  if (contentVersion !== undefined) {
+    return sorted.filter((server) => server.contentVersion === contentVersion);
+  }
+  return all ? sorted : sorted.slice(0, MAX_UNFILTERED_SERVERS);
 }

@@ -15,10 +15,11 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * `--tag pr-12`; when the registry already holds that build (a change outside the
  * server), it only adds the tags instead of rebuilding.
  *
- * `bun scripts/server.mjs publish --dev` passes `--dev --tag dev` for the dev servers: a
+ * `bun scripts/server.mjs publish --dev` passes `--dev` for the dev servers: a
  * developer's build is tagged `dev-<build>` instead, since CI would take an image tagged
  * with the bare build for its own and could promote it to :production. A dev publish
- * reuses CI's image of the same server build when there is one, else its own earlier one.
+ * reuses CI's image of the same server build when there is one, else its own earlier one,
+ * and then adds it to :dev (scripts/promote-server.mjs).
  *
  * Main's builds also pass `--build-number`, the deploy workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image
@@ -26,8 +27,8 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * release of the first main build that shipped it: a pull request usually built the
  * image first, without a number, so that main build restamps the image's metadata
  * (release, commit and time) over the same binary layer, and later builds only retag it.
- * The VPS restarts only when :production's image changes, which then happens once per
- * server build. */
+ * A machine restarts a version's server only when that version's image changes, which
+ * then happens once per server build. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const LOCAL_IMAGE = "sloppy-tanks-server";
 

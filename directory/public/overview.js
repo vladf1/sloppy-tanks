@@ -115,7 +115,7 @@ function serverCard(server) {
 async function showEnvironment(section) {
   const summary = section.querySelector("h2 small");
   try {
-    const response = await fetch(`servers?environment=${section.dataset.environment}`, {
+    const response = await fetch(`servers?environment=${section.dataset.environment}&all=1`, {
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);

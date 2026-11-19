@@ -1107,7 +1107,10 @@
       function connect() {
         clearTimeout(retry);
         source?.close();
-        source = new EventSource("/dashboard/stream");
+        // Beside the page, which a machine running several versions serves under
+        // /v/<content version>/ as well as at its root.
+        const base = location.pathname.replace(/(?:\/dashboard)?\/?$/, "");
+        source = new EventSource(`${base}/dashboard/stream`);
         source.addEventListener("hello", (message) => {
           const hello = JSON.parse(message.data);
           state.server = hello.server;
