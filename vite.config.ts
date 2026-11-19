@@ -81,13 +81,56 @@ function inlineBootChunk(bundle: Rolldown.OutputBundle, base: string) {
     }
   }
   const folder = entry.fileName.slice(0, entry.fileName.lastIndexOf("/") + 1);
-  let code = entry.code;
-  for (const file of [...entry.imports, ...entry.dynamicImports]) {
+  let code = inlinePreloadHelper(bundle, entry, folder);
+  for (const file of entry.dynamicImports) {
     code = code.replaceAll(`./${file.slice(folder.length)}`, base + file);
   }
   const script = `<script type="module">${code.replaceAll("</script", "<\\/script")}</script>`;
   page.source = html.replace(tag[0], () => script);
   delete bundle[entry.fileName];
+}
+
+/** Vite still wraps dynamic imports for CSS with modulePreload disabled. A build with
+ * fixtures shares that wrapper in its own chunk. Keep a copy in the boot script so
+ * the game's initial downloads can start as soon as the HTML arrives. */
+function inlinePreloadHelper(
+  bundle: Rolldown.OutputBundle,
+  entry: Rolldown.OutputChunk,
+  folder: string,
+): string {
+  if (entry.imports.length === 0) return entry.code;
+  const [file] = entry.imports;
+  const helper = bundle[file];
+  if (
+    entry.imports.length !== 1 ||
+    helper?.type !== "chunk" ||
+    helper.name !== "preload-helper" ||
+    helper.imports.length ||
+    helper.dynamicImports.length
+  ) {
+    throw new Error("The game boot script has an unexpected static dependency");
+  }
+
+  // Rolldown assigns different local names in each chunk. Keep the helper in
+  // its own scope and bind its export to the name used by the boot chunk.
+  const imported = entry.code.match(
+    /\bimport\s*\{\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*\}\s*from\s*["']([^"']+)["'];?/,
+  );
+  const exported = helper.code.match(/\bexport\s*\{\s*([\w$]+)(?:\s+as\s+([\w$]+))?\s*\};?\s*$/);
+  if (
+    !imported ||
+    !exported ||
+    imported[3] !== "./" + file.slice(folder.length) ||
+    imported[1] !== (exported[2] ?? exported[1])
+  ) {
+    throw new Error("Could not inline Vite's preload helper in the game boot script");
+  }
+  const code = helper.code.slice(0, exported.index);
+  const binding = imported[2] ?? imported[1];
+  return entry.code.replace(
+    imported[0],
+    () => `const ${binding}=(()=>{${code}\nreturn ${exported[1]}})();`,
+  );
 }
 
 export default defineConfig({
@@ -117,8 +160,7 @@ export default defineConfig({
   // The bake worker (src/bake-worker.ts) imports the page's glue on demand.
   worker: { format: "es" },
   build: {
-    // The pages' dynamic imports have no dependencies to preload, so the preload helper
-    // and its polyfill would only add to the game page's boot script.
+    // The pages' dynamic imports have no JavaScript dependencies to preload.
     modulePreload: false,
     rolldownOptions: {
       input: {
