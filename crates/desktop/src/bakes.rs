@@ -6,24 +6,23 @@
 //! fails, goes back to the engine, which bakes it in bands between preparation steps.
 
 #[cfg(not(target_arch = "wasm32"))]
-use std::sync::mpsc::{Receiver, channel};
+use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::mpsc::{Receiver, TryRecvError, channel};
 
 use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
 #[cfg(not(target_arch = "wasm32"))]
-use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_ground, sand_accum};
+use sloppy_core::models::{QUARRY_SOIL_SIZE, sand_accum, write_quarry_ground};
 
 /// A bake's RGBA rows: in a page the JS array its workers filled, so the pixels never
 /// enter this instance's heap (which never shrinks).
-#[cfg(not(target_arch = "wasm32"))]
-pub type Pixels = Vec<u8>;
-#[cfg(target_arch = "wasm32")]
-pub type Pixels = js_sys::Uint8Array;
+pub type Pixels = sloppy_web::BakedPixels;
 
 /// A bake running on its threads or workers.
 pub struct Bake {
     pub key: String,
     #[cfg(not(target_arch = "wasm32"))]
-    pixels: Receiver<Vec<u8>>,
+    pixels: Receiver<Pixels>,
     #[cfg(target_arch = "wasm32")]
     workers: page::Workers,
 }
@@ -40,21 +39,19 @@ pub fn start(key: String) -> Option<Bake> {
         std::thread::spawn(move || {
             let bands =
                 std::thread::available_parallelism().map_or(4, |cores| cores.get().max(2) - 1);
-            let row = |band: usize| QUARRY_SOIL_SIZE * band / bands;
-            let parts: Vec<Vec<u8>> = std::thread::scope(|scope| {
-                let workers: Vec<_> = (0..bands)
-                    .map(|band| {
-                        scope.spawn(move || {
-                            bake_quarry_ground(sand_accum(), row(band), row(band + 1))
-                        })
-                    })
-                    .collect();
-                workers
-                    .into_iter()
-                    .map(|worker| worker.join().unwrap_or_default())
-                    .collect()
+            let row_bytes = QUARRY_SOIL_SIZE * 4;
+            let rows_per_band = QUARRY_SOIL_SIZE.div_ceil(bands);
+            let mut image: Arc<[u8]> =
+                std::iter::repeat_n(0, QUARRY_SOIL_SIZE * row_bytes).collect();
+            let rows = Arc::get_mut(&mut image).expect("the bake owns its pixels");
+            std::thread::scope(|scope| {
+                for (band, pixels) in rows.chunks_mut(rows_per_band * row_bytes).enumerate() {
+                    scope.spawn(move || {
+                        write_quarry_ground(sand_accum(), band * rows_per_band, pixels)
+                    });
+                }
             });
-            let _ = sender.send(parts.concat());
+            let _ = sender.send(image);
         });
         Some(Bake { key, pixels })
     }
@@ -70,7 +67,11 @@ impl Bake {
     pub fn finished(&self) -> Option<Result<Pixels, String>> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.pixels.try_recv().ok().map(Ok)
+            match self.pixels.try_recv() {
+                Ok(pixels) => Some(Ok(pixels)),
+                Err(TryRecvError::Empty) => None,
+                Err(TryRecvError::Disconnected) => Some(Err("quarry bake worker stopped".into())),
+            }
         }
         #[cfg(target_arch = "wasm32")]
         {

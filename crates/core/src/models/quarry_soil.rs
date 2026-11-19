@@ -357,9 +357,16 @@ fn to_uint8_clamp(value: f64) -> u8 {
 /// first replays the earlier draws. Alpha carries how gritty the soil is (128 fine
 /// sand ... 255 loose gravel) for the world-space detail shader; it never blends.
 pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
+    let mut pixels = vec![0; (end - start) * QUARRY_SOIL_SIZE * 4];
+    write_quarry_soil(accum, start, &mut pixels);
+    pixels
+}
+
+/// Fill whole rows of soil, starting at `start`.
+pub(super) fn write_quarry_soil(accum: &[f32], start: usize, pixels: &mut [u8]) {
     let size = QUARRY_SOIL_SIZE;
+    assert!(pixels.len().is_multiple_of(size * 4));
     let table = soil_noise();
-    let mut pixels = vec![0u8; (end - start) * size * 4];
     let mut rng = Random::new(7391.0);
     for _ in 0..start * size {
         rng.next();
@@ -368,11 +375,10 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
         }
     }
     let columns = SoilColumns::new();
-    for (row, out) in (start..end).zip(pixels.chunks_exact_mut(size * 4)) {
+    for (row, out) in (start..).zip(pixels.chunks_exact_mut(size * 4)) {
         let z = (row as f64 / (size - 1) as f64 - 0.5) * EXTENT;
         bake_row(accum, table, &columns, &mut rng, row, z, out);
     }
-    pixels
 }
 
 /// World x across the soil's pixel columns.

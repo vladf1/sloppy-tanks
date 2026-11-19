@@ -1192,9 +1192,9 @@ impl StateMirror {
         // Path entries apply to a copy of the shells, kept only if the whole frame reads.
         frame.shots.paths.clone_from(&self.shots.paths);
         let paths = items(reader, sections & PATHS_SECTION != 0)?;
-        frame.paths = frame
+        frame
             .shots
-            .apply_binary(reader, paths, tick)
+            .apply_binary_into(reader, paths, tick, &mut frame.paths)
             .map_err(|error| format!("paths: {error}"))?;
         if batch.read == batch.count && !batch.frames.is_empty() {
             return Err("Trailing data".into());

@@ -611,7 +611,7 @@ impl Art {
     }
 
     /// Icon `name`'s texture, rasterized on its first draw.
-    fn texture(&self, context: &egui::Context, name: &str) -> Option<egui::TextureId> {
+    pub(super) fn texture(&self, context: &egui::Context, name: &str) -> Option<egui::TextureId> {
         let mut icons = self.icons.borrow_mut();
         if let Some(texture) = icons.get(name) {
             return Some(texture.id());
@@ -649,26 +649,6 @@ impl Art {
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                 tint,
             );
-        }
-    }
-
-    /// Paint icon `name` at each of `copies`' rects in its tint, as one mesh: what as
-    /// many [`Self::icon`] calls draw, without a mesh and a texture lookup for each.
-    pub fn icon_copies(
-        &self,
-        painter: &egui::Painter,
-        name: &str,
-        copies: impl ExactSizeIterator<Item = (Rect, Color32)>,
-    ) {
-        if let Some(texture) = self.texture(painter.ctx(), name) {
-            let mut mesh = egui::Mesh::with_texture(texture);
-            mesh.reserve_vertices(copies.len() * 4);
-            mesh.reserve_triangles(copies.len() * 2);
-            let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-            for (rect, tint) in copies {
-                mesh.add_rect_with_uv(rect, uv, tint);
-            }
-            painter.add(egui::Shape::mesh(mesh));
         }
     }
 

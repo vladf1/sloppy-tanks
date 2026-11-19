@@ -460,7 +460,9 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         rewind: 0,
     };
     let launch = PathEntry::Launch(path(900, 0.5, 0.0, 0.0, 30.0, 0.0, ricochet));
-    assert!(apply_one(&mut mirror, &paths_frame(1, 3, &[launch])).is_some());
+    let extras = apply_one(&mut mirror, &paths_frame(1, 3, &[launch])).unwrap();
+    let path_buffer = extras.paths.as_ptr();
+    mirror.recycle(extras);
     let shot = mirror.render(viewer).unwrap().shots[0];
     assert_eq!(
         (shot.x, shot.z),
@@ -478,6 +480,7 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
     };
     let bounce = PathEntry::Change(path(900, 4.0, 1.75, 0.0, -30.0, 0.0, blank));
     let extras = apply_one(&mut mirror, &paths_frame(2, 6, &[bounce])).unwrap();
+    assert_eq!(extras.paths.as_ptr(), path_buffer);
     let PathEntry::Change(changed) = extras.paths[0] else {
         panic!("a new path for a flying shell");
     };

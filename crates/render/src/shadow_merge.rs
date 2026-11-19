@@ -14,7 +14,7 @@
 use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Mat4, Vec3};
 use sloppy_core::scene::{Material, Side};
 
 use crate::camera::Sphere;
@@ -139,39 +139,6 @@ pub fn merged_draw_order(
         | u128::from(group)
 }
 
-type Geometry<'a> = (Vec<Vec3>, Vec<Vec2>, std::borrow::Cow<'a, [u32]>);
-
-/// Positions, UVs and triangle indices of a part's mesh.
-fn part_geometry<'a>(part: &'a PreparedPart, meshes: &'a [MeshData]) -> Geometry<'a> {
-    match &part.mesh {
-        PartMesh::Shared(mesh) => {
-            let positions = mesh.positions.iter().map(|p| Vec3::from(*p)).collect();
-            let uvs = (0..mesh.positions.len())
-                .map(|i| mesh.uvs.get(i).map_or(Vec2::ZERO, |uv| Vec2::from(*uv)))
-                .collect();
-            let indices = match &mesh.indices {
-                Some(indices) => std::borrow::Cow::Borrowed(indices.as_slice()),
-                None => std::borrow::Cow::Owned((0..mesh.positions.len() as u32).collect()),
-            };
-            (positions, uvs, indices)
-        }
-        PartMesh::Owned(index) => {
-            let data = &meshes[*index];
-            let positions = data
-                .vertices
-                .iter()
-                .map(|v| Vec3::from(v.position))
-                .collect();
-            let uvs = data.vertices.iter().map(|v| Vec2::from(v.uv)).collect();
-            (
-                positions,
-                uvs,
-                std::borrow::Cow::Borrowed(data.indices.as_slice()),
-            )
-        }
-    }
-}
-
 /// Merge the eligible parts of a prepared model. `kind(part_index)` says how a
 /// part may merge (see [`MergeKind`]; on movable models only non-instanced
 /// parts merge). `scenery` bakes world
@@ -217,16 +184,7 @@ pub fn merge_shadows(
         if index_count == 0 {
             continue;
         }
-        let placements: Vec<Mat4> = if scenery {
-            match &part.instances {
-                Some(list) => list.iter().map(|item| part.local * item.matrix).collect(),
-                None => vec![part.local],
-            }
-        } else {
-            vec![Mat4::IDENTITY]
-        };
-        // One slot per part, or one per segment of a merged part; each vertex gets
-        // its own when the groups are filled (`slots_of`).
+        // One slot per part, or one per segment of a merged part.
         let first_slot = merge.slots.len() as u32;
         if !scenery {
             match &part.segments {
@@ -246,16 +204,12 @@ pub fn merge_shadows(
         }
         merge.merged[index] = true;
         let side = shadow_side(&part.material);
-        for (instance, placement) in placements.into_iter().enumerate() {
-            // Transformed on the fly, twice, rather than into a copy of the part.
-            let moved = |p: Vec3| {
-                if scenery {
-                    placement.transform_point3(p)
-                } else {
-                    p
-                }
-            };
-            let sphere = part_bounds(part, &model.meshes, moved);
+        let placements = part.instances.as_ref().map_or(1, Vec::len);
+        for instance in 0..placements {
+            let placement = scenery.then(|| placement_matrix(part, instance));
+            let sphere = part_bounds(part, &model.meshes, |p| {
+                placement.map_or(p, |matrix| matrix.transform_point3(p))
+            });
             let cell = if scenery && cell_size > 0.0 {
                 (
                     (sphere.center.x / cell_size).floor() as i32,
@@ -296,39 +250,54 @@ pub fn merge_shadows(
         group.vertices.reserve_exact(vertices);
         group.indices.reserve_exact(indices);
     }
-    // A part's placements are consecutive: its geometry is gathered once.
-    let mut geometry: Option<(u32, Geometry, Vec<u32>)> = None;
-    for item in &placed {
+    for item in placed {
         let part = &model.parts[item.part as usize];
-        if geometry
-            .as_ref()
-            .is_none_or(|(index, ..)| *index != item.part)
-        {
-            let gathered = part_geometry(part, &model.meshes);
-            let slots = slots_of(part, item.slot, gathered.0.len(), scenery);
-            geometry = Some((item.part, gathered, slots));
-        }
-        let (_, (positions, uvs, indices), slot_of) = geometry.as_ref().expect("gathered above");
-        let placement = scenery.then(|| match &part.instances {
-            Some(list) => part.local * list[item.instance as usize].matrix,
-            None => part.local,
-        });
+        let placement = scenery.then(|| placement_matrix(part, item.instance as usize));
         let target = &mut merge.groups[item.group as usize];
-        let base = target.vertices.len() as u32;
-        target.vertices.extend(
-            positions
-                .iter()
-                .zip(uvs)
-                .enumerate()
-                .map(|(vertex, (p, uv))| ShadowVertex {
-                    position: placement
-                        .map_or(*p, |placement| placement.transform_point3(*p))
-                        .to_array(),
-                    slot: slot_of.get(vertex).copied().unwrap_or(0),
-                    uv: uv.to_array(),
-                }),
-        );
-        target.indices.extend(indices.iter().map(|i| base + i));
+        let base = target.vertices.len();
+        let vertex = |position: [f32; 3], uv| ShadowVertex {
+            position: placement.map_or(position, |matrix| {
+                matrix.transform_point3(Vec3::from(position)).to_array()
+            }),
+            uv,
+            slot: item.slot,
+        };
+        let indices = match &part.mesh {
+            PartMesh::Shared(mesh) => {
+                target.vertices.extend(
+                    mesh.positions
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &p)| vertex(p, mesh.uvs.get(i).copied().unwrap_or_default())),
+                );
+                mesh.indices.as_deref()
+            }
+            PartMesh::Owned(index) => {
+                let mesh = &model.meshes[*index];
+                target
+                    .vertices
+                    .extend(mesh.vertices.iter().map(|v| vertex(v.position, v.uv)));
+                Some(mesh.indices.as_slice())
+            }
+        };
+        if let Some(indices) = indices {
+            target
+                .indices
+                .extend(indices.iter().map(|i| base as u32 + i));
+        } else {
+            target
+                .indices
+                .extend(base as u32..target.vertices.len() as u32);
+        }
+        if !scenery && let Some(segments) = &part.segments {
+            let vertices = &mut target.vertices[base..];
+            for (offset, segment) in segments.iter().enumerate() {
+                let range = segment.vertices.start as usize..segment.vertices.end as usize;
+                for vertex in &mut vertices[range] {
+                    vertex.slot = item.slot + offset as u32;
+                }
+            }
+        }
     }
     for (group, sphere) in merge.groups.iter_mut().zip(bounds) {
         group.bounds = sphere.unwrap_or_default();
@@ -336,18 +305,12 @@ pub fn merge_shadows(
     merge
 }
 
-/// Each vertex's slot on a movable model: the part's `first` slot or, with segments,
-/// one slot per segment from `first` on (a vertex outside every segment keeps
-/// `first`). Scenery has no slots.
-fn slots_of(part: &PreparedPart, first: u32, vertices: usize, scenery: bool) -> Vec<u32> {
-    let mut slots = vec![first; if scenery { 0 } else { vertices }];
-    if !scenery && let Some(segments) = &part.segments {
-        for (offset, segment) in segments.iter().enumerate() {
-            let range = segment.vertices.start as usize..segment.vertices.end as usize;
-            slots[range].fill(first + offset as u32);
-        }
+/// A scenery placement in model space; an uninstanced part has just its local pose.
+fn placement_matrix(part: &PreparedPart, instance: usize) -> Mat4 {
+    match &part.instances {
+        Some(list) => part.local * list[instance].matrix,
+        None => part.local,
     }
-    slots
 }
 
 /// One merged caster placement: its part, first slot and group, and for scenery which of
@@ -359,7 +322,6 @@ struct Placed {
     instance: u32,
 }
 
-/// The vertex and triangle-index counts [`part_geometry`] gathers for a part.
 /// The triangles [`merge_shadows`] would merge of a movable or still model's casters.
 pub fn caster_triangles(model: &PreparedModel, kind: impl Fn(usize) -> MergeKind) -> u64 {
     model
@@ -519,6 +481,33 @@ mod tests {
         let slots: std::collections::BTreeSet<u32> = back.vertices.iter().map(|v| v.slot).collect();
         assert!(!slots.is_empty());
         assert_eq!(back.indices.len() % 3, 0);
+    }
+
+    #[test]
+    fn unindexed_shared_casters_rebase_indices_and_fill_missing_uvs() {
+        let mesh = Arc::new(sloppy_core::geometry::Mesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            uvs: vec![[0.25, 0.75]],
+            ..Default::default()
+        });
+        let mut root = Node::group("model");
+        for joint in ["body", "turret"] {
+            let mut node = Node::group(joint);
+            node.children.push(caster(&mesh, Material::default(), 0.0));
+            root.children.push(node);
+        }
+        let model = prepare_model(&root, &mut MaterialInterner::default());
+        let merged = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0, usize::MAX);
+        assert_eq!(merged.groups.len(), 1);
+        let group = &merged.groups[0];
+        assert_eq!(group.indices, [0, 1, 2, 3, 4, 5]);
+        assert_eq!(group.vertices.len(), 6);
+        for triangle in group.vertices.as_chunks::<3>().0 {
+            assert_eq!(
+                triangle.map(|vertex| vertex.uv),
+                [[0.25, 0.75], [0.0; 2], [0.0; 2]]
+            );
+        }
     }
 
     #[test]

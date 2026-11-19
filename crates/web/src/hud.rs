@@ -9,7 +9,7 @@
 
 use std::borrow::{Borrow, Cow};
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
@@ -52,7 +52,7 @@ pub struct Hud<'a> {
     pub human: HudHuman,
     pub scoreboard: Scoreboard<'a>,
     /// The finished round's recap, while results show.
-    pub recap: Option<Cow<'a, RoundRecap>>,
+    pub recap: Option<Arc<RoundRecap>>,
     /// The score pill's goal line and clock.
     pub score_pill: ScorePill,
 }
@@ -98,7 +98,7 @@ impl Hud<'_> {
             active_enemies: self.active_enemies,
             human: self.human,
             scoreboard: self.scoreboard.into_owned(),
-            recap: self.recap.map(|recap| Cow::Owned(recap.into_owned())),
+            recap: self.recap,
             score_pill: self.score_pill,
         }
     }
@@ -138,7 +138,7 @@ impl Hud<'static> {
         self.team_names = team_names;
         self.active_enemies = active_enemies;
         self.human = human;
-        self.recap = recap.map(|recap| Cow::Owned(recap.into_owned()));
+        self.recap = recap;
         self.score_pill = score_pill;
     }
 }
@@ -161,7 +161,7 @@ fn map_capitals(id: MapId) -> &'static str {
 pub fn simulation_hud<'a>(
     sim: &'a Simulation,
     tank: &mut RenderTank,
-    recap: Option<&'a RoundRecap>,
+    recap: Option<Arc<RoundRecap>>,
     timers: &mut EffectTimers,
 ) -> Hud<'a> {
     sim.fill_tank(tank, sim.human());
@@ -179,7 +179,7 @@ pub fn simulation_hud<'a>(
         active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
         human: human_json(tank, sim.elapsed, timers),
         scoreboard: Scoreboard::Simulated(&sim.tanks),
-        recap: recap.map(Cow::Borrowed),
+        recap,
         score_pill: ScorePill::local(
             &sim.match_state,
             sim.game_mode,

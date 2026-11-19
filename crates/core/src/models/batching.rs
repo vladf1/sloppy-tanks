@@ -5,6 +5,7 @@
 //! color share one white vertex-color material (and one draw); team paint keeps its
 //! emissive glow as a material uniform. Parts of other materials merge per material.
 
+use std::borrow::Borrow;
 use std::sync::{Arc, Mutex};
 
 use glam::DVec3;
@@ -49,15 +50,19 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if !is_paintable(source) {
         return source.clone();
     }
-    shared_vertex_material(Arc::new(painted(source)))
+    shared_vertex_material(painted(source))
 }
 
 /// The shared vertex material equal to `material`, which becomes it if none is.
-fn shared_vertex_material(material: Arc<Material>) -> Arc<Material> {
+fn shared_vertex_material(material: impl Borrow<Material> + Into<Arc<Material>>) -> Arc<Material> {
     let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
-    if let Some(held) = materials.iter().find(|held| **held == material) {
+    if let Some(held) = materials
+        .iter()
+        .find(|held| held.as_ref() == material.borrow())
+    {
         return held.clone();
     }
+    let material = material.into();
     materials.push(material.clone());
     material
 }
@@ -192,5 +197,25 @@ pub fn batch(group: &mut Node) {
         if let Some(merged) = merge_geometries(&baked.iter().collect::<Vec<_>>()) {
             group.children.push(shadowed(Arc::new(merged), material));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_painted_lookup_reuses_an_equal_decoded_material() {
+        let source = Arc::new(Material::standard(0xab3412, 0.12345, 0.54321));
+        let decoded = Arc::new(painted(&source));
+        let adopted = adopt_vertex_material(decoded.clone());
+        assert!(Arc::ptr_eq(&decoded, &adopted));
+        assert!(Arc::ptr_eq(&decoded, &vertex_material(&source)));
+
+        let other_color = Arc::new(Material {
+            color: Color(0x009977),
+            ..(*source).clone()
+        });
+        assert!(Arc::ptr_eq(&decoded, &vertex_material(&other_color)));
     }
 }

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use futures_util::{SinkExt, StreamExt};
 use sloppy_core::net::client::MAX_BUFFERED_BYTES;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
-use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
+use tokio_tungstenite::tungstenite::{Bytes, Message, Utf8Bytes};
 
 /// Connecting and the opening handshake give up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -31,7 +31,7 @@ const ABNORMAL_CLOSE: u16 = 1006;
 pub enum SocketEvent {
     Opened(u32),
     Text(u32, String),
-    Binary(u32, Vec<u8>),
+    Binary(u32, Bytes),
     /// The socket is gone, with its close code; the last event of a socket.
     Closed(u32, u16),
 }
@@ -208,7 +208,7 @@ async fn run(
                     let _ = events.send(SocketEvent::Text(id, text.as_str().to_owned()));
                 }
                 Some(Ok(Message::Binary(bytes))) => {
-                    let _ = events.send(SocketEvent::Binary(id, bytes.to_vec()));
+                    let _ = events.send(SocketEvent::Binary(id, bytes));
                 }
                 // The server closed first: its code stands, whatever is still queued
                 // here (tungstenite answers the close frame itself).
@@ -284,7 +284,7 @@ mod tests {
             events,
             vec![
                 SocketEvent::Text(7, "hello".into()),
-                SocketEvent::Binary(7, vec![1, 2, 3]),
+                SocketEvent::Binary(7, Bytes::from_static(&[1, 2, 3])),
                 SocketEvent::Closed(7, 4001),
             ]
         );

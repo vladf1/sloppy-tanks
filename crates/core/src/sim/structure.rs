@@ -1073,6 +1073,15 @@ impl Structure {
     /// them that tipped over with where they turn. Whether a part falls does not depend
     /// on `toward`, only which way a group tips.
     pub fn giving_way(&self, gone: &PartSet, toward: DVec3) -> GivingWay {
+        self.giving_way_with(gone, toward, &mut TippingScratch::default())
+    }
+
+    pub(super) fn giving_way_with(
+        &self,
+        gone: &PartSet,
+        toward: DVec3,
+        scratch: &mut TippingScratch,
+    ) -> GivingWay {
         let holds = self.shares.then(|| self.holds());
         let mut falling = PartSet::EMPTY;
         let mut tips = Vec::new();
@@ -1082,11 +1091,15 @@ impl Structure {
             Some(_) => self.parts.iter().map(|part| part.contacts.len()).sum(),
             None => 0,
         };
-        let mut contacts = Vec::with_capacity(room);
-        let mut hull = Hull {
-            sorted: Vec::with_capacity(room),
-            points: Vec::with_capacity(2 * room),
-        };
+        let TippingScratch { contacts, hull } = scratch;
+        for (buffer, capacity) in [
+            (&mut *contacts, room),
+            (&mut hull.sorted, room),
+            (&mut hull.points, 2 * room),
+        ] {
+            buffer.clear();
+            buffer.reserve(capacity);
+        }
         loop {
             let down = gone.union(&falling);
             let standing = |index: usize| !down.contains(index);
@@ -1123,7 +1136,7 @@ impl Structure {
                         continue;
                     }
                     let (_, weight) = self.balance(&group);
-                    let Some(tip) = tipping_with(&contacts, weight, toward, rule, &mut hull) else {
+                    let Some(tip) = tipping_with(contacts, weight, toward, rule, hull) else {
                         continue;
                     };
                     // A strip of wall alone that tips over snaps off its stubs on the
@@ -1532,6 +1545,13 @@ impl Iterator for Groups<'_> {
     }
 }
 
+/// Reused across breaks in one simulation, including breaks on different structures.
+#[derive(Default)]
+pub(super) struct TippingScratch {
+    contacts: Vec<DVec2>,
+    hull: Hull,
+}
+
 /// Room for a convex hull and the sorted points it is taken from, kept across the groups
 /// one break tests for tipping.
 #[derive(Default)]
@@ -1712,6 +1732,26 @@ mod tests {
         };
         assert!(tipping(&slab, DVec3::new(0.0, 0.5, 0.0), DVec3::ZERO, rule).is_none());
         assert!(tipping(&slab, DVec3::new(0.0, 2.0, 0.0), DVec3::ZERO, rule).is_some());
+    }
+
+    #[test]
+    fn tipping_scratch_keeps_its_buffers_across_breaks() {
+        let tower = tower_structure();
+        let mut scratch = TippingScratch::default();
+        tower.giving_way_with(&PartSet::EMPTY, DVec3::ZERO, &mut scratch);
+        let buffers = |scratch: &TippingScratch| {
+            [&scratch.contacts, &scratch.hull.sorted, &scratch.hull.points]
+                .map(|buffer| (buffer.as_ptr(), buffer.capacity()))
+        };
+        let warmed = buffers(&scratch);
+        assert!(warmed.iter().all(|(_, cap)| *cap > 0));
+        for gone in [PartSet::from_indices([1, 2, 4]), PartSet::EMPTY] {
+            assert_eq!(
+                tower.giving_way_with(&gone, DVec3::X, &mut scratch),
+                tower.giving_way(&gone, DVec3::X),
+            );
+            assert_eq!(buffers(&scratch), warmed);
+        }
     }
 
     #[test]

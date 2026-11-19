@@ -32,6 +32,18 @@ fn soil_is_independent_of_the_band_split() {
     );
 }
 
+/// Workers may write adjacent, unequal bands straight into the final texture.
+#[test]
+fn quarry_workers_write_the_same_rows_as_a_whole_bake() {
+    let accum = sand_accum();
+    let expected = bake_quarry_ground(accum, 3, 8);
+    let mut actual = vec![0xff; expected.len()];
+    let (first, last) = actual.split_at_mut(2 * QUARRY_SOIL_SIZE * 4);
+    write_quarry_ground(accum, 3, first);
+    write_quarry_ground(accum, 5, last);
+    assert!(actual == expected);
+}
+
 /// The full 2048² bake and each theme's build time. Run in release:
 /// `cargo test -p sloppy-core --release scenery_build_times -- --ignored --nocapture`.
 #[test]

@@ -302,6 +302,7 @@ pub(crate) struct Scratch {
     pub chained_mines: Vec<Mine>,
     /// A blast's damage to one structure's parts: part, damage and gap.
     pub structure_hits: Vec<(usize, f64, f64)>,
+    pub(super) tipping: super::structure::TippingScratch,
     /// The landed structure debris a blast may throw: id, and index when listed.
     pub thrown_debris: Vec<(u32, usize)>,
     /// The round's thin cover, which hulls run down ([`run_down_thin_cover`]).

@@ -389,6 +389,14 @@ impl Street {
         })
     }
 
+    /// The same immutable trace for the many point queries made while placing scenery.
+    fn shared_line(self) -> &'static Line {
+        use std::sync::OnceLock;
+        static LINES: [OnceLock<Line>; Street::ALL.len()] =
+            [const { OnceLock::new() }; Street::ALL.len()];
+        LINES[self as usize].get_or_init(|| self.line())
+    }
+
     /// Half its width kerb to kerb.
     pub fn half(self) -> f64 {
         match self {
@@ -429,7 +437,7 @@ const FACES_CIRCLE: f64 = 0.999;
 /// How far (m) `p` stands outside the back edge of `street`'s sidewalk (negative on its
 /// paving, parkway or sidewalk): on Senda Parkway's south side, its wide path's.
 pub fn past_sidewalk(street: Street, p: DVec2) -> f64 {
-    let line = street.line();
+    let line = street.shared_line();
     let walk = if street == Street::SendaParkway && line.signed_distance(p) < 0.0 {
         WAY_PARKWAY + WAY_PATH
     } else {
@@ -474,7 +482,7 @@ pub fn senda_design_point(x: f64, z: f64) -> DVec2 {
 pub fn is_senda_paved(x: f64, z: f64) -> bool {
     let p = DVec2::new(x, z);
     Street::ALL.into_iter().any(|street| {
-        street.line().distance(p) < street.half() + PARKWAY + SIDEWALK
+        street.shared_line().distance(p) < street.half() + PARKWAY + SIDEWALK
             || street
                 .cul_de_sac()
                 .is_some_and(|middle| middle.distance(p) < CUL_DE_SAC_RADIUS)
@@ -2326,6 +2334,14 @@ pub static SENDA_MAP: ArenaMap = ArenaMap {
 #[cfg(test)]
 mod lamp_tests {
     use super::*;
+
+    #[test]
+    fn shared_street_lines_keep_each_traced_centreline() {
+        for street in Street::ALL {
+            assert_eq!(street.shared_line().0, street.line().0);
+            assert!(std::ptr::eq(street.shared_line(), street.shared_line()));
+        }
+    }
 
     #[test]
     fn every_street_lamp_stands_in_a_parkway_strip_and_the_rows_apart() {

@@ -86,7 +86,7 @@ pub fn draw_canvas(canvas: &CanvasTexture) -> Result<ImageData, String> {
             [color.red(), color.green(), color.blue(), color.alpha()]
         })
         .collect();
-    image_data(canvas.width, canvas.height, &pixels)
+    image_data(canvas.width, canvas.height, pixels.as_slice())
 }
 
 fn rect_of(rect: &[f64; 4]) -> Option<Rect> {

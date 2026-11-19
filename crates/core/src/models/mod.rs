@@ -166,7 +166,7 @@ pub use harbor_scenery::HarborScenery;
 beyond_geometry! {
     pub use loading_assets::{node_textures, round_texture_files, scenery_texture_files};
 }
-pub use quarry_relief::bake_quarry_ground;
+pub use quarry_relief::{bake_quarry_ground, write_quarry_ground};
 pub use quarry_scenery::{SpawnPadShape, quarry_spawn_pad_pieces};
 pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;

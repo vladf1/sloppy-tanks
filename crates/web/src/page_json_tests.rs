@@ -276,10 +276,15 @@ fn page_json() -> BTreeMap<&'static str, String> {
 
     end_battle(&mut sim.match_state);
     let mut storage = SavedBests(r#"{"kills":9,"damage":250,"bestLife":2,"rank":"high"}"#);
-    let recap = round_recap(&sim, &mut storage, Shell::Page);
-    let hud = simulation_hud(&sim, &mut tank, Some(&recap), &mut EffectTimers::default());
+    let recap = std::sync::Arc::new(round_recap(&sim, &mut storage, Shell::Page));
+    let mut timers = EffectTimers::default();
+    let mut results = || simulation_hud(&sim, &mut tank, Some(recap.clone()), &mut timers);
+    let hud = results();
     let text = serde_json::to_string(&hud).unwrap();
-    assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);
+    let mut kept = hud.into_owned();
+    kept.refill(results());
+    assert!(std::sync::Arc::ptr_eq(kept.recap.as_ref().unwrap(), &recap));
+    assert_eq!(serde_json::to_string(&kept).unwrap(), text);
     texts.insert("resultsHud", text);
 
     texts.insert("actions", serde_json::to_string(&actions()).unwrap());

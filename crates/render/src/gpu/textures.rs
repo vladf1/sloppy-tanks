@@ -103,9 +103,14 @@ impl ImageData {
 
 /// RGBA8 rows (top first) as the pixels a generated texture uploads from.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<ImageData, String> {
-    if rgba.len() != width as usize * height as usize * 4 {
-        return Err(format!("{} bytes for a {width}x{height} image", rgba.len()));
+pub fn image_data(
+    width: u32,
+    height: u32,
+    rgba: impl AsRef<[u8]> + Into<Arc<[u8]>>,
+) -> Result<ImageData, String> {
+    let len = rgba.as_ref().len();
+    if len != width as usize * height as usize * 4 {
+        return Err(format!("{len} bytes for a {width}x{height} image"));
     }
     Ok(ImageData {
         width,
@@ -138,7 +143,7 @@ fn decode_file(path: &str) -> Result<ImageData, String> {
     let image = image::load_from_memory(bytes).map_err(|error| format!("{path}: {error}"))?;
     let image = image.into_rgba8();
     let (width, height) = image.dimensions();
-    image_data(width, height, image.as_raw())
+    image_data(width, height, image.as_raw().as_slice())
 }
 
 /// A texture file a page cuts out of another file instead of downloading it: the file
@@ -502,7 +507,7 @@ impl TextureStore {
             TextureSource::Generated(name) => {
                 if *name == GROUND_NOISE && !self.generated.contains_key(name) {
                     let size = GROUND_NOISE_SIZE as u32;
-                    match image_data(size, size, &ground_noise_pixels()) {
+                    match image_data(size, size, ground_noise_pixels().as_slice()) {
                         Ok(image) => {
                             self.generated.insert(GROUND_NOISE, image);
                         }

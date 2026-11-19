@@ -11,7 +11,7 @@
 //! costs a few percent of the soil bake. Like the bake it is a pure function of
 //! the pixel, so any row split gives the same pixels.
 
-use super::quarry_soil::{QUARRY_SOIL_SIZE, QUARRY_TERRAIN_EXTENT, bake_quarry_soil};
+use super::quarry_soil::{QUARRY_SOIL_SIZE, QUARRY_TERRAIN_EXTENT, write_quarry_soil};
 
 /// Soil pixels between the relief's lattice points.
 pub const RELIEF_STEP: usize = 4;
@@ -46,9 +46,15 @@ const SRGB_EXPONENT: f64 = 1.0 / 2.2;
 /// The bake's soil with its relief, rows `[start, end)`: what the quarry soil
 /// texture holds.
 pub fn bake_quarry_ground(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
-    let mut pixels = bake_quarry_soil(accum, start, end);
-    shade_relief(&mut pixels, start);
+    let mut pixels = vec![0; (end - start) * QUARRY_SOIL_SIZE * 4];
+    write_quarry_ground(accum, start, &mut pixels);
     pixels
+}
+
+/// Bake whole rows into their final place in a shared image, starting at row `start`.
+pub fn write_quarry_ground(accum: &[f32], start: usize, pixels: &mut [u8]) {
+    write_quarry_soil(accum, start, pixels);
+    shade_relief(pixels, start);
 }
 
 /// Multiply the relief's tint and slope shade into soil rows starting at `start`

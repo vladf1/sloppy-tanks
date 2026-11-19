@@ -154,7 +154,7 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             ..RoundRecap::default()
         };
         recap.report = battle_report(&hud, &recap, Shell::Desktop);
-        hud.recap = Some(Cow::Owned(recap));
+        hud.recap = Some(recap.into());
     }
     hud
 }

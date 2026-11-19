@@ -89,6 +89,8 @@
 //! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
 //! `set_graphics_setting` and `respawn_in` with the setting and tank themselves.
 
+use std::sync::Arc;
+
 use crate::Shell;
 use crate::battle_report::pause_report;
 use crate::events::{EventBatch, PendingEvent, batch_json, take_events, take_events_into};
@@ -285,7 +287,7 @@ pub struct Game {
     /// How long the human's effects have run, which their timer rings drain from.
     effect_timers: EffectTimers,
     /// The finished round's recap; personal bests are saved once per result.
-    recap: Option<RoundRecap>,
+    recap: Option<Arc<RoundRecap>>,
 }
 
 #[cfg_attr(all(target_arch = "wasm32", feature = "js-api"), wasm_bindgen)]
@@ -1055,14 +1057,14 @@ impl Game {
     /// bests and reports them in the recap.
     pub fn hud(&mut self) -> Hud<'_> {
         if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
-            self.recap = Some(round_recap(
+            self.recap = Some(Arc::new(round_recap(
                 &self.sim,
                 &mut BrowserStorage::local(),
                 self.shell,
-            ));
+            )));
         }
         let recap = if self.sim.match_state.phase == MatchPhase::Results {
-            self.recap.as_ref()
+            self.recap.clone()
         } else {
             None
         };
