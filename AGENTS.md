@@ -588,12 +588,12 @@ offline.
   production or change the production deploy workflow, and never upload
   the repository directory.
 - `deploy:dev` first publishes the dev site's own multiplayer server
-  (`scripts/server.mjs publish --dev`). When the registry lacks the build, it
-  pushes the checkout's image as
-  `dev-<serverBuild>`, keeping the bare build tag for CI. Publishing adds the image
-  to `deployment-dev`. The dev machines check it every 10 seconds. The SSH
-  commands act on each machine listed for the selected environment, or the one named
-  with `--ip`. A dev publish can end rooms on versions it replaces or removes.
+  (`scripts/server.mjs publish --dev`): when the registry lacks the checkout's server
+  build it pushes the image as `dev-<serverBuild>`, never the bare build tag CI reuses,
+  and adds it to `deployment-dev`, which the dev machines check every 10 seconds. The
+  SSH commands act on each machine the directory lists for the selected environment, or
+  the one named with `--ip`. A dev publish can end dev rooms on versions it replaces or
+  removes, and never touches production's servers.
   Client and server must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
   `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page

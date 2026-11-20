@@ -146,8 +146,8 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## Deployment
 
-Production and the App Store and the dev site run on separate Ubuntu x64 VPSes at Vultr
-with the same provisioning scripts. A machine runs the server as a container under Podman, behind Caddy in a
+Production, the App Store apps and the dev site each have their own Ubuntu x64 VPSes at
+Vultr, set up by the same provisioning scripts. A machine runs the server as a container under Podman, behind Caddy in a
 container of its own, both supervised by systemd through Quadlet units. CI builds
 production's server images, which production pulls by hand or automatically; a developer
 publishes the dev servers' images from a checkout, which the dev servers pull by

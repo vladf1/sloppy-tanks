@@ -24,7 +24,7 @@ Each region runs one `BotSwarm` Durable Object created with a
 reports its actual colo, and reads the server's protocol and content version
 from the directory, so a server redeploy does not need a bot redeploy.
 
-The swarm checks the directory every 10 seconds when it has idle bots and fill compatible rooms with free
+While it has idle bots, the swarm checks the directory every 10 seconds and fills compatible rooms with free
 seats, most-occupied first. With `host`, a bot creates a five-minute room when
 nothing has space, and the rest join it. A bot that ends up as the lobby host
 starts the next round after 15 seconds, so people are never stuck waiting on it.
