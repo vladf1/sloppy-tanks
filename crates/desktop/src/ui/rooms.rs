@@ -1104,21 +1104,12 @@ pub fn multiplayer(
 
 /// CREATE ROOM, or JOIN ROOM with an open room chosen, in `rect`; true when pressed.
 /// With no server to create on it stands down (`.room-action .primary:disabled`): dark
-/// glass and grey type, and offline a lock and why under its name. An App Store app the
-/// servers have moved past offers UPDATE instead, which opens its App Store page: the
-/// servers play only the latest release.
+/// glass and grey type, and offline a lock and why under its name.
 fn room_action(ui: &mut egui::Ui, art: &Art, rect: Rect, state: &RoomsState) -> bool {
     let joining = !state.selected.is_empty();
     let label = if joining { "JOIN ROOM" } else { "CREATE ROOM" };
     if joining || state.list.new_room_server().is_some() {
         return paint::action_button(ui, art, rect, label, ROOM_ACTION_LETTERING, true).clicked();
-    }
-    #[cfg(feature = "app-store")]
-    if state.outdated() {
-        if paint::action_button(ui, art, rect, "UPDATE", ROOM_ACTION_LETTERING, true).clicked() {
-            links::open_url(ui.ctx(), links::APP_STORE);
-        }
-        return false;
     }
     let response = ui.interact(rect, Id::unique("room action"), Sense::hover());
     paint::labelled(&response, false, label);
