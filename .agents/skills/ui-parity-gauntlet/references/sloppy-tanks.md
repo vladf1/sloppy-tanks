@@ -6,11 +6,12 @@ pre-migration web page: the production build (`pnpm run build`) of `90423be0`, t
 main commit with the TypeScript/DOM page shell, which production served until PR 125
 replaced it with the egui shell. `scripts/desktop-ui-capture.mjs` serves it from
 `artifacts/performance/web-shell/baseline-main/dist` and checks its `/health` commit;
-create it once per checkout:
+create it once per checkout. That revision pins pnpm 12.6.0 and requires Node.js
+24.22.0 through the rest of the 24.x line:
 
 ```sh
 git worktree add --detach artifacts/performance/web-shell/baseline-main 90423be0
-(cd artifacts/performance/web-shell/baseline-main && pnpm install && pnpm run build)
+(cd artifacts/performance/web-shell/baseline-main && pnpm install --frozen-lockfile && pnpm run build)
 ```
 
 `--reference-dist <dist>` selects another copy of that build and `--reference <url>`
@@ -30,8 +31,9 @@ WebGL2 as the page). Primary owners:
 
 - Egui screens: `crates/desktop/src/ui/`; native minimum window size: `app.rs`.
 - Reference appearance, in the reference worktree (or `git show 90423be0:<path>`):
-  `src/style.css`, `src/game/ui*.ts`, `settings-dialog.ts`, `round-recap.ts`,
-  `nerd-stats.ts`, `src/net/network-ui.ts`, `multiplayer.css`.
+  `src/style.css`, `src/game/ui*.ts`, `src/game/settings-dialog.ts`,
+  `src/game/round-recap.ts`, `src/game/nerd-stats.ts`, `src/net/network-ui.ts` and
+  `src/net/multiplayer.css`.
 - Native fixtures and GPU capture: `crates/desktop/src/ui/snapshots.rs`.
 - Reference fixture rendering: `scripts/desktop-ui-capture.mjs`.
 - Randomized A/B sheets and HTML: `scripts/desktop-ui-report.mjs`.
@@ -83,8 +85,8 @@ scope unless other source changed:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
-cargo test --locked -p sloppy-desktop
+cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
+cargo test --locked --profile desktop-check -p sloppy-desktop
 bun x prettier --check scripts/desktop-ui-*.mjs
 bun x oxlint --deny-warnings scripts/desktop-ui-*.mjs
 git diff --check

@@ -1,7 +1,7 @@
 # Host download benchmarks
 
-This folder contains HTTP-only comparisons of the live Sloppy Tanks hosts: the GitHub
-Pages production site and the Cloudflare Workers dev site. The dev site serves its own
+This folder contains HTTP-only comparisons of the live Sloppy Tanks hosts: the production
+and dev sites, both served by Cloudflare Workers. The dev site serves its own
 build (the dev server directory compiled in), so its shell Wasm differs a little from
 production's; compare like files.
 
@@ -20,7 +20,7 @@ This is a manual benchmark. It is intentionally excluded from the repository-wid
 ## Scope and method
 
 - 13 alternating rounds per deployment and graphics backend.
-- A page load is the HTML entry with its boot script (a page built before the script moved inline also loads it as `assets/main-*.js`), one build of the egui shell (its glue, `assets/shell-glue-*.js`, formerly `assets/sloppy-tanks-*.js`, and Wasm, `assets/sloppy-tanks_bg-*.wasm`; or the WebGL2 build's `-webgl` pair), the favicon and the village's textures the script lists. The script discovers the hashed names from the live HTML, module and glue, so it needs a page built from the egui shell (PR 125 on); the fonts, sounds and tank previews the page downloads beside the Wasm are not counted.
+- A page load is the HTML entry with its boot script (a page built before the script moved inline also loads it as `assets/main-*.js`), one build of the egui shell (its glue, `assets/shell-glue-*.js`, formerly `assets/sloppy-tanks-*.js`, and Wasm, `assets/sloppy-tanks_bg-*.wasm`; or the WebGL2 build's `-webgl` pair), the favicon and the village's textures the script lists. The script discovers the hashed names from the live HTML, module and glue, so it needs a page built from the egui shell (PR 125 on); the selected URLs exclude the shader tables, fonts, tank previews and workers. The page synthesizes its audio locally.
 - Each round requests the WebGPU load and the WebGL2 load of each deployment as separate batches.
 - Optional Harbor/Quarry-only assets and unused public files are not part of the default `/` startup graph.
 - Each resource is fetched concurrently using a fresh curl process with HTTP/2, IPv4, no local cache, and `Accept-Encoding: br, gzip`.

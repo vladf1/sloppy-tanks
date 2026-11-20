@@ -2,11 +2,11 @@
 
 ## Perimeter concrete
 
-Created with the built-in image generation tool. Original: `weathered-concrete.webp` (1254 × 1254). Runtime: `public/textures/walls/weathered-concrete.webp`, encoded with `cwebp -q 88 -m 6 -metadata none`. All four perimeter walls share the image, with a four-metre tile size on faces and tops. The saved asset ships directly; neither browser nor CI regenerates it.
+Created with the built-in image generation tool. Original: `weathered-concrete.webp` (1254 × 1254). The optimizer writes `public/textures/walls/weathered-concrete.webp` at 512 × 512, quality 80. All four perimeter walls share the image, with a four-metre tile size on faces and tops. The saved asset ships directly; neither browser nor CI regenerates it.
 
 Prompt: Create a seamless tileable square high-resolution albedo texture for weathered poured cement perimeter walls in a colorful top-down 3D tank game. Orthographic straight-on flat surface filling entire image, no perspective. Warm light gray concrete, irregular broad cloudy cement variation, fine aggregate and pores, a few short subtle hairline cracks, faint formwork impressions. Readable medium-scale mottling at game distance with detailed grain up close. Moderately worn but structurally sound, clean light cement overall, restrained contrast. Seamless all four edges, uniform neutral diffuse lighting, no directional shadows, no ambient occlusion, no lighting gradients, no objects, no ground, no sky, no text, no logos, no borders, no large dramatic fissures, no graffiti. Single continuous material texture, not a photo of a wall in an environment.
 
-Created with the built-in image generation tool on 2026-09-05. Original outputs are preserved here; game assets are WebP quality 88 under `public/textures/ground/`. The tool returned 1254 × 1254 images despite the requested 2048 × 2048; they are used at native resolution, without upscaling.
+Created with the built-in image generation tool on 2026-09-05. The 1254 × 1254 dry grass and packed dirt sources are preserved here. See Encoding below for the current runtime copies.
 
 ## Dry grass prompt
 
@@ -69,7 +69,7 @@ The page draws its headings in Anton Wide, which `scripts/build-fonts.py` (fontT
 makes from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License 1.1, its
 license beside both) and packs with Roboto Regular and Bold (`assets/fonts/`, Apache
 2.0) into `public/fonts/interface.ttc`, one download that Brotli makes 12% smaller than
-the three files apart. The page set its headings in Impact,
+the three files apart. The former web page set its headings in Impact,
 which may not be redistributed; Anton is narrower, so the script stretches its outlines,
 advances and kerning by 11% (Impact's letters over Anton's across the interface's
 uppercase strings), gives the space Impact's width and drops the hinting. The native apps
@@ -80,7 +80,7 @@ draw the system's Impact. Rerun
 
 The logo's letters (`LOGO_SLOPPY` and `LOGO_TANKS` in `crates/desktop/src/ui/icons.rs`)
 are path data baked from Anton (`assets/fonts/Anton-Regular.ttf`, SIL Open Font License
-1.1, its license beside it) by `scripts/generate-logo-outlines.ts`. The page set the
+1.1, its license beside it) by `scripts/generate-logo-outlines.ts`. The former web page set the
 logo in Impact, whose outlines may not be redistributed; until the vector logo it was
 `public/previews/logo.webp`, a 3x capture of the production page's `.setup-brand`.
 The generator stretches each Anton capital into the ink box its Impact letter took

@@ -1,8 +1,8 @@
 # Cloudflare deployment tools
 
-Wrangler and its esbuild/workerd dependencies live here so normal game installs,
-builds and GitHub Pages CI do not install them. This is a separate package, which the root install
-leaves alone, with its own committed `bun.lock` and isolated linking.
+Wrangler and its esbuild/workerd dependencies live in this separate package.
+Cloudflare deployment jobs install it on demand using its own `bun.lock` and
+isolated linking. The root install leaves it alone.
 Only esbuild and workerd may run dependency install scripts in this package.
 
 Install Node.js 26.13.1 on PATH to match the deployment workflow. On macOS,

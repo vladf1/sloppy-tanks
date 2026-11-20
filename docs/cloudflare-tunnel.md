@@ -7,8 +7,9 @@
   `--no-build` reuses the current `dist/`. Opened locally, `http://localhost:4179/`
   shows the link; through the tunnel, `/` goes to the game. Never tunnel the Vite
   dev server or the repository.
-- Agents start it with the `tunnel` entry in `.claude/launch.json`, whose preview
-  is the link page, and read the link from its output. Reuse a running tunnel
+- Run `bun run tunnel` from the repository root. Claude Code can also use the
+  `tunnel` entry in `.claude/launch.json`. The command prints the current link and
+  can replace it if the tunnel drops. Reuse a running tunnel
   when appropriate. If sandbox restrictions block local binding or external
   DNS/network access, request narrow execution escalation; do not treat that
   failure as a broken application.

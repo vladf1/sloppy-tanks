@@ -38,7 +38,7 @@ on a Mac unless noted), so re-measure before relying on them.
   (−0.8 dB PSNR, no visible change at 2× zoom), and `village-ground.webp` near-lossless
   saves 29 KB (colours off by at most 2/255).
 - **Why it waited:** it trades a small amount of quality, which was declined then.
-  These two files are 37% of the texture download.
+  Those two files were 37% of the texture download measured at the time.
 
 ### Measure tanks before painting them
 
@@ -72,7 +72,7 @@ on a Mac unless noted), so re-measure before relying on them.
 - **Where:** local branch `browser-glyphs`; screenshots and timings in
   `artifacts/performance/parity-2026-10-30/fonts/browser-glyphs/`.
 
-### Remaining differences from the former web page
+### Differences observed during the migration
 
 - **Joining a room:** the former page stayed on Battle Setup with "JOINING…" on the
   button and the status under it. The egui page shows a "Joining room" card over
@@ -94,6 +94,7 @@ Recorded so they are not retried without a new reason:
   maximum compression.
 - **Combining the textures into one file:** under 1%, since WebP is already
   compressed.
-- **Delaying the sound downloads:** a round's first sound could come out silent.
+- **Delaying the former sound downloads:** a round's first sound could come out
+  silent. The page now synthesizes its audio during startup.
 - **Shortening the menu's 250 ms fade:** the menu is already drawn and clickable
   under it.

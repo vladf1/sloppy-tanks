@@ -9,20 +9,21 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 browser engine runs. The host seats a join under the name it typed, when a player may
 type it, or one drawn from fixed word lists (`sloppy_core::net::player_names`), or a
 bot's for a pilot, whatever the join asked for. A server whose `SERVER_ENVIRONMENT` is
-`app-store` seats only drawn names, so the App Store apps show no text a player wrote. Production and
-the dev site each run it on their own Vultr machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
-the server directory (https://directory.sloppytanks.com) lists them.
+`app-store` seats only drawn names, so the App Store apps show no text a player wrote. Production, dev and the App Store each have a separate server environment. Machines
+run one process per retained content version behind Caddy at their nip.io addresses.
+The directory lists each version separately. See [Deployment](#deployment).
 
 ```sh
 bun run server:dev        # build for this machine and listen on 127.0.0.1:8787
 bun run dev               # in another terminal; open ?multiplayer on the printed URL
 ```
 
-A page on this machine lists this server's rooms (it answers as its own directory) and
+A page on localhost lists this server's rooms (it answers as its own directory) and
 plays on `ws://127.0.0.1:8787`, unless the build names a directory; `?directory=` (the
-app's `--directory`) names another. `bun run server:check:players` runs real player sockets on all
-maps against a running server; `SLOPPY_SERVER_URL=wss://<server>`
-(a URL the directory lists) tests that one. For sustained traffic from other regions, the traffic bots (a
+app's `--directory`) names another. `bun run server:check:players` runs real player sockets on Village, Harbor and Quarry by default. Build `wasm:engine`
+first for its wire decoder. Set `SLOPPY_SERVER_URL` to test a deployed version and
+`SLOPPY_PLAYER_MAPS` to pick other maps. See the
+[scripts guide](../../scripts/README.md#multiplayer-experiments). For sustained traffic from other regions, the traffic bots (a
 separate Cloudflare Worker) join open rooms on production's server; see `bots/README.md`.
 
 Tests: `cargo test -p sloppy-server` covers settings, limits, the WebSocket codec
@@ -60,14 +61,13 @@ reload message, so after editing `crates/core`, rebuild the Wasm (`bun run
 wasm`) and the server together. The build also stamps a `serverBuild`
 fingerprint of the core and server sources, their dependencies and build
 settings, which `/health` reports so deploys and the redeploy check notice
-server-only changes that leave clients compatible. No client URL override is
-accepted in production builds.
+server-only changes that leave clients compatible. The page accepts a directory override on localhost and on the dev site.
 
 Settings come from the environment:
 
 | Variable             | Default              | Meaning                                                                                      |
 | -------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks                                  |
+| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; only Caddy is public on a VPS. `PORT=0` picks a free port.                         |
 | `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                                                 |
 | `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none                                  |
 | `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL`; it titles the dashboard |
@@ -81,17 +81,19 @@ Rooms admit eight people, at most six per team. Explicitly leaving the last seat
 disposes the match immediately; dropped connections retain a 30-second room/seat
 grace. Idle lobbies/results expire after five minutes. After four hours a room
 hosts no new battle: one under way may finish (up to its 99-minute length plus
-overtime), then the room closes. Menu/hidden clients stop receiving snapshots
-until they resume with a full baseline. Seat tokens stay in session storage,
-never in shared room links.
+overtime), then the room closes. A hidden client stops receiving snapshots until
+it resumes with a full baseline. A visible client with its in-battle menu open
+keeps receiving snapshots so it can watch. The web client stores seat tokens in
+session storage and shares room links by code alone.
 
 A room on an extra level (the Stress Grid or the Scrap Yard) fills that level's
 roster with bots (30 tanks, where players are nearly invulnerable, power-ups
 last ten times longer and ammo crates hold ten times as much). Its host picks it
-like any map. Plain `/rooms` lists only rooms on standard maps; Battle Setup asks
-for `/rooms?debug` and shows the others only on a page opened with
-`?debug`, or when following that room's link. A Scrap Yard room sends
-roughly five times a standard room's snapshot bandwidth.
+like any map. Plain `/rooms` lists only standard maps and `/rooms?debug` includes extra levels.
+Battle Setup reads `/servers` and shows extra rooms when Developer tools are active
+or when the player looks up an extra room by code or invite link. The Scrap Yard
+can send substantially more snapshot data. Use the
+[snapshot benchmark](../../scripts/README.md#measurements) to measure a build.
 
 Room traffic uses permessage-deflate at zlib-rs level 2 (its fast strategy) with
 context takeover, which browsers negotiate natively; a client that does not offer it
@@ -105,8 +107,8 @@ are measured before compression; the `wire` figures count socket bytes after it.
 Rooms publish on lobby changes and every 20 seconds while active;
 disconnected-empty rooms are removed immediately and stale entries expire after
 45 seconds. The list holds at most 256 entries, evicting the least recently
-refreshed. The client refreshes every five seconds while the visible browser
-dialog is open, and stops on joining, creating or leaving the page. Ordinary
+refreshed. The client refreshes the directory every five seconds while Battle Setup's
+Multiplayer tab is visible. Polling stops when it enters a room or leaves the tab. Ordinary
 single player never loads or polls it.
 
 `GET /servers` answers in the server directory's format with this one server, so a lone
@@ -119,7 +121,7 @@ seconds), and `rooms`, every room including extra levels. It shares `/rooms`'s C
 
 With `DIRECTORY_URL` set to the directory's base address
 (`https://directory.sloppytanks.com`) and `SERVER_ENVIRONMENT` to the environment
-that lists the server (`production` or `dev`), the server PUTs the same listing, without
+that lists the server (`production`, `dev` or `app-store`), the server PUTs the same listing, without
 `url`, to `/servers?environment=` there as JSON. A room entering or leaving the list
 (its first player joining, its last leaving, or the room ending) sends it at once.
 Otherwise it compares the rooms every 2 seconds and sends the listing when they changed
@@ -144,8 +146,8 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## Deployment
 
-Production and the dev site each run game server machines, Ubuntu x64 VPSes at Vultr set
-up identically. A machine runs the server as a container under Podman, behind Caddy in a
+Production, the App Store apps and the dev site each have their own Ubuntu x64 VPSes at
+Vultr, set up by the same provisioning scripts. A machine runs the server as a container under Podman, behind Caddy in a
 container of its own, both supervised by systemd through Quadlet units. CI builds
 production's server images, which production pulls by hand or automatically; a developer
 publishes the dev servers' images from a checkout, which the dev servers pull by
@@ -182,23 +184,22 @@ first, in place of an older image of the same content version (a server-only cha
 drops the oldest beyond five. Like an image, each file pushed is fixed and the tag moves to
 the newest, so the package's untagged versions are the deployments before. Every machine
 of the environment runs a server for each version listed, so a page or app keeps a server
-of its own content version while newer ones are deployed, and only an app more than five
-versions behind is told to update. Read one with
+of its own content version while newer ones are deployed. Read the production file with
 `bun -e 'import {registry} from "./scripts/deployment.mjs"; console.log(await registry("ghcr.io/vladf1/sloppy-tanks-server").read("deployment-production"))'`.
 
-The tags `production`, `app-store` and `dev`, which listed the versions in a label before
-the deployment file, no longer move; a machine created before anything was published to
-its environment starts production's newest server until the first publish.
+The old image tags `production`, `app-store` and `dev` are frozen. Use the
+`deployment-<environment>` artifacts to see what an environment runs.
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
 completes the release version (`1.1.0.628`, `scripts/release-version.mjs`) the image
 records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When main
 first ships a server build a pull request already built, it restamps that image's
-release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
-connects to the machines. Fork pull requests build the image without pushing.
+release, commit and time over the same binary layer. Later builds keep that metadata.
+Pull requests leave the deployment files alone. The machines fetch deployments
+from the registry. Fork pull requests build the image without pushing.
 
-`server:publish --dev`, which `deploy:dev` runs, adds to `dev` the package's image of the
+`server:publish --dev`, which `deploy:dev` runs, adds to `deployment-dev` the package's image of the
 checkout's server build when there is one (CI's `<serverBuild>`, or an earlier
 publish's), and otherwise pushes the checkout's build as `dev-<serverBuild>` and adds
 that. A dev build never takes the bare
@@ -265,14 +266,14 @@ bun run server:auto-update resume    # lift a hold (below) so auto-update follow
 bun run server:deploy                # SSH fallback: build here, copy the image, switch
 ```
 
-Each acts on production's machine; `--dev` picks the dev site's and `--app-store` the
-App Store apps' ([App Store machines](#app-store-machines)).
+Remote commands act on the listed machines in production by default. Use `--dev`
+or `--app-store` to select another environment, and `--ip ADDRESS` to target a
+single machine. Registry publishing is available through `server:publish --dev`.
 
 With auto-update on, as every machine is by default, production's timer checks
 `deployment-production` every 10 seconds. A newly listed version starts at once beside the others
 (no one plays on it yet). A version pushed out of the list, and a listed version whose
-image changed (a server-only change), wait until nobody holds a seat on its server (the
-`players` count in `/stats`), or at most four hours, a room's lifetime; then the server
+image changed (a server-only change), wait until the server's `players` count in `/stats` reaches zero, or at most four hours, a room's lifetime; then the server
 stops, or restarts on the new image. Anything other than following the deployment file leaves
 a hold: an SSH deploy, a rollback or running another tag pins that image, and auto-update
 skips its checks until `server:auto-update resume` or `server:update`. An image that fails
@@ -280,11 +281,11 @@ its health check is not tried again until the file lists another image of its ve
 `server:status` shows each version's port, pinned and previous image, any pending
 update, stop or failed image, the hold, and auto-update's latest checks.
 
-Dev's machines check `:dev` every 10 seconds and start, switch and stop versions as soon
+Dev's machines check `deployment-dev` every 10 seconds and start, switch and stop versions as soon
 as it moves, without looking at who is playing. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
-or `server:update --dev --image`) lasts until the next publish moves `:dev`.
+or `server:update --dev --image`) lasts until the next publish changes that file.
 
-`server:publish --dev` runs `server:deploy-check`, adds to `:dev` the package's image of
+`server:publish --dev` runs `server:deploy-check`, adds to `deployment-dev` the package's image of
 the checkout's server build if it has one, or else builds the image here with Docker,
 pushes it as `dev-<serverBuild>` and adds that, then waits until every dev server the
 directory lists reports the checkout's build at its root through Caddy: the next check,
@@ -331,9 +332,9 @@ starts a server for each version its environment's deployment file lists. The se
 directory under their environment within a few minutes, once Caddy has its certificate,
 each at `wss://<address>.nip.io/v/<content version>`, with no SSH from here; from then on
 `deploy:dev` and the other `server:*` commands reach the machine, once however many
-versions it runs. A dev machine created before anything was published
-to `:dev` starts production's image instead, so it is up and listed, and switches to the
-first publish within 10 seconds; that fallback is no hold, since it still follows `:dev`.
+versions it runs. On first boot, a dev or App Store machine whose environment has
+no deployment file starts the newest version in `deployment-production`. Its
+updater applies its own environment's file once it becomes available.
 
 Machines are never set up again in place: a changed `deploy/server/` file reaches a
 machine once it is on `main` and the machine is created again, by destroying it and
@@ -345,22 +346,20 @@ key with `ssh-keygen -R <ip>`.
 
 ### App Store machines
 
-A client plays only on a server with its content version. Production's deployment file changes with every
-content change on main, while the App Store's apps change only when Apple releases a
-version and players install it, so they play in an environment of their own, `app-store`
-(the build sets `SLOPPY_SERVER_ENVIRONMENT`), whose machines follow `deployment-app-store`. Create
-one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the first
-upload it runs production's image.
+App Store builds use their own environment (`SLOPPY_SERVER_ENVIRONMENT=app-store`)
+so their matching servers can stay available as Apple releases and players install
+updates. Create a machine from `deploy/server/cloud-init/app-store.yaml` to follow
+`deployment-app-store`.
 
 Each run of the Apps workflow that uploads to TestFlight adds its commit's server image,
-`sha-<commit>`, to `:app-store` once both uploads succeed (the run fails before building
+`sha-<commit>`, to `deployment-app-store` once both uploads succeed (the run fails before building
 when main's build has not pushed it yet). The machines start it beside the versions they
 already run, so TestFlight's testers and App Review play the build online at once, and the
 released apps keep their servers. Apple may approve and release the iOS and the Mac
-version apart, each whenever it is ready, with nothing to run here: every version of the
-last five uploads has its server, and an app of an older one finds none, says so, and
-offers UPDATE, which opens its App Store page. Single player keeps working. App Store
-rooms seat drawn names only, whichever version they play.
+versions separately. The deployment retains the five most recently promoted
+distinct content versions.
+An app needs a matching server to play online. Single player keeps working when
+the directory has none. App Store rooms seat players under drawn names.
 
 `server:update`, `rollback`, `deploy`, `auto-update`, `status`, `logs` and `stats` take
 `--app-store` as they take `--dev` (`--ip` names one machine); `server:deploy
@@ -374,9 +373,14 @@ bun run server:stats   # /stats JSON over SSH
 bun run server:status  # systemctl status for the game server and Caddy, and its image state
 # add --dev for the dev server
 # exit 1 when the live server needs a redeploy: clients are refused, or only
-# server code changed; --dev checks the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
+# server code changed; --dev selects dev, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 checks a local one
 bun run server:check-if-redeployment-required
 ```
+
+The redeploy check compares this checkout with the newest version at the root of the
+first listed machine, or the origin selected by `SLOPPY_SERVER_URL`. Use
+`https://<machine>/v/<content version>/health` to inspect a specific retained
+version. A warning about the live page compares it with the checked endpoint only.
 
 The log has one line per event: a room is created, a player joins, disconnects
 or leaves, the server closes a socket (with its close code and reason), or a

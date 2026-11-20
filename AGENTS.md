@@ -65,13 +65,14 @@ the server:
   byte), and only lays out and plays what they produce. Game rules stay out of the
   shell. The iOS build is the same crate for `aarch64-apple-ios`, one bundle for iPhone
   and iPad (an iPhone plays the phone edition), which plays by touch
-  (`touch::screen`: true there, in the phone edition, and in a page on a touch screen as
-  Settings' Touch controls say): touch controls painted in egui (`touch.rs`,
+  (`touch::screen` also enables touch for the web phone edition and honors the page's
+  Touch controls setting on larger screens): touch controls painted in egui (`touch.rs`,
   `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there
   (the UIScene life cycle iOS 27 requires, hardware keyboard presses). The device class
-  (`touch::device`: desktop, tablet or phone) is decided once at startup and picks the
-  engine's starting graphics, the reticle and the phone edition, whose screens are
-  separate `phone_*` layouts beside the full ones; keep that edition limited.
+  (`touch::device`: desktop, tablet or phone) picks the engine's starting graphics,
+  the reticle and the shell layout. On iPhone, `touch::fit_screen` can switch between
+  phone and tablet layouts on resize, as when an iPhone Duo opens or closes. The
+  phone edition uses separate `phone_*` layouts beside the full ones; keep it limited.
 
 ## Code style
 
@@ -116,8 +117,8 @@ Run `bun install --frozen-lockfile` in every new checkout or worktree. Use `bun 
 for dependency changes. Installs use isolated linking; root dependencies cannot
 run install scripts. Wrangler lives in `tools/deploy/` with a separate lockfile;
 `bun run wrangler` and the Cloudflare deployment commands install it on demand
-with Bun, then run Wrangler on Node.js 26 (the deploy workflow pins 26.13.1). This is the sole Node runtime
-exception while Bun's Undici dispatcher support is incomplete; do not force it onto Bun.
+with Bun, then run Wrangler on Node.js 22 or newer. The deploy workflow pins
+26.13.1. Keep Wrangler on Node while Bun lacks the Undici dispatcher support it needs.
 Only that package trusts `esbuild` and `workerd`. Review a new dependency's install
 script before adding it to `trustedDependencies`. Keep `--no-script` on the native
 `bun check` command: this repository also has a `check` package script.
@@ -425,9 +426,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   upsamples it; at scale 1 the output reads texels exactly as before, so the High
   tier on a desktop is pixel for pixel today's picture. Tiers switch optional work
   through uniforms and passes (`TierFeatures`), never through pipeline variants.
-  Touch tablets also draw without MSAA (phones, whose scene is small, keep it), which
-  is fixed per renderer. Keep a new
-  expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
+  Tablets normally draw without MSAA. Starting with Graphics set to High enables
+  it on tablets, and phones keep it at every tier. The sample count is fixed per
+  renderer. Keep a new expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
   to 15-30 fps after a single frame overruns, and builds from August to October 2026
   (bug 325095, Playwright's WebKit too) never raise it again on their own; the
   controller reconfigures the canvas when frames stay held while the GPU has room, so
@@ -510,17 +511,19 @@ reachability; add or update a test for those properties. Check both projectile
 line-of-sight and tank steering when changing cover geometry.
 
 Extra levels are maps with their own arena, roster and rules, offered in Battle
-Setup's map dropdowns (marked EXTRA, in their own group) only on a page opened
-with `?debug`. Each is a map option with `extra: true`
+Setup's map dropdowns (marked EXTRA, in their own group) with Developer tools
+active (`?debug` on the page or `--debug` in the desktop app). Each is a map option
+with `extra: true`
 (`crates/core/src/sim/map_options.rs`) and a setup in `sim/extra_levels.rs`
 (`extra_level`).
 Single player plays one as an endless team battle (`single_player_rules`);
 switching back applies the standard rules, so every rule a level sets needs a
 standard value there. A room plays one like any map: the host picks it,
 `create_multiplayer_simulation` applies the same setup with the room's round
-rules, and plain `/rooms` (which the traffic bots read) leaves those rooms out,
-while the server directory lists every room and Battle Setup shows them only on a
-`?debug` page. Room clients learn a level
+rules. Plain `/rooms` leaves those rooms out, while `/servers` includes extra
+levels. Load bots use the directory and filter their automatic room selection to
+standard maps. Battle Setup hides them unless Developer
+tools are active or the player looks up that room by code. Room clients learn a level
 from the replicated scene (`map.theme`, `map.scale`).
 
 The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 83
@@ -585,13 +588,13 @@ offline.
   production or change the production deploy workflow, and never upload
   the repository directory.
 - `deploy:dev` first publishes the dev site's own multiplayer server
-  (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
-  `dev-<serverBuild>`, never the bare build tag CI reuses, and adds it to the versions
-  `:dev` lists, which the dev machines check every 10 seconds), which runs on its own Vultr
-  machines (the other `server:*` commands run over SSH on every machine the server
-  directory lists for the environment, or on one named with `--ip`). It resets only the
-  dev server's rooms and never touches production's server. Client and server
-  must agree on a content hash of the `crates/core` sources, the crates they
+  (`scripts/server.mjs publish --dev`): when the registry lacks the checkout's server
+  build it pushes the image as `dev-<serverBuild>`, never the bare build tag CI reuses,
+  and adds it to `deployment-dev`, which the dev machines check every 10 seconds. The
+  SSH commands act on each machine the directory lists for the selected environment, or
+  the one named with `--ip`. A dev publish can end dev rooms on versions it replaces or
+  removes, and never touches production's servers.
+  Client and server must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
   `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs a server container per content version its
@@ -607,16 +610,16 @@ offline.
   `server:update` for production without being asked. The dev server only changes
   on `deploy:dev` or an explicit `--dev` command.
 - Pages find servers through the server directory, a Cloudflare Worker in
-  `directory/` (`bun run directory:deploy`) that every server pushes its rooms to;
-  one deployment serves production and dev by its `environment` parameter, and
-  a machine's startup script (`deploy/server/cloud-init/`) writes its `DIRECTORY_URL`
-  and `SERVER_ENVIRONMENT`.
+  `directory/` (`bun run directory:deploy`) that every server pushes its rooms to.
+  Clients request their build's environment and content version. A machine's startup
+  script (`deploy/server/cloud-init/`) writes `DIRECTORY_URL` and
+  `SERVER_ENVIRONMENT` (production, dev or app-store).
   `bun run server:check-if-redeployment-required` (add `--dev` for
-  the dev server) compares this checkout with a live server's `/health` and
-  exits non-zero when a redeploy is needed. It tells clients-refused (content
-  hash) apart from server-only changes (`serverBuild`: `crates/server`, its
-  dependencies, build settings). Run it after a merge instead of judging by
-  which directories changed.
+  dev) compares this checkout with the newest version on the first listed machine,
+  or the root of a server named by `SLOPPY_SERVER_URL`. Exit 1 means that endpoint
+  needs a redeploy. The output distinguishes a protocol or content version mismatch
+  from server-only changes (`serverBuild`). Check a specific retained version through its versioned
+  `/health` or the directory, since an older build can still have its own server.
   Change the machines only through the Vultr startup scripts
   (`deploy/server/cloud-init/`), `deploy/server/` and the `server:*` scripts described
   in `crates/server/README.md`. The load bots in `bots/` are a Cloudflare Worker that

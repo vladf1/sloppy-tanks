@@ -17,15 +17,15 @@ The work goes ahead only if Phase 0 shows stalls that matter on real networks.
 
 ## Decisions
 
-| Decision           | Choice                                                                                                                            | Why                                                                                                                                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Transport          | WebTransport where the browser and network allow it, WebSocket otherwise                                                          | The WebSocket path keeps serving the traffic bots, UDP-blocked networks, older Safari and the apps.                                                                                                       |
-| Where QUIC ends    | A separate bridge process on each machine (`wt-bridge`), which forwards each session to the game server over a loopback WebSocket | The server's TLS provider cannot do QUIC (below), and Caddy only proxies WebTransport to another WebTransport server. Loopback loses no packets, so the ordered TCP hop behind the bridge delays nothing. |
-| Bridge stack       | Rust: `web-transport-quinn` on quinn with `ring` or `aws-lc-rs`, its own image, built only in CI                                  | It advertises the settings Safari negotiates. The C in its crypto stays out of the game server, whose SSH fallback deploy (`server:deploy`) keeps cross-compiling from macOS without a C toolchain.       |
-| Ports              | The bridge owns UDP 443; Caddy keeps TCP 443 with HTTP/3 turned off                                                               | Restrictive networks that allow any UDP usually allow 443.                                                                                                                                                |
-| Certificates       | The Let's Encrypt certificate Caddy already obtains for the machine's nip.io name; certificate hashes only for local servers      | Safari 26.5 and 26.6 reportedly fail handshakes pinned by certificate hash.                                                                                                                               |
-| Snapshot datagrams | Each frame is the change from the last frame that client confirmed (protocol 8); WebSocket clients keep base = previous frame     | Today's frames must be applied in order (below). With base = previous frame the WebSocket bytes stay exactly as they are.                                                                                 |
-| Rollout            | Chrome first behind a page parameter, then the default with WebSocket fallback                                                    | Safari's implementation is the newest and least proven; Roblox is launching its browser client on Chrome first for the same reason.                                                                       |
+| Decision           | Choice                                                                                                                                       | Why                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Transport          | WebTransport where the browser and network allow it, WebSocket otherwise                                                                     | The WebSocket path keeps serving the traffic bots, UDP-blocked networks, older Safari and the apps.                                                     |
+| Where QUIC ends    | A separate bridge process on each machine (`wt-bridge`), which forwards each session to the game server over a loopback WebSocket            | The bridge owns public QUIC sessions and keeps the existing game-server listener on loopback. Caddy's proposed passthrough still needs a QUIC upstream. |
+| Bridge stack       | Rust: `web-transport-quinn` on quinn with `ring` or `aws-lc-rs`, its own image, built only in CI                                             | The proposed library advertises the settings Safari negotiates. A separate binary keeps the QUIC stack out of the game server.                          |
+| Ports              | The bridge owns UDP 443; Caddy keeps TCP 443 with HTTP/3 turned off                                                                          | Restrictive networks that allow any UDP usually allow 443.                                                                                              |
+| Certificates       | The Let's Encrypt certificate Caddy already obtains for the machine's nip.io name; certificate hashes only for local servers                 | Safari 26.5 and 26.6 reportedly fail handshakes pinned by certificate hash.                                                                             |
+| Snapshot datagrams | Each frame is the change from the last frame that client confirmed (in a new protocol version); WebSocket clients keep base = previous frame | Today's frames must be applied in order (below). With base = previous frame the WebSocket bytes stay exactly as they are.                               |
+| Rollout            | Chrome first behind a page parameter, then the default with WebSocket fallback                                                               | Safari's implementation is the newest and least proven; Roblox is launching its browser client on Chrome first for the same reason.                     |
 
 ## Background
 
@@ -39,7 +39,7 @@ So the upload side gains as soon as inputs travel as datagrams (Phase 2), and th
 
 ### QUIC in the Rust server
 
-quinn needs a rustls crypto provider with QUIC support. The server's `rustls-rustcrypto` (0.0.2-alpha) sets `quic: None` on every cipher suite, and its QUIC header protection is an unfinished `todo!()`; `rustls-graviola` 0.4.0 also sets `quic: None`. `ring` and `aws-lc-rs` support QUIC but contain C, which the musl cross-compile from macOS cannot build without a C toolchain. The bridge avoids the choice: the game server keeps its pure-Rust TLS for the directory client and never handles QUIC.
+The server now uses rustls with its QUIC-capable `ring` provider for directory HTTPS. The VPS build cross-compiles ring with clang and rustup's LLVM tools. The bridge remains a proposed way to keep QUIC termination and session management outside the game-server process. See the [server build guide](../crates/server/README.md#build-and-settings).
 
 ### Proxies
 
@@ -69,15 +69,15 @@ What this plan takes from it: separate streams for separate kinds of reliable tr
 ## Architecture
 
 ```
-browser ──QUIC, UDP 443──> wt-bridge ──WebSocket, 127.0.0.1:8787──> sloppy-server
-browser ──TLS, TCP 443───> Caddy ─────WebSocket, 127.0.0.1:8787──> sloppy-server   (fallback, bots)
+browser ──QUIC, UDP 443──> wt-bridge ──loopback WebSocket──> sloppy-server (requested version)
+browser ──TLS, TCP 443───> Caddy ─────loopback WebSocket──> sloppy-server (fallback, bots)
 ```
 
-The game server keeps listening only on loopback, behind both. It learns about WebTransport only through the bridge's subprotocol.
+The game server keeps listening only on loopback. Machines now run several content versions, each on its own port. The bridge must resolve the same `/v/<content version>/` routes as Caddy, strip that prefix on the upstream request and refresh its port map as versions start or stop. The unversioned route selects the newest version.
 
 ### The bridge
 
-- Accepts sessions at `https://<nip.io name>/room/CODE` on UDP 443. For each, it opens `ws://127.0.0.1:8787/room/CODE` with the subprotocol `sloppy-bridge.1` and the player's address and port in `X-Forwarded-For` and `X-Client-Port`, as Caddy does, so the server's per-IP limits apply unchanged.
+- Accepts sessions at `https://<nip.io name>/v/<content version>/room/CODE` on UDP 443. For each, it opens `ws://127.0.0.1:<port>/room/CODE` with the subprotocol `sloppy-bridge.1` and the player's address and port in `X-Forwarded-For` and `X-Client-Port`, as Caddy does, so the server's per-IP limits apply unchanged.
 - Sets `TCP_NODELAY` on its loopback socket (the server already sets it on the sockets it accepts), so small datagram messages never wait on Nagle's algorithm and delayed acknowledgements.
 - Reads the loopback socket without pausing: datagrams go out at once, and reliable messages wait in a bounded queue per session, so a slow client's stream never holds up its datagrams. The server's 2 MB slow-reader limit cannot trip through the bridge, which drains loopback quickly, so the bridge enforces it and closes with 4002.
 - Drops a datagram that is larger than the session's `maxDatagramSize` or that QUIC cannot send now; it never queues stale datagrams. quinn's datagram send buffer stays small.
@@ -126,7 +126,7 @@ WebSocket compression covers one hop, and the bridge's loopback socket negotiate
 - A `transport` page parameter forces either transport for testing.
 - Expect a faster join (one round trip for QUIC against TCP, TLS and the WebSocket upgrade) and fewer input lapses, but no change to download stalls yet.
 
-### Phase 3: snapshots as datagrams (protocol 8, new content version)
+### Phase 3: snapshots as datagrams (new protocol and content version)
 
 - One encoder for both transports: `StateStream` writes the change from a base frame to a target frame. Moving fields carry on by their change in the base frame times the gap in ticks, which keeps it exact. The host keeps the last 64 frames (about a second) with their motion. WebSocket clients use base = target − 1, which reproduces today's bytes and keeps one shared encoding; WebTransport clients use the newest frame they confirmed. Encodings are cached by base and target, so clients at the same point share bytes.
 - Each datagram stands alone: round, target, base, tick, the seat's input `ack`, `hull` and `bodies`, the changes since the base, and the events and projectile path entries newer than the client's confirmed frame. The client skips events it already has by id; applying a path entry twice gives the same path.
@@ -165,7 +165,7 @@ WebSocket compression covers one hop, and the bridge's loopback socket negotiate
 
 ## Alternatives considered
 
-- **QUIC inside the game server:** needs either a QUIC crypto module of our own on RustCrypto (`aes` and `aes-gcm` are already locked), checked against the RFC 9001 Appendix A vectors, or C crypto in the server; and it puts the server itself on the internet. Revisit if the bridge's hop costs too much.
+- **QUIC inside the game server:** ring makes this feasible. It would move public QUIC session handling into the game-server process and need a routing design for multiple content versions on one machine. Revisit if the bridge hop costs too much.
 - **Caddy's passthrough:** unreleased and experimental, its upstream must still speak QUIC, and its Safari support is untested.
 - **The current protocol on one WebTransport stream:** the same head-of-line blocking as TCP.
 - **Splitting large frames across datagrams:** losing any piece loses the frame; a reliable stream suits bursts better.

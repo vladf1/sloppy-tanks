@@ -1,9 +1,9 @@
 # Scripts
 
-Browser checks, measurements and asset tools. None of these run in CI: `bun run
-check` covers formatting, lint, types, the site and server builds, clippy and the Rust
-and Bun tests. A passing gate does not verify controls, menu transitions, rendering or
-cleanup, so play the changed path in the page or the desktop app.
+The browser checks, UI gauntlet and benchmarks here are manual. The CI gate
+(`bun run check` locally) covers format, lint, types, site and server builds, clippy
+plus the Rust and Bun tests. Play the changed path in the page or the desktop app
+to verify controls, menu transitions, rendering and cleanup.
 
 ## Desktop UI gauntlet
 
@@ -16,11 +16,12 @@ pause/controls, Settings, team/solo results, room host/guest/rules/choices, room
 pause/results/connection states, and both Stats for nerds panels.
 
 Build the reference once per checkout (the capture checks the build's `/health`
-commit):
+commit). The frozen revision pins pnpm 12.6.0 and requires Node.js
+24.22.0 through the rest of the 24.x line:
 
 ```sh
 git worktree add --detach artifacts/performance/web-shell/baseline-main 90423be0
-(cd artifacts/performance/web-shell/baseline-main && pnpm install && pnpm run build)
+(cd artifacts/performance/web-shell/baseline-main && pnpm install --frozen-lockfile && pnpm run build)
 ```
 
 `--reference-dist <dist>` names another copy of that build, and `--reference <url>` a
@@ -82,8 +83,11 @@ The game page is the desktop crate's egui shell (`index.html`, `bun run wasm`), 
 one canvas, so no check drives it through the DOM: a check opens the page with
 `?automation` and reads the shell's state and labelled widgets from `window.sloppyShell`
 (`crates/desktop/src/automation.rs`), then plays it with real mouse, keyboard and CDP touch
-input at those coordinates. Start `bun run dev` and pass the URL it prints. Checks drive
-installed Google Chrome headless with an isolated profile, so no window takes focus; set
+input at those coordinates. Build with `bun run wasm:all` for the shell and engine
+fixtures and `bun run server:build` for the room checks. Install Playwright WebKit
+with `bun x playwright install webkit`, then start `bun run dev` and pass the URL it
+prints. The Chrome checks use installed Google Chrome in headless mode with an
+isolated profile. Set
 `SLOPPY_HEADED=1` to watch one in a visible window, and `SLOPPY_WEBGL=1` to play the
 page's WebGL2 build. Each exits non-zero on failure and writes screenshots to the ignored
 `artifacts/performance/<check>/`. Shared setup lives in `browser-helpers.mjs`
@@ -102,7 +106,7 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun scripts/round-check.mjs
 The room checks start their own game server on a free port from `SLOPPY_SERVER_BIN`
 (default `target/server/sloppy-server`, which `bun scripts/build-server.mjs` builds with
 the content version the page plays) and stage outages through `installProbes()` (dropped
-sockets, a hidden page).
+sockets, a hidden page). The suite skips its room checks when the binary is missing.
 
 | Check                      | Plays                                                                                                                                                                                                                                                                                                               |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -121,10 +125,10 @@ sockets, a hidden page).
 | `webkit-check.mjs`         | Playwright WebKit at iPad and desktop sizes: startup, GO, W's frame rate against a blank page's (three quarters of it unless the frames fill theirs, so Low Power Mode's 30 fps and a slow machine pass and WebKit's held canvas fails), no late pipelines, frame gaps (printed; fails only on a stall over 250 ms) |
 | `fixtures-check.mjs`       | The engine fixtures below                                                                                                                                                                                                                                                                                           |
 
-The dev server serves interactive fixtures, listed on the dev site's
-`/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
-`tools/tank-surface-check.html`, plus a link to the game with `?debug`, whose
-Battle Setup offers the Stress Grid and Scrap Yard. Each fixture runs the engine's
+The dev site lists the interactive fixtures at `/test-pages.html` (allowlist in
+`dev-site.ts`) alongside the labs-based tank surface tool and a link to the game
+with `?debug` for the Stress Grid and Scrap Yard. The `tests/*.browser.html` fixtures
+also run on the local Vite server. Each of those fixtures runs the engine's
 `Game` (`bun run wasm:engine`) on its own canvas (`tests/engine-fixture.ts`, through
 `tools/game-engine.ts`) and arranges it through the `Game.debug_*` hooks
 (`crates/web/src/game/debug.rs`): `reinforcements` (120 Solo Assault kills, bounded views,
@@ -171,8 +175,9 @@ through the engine Wasm (one `WireView` per socket, so run `bun run wasm:engine`
 into the JSON `full` and `snapshot` shapes, and `state-mirror.mjs` applies those and
 asserts the snapshot stream stays contiguous.
 
-`bun run server:check:players` runs 4 real player sockets for 15 seconds per map,
-including combat, reconnect and results. The traffic bots' `BotPlayer`
+`bun run server:check:players` uses four real player sockets, with a 15-second play
+window per map. It defaults to Village, Harbor and Quarry. Set `SLOPPY_PLAYER_MAPS` to a comma-separated list
+to exercise other maps. The traffic bots' `BotPlayer`
 (`bots/bot-player.ts`) drives each socket; the check mirrors every snapshot to prove
 the stream is contiguous and enforces full-state, snapshot-batch and sustained byte
 budgets. Set `SLOPPY_SERVER_URL` for a deployed server,
@@ -209,10 +214,10 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `bun run validate`                                                                       | Ten seeded headless matches and reset checks                                           |
 | `bun scripts/benchmarks/host-download-benchmark.mjs`                                     | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
 
-- `capture_benchmark` seeds each standard map and both extra levels with one idle
-  player, warms up 1200 ticks, then times 400 intervals of three steps (each
-  followed by the host's projectile path recording) and a snapshot. It takes an
-  output path after `--`.
+- `capture_benchmark` seeds Village, Harbor, Quarry and both extra levels with one idle
+  player, warms up 1200 ticks, then times 400 intervals of `BATCH_TICKS` (currently
+  one step). It records projectile paths and produces a snapshot each interval.
+  Pass an output path after `--`.
 - `snapshot_bandwidth` plays the Village (with bot fill), the Stress Grid and the
   Scrap Yard with four scripted players that drive and fire like the traffic bots,
   through `MatchHost` and a server-role codec per connection (permessage-deflate
@@ -227,8 +232,8 @@ time on an otherwise idle machine, and report sample counts with outliers.
 - `simulation_benchmark` takes a map id and a seed after `--`; it warms up 600
   ticks, times 3600 and prints JSON. For an engine change, run a base-commit
   worktree and the candidate alternately over several maps and seeds.
-- `bot_skill` plays seeded bots-only team matches on the standard maps (eight
-  seeds each by default; `--maps`, `--seeds`) and writes
+- `bot_skill` plays seeded bots-only team matches on Village, Harbor and Quarry
+  by default (eight seeds each; `--maps`, `--seeds`) and writes
   `artifacts/performance/bot-skill.json`. Pass an earlier output as `--baseline`
   to print differences. An AI change alters every seeded match, so judge it by the
   means ± two standard errors over rounds, not by any one match.
@@ -271,8 +276,8 @@ guarantees for other devices.
   app and the Mac app and captures App Store Connect's screenshots at Apple's landscape
   sizes into `artifacts/app-store/screenshots/<device>/`: iPhone 6.9" (2868×1320) and
   6.3" (2622×1206), iPad 13" (2752×2064) and Mac (2880×1800, or 2560×1600 when the screen
-  above the Dock is smaller). Each shows Battle Setup, autoplayed seeded battles on the
-  three standard maps (`--map`, `--seed`, `--autoplay`) and the last one's battle report,
+  above the Dock is smaller). Each shows Battle Setup, autoplayed seeded battles on
+  Village, Harbor and Quarry (`--map`, `--seed`, `--autoplay`) and the last one's battle report,
   which waits out the five-minute round (`--no-report` skips it). The autoplayed match
   varies between runs, so a battle can catch the player's tank destroyed: two later
   moments of each go to `alternates/` to swap in. The simulators, created
