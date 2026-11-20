@@ -303,6 +303,19 @@ test("a deployment file that does not match its digest changes nothing", () => {
   assert.deepEqual(Object.keys(services()), ["sloppy-tanks-aaaaaaaa"]);
 });
 
+test("a machine of an environment never published to starts production's newest server", () => {
+  environment("dev");
+  publish("production", [image("aaaaaaaa", "b1"), image("bbbbbbbb", "b1")], "1");
+  const result = run("pull");
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /starting production's newest server/);
+  assert.deepEqual(services(), { "sloppy-tanks-aaaaaaaa": `${idOf("aaaaaaaa", "b1")} 8787` });
+  // Its first publish replaces it.
+  publish("dev", [image("cccccccc", "b1")], "2");
+  assert.equal(run("auto").status, 0);
+  assert.deepEqual(Object.keys(services()), ["sloppy-tanks-cccccccc"]);
+});
+
 test("an image another environment's checkout loads runs as its version and holds", () => {
   publish("production", [image("aaaaaaaa", "b1")], "1");
   assert.equal(run("pull").status, 0);

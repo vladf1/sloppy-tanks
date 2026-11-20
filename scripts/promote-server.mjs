@@ -1,13 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { deploymentTag, formatDeployment, registry } from "./deployment.mjs";
-import {
-  addVersion,
-  formatVersions,
-  parseVersions,
-  SERVER_IMAGE,
-  VERSIONS_LABEL,
-} from "./servers.mjs";
+import { addVersion, SERVER_IMAGE } from "./servers.mjs";
 
 /** Publish a server image to an environment's machines:
  *
@@ -18,8 +12,9 @@ import {
  * IMAGE first in that list, in place of an older image of the same content version (a
  * server-only change), and drops the oldest beyond KEPT_VERSIONS. The deploy workflow runs
  * it for production after the site deploys, the Apps workflow for app-store once both
- * TestFlight uploads succeed, and `server:publish --dev` for dev. Needs Docker logged in to
- * ghcr.io and a token that can write packages (GITHUB_TOKEN, else the GitHub CLI's). */
+ * TestFlight uploads succeed, and `server:publish --dev` for dev. Needs Docker, which reads
+ * the image's labels, and a token that can write packages (GITHUB_TOKEN, else the GitHub
+ * CLI's). */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const ENVIRONMENTS = ["production", "dev", "app-store"];
 const LABELS = "me.fridman.sloppy-tanks";
@@ -34,8 +29,7 @@ function docker(args, options = {}) {
 }
 
 /** The labels and root digest of an image in the registry, or nothing when it holds none.
- * Any other failure stops the promotion: read as an empty list, a registry hiccup would push
- * a deployment that drops every version kept so far. */
+ * Any other failure stops the promotion. */
 function inspect(ref) {
   const result = docker([
     "buildx",
@@ -67,41 +61,6 @@ function deployedVersion(digest, labels) {
   };
 }
 
-/** The versions the environment's tag listed in its label before the deployment file
- * existed: the first promotion's starting point. */
-function labelledVersions(tag) {
-  const current = inspect(tag);
-  if (!current) return [];
-  const listed = current.labels[VERSIONS_LABEL];
-  if (listed === undefined) return [deployedVersion(current.digest, current.labels)];
-  return parseVersions(listed).map(({ digest }) => {
-    const image = inspect(`${SERVER_IMAGE}@${digest}`);
-    if (!image) {
-      console.error(`${tag} lists ${digest}, which the registry no longer holds`);
-      process.exit(1);
-    }
-    return deployedVersion(digest, image.labels);
-  });
-}
-
-/** Points the environment's image tag at the root version's image, relabelled with the
- * list, for machines created before the deployment file. Only the label changes, so the
- * image shares the root image's layers. A relabel is a new image every time, and those
- * machines restart for any new image: it pushes only when the list changes. */
-function relabel(tag, versions) {
-  const listed = formatVersions(versions);
-  if (inspect(tag)?.labels[VERSIONS_LABEL] === listed) return;
-  const dockerfile = [
-    `FROM ${SERVER_IMAGE}@${versions[0].digest}`,
-    `LABEL ${VERSIONS_LABEL}="${listed}"`,
-  ].join("\n");
-  const built = docker(
-    ["build", "--platform", "linux/amd64", "--pull", "--tag", tag, "--push", "-"],
-    { input: `${dockerfile}\n`, stdio: ["pipe", "inherit", "inherit"] },
-  );
-  if (built.status !== 0) process.exit(built.status ?? 1);
-}
-
 const [environment, source] = process.argv.slice(2);
 if (!ENVIRONMENTS.includes(environment) || !source) {
   console.error(`Usage: bun scripts/promote-server.mjs ${ENVIRONMENTS.join("|")} IMAGE`);
@@ -128,8 +87,9 @@ const listed = (versions) =>
 let deployment;
 for (let attempt = 1; ; attempt++) {
   const current = await servers.read(tag);
-  const kept = current?.versions ?? labelledVersions(`${SERVER_IMAGE}:${environment}`);
-  const versions = addVersion(kept, added);
+  // Only an environment never published to has no file: a failed read throws, rather than
+  // pushing a deployment that drops every version kept so far.
+  const versions = addVersion(current?.versions ?? [], added);
   if (current && formatDeployment({ versions }) === formatDeployment(current)) {
     console.log(`${SERVER_IMAGE}:${tag} already lists ${source} first; nothing to push`);
     deployment = current;
@@ -146,11 +106,3 @@ for (let attempt = 1; ; attempt++) {
   console.log(`Another promotion wrote ${tag} meanwhile; trying again`);
 }
 console.log(`${SERVER_IMAGE}:${tag} lists:\n${formatDeployment(deployment)}`);
-// Another promotion may write the file while this one relabels: the label follows the
-// file as it is once relabelled, so both kinds of machine end on the same list.
-for (;;) {
-  relabel(`${SERVER_IMAGE}:${environment}`, deployment.versions);
-  const latest = await servers.read(tag);
-  if (formatDeployment(latest) === formatDeployment(deployment)) break;
-  deployment = latest;
-}

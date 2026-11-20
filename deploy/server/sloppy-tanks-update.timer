@@ -1,8 +1,8 @@
 # Auto-update: bootstrap.sh enables it; `server:auto-update off` stops it until `on` or the
 # machine is created again. A check is one manifest HEAD against the registry, so every
-# machine checks every 10 seconds: CI moves :production right after the site deploys, and
-# the new page cannot join the old server until the machine switches. AccuracySec lets it
-# fire on time rather than anywhere within systemd's default minute.
+# machine checks every 10 seconds: CI writes production's deployment file right after the
+# site deploys, and the new page cannot join the old server until the machine switches.
+# AccuracySec lets it fire on time rather than anywhere within systemd's default minute.
 [Unit]
 Description=Check for a new server image every 10 seconds
 
