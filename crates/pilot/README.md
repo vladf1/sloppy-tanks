@@ -91,7 +91,7 @@ the pilots send `leave` and their reports print as JSON (`--report FILE` writes 
 file).
 
 From Cloudflare regions, through the bots control page (**Pilots**) or its
-command line (see `bots/README.md`). The pilots run in their own Worker, which the
+command line. See the [bots guide](../../bots/README.md). The pilots run in their own Worker, which the
 control page reaches over a service binding:
 
 ```sh
@@ -103,8 +103,8 @@ bun run bots -- status
 
 **Content versions:** pilots are game code. `bun run pilot` and `bun run pilot:build`
 stamp `SLOPPY_CONTENT_VERSION` as the browser build and the server do. A server whose
-content version differs refuses the pilots with "Game updated". Run or deploy them from the
-commit the target server runs. The pilots Worker reports a mismatch as a region error
+content version differs rejects the join. Run or deploy pilots from a checkout
+with the same content version as the target server. The pilots Worker reports a mismatch as a region error
 naming both versions.
 
 ## Tests

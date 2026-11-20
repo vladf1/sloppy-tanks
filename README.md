@@ -9,7 +9,7 @@ Use [Bun](https://bun.sh/docs/installation) 1.4.4 and Rust through [rustup](http
 ```sh
 brew install rustup                 # once per machine
 curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
-export PATH="$HOME/.bun/bin:$PATH"
+export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
 cargo install wasm-bindgen-cli --version 0.2.130 --locked
 bun install --frozen-lockfile   # once per checkout or worktree, and after dependency changes
@@ -33,7 +33,9 @@ version; CI reads `.bun-version`. Installs use isolated linking and committed
 dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
 [`tools/deploy/`](tools/deploy/README.md) and installs only when a Cloudflare command
 needs it; that package trusts only its `esbuild` and `workerd` setup scripts.
-Use Node.js 26.13.1 for Wrangler, the only tool here that runs on Node.
+Wrangler is the only tool in the current build and deployment workflow that
+requires Node.js. CI uses 26.13.1 and the
+launcher accepts Node.js 22 or newer.
 Run `bun add` to change dependencies and commit the affected lockfiles.
 
 `bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke
@@ -65,7 +67,7 @@ line: `?debug` is `--debug`. `?map=<id>` picks Battle Setup's map (an extra leve
 with `?debug`), `?multiplayer` opens its Multiplayer tab and `?room=<CODE>`, an invite
 link, opens the tab with that room selected. The address then follows the tab and the
 room, so a reload comes back there, and JOIN ROOM takes back a seat the room still holds.
-A page on this machine lists the local game server (`bun run server:dev`) unless the
+A page on localhost lists the local game server (`bun run server:dev`) unless the
 build names a directory; there and on the dev site, `?directory=<url>` names another, and
 rooms take the network tools `?latency=`, `?jitter=`, `?stall=` (milliseconds), `?dodge=0`
 and `?shooter=0`. Until the shell shows its first frame, the page's own loading view
@@ -110,7 +112,8 @@ the map dropdowns: **Stress Grid** (30 tanks among 83 destructibles) and
 **Scrap Yard** (30 tanks in a compact yard whose cover rebuilds). In single player
 they are an endless 15 v 15 team battle with your chosen tank; online they follow
 the room's rules. Players are nearly invulnerable on both, and pickups are ten
-times stronger. Rooms on these levels appear in the room list only on such a page.
+times stronger. These rooms are hidden from the list in normal play. Looking up one
+by code or invite link still shows it.
 
 | Control            | Action                                                   |
 | ------------------ | -------------------------------------------------------- |
@@ -129,11 +132,12 @@ Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choic
 
 In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc frees the cursor and a second Esc pauses), WASD steers relative to where you look, the compass above the ammo strip shows which way the hull points, and pickups turn see-through. On touchscreens the drive stick's sideways push turns the view (forward and back drive toward it), and dragging the finger that fires fine-tunes the aim. While destroyed, you watch from above and the pointer stays captured for the respawn; press Esc to pick another tank.
 
-Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
+Losing focus clears held input, while hiding the page pauses single player and suspends your controls in multiplayer. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
-On iPads, car screens and other touchscreens, touch controls appear automatically (in the [iPad app](#iphone-and-ipad) too): drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. In a page, Settings' **Touch controls: Auto / On / Off** is saved: Auto shows them where the browser reports a touchscreen and from the first touch on a touch laptop, and Off keeps the keyboard and mouse whatever touches the screen. The desktop app plays with a keyboard and mouse.
+On iPads, car screens and other touchscreens, touch controls appear automatically (in the [iPad app](#iphone-and-ipad) too): drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. In a page, Settings' **Touch controls: Auto / On / Off** is saved: Auto shows them where the browser reports a touchscreen and from the first touch on a touch laptop, and Off keeps keyboard and mouse on the full-size layout. The phone edition always
+uses touch controls. The desktop app plays with a keyboard and mouse.
 
-Phones (a touchscreen whose shorter side is under 600 px, the [iPhone app](#iphone-and-ipad), or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs, the battle format (Team Battle or Solo Assault) and single player's difficulty, one key that steps from Easy (where a phone starts) through Normal and Hard and is saved apart from a larger screen's, and the arena shows nothing but the drive and fire sticks, the ammo key and the mine button round the fire stick, a small scoreboard, − / + zoom, the first-person ◎ and pause keys along the top, and the mid-screen notices. Touch the arena to aim and fire. In first person the drive stick's sideways push turns the view, and the hull compass shows over a small hull plate. Phones start with a farther camera until you zoom, the farthest when held upright, where the screen is narrow (the zoom is remembered), and draw no overhead aiming reticle. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with Easy bots filling the teams. In a room the menu keeps only the room, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no ammo strip on a phone: the ammo key shows the loaded round and how many remain (dim while only Standard shells are aboard), and a tap loads the next round you carry, as E does. The smaller mine button beside it drops a mine and shows its cooldown. Settings opens from the pause menu. In an iPhone's browser Battle Setup suggests adding the game to the Home Screen, which gives it the whole screen.
+Phones (a touchscreen whose shorter side is under 600 px, the [iPhone app](#iphone-and-ipad), or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs, the battle format (Team Battle or Solo Assault) and single player's difficulty, one key that steps from Easy (where a phone starts) through Normal and Hard and is saved apart from a larger screen's, and the arena shows nothing but the drive and fire sticks, the ammo key and the mine button round the fire stick, a small scoreboard, − / + zoom, the first-person ◎ and pause keys along the top, and the mid-screen notices. Touch the arena to aim and fire. In first person the drive stick's sideways push turns the view, and the hull compass shows over a small hull plate. Phones start with a farther camera until you zoom, the farthest when held upright, where the screen is narrow (the zoom is remembered), and draw no overhead aiming reticle. Multiplayer on a phone is one button with no room list: it joins the busiest compatible room with a free seat (preferring a battle under way), showing that room's map, or creates a room on the chosen map with Easy bots filling the teams. In a room the menu keeps only the room, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no ammo strip on a phone: the ammo key shows the loaded round and how many remain (dim while only Standard shells are aboard), and a tap loads the next round you carry, as E does. The smaller mine button beside it drops a mine and shows its cooldown. Settings opens from the pause menu. In an iPhone's browser Battle Setup suggests adding the game to the Home Screen, which gives it the whole screen.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
@@ -182,7 +186,7 @@ bun run format         # Prettier for tests, scripts, tools and docs; cargo fmt 
 
 Multiplayer is available on the [production site](https://sloppytanks.com/?multiplayer)
 and the [dev site](https://dev.sloppytanks.com/?multiplayer), each with its own
-game server. Battle Setup's tank and map choices sit above its two tabs,
+server environment. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
 The Multiplayer tab lists open rooms (it polls only while shown) below a **New room**
@@ -220,8 +224,7 @@ here, reload, or return to Battle Setup.
 New rooms default to **Humans only (no bots)**. Empty seats stay empty, and
 paused or disconnected players remain idle and vulnerable. Uncheck it when
 creating, or pick a bot difficulty between rounds, to fill the six-versus-six
-teams with bots; bots
-also drive absent humans in that mode. Up to eight people can join, with six
+teams with bots. Bots also drive absent humans in that mode. Up to eight people can join, with six
 human seats per team. Reconnect within 30 seconds to reclaim the same seat.
 
 The last explicit departure removes the room and frees its simulation. An
@@ -300,8 +303,8 @@ The same crate builds as one iOS app for iPhone and iPad (iOS and iPadOS 16 or n
 full screen, held sideways or upright). On an iPad it has the web edition's tablet touch controls: the
 drive stick in the bottom-left corner, a finger on the arena to aim and fire, and the mine
 button with − / + zoom in the bottom-right corner. On an iPhone it plays the web's phone
-edition (see [Play](#play)): the drive stick, a finger on the arena to aim and fire, and
-the few keys along the top. A hardware keyboard plays as on a Mac (arrows or WASD, Space,
+edition (see [Play](#play)). An iPhone Duo uses that layout on its outer screen
+and switches to the tablet layout on its inner screen. A hardware keyboard plays as on a Mac (arrows or WASD, Space,
 1–5, Q/E, V). There is no Quit or fullscreen, and single player pauses when the app leaves
 the screen. It needs a Mac with Xcode:
 
@@ -373,11 +376,11 @@ or a local Mac app) that feature and the App Store's servers, so the store's scr
 show what its players see: `bun scripts/build-desktop.mjs --ios-simulator --store-edition`.
 
 The App Store's builds play online in the `app-store` environment, whose machines run a
-server for each of the last five content versions the Apps workflow uploaded to
-TestFlight, so testers and App Review play a build before its release and the iOS and Mac
+server for each of the five most recently promoted distinct content versions from
+the Apps workflow's TestFlight runs, so testers and App Review play a build before its release and the iOS and Mac
 versions can be released apart, each whenever Apple approves it
-([App Store machines](crates/server/README.md#app-store-machines)). An app older than
-those five offers UPDATE, which opens its App Store page.
+([App Store machines](crates/server/README.md#app-store-machines)). Online play
+requires a server for the app's content version. Single player works independently.
 
 The store listing points at two pages the site serves beside
 the game, `/privacy` and `/support` (`public/privacy.html`, `public/support.html`), which
@@ -398,7 +401,7 @@ Runtime textures, tank previews and sounds are checked in under `public/`. Devel
 | `bun run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
 | `bun run generate:audio`        | The native apps' thirteen MP3 effects (the page makes its own, `src/sounds.ts`); requires FFmpeg                                 |
 | `bun run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
-| `bun run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
+| `bun run generate:app-icons`    | The Home Screen icons in `public/icons/` and the Mac app icon; requires Google Chrome and `oxipng`                               |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
@@ -427,36 +430,34 @@ the Vite dev server keep the default `/sloppy-tanks/` base.
 The page holds no server address, only the server directory's (production's, unless the
 shell's build names another in `SLOPPY_DIRECTORY_URL`). The directory is a Cloudflare
 Worker at <https://directory.sloppytanks.com> (`directory/`, published with `bun run directory:deploy`) that every game server
-pushes its rooms to; the page lists every server's rooms from it and connects to the
-server that hosts the chosen room, or for a new room the one with the fewest rooms. A
-machine pushes its rooms to the directory under its environment (production or dev),
-which its startup script (`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and
-`SERVER_ENVIRONMENT`; the shell lists the environment its build names in
-`SLOPPY_SERVER_ENVIRONMENT`: production's, and `dev` for the dev site (`build:dev`). The workflow does not deploy the server, but after the site deploys it
-adds the commit's server image to the content versions production's deployment file
-lists (`deployment-production` in the server's container registry), which the machines run
-side by side; the dev
-site uses a separate server on its own machine (below). A
-client only plays on a server built from the same shared sources: the `crates/core`
-files and the crates they compile with, listed by `bun scripts/content-version.mjs`,
-and `bun run server:check-if-redeployment-required` says whether the live server
-matches this checkout and warns when the live page cannot join it. Both report their
+pushes its rooms to. The client asks for servers matching its build's environment
+and content version, then joins the server hosting the selected room. New rooms go to
+the compatible server with the fewest rooms. A machine's startup script
+(`deploy/server/cloud-init/`) sets `DIRECTORY_URL` and `SERVER_ENVIRONMENT`. Builds select
+production, `dev` for the dev site, or `app-store` for the App Store apps.
+
+After publishing the production site, the workflow promotes the commit's server image
+in `deployment-production` in the container registry. The machines' auto-update timers
+apply that file, serving its five most recently promoted distinct content versions side
+by side. Clients and servers must agree on the protocol and the content version, which
+hashes `crates/core` sources, their resolved dependencies and the pinned Rust toolchain.
+`bun run server:check-if-redeployment-required` compares this checkout with the newest
+version at the root of the first listed machine, or the server origin named by
+`SLOPPY_SERVER_URL`. Both builds report their
 build at `/health`: release version (`version`), protocol, content version, commit,
 local-change state and build time, and the server also its server build. The release
 version is `MAJOR.MINOR.PATCH.BUILD`, such as `1.1.0.628`: `version` in package.json,
 bumped by hand, and the deploy workflow's run number, which GitHub increments on every
 deploy from main (local and pull request builds have only the first three parts).
-Battle Setup shows it with the commit. The page's `/health` is a static
+Battle Setup and Settings show it with the commit. The page's `/health` is a static
 `health/index.html` that the Worker serves after a redirect to `/health/`
 (<https://sloppytanks.com/health>). The server's release, commit and time are
-those of the first main build that shipped its server build, so they predate the
-page's when later commits left the server unchanged. After merging changes to any of them, run
-`bun run server:update` (or let auto-update pull it); until then, players on the
-production site are asked to reload and cannot join. Server-only changes
-(`crates/server`, its dependencies and build settings) keep clients compatible but
-still need that update to take effect; client-only files (`crates/render`,
-`crates/web`, `crates/desktop`) never do. See `crates/server/README.md` for the
-updater, auto-update and the SSH fallback.
+those of the first main build that shipped that server build, so they can be older
+than the page's. When a page needs a new content version, it can join once a matching
+server starts and announces itself. Server-only changes replace the image for the
+existing content version, so clients stay compatible. See the
+[server guide](crates/server/README.md#deploying) for automatic updates, manual updates
+and the SSH fallback.
 
 `DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
 with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
@@ -498,11 +499,11 @@ record in the sloppytanks.com Cloudflare zone, and all other records stay as the
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, where every file has a content-hashed name, so a returning visit requests
-only the page itself; `noindex` everywhere). Only the Wasm binaries, the shell's fonts,
-its shader tables and the game page run its script, `deploy/site/worker.mjs`. Cloudflare
+only the page itself; `noindex` everywhere). The Wasm binaries, the shell's fonts, its shader tables, the house model
+pack and the game page run its script, `deploy/site/worker.mjs`. Cloudflare
 compresses static assets as it serves them, which gives a multi-megabyte binary a later
 first byte and a larger file than Brotli at quality 11. So `deploy:dev` first writes
-Brotli-11 and gzip copies beside each `.wasm`, shader table, the font collection and the
+Brotli-11 and gzip copies beside each `.wasm`, shader table, the font collection, the house model pack and the
 game page (`deploy/site/precompress.mjs`, about ten seconds), and the script sends the
 one the client accepts, marked `no-transform`.
 Range requests, and clients that accept neither, get the original file.

@@ -11,21 +11,20 @@ The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`,
 `worker.ts`) serves the control page and API and runs the load bots. It hands pilot runs
 to the `sloppy-tanks-pilots` Worker (`pilots-worker.ts`, `pilots.wrangler.jsonc`) over a
 service binding; that Worker has no public address and deploys on its own. The load bots
-play on production's game servers, which they find in the server directory
-(`DIRECTORY_URL` and `SERVER_ENVIRONMENT` in `wrangler.jsonc`): each swarm takes the
-least busy one and joins or creates rooms on standard maps there. Both Workers are
-separate from the game server and both Pages sites, and run on Cloudflare so bots can
-connect from many regions.
+default to production. They use the server directory (`DIRECTORY_URL` and
+`SERVER_ENVIRONMENT` in `wrangler.jsonc`) to find the server hosting a requested
+room or pick the listed server with the fewest rooms. The bot Workers deploy
+separately from the game servers and site Workers.
 
 ## How they live
 
 Each region runs one `BotSwarm` Durable Object created with a
 [location hint](https://developers.cloudflare.com/durable-objects/reference/data-location/)
 (`wnam enam sam weur eeur apac oc afr me`). It holds up to 32 bot sockets,
-reports its actual colo, and reads the server's `/health` for the protocol and
-content versions, so a server redeploy does not need a bot redeploy.
+reports its actual colo, and reads the server's protocol and content version
+from the directory, so a server redeploy does not need a bot redeploy.
 
-Idle bots browse `/rooms` every 10 seconds and fill compatible rooms with free
+The swarm checks the directory every 10 seconds when it has idle bots and fill compatible rooms with free
 seats, most-occupied first. With `host`, a bot creates a five-minute room when
 nothing has space, and the rest join it. A bot that ends up as the lobby host
 starts the next round after 15 seconds, so people are never stuck waiting on it.
