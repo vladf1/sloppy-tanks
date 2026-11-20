@@ -8,19 +8,30 @@ import { isIP } from "node:net";
  * scripts need: they reach a machine over SSH as root at that address and check its server
  * through that name.
  */
-/** The server's container image in the GitHub Container Registry. CI pushes it and
- * promotes it to :production and :app-store, `bun scripts/server.mjs publish --dev`
- * pushes a checkout's build and promotes it to :dev (scripts/promote-server.mjs), and the
- * machines pull it (deploy/server/sloppy-tanks-update names it too). */
+/** The server's container image in the GitHub Container Registry. CI pushes it and adds
+ * it to production's deployment file, `bun scripts/server.mjs publish --dev` pushes a
+ * checkout's build and adds it to dev's (scripts/promote-server.mjs, scripts/deployment.mjs),
+ * and the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 
-/** The label on an environment's tag that lists the content versions its machines run
- * (scripts/promote-server.mjs writes it, deploy/server/sloppy-tanks-update reads it). */
-export const VERSIONS_LABEL = "me.fridman.sloppy-tanks.versions";
 /** How many content versions an environment keeps running: an App Store version keeps its
  * server while newer ones reach TestFlight and App Review, and the iOS and Mac apps may be
  * released apart. The updater runs no more than this. */
 export const KEPT_VERSIONS = 5;
+
+/** The deployment's versions with `added` first, in place of another image of its content
+ * version, and the oldest beyond KEPT_VERSIONS dropped. */
+export function addVersion(versions, added) {
+  return [
+    added,
+    ...versions.filter(({ contentVersion }) => contentVersion !== added.contentVersion),
+  ].slice(0, KEPT_VERSIONS);
+}
+
+/** The label that listed an environment's versions on its image tag before the deployment
+ * file did. Machines created before the deployment file still read it, so the promote
+ * script writes it too until each has been created again; then it goes. */
+export const VERSIONS_LABEL = "me.fridman.sloppy-tanks.versions";
 
 /** The versions VERSIONS_LABEL lists, newest first: `<content>@<digest>` separated by
  * spaces. */
@@ -31,21 +42,12 @@ export function parseVersions(text) {
     .map((entry) => {
       const match = entry.match(/^([0-9a-f]{8,64})@(sha256:[0-9a-f]{64})$/);
       if (!match) throw new Error(`Not a listed version: ${entry}`);
-      return { content: match[1], digest: match[2] };
+      return { contentVersion: match[1], digest: match[2] };
     });
 }
 
 export function formatVersions(versions) {
-  return versions.map(({ content, digest }) => `${content}@${digest}`).join(" ");
-}
-
-/** The list with `added` first, in place of another image of its content version, and the
- * oldest beyond KEPT_VERSIONS dropped. */
-export function addVersion(versions, added) {
-  return [added, ...versions.filter(({ content }) => content !== added.content)].slice(
-    0,
-    KEPT_VERSIONS,
-  );
+  return versions.map(({ contentVersion, digest }) => `${contentVersion}@${digest}`).join(" ");
 }
 
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the

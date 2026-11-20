@@ -1,6 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { deploymentTag } from "../scripts/deployment.mjs";
 import {
   addVersion,
   DIRECTORY_URL,
@@ -11,7 +12,6 @@ import {
   parseVersions,
   SERVER_IMAGE,
   serverMachine,
-  VERSIONS_LABEL,
 } from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -70,10 +70,10 @@ test("the machines pull the image CI and the dev publish push", () => {
 
 test("the machines run the versions the promote script lists, as many as it keeps", () => {
   const updater = read("../deploy/server/sloppy-tanks-update");
-  assert.equal(updater.match(/^VERSIONS_LABEL=(\S+)$/m)?.[1], VERSIONS_LABEL);
   assert.equal(Number(updater.match(/^MAX_VERSIONS=(\d+)$/m)?.[1]), KEPT_VERSIONS);
-  // Every environment follows the tag named after it, which only the promote script moves.
-  assert.match(updater, /^follow=\$REGISTRY:\$\{environment:-production\}$/m);
+  // Every environment follows its deployment file, which only the promote script writes.
+  assert.match(updater, /^follow=\$REGISTRY:deployment-\$\{environment:-production\}$/m);
+  assert.equal(deploymentTag("production"), "deployment-production");
   assert.ok(read("../.github/workflows/deploy.yml").includes("promote-server.mjs production "));
   assert.ok(read("../.github/workflows/desktop.yml").includes("promote-server.mjs app-store "));
   assert.ok(read("../scripts/server.mjs").includes('"scripts/promote-server.mjs", "dev"'));
@@ -81,7 +81,7 @@ test("the machines run the versions the promote script lists, as many as it keep
 
 test("a promotion puts the new version first, replaces an older image of it and keeps five", () => {
   const digest = (n: number) => `sha256:${String(n).repeat(64).slice(0, 64)}`;
-  const version = (content: string, n: number) => ({ content, digest: digest(n) });
+  const version = (contentVersion: string, n: number) => ({ contentVersion, digest: digest(n) });
   const kept = ["aaaaaaaa", "bbbbbbbb", "cccccccc", "dddddddd", "eeeeeeee"].map(version);
   assert.deepEqual(addVersion(kept, version("ffffffff", 9)), [
     version("ffffffff", 9),
@@ -90,7 +90,7 @@ test("a promotion puts the new version first, replaces an older image of it and 
   // A server-only change of a kept version moves it to the front with its new image.
   assert.deepEqual(addVersion(kept, version("cccccccc", 7)), [
     version("cccccccc", 7),
-    ...kept.filter(({ content }) => content !== "cccccccc"),
+    ...kept.filter(({ contentVersion }) => contentVersion !== "cccccccc"),
   ]);
   assert.deepEqual(addVersion([], version("aaaaaaaa", 1)), [version("aaaaaaaa", 1)]);
   assert.deepEqual(parseVersions(formatVersions(kept)), kept);

@@ -11,14 +11,16 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SERVER_IMAGE, VERSIONS_LABEL } from "../scripts/servers.mjs";
+import { SERVER_IMAGE } from "../scripts/servers.mjs";
 
 /** deploy/server/sloppy-tanks-update under a scratch root, with fake podman, systemctl
- * and curl: a registry and local image store in files, units that "run" by recording
- * their image and port, and servers whose /health and /stats answer from those files. */
+ * and curl: a registry (images, deployment files) and local image store in files, units
+ * that "run" by recording their image and port, and servers whose /health and /stats
+ * answer from those files. */
 const updater = fileURLToPath(new URL("../deploy/server/sloppy-tanks-update", import.meta.url));
 const template = fileURLToPath(new URL("../deploy/server/sloppy-tanks.container", import.meta.url));
 
@@ -69,7 +71,15 @@ label() { grep "^me.fridman.sloppy-tanks.$2=" "$F/images/$1" | cut -d= -f2-; }
 service_on() { grep -l " $1$" "$F"/services/* 2>/dev/null | head -n 1; }
 case $url in
   *"/token?"*) echo '{"token":"t"}' ;;
-  */manifests/*) [[ -f $F/digest/\${url##*/} ]] || exit 22; echo "Docker-Content-Digest: $(cat "$F/digest/\${url##*/}")" ;;
+  */manifests/*)
+    tag=\${url##*/}
+    [[ -f $F/digest/$tag ]] || exit 22
+    if [[ " $* " == *" --head "* ]]; then
+      echo "Docker-Content-Digest: $(cat "$F/digest/$tag")"
+    else
+      cat "$F/manifests/$tag"
+    fi ;;
+  */blobs/*) cat "$F/blobs/\${url##*/}" 2>/dev/null || exit 22 ;;
   http://127.0.0.1:*/health | http://127.0.0.1:*/stats)
     port=\${url#http://127.0.0.1:}; port=\${port%%/*}
     service=$(service_on "$port"); [[ -n $service ]] || exit 7
@@ -94,7 +104,7 @@ beforeEach(() => {
   fake = join(scratch, "fake");
   root = join(scratch, "root");
   bin = join(scratch, "bin");
-  for (const dir of ["images", "digest", "services", "players"])
+  for (const dir of ["images", "digest", "manifests", "blobs", "services", "players"])
     mkdirSync(join(fake, dir), { recursive: true });
   for (const file of ["remote", "local"]) writeFileSync(join(fake, file), "");
   mkdirSync(join(root, "etc/sloppy-tanks"), { recursive: true });
@@ -125,7 +135,7 @@ function environment(name: string) {
 
 const hex = (seed: string, length: number) => seed.repeat(length).slice(0, length);
 /** A server image of `content` (eight hex digits) and server build `build`, in the fake
- * registry under its digest; returns `content@digest` as the versions label lists it. */
+ * registry under its digest; returns `content@digest` for publish. */
 function image(content: string, build: string): string {
   const id = `sha256:${hex(content + build, 64)}`;
   const digest = `sha256:${hex(build + content, 64)}`;
@@ -138,16 +148,21 @@ function image(content: string, build: string): string {
 }
 const idOf = (content: string, build: string) => `sha256:${hex(content + build, 64)}`;
 
-/** Points the environment's tag at an image listing `versions`, as promote-server.mjs does. */
-function publish(tag: string, versions: string[], move: string) {
-  const id = `sha256:${hex(move, 64)}`;
-  const [content] = versions[0].split("@");
-  writeFileSync(
-    join(fake, "images", id),
-    `me.fridman.sloppy-tanks.content-version=${content}\n${VERSIONS_LABEL}=${versions.join(" ")}\n`,
-  );
-  appendFileSync(join(fake, "remote"), `${SERVER_IMAGE}:${tag} ${id}\n`);
+/** Points the environment's deployment file at one listing `versions`, as
+ * promote-server.mjs does; `move` names the new file's manifest. Returns the file's path. */
+function publish(environment: string, versions: string[], move: string) {
+  const tag = `deployment-${environment}`;
+  const file = JSON.stringify({
+    versions: versions.map((entry) => {
+      const [contentVersion, digest] = entry.split("@");
+      return { contentVersion, digest };
+    }),
+  });
+  const layer = `sha256:${createHash("sha256").update(file).digest("hex")}`;
+  writeFileSync(join(fake, "blobs", layer), file);
+  writeFileSync(join(fake, "manifests", tag), JSON.stringify({ layers: [{ digest: layer }] }));
   writeFileSync(join(fake, "digest", tag), `sha256:${hex(move, 64)}\n`);
+  return join(fake, "blobs", layer);
 }
 
 function run(...args: string[]) {
@@ -278,17 +293,14 @@ test("an image that fails its health check is stopped and not tried again until 
   assert.equal(services()["sloppy-tanks-aaaaaaaa"], `${idOf("aaaaaaaa", "b2")} 8787`);
 });
 
-test("a tag pushed before the list existed stands for its own image", () => {
-  const id = `sha256:${hex("1", 64)}`;
-  writeFileSync(
-    join(fake, "images", id),
-    "me.fridman.sloppy-tanks.content-version=aaaaaaaa\nme.fridman.sloppy-tanks.server-build=b1\n",
-  );
-  appendFileSync(join(fake, "remote"), `${SERVER_IMAGE}:production ${id}\n`);
-  writeFileSync(join(fake, "digest", "production"), `sha256:${hex("1", 64)}\n`);
-  const result = run("pull");
+test("a deployment file that does not match its digest changes nothing", () => {
+  publish("production", [image("aaaaaaaa", "b1")], "1");
+  assert.equal(run("pull").status, 0);
+  appendFileSync(publish("production", [image("bbbbbbbb", "b1")], "2"), " ");
+  const result = run("auto");
   assert.equal(result.status, 0, result.output);
-  assert.deepEqual(services(), { "sloppy-tanks-aaaaaaaa": `${id} 8787` });
+  assert.match(result.output, /Cannot read .*deployment-production/);
+  assert.deepEqual(Object.keys(services()), ["sloppy-tanks-aaaaaaaa"]);
 });
 
 test("an image another environment's checkout loads runs as its version and holds", () => {
