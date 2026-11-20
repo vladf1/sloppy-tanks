@@ -74,9 +74,14 @@ function labelledVersions(tag) {
   if (!current) return [];
   const listed = current.labels[VERSIONS_LABEL];
   if (listed === undefined) return [deployedVersion(current.digest, current.labels)];
-  return parseVersions(listed).map(({ digest }) =>
-    deployedVersion(digest, inspect(`${SERVER_IMAGE}@${digest}`)?.labels ?? {}),
-  );
+  return parseVersions(listed).map(({ digest }) => {
+    const image = inspect(`${SERVER_IMAGE}@${digest}`);
+    if (!image) {
+      console.error(`${tag} lists ${digest}, which the registry no longer holds`);
+      process.exit(1);
+    }
+    return deployedVersion(digest, image.labels);
+  });
 }
 
 /** Points the environment's image tag at the root version's image, relabelled with the
@@ -141,4 +146,11 @@ for (let attempt = 1; ; attempt++) {
   console.log(`Another promotion wrote ${tag} meanwhile; trying again`);
 }
 console.log(`${SERVER_IMAGE}:${tag} lists:\n${formatDeployment(deployment)}`);
-relabel(`${SERVER_IMAGE}:${environment}`, deployment.versions);
+// Another promotion may write the file while this one relabels: the label follows the
+// file as it is once relabelled, so both kinds of machine end on the same list.
+for (;;) {
+  relabel(`${SERVER_IMAGE}:${environment}`, deployment.versions);
+  const latest = await servers.read(tag);
+  if (formatDeployment(latest) === formatDeployment(deployment)) break;
+  deployment = latest;
+}

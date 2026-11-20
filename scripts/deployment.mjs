@@ -130,15 +130,16 @@ export function registry(repository) {
       throw new Error(`${repository} refused an upload: ${started.status}`);
     const location = new URL(started.headers.get("Location"), base);
     location.searchParams.set("digest", digest);
-    const done = await request(
-      location.href,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: bytes,
-      },
-      "pull,push",
-    );
+    const put = {
+      method: "PUT",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: bytes,
+    };
+    // An upload the registry hands to storage elsewhere goes there without its token.
+    const done =
+      location.origin === new URL(base).origin
+        ? await request(location.href, put, "pull,push")
+        : await fetch(location, { ...put, signal: AbortSignal.timeout(30_000) });
     if (done.status !== 201) throw new Error(`${repository} refused ${digest}: ${done.status}`);
     return digest;
   }
@@ -159,9 +160,12 @@ export function registry(repository) {
       return parseDeployment((await blob(layer.digest)).toString("utf8"));
     },
 
-    /** Pushes `deployment` as a new file and points the tag at it; returns its digest. */
+    /** Pushes `deployment` as a new file and points the tag at it; returns its digest. A
+     * deployment the machines would refuse is refused here, before the tag moves. */
     async write(tag, deployment) {
-      const file = Buffer.from(formatDeployment(deployment));
+      const text = formatDeployment(deployment);
+      parseDeployment(text);
+      const file = Buffer.from(text);
       const layer = { mediaType: FILE_TYPE, digest: await upload(file), size: file.length };
       const config = { mediaType: CONFIG_TYPE, digest: await upload(CONFIG), size: CONFIG.length };
       const manifest = JSON.stringify({

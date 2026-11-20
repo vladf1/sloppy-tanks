@@ -30,7 +30,7 @@ beforeAll(() => {
       if (url.pathname.startsWith("/storage/")) {
         if (request.headers.get("Authorization")) return new Response(null, { status: 400 });
         const bytes = blobs.get(url.pathname.slice("/storage/".length));
-        return bytes ? new Response(bytes) : new Response(null, { status: 404 });
+        return bytes ? new Response(new Uint8Array(bytes)) : new Response(null, { status: 404 });
       }
       const auth = request.headers.get("Authorization");
       const write = ["PUT", "POST"].includes(request.method);
@@ -149,6 +149,6 @@ test("a deployment lists each content version once, with hex names and sha256 di
     '{"versions":[{"contentVersion":"aaaaaaaa","digest":"sha256:12"}]}',
     JSON.stringify({ versions: [deployment.versions[0], deployment.versions[0]] }),
   ]) {
-    assert.throws(() => parseDeployment(bad), undefined, bad);
+    assert.throws(() => parseDeployment(bad), bad);
   }
 });
