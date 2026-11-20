@@ -26,6 +26,8 @@ export interface Announcement {
   builtAt?: string;
   /** When the server process started, ISO 8601. */
   startedAt?: string;
+  /** Players seated since the process started, a reconnect counting again. */
+  joins?: number;
   /** The process's CPU time over its latest 10 s sample, in percent of one core. */
   cpuPercent?: number;
   cpus?: number;
@@ -159,6 +161,8 @@ export function parseAnnouncement(body: string): Announcement | undefined {
     if (startedAt !== undefined && Number.isNaN(Date.parse(startedAt))) fail("startedAt");
     const cpus = optionalAmount("cpus", MAX_CPUS);
     if (cpus !== undefined && !Number.isInteger(cpus)) fail("cpus");
+    const joins = optionalAmount("joins", Number.MAX_SAFE_INTEGER);
+    if (joins !== undefined && !Number.isInteger(joins)) fail("joins");
     const contentVersion = text(value.contentVersion) ?? fail("contentVersion");
     return {
       version: optional("version"),
@@ -169,6 +173,7 @@ export function parseAnnouncement(body: string): Announcement | undefined {
       dirty: value.dirty as boolean | undefined,
       builtAt: optional("builtAt"),
       startedAt,
+      joins,
       cpuPercent: optionalAmount("cpuPercent", MAX_CPUS * 100),
       cpus,
       rssMB: optionalAmount("rssMB", MAX_MEMORY_MB),

@@ -10,7 +10,8 @@ const latencies = new Map();
 /** Servers with a probe under way, so a slow one never piles up probes. */
 const probing = new Set();
 
-const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const number = new Intl.NumberFormat();
+const count = (n, noun) => `${number.format(n)} ${noun}${n === 1 ? "" : "s"}`;
 const players = (server) => server.rooms.reduce((sum, room) => sum + room.players, 0);
 
 function clock(seconds) {
@@ -25,6 +26,91 @@ function fromTemplate(id, fields) {
     element.textContent = fields[element.dataset.field] ?? "";
   }
   return copy;
+}
+
+const writtenTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+/** The environment's deployment file, with how many listed servers announce each version:
+ * none means its machines have not started it (or are down). A server-only promotion keeps
+ * the content version, so a server counts only when its server build matches too. */
+function deploymentCard(deployment, servers) {
+  const card = fromTemplate("deployment", {
+    written: deployment.writtenAt
+      ? `written ${writtenTime.format(new Date(deployment.writtenAt))}`
+      : "",
+  });
+  card.querySelector("tbody").replaceChildren(
+    ...deployment.versions.map((version, index) => {
+      const announcing = servers.filter(
+        (server) =>
+          server.contentVersion === version.contentVersion &&
+          (!version.serverBuild || server.serverBuild === version.serverBuild),
+      ).length;
+      return fromTemplate("deployed-version", {
+        release: version.release ? `v${version.release}` : "",
+        content: `${version.contentVersion.slice(0, 8)}${index === 0 ? " (root)" : ""}`,
+        build: version.serverBuild?.slice(0, 8) ?? "",
+        image: version.digest.slice(0, 19),
+        servers: count(announcing, "server"),
+      });
+    }),
+  );
+  return card;
+}
+
+/** Environments with a deployment read under way: a slow registry never piles up reads, and
+ * a late answer never replaces a newer one. */
+const readingDeployments = new Set();
+
+/** The deployment block of a section: the file, a note when the environment has none, or
+ * why it could not be read. */
+async function showDeployment(section, servers) {
+  const block = section.querySelector(".deployment");
+  const environment = section.dataset.environment;
+  if (readingDeployments.has(environment)) return;
+  readingDeployments.add(environment);
+  try {
+    const response = await fetch(`deployment?environment=${environment}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { deployment } = await response.json();
+    if (deployment) {
+      block.replaceChildren(deploymentCard(deployment, servers));
+    } else {
+      // deploy/server/sloppy-tanks-update starts a new machine on production's newest server
+      // until its own environment's file appears; it does not follow production's after that.
+      const note = document.createElement("p");
+      note.className = "empty";
+      note.textContent =
+        environment === "production"
+          ? "No deployment file"
+          : "No deployment file: a new machine starts on production's newest server";
+      block.replaceChildren(note);
+    }
+  } catch (error) {
+    const note = document.createElement("p");
+    note.className = "empty";
+    note.textContent = `Deployment file unavailable: ${error.message}`;
+    block.replaceChildren(note);
+  } finally {
+    readingDeployments.delete(environment);
+  }
+}
+
+/** The environment's join total. Servers built before they announced joins have no count,
+ * so a sum missing some says how many servers it covers rather than passing for the total. */
+function joinsText(servers) {
+  const reporting = servers.filter((server) => server.joins !== undefined);
+  if (!reporting.length) return "";
+  const total = count(
+    reporting.reduce((sum, server) => sum + server.joins, 0),
+    "join",
+  );
+  return reporting.length === servers.length
+    ? total
+    : `${total} on ${reporting.length} of ${count(servers.length, "server")}`;
 }
 
 function roomRow(room) {
@@ -97,6 +183,7 @@ function serverCard(server) {
     `content ${server.contentVersion.slice(0, 8)}`,
     `build ${server.serverBuild.slice(0, 8)}`,
     count(players(server), "player"),
+    server.joins !== undefined && count(server.joins, "join"),
     `seen ${Math.max(0, Math.round((Date.now() - server.seen) / 1000))} s ago`,
   ];
   const card = fromTemplate("server", {
@@ -125,7 +212,12 @@ async function showEnvironment(section) {
       count(servers.length, "server"),
       count(rooms, "room"),
       count(servers.reduce((sum, server) => sum + players(server), 0), "player"),
-    ].join(" · ");
+      joinsText(servers),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    // The registry answers slower than the list, so the cards never wait for it.
+    void showDeployment(section, servers);
     const cards = servers.map(serverCard);
     section.querySelector(".servers").replaceChildren(...cards);
     section.querySelector(":scope > .empty").hidden = !!servers.length;

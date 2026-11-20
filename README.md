@@ -434,7 +434,8 @@ pushes its rooms to. The client asks for servers matching its build's environmen
 and content version, then joins the server hosting the selected room. New rooms go to
 the compatible server with the fewest rooms. A machine's startup script
 (`deploy/server/cloud-init/`) sets `DIRECTORY_URL` and `SERVER_ENVIRONMENT`. Builds select
-production, `dev` for the dev site, or `app-store` for the App Store apps.
+production, `dev` for the dev site, or `app-store` for the App Store apps. Its overview page
+lists each environment's servers and rooms, and the versions its deployment file names.
 
 After publishing the production site, the workflow promotes the commit's server image
 in `deployment-production` in the container registry. The machines' auto-update timers

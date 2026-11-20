@@ -504,6 +504,9 @@ struct Listing<'a> {
     health: Health<'a>,
     /// ISO 8601, UTC.
     started_at: String,
+    /// Players seated since the process started (`/stats` `totals.joins`): every join
+    /// counts, a reconnect included.
+    joins: u64,
     /// From the latest `/stats` sample; none in the first ten seconds.
     #[serde(flatten)]
     load: Option<Load>,
@@ -524,7 +527,7 @@ struct Load {
 
 fn listing(shared: &Shared) -> Listing<'_> {
     let now = (shared.clock)();
-    let (started_ms, load) = {
+    let (started_ms, joins, load) = {
         let monitor = shared.monitor.lock().expect("monitor");
         let load = monitor.latest.as_ref().map(|stats| Load {
             cpu_percent: stats.cpu_percent,
@@ -532,11 +535,12 @@ fn listing(shared: &Shared) -> Listing<'_> {
             rss_mb: stats.rss_mb,
             host_memory_mb: (process_stats::host_memory().0 as f64 / (1024.0 * 1024.0)).round(),
         });
-        (monitor.started_ms(), load)
+        (monitor.started_ms(), monitor.joins(), load)
     };
     Listing {
         health: health(&shared.options.build),
         started_at: iso_time(started_ms),
+        joins,
         load,
         rooms: shared.catalog.lock().expect("catalog").list(now, true),
     }

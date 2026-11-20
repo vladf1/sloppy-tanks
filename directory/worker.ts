@@ -3,7 +3,7 @@
  * reads which servers are up and how busy they are.
  *
  * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields, start
- *   time and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
+ *   time, join count and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
  *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. A machine that
  *   runs several content versions announces each to `/v/<contentVersion>/servers`, listed
  *   at `wss://a-b-c-d.nip.io/v/<contentVersion>`, at most MAX_ENTRIES_PER_MACHINE of them.
@@ -12,6 +12,10 @@
  *   anyone): `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first,
  *   only that content version's when the request names one; every version's, uncapped, with
  *   `all=1` (the overview).
+ * - `GET /deployment?environment=production|dev|app-store`: `{ "deployment": { "versions",
+ *   "writtenAt" } }`, the server versions the environment's machines run, from its deployment
+ *   file in the server images' registry (`deployment.ts`), or `null` when it has none. Kept in
+ *   the edge cache for DEPLOYMENT_CACHE_SECONDS; 502 when the registry fails.
  * - `GET /`: the overview page, static files in public/ that read these lists.
  * - `POST /traces?id=<id>` from a page opened with `?trace`: its trace as text, at most
  *   MAX_TRACE_BYTES, replacing that id's earlier upload; `GET /traces` lists the latest
@@ -41,6 +45,7 @@ import {
   type Announcement,
   type ListedServer,
 } from "./listing";
+import { DEPLOYMENT_CACHE_SECONDS, readDeployment } from "./deployment";
 
 interface Env {
   DIRECTORY: DurableObjectNamespace<Directory>;
@@ -103,11 +108,46 @@ async function traces(request: Request, url: URL, env: Env): Promise<Response> {
   return new Response(null, { status: 204, headers: HEADERS });
 }
 
+/** The environment's deployment file, from the edge cache when a recent read is there. */
+async function deployment(
+  request: Request,
+  url: URL,
+  context: ExecutionContext,
+): Promise<Response> {
+  const environment = parseEnvironment(url.searchParams.get("environment"));
+  if (request.method !== "GET" || !environment) {
+    return text("GET a deployment with environment=" + ENVIRONMENTS.join("|"), 400);
+  }
+  const key = new Request(`${url.origin}/deployment?environment=${environment}`);
+  const cached = await caches.default.match(key);
+  if (cached) return cached;
+  let file;
+  try {
+    file = await readDeployment(environment);
+  } catch (error) {
+    return text(`the registry: ${(error as Error).message}`, 502);
+  }
+  const response = Response.json(
+    { deployment: file ?? null },
+    {
+      headers: {
+        ...HEADERS,
+        "Cache-Control": `public, max-age=${DEPLOYMENT_CACHE_SECONDS}`,
+      },
+    },
+  );
+  context.waitUntil(caches.default.put(key, response.clone()));
+  return response;
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === "/traces") {
       return traces(request, url, env);
+    }
+    if (url.pathname === "/deployment") {
+      return deployment(request, url, context);
     }
     const version = announcedVersion(url.pathname);
     if (version === undefined || (version !== "" && request.method !== "PUT")) {

@@ -82,24 +82,35 @@
       .empty {
         margin: 0;
       }
+      .deployment > .server {
+        border-style: dashed;
+      }
     </style>
   </head>
   <body>
     <h1>Sloppy Tanks servers</h1>
-    <p class="note">Game servers announce their rooms here; this page refreshes every 5 s while it is visible.</p>
+    <p class="note">
+      Game servers announce their rooms here; this page refreshes every 5 s while it is visible.
+      Joins count every player seated since each listed server started, reconnects and bots included.
+      Each deployment file lists the server versions its environment's machines run, newest first;
+      the first is served at each machine's root.
+    </p>
 
     <section data-environment="production">
       <h2>Production <small></small></h2>
+      <div class="deployment"></div>
       <div class="servers"></div>
       <p class="empty">No servers</p>
     </section>
     <section data-environment="dev">
       <h2>Dev <small></small></h2>
+      <div class="deployment"></div>
       <div class="servers"></div>
       <p class="empty">No servers</p>
     </section>
     <section data-environment="app-store">
       <h2>App Store <small></small></h2>
+      <div class="deployment"></div>
       <div class="servers"></div>
       <p class="empty">No servers</p>
     </section>
@@ -125,6 +136,32 @@
         </table>
         <p class="empty">No rooms</p>
       </section>
+    </template>
+    <template id="deployment">
+      <section class="server">
+        <h3>Deployment file <span class="details" data-field="written"></span></h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Release</th>
+              <th>Content version</th>
+              <th>Server build</th>
+              <th>Image</th>
+              <th>Announcing</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </template>
+    <template id="deployed-version">
+      <tr>
+        <td data-field="release"></td>
+        <td data-field="content"></td>
+        <td data-field="build"></td>
+        <td data-field="image"></td>
+        <td data-field="servers"></td>
+      </tr>
     </template>
     <template id="room">
       <tr>

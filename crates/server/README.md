@@ -115,7 +115,8 @@ single player never loads or polls it.
 local server is its own directory: `{"servers":[{"url":…,…}]}`, where the entry holds
 `url`, the address the request came in on (`wss://` when Caddy received it over HTTPS,
 otherwise `ws://`, with the request's host), `/health`'s fields, `startedAt` (when the
-process started, ISO 8601 UTC), the latest `/stats` sample's `cpuPercent` (100 is one
+process started, ISO 8601 UTC), `joins` (players seated since then, each reconnect
+again: `/stats`'s `totals.joins`), the latest `/stats` sample's `cpuPercent` (100 is one
 core) and `rssMB` with the host's `cpus` and `hostMemoryMB` (absent for the first ten
 seconds), and `rooms`, every room including extra levels. It shares `/rooms`'s CORS headers and rate limit.
 
