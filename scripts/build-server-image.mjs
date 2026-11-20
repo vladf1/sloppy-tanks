@@ -17,9 +17,9 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  *
  * `bun scripts/server.mjs publish --dev` passes `--dev` for the dev servers: a
  * developer's build is tagged `dev-<build>` instead, since CI would take an image tagged
- * with the bare build for its own and could promote it to :production. A dev publish
+ * with the bare build for its own and could promote it to production. A dev publish
  * reuses CI's image of the same server build when there is one, else its own earlier one,
- * and then adds it to :dev (scripts/promote-server.mjs).
+ * and then adds it to dev's deployment file (scripts/promote-server.mjs).
  *
  * Main's builds also pass `--build-number`, the deploy workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image

@@ -28,28 +28,6 @@ export function addVersion(versions, added) {
   ].slice(0, KEPT_VERSIONS);
 }
 
-/** The label that listed an environment's versions on its image tag before the deployment
- * file did. Machines created before the deployment file still read it, so the promote
- * script writes it too until each has been created again; then it goes. */
-export const VERSIONS_LABEL = "me.fridman.sloppy-tanks.versions";
-
-/** The versions VERSIONS_LABEL lists, newest first: `<content>@<digest>` separated by
- * spaces. */
-export function parseVersions(text) {
-  return text
-    .split(" ")
-    .filter(Boolean)
-    .map((entry) => {
-      const match = entry.match(/^([0-9a-f]{8,64})@(sha256:[0-9a-f]{64})$/);
-      if (!match) throw new Error(`Not a listed version: ${entry}`);
-      return { contentVersion: match[1], digest: match[2] };
-    });
-}
-
-export function formatVersions(versions) {
-  return versions.map(({ contentVersion, digest }) => `${contentVersion}@${digest}`).join(" ");
-}
-
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
  * pages of its site read every server's rooms from there, each under its environment, the
  * role (production or dev). */

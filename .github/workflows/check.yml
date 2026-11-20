@@ -2,7 +2,8 @@
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the deploy workflow calls it with the production site settings and deploys
 # only after every job here passes. Beside its gate script, the server job publishes the
-# multiplayer server's Docker image, which the deploy workflow adds to :production.
+# multiplayer server's Docker image, which the deploy workflow adds to production's
+# deployment file.
 name: Code quality
 
 on:
@@ -88,8 +89,8 @@ jobs:
   # server image (Dockerfile) copies it in. The image is pushed as <server build>, plus
   # pr-<number> for a pull request, or main and sha-<commit> for main. A server build the
   # registry already holds is only retagged, after main's first build of it stamps its
-  # build number (scripts/build-server-image.mjs). Nothing here moves :production or touches a
-  # server; fork pull requests, which cannot push, only build.
+  # build number (scripts/build-server-image.mjs). Nothing here writes a deployment file or
+  # touches a server; fork pull requests, which cannot push, only build.
   server:
     name: Server build, page-shell tests and image
     runs-on: ubuntu-24.04

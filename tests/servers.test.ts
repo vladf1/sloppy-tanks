@@ -5,11 +5,9 @@ import { deploymentTag } from "../scripts/deployment.mjs";
 import {
   addVersion,
   DIRECTORY_URL,
-  formatVersions,
   KEPT_VERSIONS,
   machineAddress,
   option,
-  parseVersions,
   SERVER_IMAGE,
   serverMachine,
 } from "../scripts/servers.mjs";
@@ -93,16 +91,6 @@ test("a promotion puts the new version first, replaces an older image of it and 
     ...kept.filter(({ contentVersion }) => contentVersion !== "cccccccc"),
   ]);
   assert.deepEqual(addVersion([], version("aaaaaaaa", 1)), [version("aaaaaaaa", 1)]);
-  assert.deepEqual(parseVersions(formatVersions(kept)), kept);
-  assert.deepEqual(parseVersions(""), []);
-  for (const label of [
-    "aaaaaaaa",
-    "AAAAAAAA@" + digest(1),
-    "aaaaaaaa@sha256:12",
-    "../x@" + digest(1),
-  ]) {
-    assert.throws(() => parseVersions(label), /Not a listed version/, label);
-  }
 });
 
 test("a machine is listed once whatever versions it runs", () => {

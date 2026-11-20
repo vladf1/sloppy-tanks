@@ -186,10 +186,9 @@ of its own content version while newer ones are deployed, and only an app more t
 versions behind is told to update. Read one with
 `bun -e 'import {registry} from "./scripts/deployment.mjs"; console.log(await registry("ghcr.io/vladf1/sloppy-tanks-server").read("deployment-production"))'`.
 
-The tags `production`, `app-store` and `dev` still point at each environment's newest
-server image, relabelled with the list in `me.fridman.sloppy-tanks.versions`: machines
-created before the deployment file read that label. The promote script writes both until
-every machine has been created again, then the label goes.
+The tags `production`, `app-store` and `dev`, which listed the versions in a label before
+the deployment file, no longer move; a machine created before anything was published to
+its environment starts production's newest server until the first publish.
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
@@ -346,10 +345,10 @@ key with `ssh-keygen -R <ip>`.
 
 ### App Store machines
 
-A client plays only on a server with its content version. `:production` moves with every
+A client plays only on a server with its content version. Production's deployment file changes with every
 content change on main, while the App Store's apps change only when Apple releases a
 version and players install it, so they play in an environment of their own, `app-store`
-(the build sets `SLOPPY_SERVER_ENVIRONMENT`), whose machines follow `:app-store`. Create
+(the build sets `SLOPPY_SERVER_ENVIRONMENT`), whose machines follow `deployment-app-store`. Create
 one from `deploy/server/cloud-init/app-store.yaml` like any machine; until the first
 upload it runs production's image.
 

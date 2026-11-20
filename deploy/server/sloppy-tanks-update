@@ -373,14 +373,15 @@ remote_digest() {
     tr -d '\r' | grep -i '^docker-content-digest:' | sed 's/^[^:]*: *//' | grep .
 }
 
-# The deployment file's versions as `<content> <digest>` lines, newest first: its manifest,
-# then its one layer, which GHCR serves through a redirect to storage (curl sends the
-# token to the registry alone). The layer must hash to its digest.
+# The versions a deployment file lists (the followed one, or the tag TAG names) as
+# `<content> <digest>` lines, newest first: its manifest, then its one layer, which GHCR
+# serves through a redirect to storage (curl sends the token to the registry alone). The
+# layer must hash to its digest.
 read_deployment() {
-  local token manifest layer
+  local tag=${1:-${follow##*:}} token manifest layer
   token=$(registry_token) || return 1
   manifest=$(curl -fsS --max-time 10 --header "Authorization: Bearer $token" \
-    --header "Accept: $MANIFEST_TYPE" "https://$HOST/v2/$NAME/manifests/${follow##*:}") || return 1
+    --header "Accept: $MANIFEST_TYPE" "https://$HOST/v2/$NAME/manifests/$tag") || return 1
   layer=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["layers"][0]["digest"])' \
     <<<"$manifest") || return 1
   [[ $layer =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
@@ -568,9 +569,15 @@ case $command in
         # app-store) runs production's newest server meanwhile, so it is up and listed;
         # auto-update still follows its file and switches to the first publish. That is no
         # hold.
-        echo "Nothing to read on $follow; starting $REGISTRY:production until a publish moves it"
-        podman pull --quiet "$REGISTRY:production" >/dev/null
-        run_now "$(image_id "$REGISTRY:production")"
+        newest=$(read_deployment deployment-production | head -n 1) || true
+        newest=${newest#* }
+        [[ $newest =~ ^sha256:[0-9a-f]{64}$ ]] || {
+          echo "Nothing to read on $follow, nor on production's deployment file" >&2
+          exit 1
+        }
+        echo "Nothing to read on $follow; starting production's newest server until a publish"
+        podman pull --quiet "$REGISTRY@$newest" >/dev/null
+        run_now "$(image_id "$REGISTRY@$newest")"
         write_caddyfile
         exit 0
       fi
