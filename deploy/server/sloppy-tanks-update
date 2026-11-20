@@ -4,38 +4,35 @@
 # pinned-image state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the
 # server:* scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update pull [REF]    with no REF, follow the tag now: start, switch and stop
+#   sloppy-tanks-update pull [REF]    with no REF, follow the deployment file now: start, switch and stop
 #                                     versions without waiting for players; with REF, run
 #                                     that image as its content version's server and hold
 #   sloppy-tanks-update local IMAGE   the same for an image already loaded here (SSH deploy)
 #   sloppy-tanks-update rollback      switch the root version back to its previous image
-#   sloppy-tanks-update resume        let auto-update follow the tag again
+#   sloppy-tanks-update resume        let auto-update follow the deployment file again
 #   sloppy-tanks-update auto          the timer's check (see auto below)
 #   sloppy-tanks-update caddyfile     write Caddy's config for the versions running now
 #   sloppy-tanks-update status | stats
 #
-# The machine follows the tag named after its environment (:production, :dev or
-# :app-store, from server.env). Its image carries the
-# label me.fridman.sloppy-tanks.versions, which scripts/promote-server.mjs writes: the
-# newest content versions published to the environment, newest first, each as
-# `<content version>@<digest>` of its server image. Every version listed runs: a player's
-# app or page joins only a server of its own content version, so an App Store version
-# keeps its server after newer ones reach TestFlight, and a deploy no longer restarts the
-# rooms of the version before it. A tag without the label (pushed before the list existed)
-# lists only its own image.
+# The machine follows its environment's deployment file (production, dev or app-store,
+# from server.env), the tag deployment-<environment> beside the server images, which
+# scripts/promote-server.mjs writes (scripts/deployment.mjs): the newest content versions
+# published to the environment, newest first, each with the digest of its server image.
+# Every version listed runs: a player's app or page joins only a server of its own content
+# version, so an App Store version keeps its server after newer ones reach TestFlight, and
+# a deploy no longer restarts the rooms of the version before it.
 #
 # A version leaves the list once newer ones push it out; its server stops once its rooms
 # are empty, or after a room's lifetime. A new image of a listed version (a server-only
 # change) replaces its server the same way. Dev switches and stops at once, without
 # looking at who plays. The root of the site serves the newest version (the scripts check
-# /health there). Anything but following the tag leaves a hold that auto-update respects
-# until `resume` or a `pull` of the tag, and on dev until the next publish.
+# /health there). Anything but following the file leaves a hold that auto-update respects
+# until `resume` or a `pull` of the file, and on dev until the next publish.
 set -euo pipefail
 
 # Tests run the script under a scratch directory with fake podman, systemctl and curl.
 ROOT=${SLOPPY_TANKS_ROOT:-}
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
-VERSIONS_LABEL=me.fridman.sloppy-tanks.versions
 # At most this many listed versions run (promote-server.mjs keeps as many).
 MAX_VERSIONS=5
 # Each version's server listens on a loopback port from BASE_PORT, which Caddy forwards to.
@@ -56,30 +53,29 @@ HEALTH_TIMEOUT_SECONDS=${SLOPPY_TANKS_HEALTH_TIMEOUT:-60}
 # A server waits for its rooms to empty before it is replaced or stopped, but not forever:
 # at most a room's four-hour lifetime.
 MAX_WAIT_SECONDS=14400
-# Every kind of manifest a tag can name (CI pushes a manifest list, a local push may push
-# an image manifest or an OCI index), so a check reads the digest of whatever is there.
-MANIFEST_TYPES=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
+# The deployment file is an OCI artifact: an image manifest whose one layer is the JSON.
+MANIFEST_TYPE=application/vnd.oci.image.manifest.v1+json
 
 usage() {
   echo "usage: sloppy-tanks-update pull [REF]|local IMAGE|rollback|resume|auto|caddyfile|status|stats" >&2
   exit 2
 }
 command=${1:-}
-# The versions the tag lists: `<content> <image ID>` lines, newest first.
+# The versions the deployment file lists: `<content> <image ID>` lines, newest first.
 wanted_file=$STATE/wanted
 # The version the site's root serves.
 root_file=$STATE/root
 hold_file=$STATE/hold
-# The followed tag's manifest digest at its latest read.
+# The deployment file's manifest digest at its latest read.
 followed_file=$STATE/followed
-# Present while checks cannot read the followed tag from the registry.
+# Present while checks cannot read the deployment file from the registry.
 failing_file=$STATE/check-failing
 mkdir -p "$STATE/versions"
 
 # The machine's environment (server.env, which the provider's user data writes)
-# names the tag auto-update follows.
+# names the deployment file auto-update follows.
 environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' "$CONFIG/server.env" 2>/dev/null || true)
-follow=$REGISTRY:${environment:-production}
+follow=$REGISTRY:deployment-${environment:-production}
 
 # One change at a time. The timer skips a check while another runs.
 mkdir -p "$ROOT/run/lock"
@@ -351,47 +347,67 @@ remove_old_images() {
   )
   podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
-      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$follow" ]]; then continue; fi
+      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> ]]; then continue; fi
       if ! grep -qxF "$id" <<<"$keep"; then podman image rm "$ref" >/dev/null || true; fi
     done
   podman image prune --force >/dev/null
 }
 
-# The followed tag's manifest digest in the registry: GHCR's anonymous token and one
-# manifest HEAD, so a check every few seconds pulls only after the tag has moved.
-remote_digest() {
-  local repository=${follow%:*} host name token
-  host=${repository%%/*}
-  name=${repository#*/}
-  token=$(curl -fsS --max-time 5 "https://$host/token?scope=repository:$name:pull" 2>/dev/null |
+HOST=${REGISTRY%%/*}
+NAME=${REGISTRY#*/}
+# A pull token for the repository from GHCR, anonymous as the images are public.
+registry_token() {
+  local token
+  token=$(curl -fsS --max-time 5 "https://$HOST/token?scope=repository:$NAME:pull" 2>/dev/null |
     sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || return 1
-  [[ -n $token ]] || return 1
+  [[ -n $token ]] && echo "$token"
+}
+
+# The deployment file's manifest digest in the registry: one manifest HEAD, so a check
+# every few seconds reads the file only after the tag has moved.
+remote_digest() {
+  local token
+  token=$(registry_token) || return 1
   curl -fsS --max-time 5 --head --header "Authorization: Bearer $token" \
-    --header "Accept: $MANIFEST_TYPES" "https://$host/v2/$name/manifests/${follow##*:}" 2>/dev/null |
+    --header "Accept: $MANIFEST_TYPE" "https://$HOST/v2/$NAME/manifests/${follow##*:}" 2>/dev/null |
     tr -d '\r' | grep -i '^docker-content-digest:' | sed 's/^[^:]*: *//' | grep .
 }
 
-# Pulls the followed tag and every version its label lists, and writes them to wanted.
-# Fails, changing nothing, when any pull fails.
+# The deployment file's versions as `<content> <digest>` lines, newest first: its manifest,
+# then its one layer, which GHCR serves through a redirect to storage (curl sends the
+# token to the registry alone). The layer must hash to its digest.
+read_deployment() {
+  local token manifest layer
+  token=$(registry_token) || return 1
+  manifest=$(curl -fsS --max-time 10 --header "Authorization: Bearer $token" \
+    --header "Accept: $MANIFEST_TYPE" "https://$HOST/v2/$NAME/manifests/${follow##*:}") || return 1
+  layer=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["layers"][0]["digest"])' \
+    <<<"$manifest") || return 1
+  [[ $layer =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  curl -fsSL --max-time 10 --header "Authorization: Bearer $token" \
+    "https://$HOST/v2/$NAME/blobs/$layer" |
+    python3 -c '
+import hashlib, json, sys
+data = sys.stdin.buffer.read()
+if "sha256:" + hashlib.sha256(data).hexdigest() != sys.argv[1]:
+    sys.exit("The deployment file does not match its digest")
+for version in json.loads(data)["versions"]:
+    print(version["contentVersion"], version["digest"])
+' "$layer"
+}
+
+# Pulls every version the deployment file lists and writes them to wanted. Fails,
+# changing nothing, when the file or any pull fails.
 read_wanted() {
-  local tagged listed entry content digest image lines=""
-  podman pull --quiet "$follow" >/dev/null || return 1
-  tagged=$(image_id "$follow")
-  listed=$(label "$tagged" "$VERSIONS_LABEL")
-  if [[ -z $listed ]]; then
-    listed="$(label "$tagged" $LABELS.content-version)@self"
-  fi
-  for entry in $listed; do
-    content=${entry%%@*}
-    digest=${entry#*@}
+  local listed content digest image lines=""
+  listed=$(read_deployment) || return 1
+  [[ -n $listed ]] || return 1
+  # The list arrives on its own descriptor, so nothing the loop runs can read from it.
+  while read -r content digest <&3; do
     check_content "$content" || return 1
-    if [[ $digest == self ]]; then
-      image=$tagged
-    else
-      [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
-      podman pull --quiet "$REGISTRY@$digest" >/dev/null || return 1
-      image=$(image_id "$REGISTRY@$digest")
-    fi
+    [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    podman pull --quiet "$REGISTRY@$digest" >/dev/null || return 1
+    image=$(image_id "$REGISTRY@$digest")
     # The image must be what the list says it is.
     [[ $(label "$image" $LABELS.content-version) == "$content" ]] || {
       echo "$REGISTRY@$digest is not content $content" >&2
@@ -399,7 +415,7 @@ read_wanted() {
     }
     podman tag "$image" "$PINNED:$content-listed"
     lines+="$content $image"$'\n'
-  done
+  done 3<<<"$listed"
   printf '%s' "$lines" | head -n "$MAX_VERSIONS" >"$wanted_file.new"
   mv -f "$wanted_file.new" "$wanted_file"
 }
@@ -482,8 +498,8 @@ reconcile() {
   return "$failed"
 }
 
-# The timer's check. It follows the tag unless a hold is set, reading the tag again only
-# after its digest moved. A hold on dev ends with the next publish: whoever published wants
+# The timer's check. It follows the deployment file unless a hold is set, reading the file
+# again only after its digest moved. A hold on dev ends with the next publish: whoever published wants
 # that build running now.
 auto() {
   if [[ -f $hold_file && $environment != dev ]]; then
@@ -509,7 +525,7 @@ auto() {
   fi
   check_worked
   if [[ -f $hold_file ]]; then return 0; fi
-  # A failed image waits for the tag to list another; the journal has said why.
+  # A failed image waits for the file to list another; the journal has said why.
   reconcile wait || true
 }
 
@@ -547,10 +563,11 @@ case $command in
     requested=${2:-$follow}
     if [[ $requested == "$follow" ]]; then
       digest=$(remote_digest) || true
-      if [[ -z $digest && $follow != "$REGISTRY:production" ]]; then
-        # A machine created before anything was published to its tag (:dev, :app-store)
-        # runs production's server meanwhile, so it is up and listed; auto-update still
-        # follows its tag and switches to the first publish. That is no hold.
+      if [[ -z $digest && $follow != "$REGISTRY:deployment-production" ]]; then
+        # A machine created before anything was published to its environment (dev,
+        # app-store) runs production's newest server meanwhile, so it is up and listed;
+        # auto-update still follows its file and switches to the first publish. That is no
+        # hold.
         echo "Nothing to read on $follow; starting $REGISTRY:production until a publish moves it"
         podman pull --quiet "$REGISTRY:production" >/dev/null
         run_now "$(image_id "$REGISTRY:production")"

@@ -9,8 +9,9 @@ import { environment, gameServers, option, SERVER_IMAGE, SSH_OPTIONS } from "./s
  *
  *   publish --dev            build the image here and add it to :dev, whose versions the dev
  *                            machines run; wait until each serves it
- *   update [--image TAG]     follow the tag now (start, switch and stop versions without
- *                            waiting for players), or run another image CI published and hold
+ *   update [--image TAG]     follow the deployment file now (start, switch and stop versions
+ *                            without waiting for players), or run another image CI published
+ *                            and hold
  *   deploy [--force]         build the image here, copy it over SSH and run it (the SSH
  *                            fallback; for production only from a clean origin/main)
  *   rollback                 switch the newest version back to its previous image
@@ -18,9 +19,9 @@ import { environment, gameServers, option, SERVER_IMAGE, SSH_OPTIONS } from "./s
  *   status | logs | stats
  *
  * deploy/server/sloppy-tanks-update on the machine does every change: it runs a server per
- * content version the tag lists, checks each one's /health and restores the previous image
- * when a new one fails. Anything but following the tag leaves a hold that auto-update
- * respects (on dev, until the next publish). */
+ * content version the deployment file lists, checks each one's /health and restores the
+ * previous image when a new one fails. Anything but following the file leaves a hold that
+ * auto-update respects (on dev, until the next publish). */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
 const [command, argument] = process.argv.slice(2);

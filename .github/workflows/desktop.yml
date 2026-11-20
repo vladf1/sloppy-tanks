@@ -8,8 +8,8 @@
 # offers them to testers once Apple has processed them. They list the app-store
 # environment's servers, which play only their own content version, so the job first
 # checks that main's build pushed this commit's server image (sha-<commit>) and, after
-# both uploads, adds it to the versions the App Store machines run (:app-store), beside the
-# released ones (crates/server/README.md).
+# both uploads, adds it to the versions the App Store machines run (their deployment file),
+# beside the released ones (crates/server/README.md).
 # They are signed with the App Store certificates and profiles in the repository's
 # secrets (APP_STORE_CERTIFICATES, a base64 .p12 with the Apple Distribution and 3rd Party
 # Mac Developer Installer identities, and its APP_STORE_CERTIFICATES_PASSWORD;
@@ -202,15 +202,14 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - name: Add the App Store builds' server to :app-store
+      - name: Add the App Store builds' server to app-store's deployment file
         run: |
-          echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
+          echo "$GITHUB_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
           bun scripts/promote-server.mjs app-store "$IMAGE"
           echo "The App Store machines run \`$IMAGE\` beside the versions they kept." >> "$GITHUB_STEP_SUMMARY"
         env:
           IMAGE: ${{ needs.testflight.outputs.server-image }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   windows:
     name: Windows app

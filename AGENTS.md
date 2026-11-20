@@ -595,10 +595,11 @@ offline.
   resolve to and `rust-toolchain.toml` (list them with
   `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs a server container per content version its
-  environment's tag lists (the last five, `scripts/promote-server.mjs`), each under
+  environment's deployment file lists (`deployment-<environment>` in the server image's
+  registry, the last five, `scripts/promote-server.mjs`), each under
   `/v/<content version>` behind Caddy's own container: CI pushes one image per server
-  build and, after the site deploy, adds main's to `:production`, and the Apps workflow
-  adds each TestFlight build's to `:app-store`. Production then needs
+  build and, after the site deploy, adds main's to production's file, and the Apps
+  workflow adds each TestFlight build's to app-store's. Production then needs
   `bun run server:update` only where auto-update is off (it is on by default;
   `server:status` shows it); ask before running it.
   `bun run server:deploy` from `main` is the SSH fallback when CI or the

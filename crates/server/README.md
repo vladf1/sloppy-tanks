@@ -164,24 +164,32 @@ The `server` job in `.github/workflows/check.yml` builds the binary once, runs t
 page-shell tests against it, then builds the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag             | Moved by                                         | Meaning                                       |
-| --------------- | ------------------------------------------------ | --------------------------------------------- |
-| `<serverBuild>` | main's first build of it                         | One image per server build (`/health`'s hash) |
-| `pr-<number>`   | each pull request push                           | That pull request's latest server             |
-| `main`, `sha-…` | each push to `main`                              | Main's latest server, and per commit          |
-| `production`    | the deploy workflow, after the site deploys      | The versions production runs                  |
-| `app-store`     | the Apps workflow, after both TestFlight uploads | The versions the App Store machines run       |
-| `dev`           | `server:publish --dev` (`deploy:dev`)            | The versions the dev machines run             |
+| Tag                     | Moved by                                         | Meaning                                       |
+| ----------------------- | ------------------------------------------------ | --------------------------------------------- |
+| `<serverBuild>`         | main's first build of it                         | One image per server build (`/health`'s hash) |
+| `pr-<number>`           | each pull request push                           | That pull request's latest server             |
+| `main`, `sha-…`         | each push to `main`                              | Main's latest server, and per commit          |
+| `deployment-production` | the deploy workflow, after the site deploys      | The versions production runs                  |
+| `deployment-app-store`  | the Apps workflow, after both TestFlight uploads | The versions the App Store machines run       |
+| `deployment-dev`        | `server:publish --dev` (`deploy:dev`)            | The versions the dev machines run             |
 
-The three environment tags list content versions rather than name one image. Each points
-at its newest server image, restamped with the label `me.fridman.sloppy-tanks.versions`:
-the last five content versions published to the environment, newest first, each as
-`<content version>@<digest>` of its server image. `scripts/promote-server.mjs` is the only
-thing that moves them: it puts the new image first, in place of an older image of the same
-content version (a server-only change), and drops the oldest beyond five. Every machine of
-the environment runs a server for each version listed, so a page or app keeps a server of
-its own content version while newer ones are deployed, and only an app more than five
-versions behind is told to update.
+The `deployment-<environment>` tags name no image but a deployment file
+(`scripts/deployment.mjs`), a small JSON document stored in the registry as an OCI
+artifact: the last five content versions published to the environment, newest first, each
+with the digest of its server image, its release and its server build.
+`scripts/promote-server.mjs` is the only thing that writes them: it puts the new image
+first, in place of an older image of the same content version (a server-only change), and
+drops the oldest beyond five. Like an image, each file pushed is fixed and the tag moves to
+the newest, so the package's untagged versions are the deployments before. Every machine
+of the environment runs a server for each version listed, so a page or app keeps a server
+of its own content version while newer ones are deployed, and only an app more than five
+versions behind is told to update. Read one with
+`bun -e 'import {registry} from "./scripts/deployment.mjs"; console.log(await registry("ghcr.io/vladf1/sloppy-tanks-server").read("deployment-production"))'`.
+
+The tags `production`, `app-store` and `dev` still point at each environment's newest
+server image, relabelled with the list in `me.fridman.sloppy-tanks.versions`: machines
+created before the deployment file read that label. The promote script writes both until
+every machine has been created again, then the label goes.
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
 retags the existing image. Main's builds pass the deploy workflow's run number, which
@@ -237,23 +245,23 @@ created ([Machines](#machines)):
   and server build (its labels); otherwise it restores the previous image, or removes a
   new version's unit. It keeps each version's current, previous and listed images
   (tagged `sloppy-tanks-pinned:<content version>…`) and prunes the rest.
-- `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
-  environment (`SERVER_ENVIRONMENT`: `:production`, `:dev` or `:app-store`) every 10
-  seconds. A check reads the tag's digest with two small requests (an anonymous token and
-  the manifest's headers) and pulls the tag and the versions it lists only when it has
-  moved; one that cannot reach the registry changes nothing, and the
+- `sloppy-tanks-update.timer` is auto-update. It follows the deployment file of the
+  machine's environment (`SERVER_ENVIRONMENT`: production, dev or app-store) every 10
+  seconds. A check reads the file's digest with two small requests (an anonymous token and
+  the manifest's headers) and reads the file and pulls the versions it lists only when it
+  has moved; one that cannot reach the registry changes nothing, and the
   journal hears only when checks start failing or work again. `bootstrap.sh` turns it
   on; `server:auto-update off` turns it off until `on` or the machine is created again.
 
 ### Deploying
 
 ```sh
-bun run server:update                # follow :production now, waiting for nobody
+bun run server:update                # follow production's deployment file now, waiting for nobody
 bun run server:update --image pr-12  # run another tag (or full image name) as its version, and hold
 bun run server:update --dev --image pr-12   # try a pull request's server on the dev server
-bun run server:publish --dev         # build here, add it to :dev, wait for the dev servers
+bun run server:publish --dev         # build here, add it to dev's deployment file, wait for the dev servers
 bun run server:rollback              # switch the newest version back to its previous image
-bun run server:auto-update on|off    # follow the environment's tag by itself (default), or not
+bun run server:auto-update on|off    # follow the environment's deployment file by itself (default), or not
 bun run server:auto-update resume    # lift a hold (below) so auto-update follows again
 bun run server:deploy                # SSH fallback: build here, copy the image, switch
 ```
@@ -262,14 +270,14 @@ Each acts on production's machine; `--dev` picks the dev site's and `--app-store
 App Store apps' ([App Store machines](#app-store-machines)).
 
 With auto-update on, as every machine is by default, production's timer checks
-`:production` every 10 seconds. A newly listed version starts at once beside the others
+`deployment-production` every 10 seconds. A newly listed version starts at once beside the others
 (no one plays on it yet). A version pushed out of the list, and a listed version whose
 image changed (a server-only change), wait until nobody holds a seat on its server (the
 `players` count in `/stats`), or at most four hours, a room's lifetime; then the server
-stops, or restarts on the new image. Anything other than following `:production` leaves
+stops, or restarts on the new image. Anything other than following the deployment file leaves
 a hold: an SSH deploy, a rollback or running another tag pins that image, and auto-update
 skips its checks until `server:auto-update resume` or `server:update`. An image that fails
-its health check is not tried again until the tag lists another image of its version.
+its health check is not tried again until the file lists another image of its version.
 `server:status` shows each version's port, pinned and previous image, any pending
 update, stop or failed image, the hold, and auto-update's latest checks.
 
@@ -320,7 +328,7 @@ startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
 `/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
 `deploy/server/bootstrap.sh` from the repository's `main`, which sets the machine up and
-starts a server for each version its environment's tag lists. The servers appear in the
+starts a server for each version its environment's deployment file lists. The servers appear in the
 directory under their environment within a few minutes, once Caddy has its certificate,
 each at `wss://<address>.nip.io/v/<content version>`, with no SSH from here; from then on
 `deploy:dev` and the other `server:*` commands reach the machine, once however many

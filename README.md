@@ -433,8 +433,9 @@ machine pushes its rooms to the directory under its environment (production or d
 which its startup script (`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and
 `SERVER_ENVIRONMENT`; the shell lists the environment its build names in
 `SLOPPY_SERVER_ENVIRONMENT`: production's, and `dev` for the dev site (`build:dev`). The workflow does not deploy the server, but after the site deploys it
-adds the commit's server image to the content versions the server's container image tag
-`:production` lists, which the machines run side by side; the dev
+adds the commit's server image to the content versions production's deployment file
+lists (`deployment-production` in the server's container registry), which the machines run
+side by side; the dev
 site uses a separate server on its own machine (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
 files and the crates they compile with, listed by `bun scripts/content-version.mjs`,
@@ -483,7 +484,7 @@ The dev build connects the **Multiplayer** tab to the dev servers, which list th
 the directory under the dev environment. They run on their own machines, each at its nip.io
 name (`wss://1-2-3-4.nip.io`, each content version under `/v/<content version>`, the
 newest's dashboard at `/dashboard`). `deploy:dev` first adds the same checkout's server
-image to the versions its `:dev` tag lists, which those servers check every 10 seconds
+image to the versions dev's deployment file lists, which those servers check every 10 seconds
 and start by themselves, and waits for them, so client and server versions match;
 production multiplayer is never affected.
 

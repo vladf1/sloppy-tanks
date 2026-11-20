@@ -7,8 +7,9 @@
 # files in deploy/server/ from the repository at SLOPPY_REF (main), installs Podman, the
 # server's unit template, Caddy's Quadlet unit and the image updater, allows key-only SSH
 # and only SSH, 80 and 443 through ufw, serves the nip.io name of the machine's IPv4
-# address and starts a server for each content version its tag lists (CI's :production,
-# dev's publishes on :dev, the TestFlight builds' on :app-store); each server then appears
+# address and starts a server for each content version its environment's deployment file
+# lists (CI's for production, dev's publishes, the TestFlight builds' for app-store,
+# scripts/deployment.mjs); each server then appears
 # in the directory under its environment.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -63,10 +64,10 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
-# The first pull starts a server for each version the tag lists. A dev or App Store machine
+# The first pull starts a server for each version the deployment file lists. A dev or App Store machine
 # created before anything was published to its tag starts production's image, which
 # auto-update replaces at the first publish. Should the registry not answer now, the rest
-# of the setup stands and auto-update starts the servers once it can read the tag.
+# of the setup stands and auto-update starts the servers once it can read the file.
 [[ -f /var/lib/sloppy-tanks/wanted ]] || sloppy-tanks-update pull ||
   echo "Could not pull a server image; auto-update starts one once it can read its tag" >&2
 rm -rf "$work"
