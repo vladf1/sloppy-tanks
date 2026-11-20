@@ -28,6 +28,65 @@ function fromTemplate(id, fields) {
   return copy;
 }
 
+const writtenTime = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+
+/** The environment's deployment file, with how many listed servers announce each version:
+ * none means its machines have not started it (or are down). */
+function deploymentCard(deployment, servers) {
+  const card = fromTemplate("deployment", {
+    written: deployment.writtenAt
+      ? `written ${writtenTime.format(new Date(deployment.writtenAt))}`
+      : "",
+  });
+  card.querySelector("tbody").replaceChildren(
+    ...deployment.versions.map((version, index) => {
+      const announcing = servers.filter(
+        (server) => server.contentVersion === version.contentVersion,
+      ).length;
+      return fromTemplate("deployed-version", {
+        release: version.release ? `v${version.release}` : "",
+        content: `${version.contentVersion.slice(0, 8)}${index === 0 ? " (root)" : ""}`,
+        build: version.serverBuild?.slice(0, 8) ?? "",
+        image: version.digest.slice(0, 19),
+        servers: count(announcing, "server"),
+      });
+    }),
+  );
+  return card;
+}
+
+/** The deployment block of a section: the file, a note when the environment has none, or
+ * why it could not be read. */
+async function showDeployment(section, servers) {
+  const block = section.querySelector(".deployment");
+  const environment = section.dataset.environment;
+  try {
+    const response = await fetch(`deployment?environment=${environment}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { deployment } = await response.json();
+    if (deployment) {
+      block.replaceChildren(deploymentCard(deployment, servers));
+    } else {
+      // deploy/server/sloppy-tanks-update falls back to production's newest server.
+      const note = document.createElement("p");
+      note.className = "empty";
+      note.textContent =
+        environment === "production"
+          ? "No deployment file"
+          : "No deployment file: its machines run production's newest server";
+      block.replaceChildren(note);
+    }
+  } catch (error) {
+    const note = document.createElement("p");
+    note.className = "empty";
+    note.textContent = `Deployment file unavailable: ${error.message}`;
+    block.replaceChildren(note);
+  }
+}
+
 function roomRow(room) {
   const reconnecting = room.reserved - room.players;
   return fromTemplate("room", {
@@ -131,6 +190,8 @@ async function showEnvironment(section) {
       count(servers.reduce((sum, server) => sum + players(server), 0), "player"),
       count(joins, "join"),
     ].join(" · ");
+    // The registry answers slower than the list, so the cards never wait for it.
+    void showDeployment(section, servers);
     const cards = servers.map(serverCard);
     section.querySelector(".servers").replaceChildren(...cards);
     section.querySelector(":scope > .empty").hidden = !!servers.length;

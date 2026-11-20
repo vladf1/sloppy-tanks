@@ -14,6 +14,7 @@ import {
   MAX_UNFILTERED_SERVERS,
   type ListedServer,
 } from "../directory/listing";
+import { parseDeployment, readDeployment } from "../directory/deployment";
 import type { RoomListing } from "../directory/room-listing";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -239,4 +240,84 @@ test("the overview page has a section for every environment", () => {
   const page = read("../directory/public/index.html");
   const sections = [...page.matchAll(/data-environment="([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(sections.sort(), [...ENVIRONMENTS].sort());
+});
+
+/** A registry holding `files` (environment → file text) as deployment files, answering as
+ * GHCR does: a token, then manifests, then blobs redirected to storage. */
+function fakeRegistry(files: Record<string, string>, tamper = false) {
+  const blobs = new Map<string, string>();
+  const digestOf = (text: string) =>
+    `sha256:${new Bun.CryptoHasher("sha256").update(text).digest("hex")}`;
+  const requests: { url: string; authorization: string | null }[] = [];
+  const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const authorization = new Headers(init?.headers).get("Authorization");
+    requests.push({ url, authorization });
+    if (url.startsWith("https://ghcr.io/token?")) return Response.json({ token: "anonymous" });
+    if (authorization !== "Bearer anonymous" && !url.startsWith("https://storage.example/")) {
+      return new Response(null, { status: 401 });
+    }
+    const manifest = /\/manifests\/deployment-([\w-]+)$/.exec(url);
+    if (manifest) {
+      const text = files[manifest[1]!];
+      if (text === undefined) return new Response(null, { status: 404 });
+      const digest = digestOf(text);
+      blobs.set(digest, tamper ? `${text} ` : text);
+      return Response.json({
+        config: { mediaType: "application/vnd.sloppy-tanks.deployment.config.v1+json" },
+        layers: [{ mediaType: "application/vnd.sloppy-tanks.deployment.v1+json", digest }],
+        annotations: { "org.opencontainers.image.created": "2026-11-20T05:16:55.351Z" },
+      });
+    }
+    const blob = /\/blobs\/(sha256:[0-9a-f]+)$/.exec(url);
+    if (blob) {
+      return new Response(null, {
+        status: 307,
+        headers: { Location: `https://storage.example/${blob[1]}` },
+      });
+    }
+    const stored = blobs.get(url.slice("https://storage.example/".length));
+    return stored === undefined ? new Response(null, { status: 404 }) : new Response(stored);
+  };
+  return { fetcher: fetcher as typeof fetch, requests };
+}
+
+test("the overview reads an environment's deployment file from the registry", async () => {
+  const version = {
+    contentVersion: "6e7cbeb3a1b2c3d4",
+    digest: `sha256:${"1".repeat(64)}`,
+    release: "1.6.0.355",
+    serverBuild: "97a29958",
+  };
+  const older = { contentVersion: "9827898a", digest: `sha256:${"2".repeat(64)}` };
+  const { fetcher, requests } = fakeRegistry({
+    production: JSON.stringify({ versions: [version, older] }),
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(await readDeployment("production", fetcher))), {
+    versions: [version, older],
+    writtenAt: "2026-11-20T05:16:55.351Z",
+  });
+  // Storage takes no token.
+  assert.equal(requests.at(-1)?.authorization, null);
+  // An environment nothing was published to has none.
+  assert.equal(await readDeployment("dev", fetcher), undefined);
+
+  await assert.rejects(
+    readDeployment("production", fakeRegistry({ production: '{"versions":[]}' }, true).fetcher),
+    /is not what it says/,
+  );
+  for (const malformed of [
+    "{}",
+    '{"versions":[{"contentVersion":"6e7c","digest":"sha256:11"}]}',
+    '{"versions":[{"contentVersion":"6e7cbeb3"}]}',
+  ]) {
+    await assert.rejects(
+      readDeployment("production", fakeRegistry({ production: malformed }).fetcher),
+      malformed,
+    );
+  }
+  assert.deepEqual(
+    parseDeployment(JSON.stringify({ versions: [{ ...older, release: 4, extra: "x" }] })),
+    [{ ...older, release: undefined, serverBuild: undefined }],
+  );
 });
