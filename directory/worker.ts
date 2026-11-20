@@ -3,7 +3,7 @@
  * reads which servers are up and how busy they are.
  *
  * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields, start
- *   time and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
+ *   time, join count and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
  *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. A machine that
  *   runs several content versions announces each to `/v/<contentVersion>/servers`, listed
  *   at `wss://a-b-c-d.nip.io/v/<contentVersion>`, at most MAX_ENTRIES_PER_MACHINE of them.

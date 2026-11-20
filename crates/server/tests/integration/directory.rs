@@ -170,6 +170,7 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
         assert_eq!(first.body["contentVersion"], CONTENT_VERSION);
         assert!(first.body["serverBuild"].is_string());
         assert!(first.body["startedAt"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(first.body["joins"], 0);
         assert_eq!(first.body["rooms"], Value::Array(Vec::new()));
     }
 
@@ -199,6 +200,7 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
     assert_eq!(listed[0]["contentVersion"], CONTENT_VERSION);
     assert_eq!(room_codes(&listed[0]), ["LISTROOM"]);
     assert!(listed[0]["startedAt"].is_string());
+    assert_eq!(listed[0]["joins"], 1);
     assert!(listed[0]["cpuPercent"].as_f64().unwrap() >= 0.0);
     assert!(listed[0]["cpus"].as_u64().unwrap() >= 1);
     assert!(listed[0]["rssMB"].as_f64().unwrap() > 0.0);

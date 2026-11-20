@@ -511,6 +511,11 @@ impl ServerMonitor {
         self.record(room, format!("ended: {reason} after {}", duration(age_ms)));
     }
 
+    /// Players seated since start, reconnects included.
+    pub fn joins(&self) -> u64 {
+        self.counts.joins
+    }
+
     pub fn totals(&self) -> Totals {
         Totals {
             rooms_created: self.counts.rooms_created,

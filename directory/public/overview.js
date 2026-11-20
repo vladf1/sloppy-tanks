@@ -10,7 +10,8 @@ const latencies = new Map();
 /** Servers with a probe under way, so a slow one never piles up probes. */
 const probing = new Set();
 
-const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+const number = new Intl.NumberFormat();
+const count = (n, noun) => `${number.format(n)} ${noun}${n === 1 ? "" : "s"}`;
 const players = (server) => server.rooms.reduce((sum, room) => sum + room.players, 0);
 
 function clock(seconds) {
@@ -97,6 +98,7 @@ function serverCard(server) {
     `content ${server.contentVersion.slice(0, 8)}`,
     `build ${server.serverBuild.slice(0, 8)}`,
     count(players(server), "player"),
+    server.joins !== undefined && count(server.joins, "join"),
     `seen ${Math.max(0, Math.round((Date.now() - server.seen) / 1000))} s ago`,
   ];
   const card = fromTemplate("server", {
@@ -121,10 +123,13 @@ async function showEnvironment(section) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { servers } = await response.json();
     const rooms = servers.reduce((sum, server) => sum + server.rooms.length, 0);
+    // Servers built before they announced joins add none.
+    const joins = servers.reduce((sum, server) => sum + (server.joins ?? 0), 0);
     summary.textContent = [
       count(servers.length, "server"),
       count(rooms, "room"),
       count(servers.reduce((sum, server) => sum + players(server), 0), "player"),
+      count(joins, "join"),
     ].join(" · ");
     const cards = servers.map(serverCard);
     section.querySelector(".servers").replaceChildren(...cards);
