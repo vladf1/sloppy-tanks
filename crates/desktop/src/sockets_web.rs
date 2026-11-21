@@ -88,9 +88,24 @@ impl Sockets {
                 SocketEvent::Text(id, text)
             } else if let Ok(buffer) = data.dyn_into::<js_sys::ArrayBuffer>() {
                 let array = js_sys::Uint8Array::new(&buffer);
-                let mut bytes = spare.borrow_mut().pop().unwrap_or_default();
-                bytes.resize(array.length() as usize, 0);
-                array.copy_to(&mut bytes);
+                let length = array.length() as usize;
+                // A spare buffer for a message it may keep; any other is copied into an
+                // allocation of its own, as every one was.
+                let kept = if length <= SPARE_BYTES {
+                    spare.borrow_mut().pop()
+                } else {
+                    None
+                };
+                let bytes = match kept {
+                    Some(mut bytes) => {
+                        // The last message's bytes stay to be written over: only what
+                        // this one adds is zeroed first.
+                        bytes.resize(length, 0);
+                        array.copy_to(&mut bytes);
+                        bytes
+                    }
+                    None => array.to_vec(),
+                };
                 SocketEvent::Binary(id, bytes)
             } else {
                 return;
@@ -148,10 +163,9 @@ impl Sockets {
     }
 
     /// Take back the buffer of a binary message the room has read, for a later one.
-    pub fn recycle(&mut self, mut bytes: Vec<u8>) {
+    pub fn recycle(&mut self, bytes: Vec<u8>) {
         let mut spare = self.spare.borrow_mut();
         if spare.len() < SPARE_BUFFERS && bytes.capacity() <= SPARE_BYTES {
-            bytes.clear();
             spare.push(bytes);
         }
     }
