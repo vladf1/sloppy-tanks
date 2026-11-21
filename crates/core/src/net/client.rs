@@ -507,8 +507,23 @@ impl NetworkClient {
         std::mem::take(&mut self.actions)
     }
 
+    /// [`take_actions`](Self::take_actions) into `out`, which is emptied first and whose
+    /// buffer the client keeps for the next ones: a session that drains every frame
+    /// allocates nothing for the inputs it sends 20 to 40 times a second.
+    pub fn take_actions_into(&mut self, out: &mut Vec<ClientAction>) {
+        out.clear();
+        std::mem::swap(&mut self.actions, out);
+    }
+
     pub fn take_notices(&mut self) -> Vec<ClientNotice> {
         std::mem::take(&mut self.notices)
+    }
+
+    /// [`take_notices`](Self::take_notices) into `out`, as
+    /// [`take_actions_into`](Self::take_actions_into).
+    pub fn take_notices_into(&mut self, out: &mut Vec<ClientNotice>) {
+        out.clear();
+        std::mem::swap(&mut self.notices, out);
     }
 
     // ---- Accessors ------------------------------------------------------------------

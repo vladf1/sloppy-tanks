@@ -284,6 +284,9 @@ pub struct HullPrediction {
     host_shot: Option<(u64, f64)>,
     /// Bodies the hull touched (and tanks near it), drawn from the predicted world.
     held: Vec<Held>,
+    /// Where each held body stood before a snapshot's replay, kept between snapshots so
+    /// a replay near a tank or a crate allocates nothing.
+    held_before: Vec<(Moved, Point3)>,
     pub stats: CorrectionStats,
 }
 
@@ -453,14 +456,12 @@ impl HullPrediction {
             }
         }
         // Held bodies glide off their corrections like the hull.
-        let held_before: Vec<(Moved, Point3)> = self
-            .held
-            .iter()
-            .filter_map(|held| {
-                let pose = self.predictor.body_pose(held.moved)?;
-                Some((held.moved, pose.position))
-            })
-            .collect();
+        let mut held_before = std::mem::take(&mut self.held_before);
+        held_before.clear();
+        held_before.extend(self.held.iter().filter_map(|held| {
+            let pose = self.predictor.body_pose(held.moved)?;
+            Some((held.moved, pose.position))
+        }));
         self.predictor.sync_scene(scene);
         self.predictor
             .sync_bodies(scene, &update.bodies, hull.position);
@@ -483,7 +484,7 @@ impl HullPrediction {
         self.current = current;
         self.life = Some(hull.life);
         self.reload_gun(hull.tick, scene);
-        for (moved, before) in held_before {
+        for &(moved, before) in &held_before {
             let after = self.predictor.body_pose(moved).map(|pose| pose.position);
             if let (Some(held), Some(after)) =
                 (self.held.iter_mut().find(|held| held.moved == moved), after)
@@ -500,6 +501,7 @@ impl HullPrediction {
                 }
             }
         }
+        self.held_before = held_before;
         self.held
             .retain(|held| self.predictor.body_pose(held.moved).is_some());
         let touched = std::mem::take(&mut self.touched);

@@ -137,6 +137,9 @@ pub struct RoomSession {
     told_hidden: bool,
     /// Inside `pump`, which a notice can reach again.
     pumping: bool,
+    /// `pump`'s buffers, kept so draining every frame allocates nothing.
+    actions: Vec<ClientAction>,
+    notices: Vec<RoomNotice>,
     /// `quit` ran.
     quitting: bool,
     /// Settings opened during the battle put the tank in a bot's hands until they close.
@@ -233,6 +236,8 @@ impl RoomSession {
             minimized: false,
             told_hidden: false,
             pumping: false,
+            actions: Vec::new(),
+            notices: Vec::new(),
             quitting: false,
             resume_after_settings: false,
             last_poll: now,
@@ -344,21 +349,24 @@ impl RoomSession {
             return;
         }
         self.pumping = true;
+        let mut actions = std::mem::take(&mut self.actions);
+        let mut notices = std::mem::take(&mut self.notices);
         loop {
-            let actions = self.game.take_room_actions();
+            self.game.take_room_actions_into(&mut actions);
             let actions_empty = actions.is_empty();
-            for action in actions {
+            for action in actions.drain(..) {
                 self.perform(action);
             }
-            let notices = self.game.take_room_notices();
+            self.game.take_room_notices_into(&mut notices);
             let done = actions_empty && notices.is_empty();
-            for notice in notices {
+            for notice in notices.drain(..) {
                 self.handle(notice);
             }
             if done {
                 break;
             }
         }
+        (self.actions, self.notices) = (actions, notices);
         self.pumping = false;
     }
 

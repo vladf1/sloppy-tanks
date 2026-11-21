@@ -1626,9 +1626,7 @@ fn ground_snaps(simulation: &Simulation, handle: RigidBodyHandle, layout: &Struc
     let mut rest = *parts;
     let mut bodies = Vec::new();
     for &collider in simulation.world.bodies[handle].colliders() {
-        let collider = &simulation.world.colliders[collider];
-        let part = collider.user_data as usize;
-        if rest.contains(part) && !layout.part(part).load && collider.compute_aabb().mins.y <= GROUND_TOUCH {
+        if let Some(part) = snapping_part(simulation, layout, &rest, collider) {
             rest.remove(part);
             bodies.push(PartSet::from_indices([part]));
         }
@@ -1637,6 +1635,23 @@ fn ground_snaps(simulation: &Simulation, handle: RigidBodyHandle, layout: &Struc
         bodies.push(rest);
     }
     bodies
+}
+
+/// Whether any of `parts` would snap off in [`ground_snaps`]: a falling tree checks every
+/// tick, and on most of them nothing reaches the ground.
+fn any_ground_snap(simulation: &Simulation, handle: RigidBodyHandle, layout: &Structure, parts: &PartSet) -> bool {
+    simulation.world.bodies[handle]
+        .colliders()
+        .iter()
+        .any(|&collider| snapping_part(simulation, layout, parts, collider).is_some())
+}
+
+/// The part of `parts` that `collider` holds, when it is not load-bearing and touches
+/// the ground.
+fn snapping_part(simulation: &Simulation, layout: &Structure, parts: &PartSet, collider: ColliderHandle) -> Option<usize> {
+    let collider = &simulation.world.colliders[collider];
+    let part = collider.user_data as usize;
+    (parts.contains(part) && !layout.part(part).load && collider.compute_aabb().mins.y <= GROUND_TOUCH).then_some(part)
 }
 
 /// The first [`SHATTER_EVENTS`] of `items` in `order`, in that order (equal ones as they
@@ -1816,7 +1831,12 @@ pub fn settle_structure_debris(simulation: &mut Simulation) {
         }
         // A falling tree's limbs that reach the ground cannot hold it up: they snap off
         // however gently they meet it, until it lies on its trunk.
-        if layout.snaps_on_ground && !debris.landed && alive && debris.parts.len() > 1 {
+        if layout.snaps_on_ground
+            && !debris.landed
+            && alive
+            && debris.parts.len() > 1
+            && any_ground_snap(simulation, handle, &layout, &debris.parts)
+        {
             let bodies = ground_snaps(simulation, handle, &layout, &debris.parts);
             let room = simulation.fragments.len() + bodies.len() - 1 <= simulation.max_fragments;
             if bodies.len() > 1 && room {

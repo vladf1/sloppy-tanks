@@ -161,6 +161,9 @@ struct Network {
     /// builds that print the same hashes sent the same bytes and drew the same scenes.
     sent: DefaultHasher,
     drawn: [DefaultHasher; 2],
+    /// The drained actions and notices, kept between drains as the shell keeps them.
+    actions: Vec<ClientAction>,
+    notices: Vec<ClientNotice>,
 }
 
 impl Network {
@@ -168,14 +171,17 @@ impl Network {
         loop {
             let mut busy = false;
             for index in 0..self.peers.len() {
-                let actions = self.peers[index].client.take_actions();
+                let mut actions = std::mem::take(&mut self.actions);
+                self.peers[index].client.take_actions_into(&mut actions);
                 busy |= !actions.is_empty();
-                for action in actions {
+                for action in actions.drain(..) {
                     self.perform(index, action);
                 }
-                let notices = self.peers[index].client.take_notices();
+                self.actions = actions;
+                let mut notices = std::mem::take(&mut self.notices);
+                self.peers[index].client.take_notices_into(&mut notices);
                 let now = self.now;
-                for notice in notices {
+                for notice in notices.drain(..) {
                     match notice {
                         ClientNotice::PrepareArena {
                             round_id,
@@ -189,6 +195,7 @@ impl Network {
                         _ => {}
                     }
                 }
+                self.notices = notices;
             }
             let events = self.host.take_events();
             busy |= !events.is_empty();
@@ -412,6 +419,8 @@ fn main() {
         marks: marks.clone(),
         sent: DefaultHasher::new(),
         drawn: [DefaultHasher::new(), DefaultHasher::new()],
+        actions: Vec::new(),
+        notices: Vec::new(),
     };
     for _ in 0..2 {
         net.peers.push(Peer {

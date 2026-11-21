@@ -677,6 +677,7 @@ fn status_well(painter: &Painter, rect: Rect, message: &str, hint: &str, time: f
     let x = track.left() - sweep + eased * sweep * 4.65;
     let clipped = painter.with_clip_rect(track.intersect(painter.clip_rect()));
     clipped.add(paint::hgradient(
+        clipped.ctx(),
         Rect::from_min_size(pos2(x, track.top()), vec2(sweep, track.height())),
         &[(0.0, Color32::TRANSPARENT), (0.5, GOLD), (1.0, GOLD_HOT)],
     ));

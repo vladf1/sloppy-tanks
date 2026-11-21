@@ -165,6 +165,7 @@ pub fn hud(
     }
     // A soft shade along the top edge keeps the score, buttons and feed legible.
     painter.add(paint::vgradient(
+        painter.ctx(),
         Rect::from_min_size(viewport.min, vec2(viewport.width(), 120.0)),
         &[
             (0.0, hexa(0x030a18, 0.45)),
@@ -247,7 +248,8 @@ pub fn hud(
         },
         right: screen.right() - (EDGE + feed_width(screen)) * zoom,
     };
-    context.data_mut(|data| data.insert_temp(Id::unique("free corner"), free));
+    // Written in place: a new temporary value would box it again every frame.
+    context.data_mut(|data| *data.get_temp_mut_or(Id::unique("free corner"), free) = free);
     if playing {
         toast(&painter, screen, state);
         toolbar(
@@ -655,6 +657,7 @@ fn phone_ammo_key(context: &egui::Context, art: &Art, human: &HudHuman, actions:
             let color = hex(option.color());
             painter.circle_filled(center + vec2(0.0, 4.0), radius, hexa(0x000000, 0.25));
             painter.add(paint::radial(
+                painter.ctx(),
                 center,
                 Vec2::splat(radius),
                 &[(0.0, hexa(0x183460, 0.92)), (1.0, hexa(0x0b1a33, 0.95))],
@@ -1292,6 +1295,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             lit(hex(0x1f2735))
         };
         painter.add(paint::vgradient(
+            painter.ctx(),
             rect,
             &[
                 (0.0, top_color),
@@ -1300,10 +1304,12 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             ],
         ));
         painter.add(paint::hgradient(
+            painter.ctx(),
             rect,
             &[(0.0, fade(from, 0.3)), (0.4, Color32::TRANSPARENT)],
         ));
         painter.add(paint::hgradient(
+            painter.ctx(),
             rect,
             &[(0.6, Color32::TRANSPARENT), (1.0, fade(to, 0.3))],
         ));
@@ -1564,6 +1570,7 @@ fn toast(painter: &Painter, screen: Rect, state: &UiState) {
     // The band fades out at both ends, past a phone's tighter text.
     let edge = if phone { 0.06 } else { 0.16 };
     painter.add(paint::hgradient(
+        painter.ctx(),
         rect,
         &[
             (0.0, Color32::TRANSPARENT),
@@ -1574,6 +1581,7 @@ fn toast(painter: &Painter, screen: Rect, state: &UiState) {
     ));
     for y in [rect.top(), rect.bottom()] {
         painter.add(paint::hgradient(
+            painter.ctx(),
             Rect::from_min_max(pos2(rect.left(), y - 0.5), pos2(rect.right(), y + 0.5)),
             &[
                 (0.0, Color32::TRANSPARENT),
@@ -2172,6 +2180,7 @@ fn tank_label(
     painter.rect_filled(rank_rect, 4, rank_fill);
     if human.rank > 0 {
         painter.add(paint::vgradient(
+            painter.ctx(),
             rank_rect.shrink2(vec2(0.0, 3.0)),
             &[(0.0, GOLD_HOT), (1.0, GOLD)],
         ));
@@ -2273,6 +2282,7 @@ fn hull_bar(painter: &Painter, bar: Rect, state: &UiState, human: &HudHuman) {
     if share > 0.0 {
         painter.rect_filled(fill.expand(2.0), 4, fade(ramp, 0.25));
         painter.add(paint::vgradient(
+            painter.ctx(),
             fill,
             &[
                 (0.0, mix(Color32::WHITE, ramp, 0.4)),
@@ -2317,17 +2327,26 @@ fn count_mark(
         let half = vec2(INFINITY_WIDTH, INFINITY_HEIGHT) * size / 2.0;
         let outer = (INFINITY_WIDTH + INFINITY_STROKE) * size;
         let center = align.anchor_size(pos, vec2(outer, 0.0)).center() + vec2(0.0, INFINITY_DROP);
-        let points = (0..STEPS)
-            .map(|step| {
-                let turn = step as f32 / STEPS as f32 * std::f32::consts::TAU;
-                let sweep =
-                    (turn.cos() + INFINITY_ROUND * (3.0 * turn).cos()) / (1.0 + INFINITY_ROUND);
-                center + vec2(half.x * sweep, half.y * (2.0 * turn).sin())
-            })
-            .collect();
-        painter.add(Shape::closed_line(
-            points,
-            Stroke::new(INFINITY_STROKE * size, color),
+        let stroke = Stroke::new(INFINITY_STROKE * size, color);
+        let feathering = paint::feathering(painter);
+        // The same mark every frame, kept rather than tessellated again.
+        let key = paint::key_floats([center.x, center.y, size, feathering])
+            .chain([u32::from_le_bytes(color.to_array())]);
+        painter.add(paint::memo_mesh(
+            painter.ctx(),
+            paint::MeshKind::Infinity,
+            key,
+            || {
+                let points: Vec<Pos2> = (0..STEPS)
+                    .map(|step| {
+                        let turn = step as f32 / STEPS as f32 * std::f32::consts::TAU;
+                        let sweep = (turn.cos() + INFINITY_ROUND * (3.0 * turn).cos())
+                            / (1.0 + INFINITY_ROUND);
+                        center + vec2(half.x * sweep, half.y * (2.0 * turn).sin())
+                    })
+                    .collect();
+                paint::line_mesh(&points, true, stroke, feathering)
+            },
         ));
         return;
     };
@@ -2501,6 +2520,7 @@ fn ammo_rack(
         } else {
             painter.rect_filled(rect, radius, hex(0x081427));
             painter.add(paint::vgradient(
+                painter.ctx(),
                 rect.shrink2(vec2(0.0, 4.0)),
                 &[(0.0, hex(0x11284a)), (1.0, hex(0x081427))],
             ));
@@ -2712,6 +2732,7 @@ fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human:
     } else {
         painter.rect_filled(rect, radius, hex(0x081427));
         painter.add(paint::vgradient(
+            painter.ctx(),
             rect.shrink2(vec2(0.0, 4.0)),
             &[(0.0, hex(0x11284a)), (1.0, hex(0x081427))],
         ));
@@ -2793,6 +2814,7 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, human: &HudHuman) {
         };
         painter.rect_filled(rect, radius, hex(0x12284b));
         painter.add(paint::vgradient(
+            painter.ctx(),
             rect.shrink2(vec2(0.0, 0.0)).with_min_y(rect.top() + 6.0),
             &[(0.0, fade(color, 0.2)), (0.85, Color32::TRANSPARENT)],
         ));
@@ -2866,6 +2888,7 @@ fn ammo_notice(painter: &Painter, left: f32, plate_top: f32, room: f32, notice: 
     let rect = Rect::from_min_size(pos2(left, plate_top - NOTICE_GAP - size.y), size);
     painter.rect_filled(rect.translate(vec2(0.0, 4.0)), 8, hexa(0, 0.3));
     painter.add(paint::vgradient(
+        painter.ctx(),
         rect,
         &[(0.0, hexa(0x11264a, 0.94)), (1.0, hexa(0x08142a, 0.95))],
     ));
@@ -3021,7 +3044,8 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
         let point =
             screen.center() + vec2(dx * reach * screen.width(), dy * reach * screen.height());
         let radii = vec2(screen.width() * 0.34, screen.height() * 0.44);
-        let blob = paint::radial(
+        // It fades every frame, so it is built, not kept.
+        let blob = Shape::mesh(paint::radial_mesh(
             point,
             radii,
             &[
@@ -3029,7 +3053,7 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
                 (0.42, fade(hexa(0xff2a3a, 0.3), alpha)),
                 (0.72, Color32::TRANSPARENT),
             ],
-        );
+        ));
         painter.with_clip_rect(screen).add(blob);
         return;
     };

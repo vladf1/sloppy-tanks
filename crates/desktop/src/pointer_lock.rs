@@ -293,8 +293,17 @@ pub fn look_travel(window: &Window, delta: f64) -> f64 {
 }
 
 /// Whether the page runs in a Chromium browser, as winit tells (`web_sys::engine`).
+/// Asked once: a locked pointer reports every mouse move, and the browser never changes.
 #[cfg(target_arch = "wasm32")]
 fn chromium() -> bool {
+    thread_local! {
+        static CHROMIUM: bool = ask_chromium();
+    }
+    CHROMIUM.with(|chromium| *chromium)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn ask_chromium() -> bool {
     use js_sys::{Array, Reflect};
     use wasm_bindgen::JsCast;
     let Some(navigator) = web_sys::window().map(|window| window.navigator()) else {
