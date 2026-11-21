@@ -304,7 +304,7 @@ fn room_dialog(context: &egui::Context, id: &str, width: f32, build: impl FnOnce
             )));
             body.spacing_mut().item_spacing = vec2(ROW_GAP, ROOM_GAP);
             body.style_mut().override_font_id = Some(FontId::proportional(14.0));
-            egui::ScrollArea::vertical()
+            paint::vertical_scroll()
                 .id_salt(id)
                 .max_height(context.content_rect().height() - 80.0)
                 .auto_shrink([false, true])
@@ -1371,7 +1371,7 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
             1.5,
         );
     }
-    egui::ScrollArea::vertical()
+    paint::vertical_scroll()
         .id_salt("room scoreboard")
         .max_height(200.0)
         .show(ui, |ui| {
