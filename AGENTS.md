@@ -106,7 +106,7 @@ the server:
 
 ## Normal development and validation
 
-Use Bun 1.4.4 (pinned in `.bun-version` and `package.json`) and Rust through rustup.
+Use Bun 1.4.5 (pinned in `.bun-version` and `package.json`) and Rust through rustup.
 Bun supplies installation, TypeScript checking, script execution and the native
 test runner; Vite, running on Bun, bundles the page and serves it in development.
 `rust-toolchain.toml` pins Rust with rustfmt, clippy and the

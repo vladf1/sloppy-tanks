@@ -4,11 +4,11 @@ A browser tank game with destructible cover, team battles and solo survival. The
 
 ## Run
 
-Use [Bun](https://bun.sh/docs/installation) 1.4.4 and Rust through [rustup](https://rustup.rs). On macOS:
+Use [Bun](https://bun.sh/docs/installation) 1.4.5 and Rust through [rustup](https://rustup.rs). On macOS:
 
 ```sh
 brew install rustup                 # once per machine
-curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.5"
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
 cargo install wasm-bindgen-cli --version 0.2.130 --locked

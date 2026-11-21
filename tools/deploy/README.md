@@ -26,7 +26,7 @@ Deployment scripts use this same launcher automatically. Normal development and
 bot control (`bun run bots`) do not need it.
 
 Wrangler always uses Node because Miniflare needs Undici's dispatcher, which Bun
-1.4.4's built-in replacement ignores
+1.4.5's built-in replacement ignores
 ([upstream issue](https://github.com/oven-sh/bun/issues/39247)). `wrangler dev` is a
 manual tool for local Worker development, not part of the build, tests, CI or
 deployment scripts. The game dev server and native Rust multiplayer server do
