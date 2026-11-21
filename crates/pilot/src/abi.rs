@@ -115,8 +115,10 @@ pub extern "C" fn pilot_opened(handle: u32, socket: u32, now_ms: f64) {
 #[unsafe(no_mangle)]
 pub extern "C" fn pilot_text(handle: u32, socket: u32, length: usize, now_ms: f64) {
     ENGINE.with_borrow_mut(|engine| {
-        let text = input_text(engine, length);
-        engine.fleet.text(handle, socket, &text, now_ms);
+        let Engine { fleet, input, .. } = engine;
+        // Read where it lies: a frame is copied only to mend text that is not UTF-8.
+        let text = String::from_utf8_lossy(&input[..length.min(input.len())]);
+        fleet.text(handle, socket, &text, now_ms);
     });
 }
 

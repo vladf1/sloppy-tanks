@@ -514,9 +514,10 @@ fn icon_button(
     tip: &str,
     draw: impl FnOnce(&Painter, Rect, Color32),
 ) -> bool {
-    let response = ui
-        .interact(rect, Id::unique(("rooms button", id)), Sense::click())
-        .on_hover_text(tip);
+    let response = paint::on_hover_text_with(
+        ui.interact(rect, Id::unique(("rooms button", id)), Sense::click()),
+        || tip.to_owned(),
+    );
     paint::labelled(&response, enabled, tip);
     let painter = ui.painter();
     let hovered = enabled && response.hovered();
@@ -877,16 +878,18 @@ pub fn multiplayer(
         pos2(room_list.right() - 61.0, rooms_head.y - 3.0),
         vec2(61.0, 26.0),
     );
-    let found = paint::button_at(
-        ui,
-        art,
-        find,
-        "FIND",
-        None,
-        ButtonStyle::Secondary,
-        !state.code.trim().is_empty(),
+    let found = paint::on_hover_text_with(
+        paint::button_at(
+            ui,
+            art,
+            find,
+            "FIND",
+            None,
+            ButtonStyle::Secondary,
+            !state.code.trim().is_empty(),
+        ),
+        || "Find the room with this code".to_owned(),
     )
-    .on_hover_text("Find the room with this code")
     .clicked();
     if found || entered {
         match read_room_code(&state.code) {
@@ -1426,9 +1429,10 @@ fn new_room_card(
     };
     let switch = Rect::from_min_size(pos2(switch_left, switch_y - 10.0), vec2(34.0, 20.0));
     let switch_area = Rect::from_min_max(switch.min, pos2(switch.right() + 112.0, switch.bottom()));
-    let response = ui
-        .interact(switch_area, Id::unique("humans only"), Sense::click())
-        .on_hover_text("No bots fill the teams; empty seats stay empty");
+    let response = paint::on_hover_text_with(
+        ui.interact(switch_area, Id::unique("humans only"), Sense::click()),
+        || "No bots fill the teams; empty seats stay empty".to_owned(),
+    );
     paint::labelled_choice(&response, true, state.humans_only, "Humans only");
     let toggled = response.clicked();
     let mut humans_only = state.humans_only;

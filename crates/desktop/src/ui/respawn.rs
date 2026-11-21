@@ -284,11 +284,11 @@ pub fn strip(
 fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, line_right: f32, state: &UiState) {
     let death = state.death.as_ref();
     let (label, name) = match death {
-        None => ("YOUR TANK", "DESTROYED".to_owned()),
-        Some(report) if report.own_goal => ("OWN GOAL", "YOU".to_owned()),
+        None => ("YOUR TANK", paint::upper("DESTROYED")),
+        Some(report) if report.own_goal => ("OWN GOAL", paint::upper("YOU")),
         Some(report) => {
             let killer = report.killer.as_deref().unwrap_or("THE YARD");
-            ("DESTROYED BY", killer.to_uppercase())
+            ("DESTROYED BY", paint::upper(killer))
         }
     };
     let name_color = match death.and_then(|report| report.killer_team) {
@@ -319,7 +319,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, line_right: f32, s
     let mut x = rect.left();
     let y = name_rect.bottom() + 6.0;
     if let Some(weapon) = report.weapon {
-        let label = weapon.to_uppercase();
+        let label = paint::upper(weapon);
         let text_width = paint::text_width(painter, &label, bold_font(12.0), 1.0);
         let chip = Rect::from_min_size(pos2(x, y), vec2(text_width + 36.0, 25.0));
         painter.rect_filled(chip, 7, hex(0x2c1219));
@@ -354,15 +354,21 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, line_right: f32, s
     if report.own_goal {
         return;
     }
-    let mut tags: Vec<(Option<&str>, String)> = Vec::new();
-    if let Some(vehicle) = report.killer_vehicle {
-        tags.push((None, vehicle.to_owned()));
-    }
-    if let Some(tally) = &report.killer_tally {
-        tags.push((Some("skull"), tally.to_ascii_uppercase()));
-    }
+    // The tally in ASCII capitals, as `to_ascii_uppercase` gives them.
+    let tally = report.killer_tally.as_deref().map(|tally| {
+        let mut capitals = paint::ShortText::default();
+        for letter in tally.chars() {
+            // Writing to a `ShortText` never fails.
+            let _ = std::fmt::Write::write_char(&mut capitals, letter.to_ascii_uppercase());
+        }
+        capitals
+    });
+    let tags: [Option<(Option<&str>, &str)>; 2] = [
+        report.killer_vehicle.map(|vehicle| (None, vehicle)),
+        tally.as_deref().map(|tally| (Some("skull"), tally)),
+    ];
     let center_y = y + 12.5;
-    for (index, (icon, tag)) in tags.iter().enumerate() {
+    for (index, (icon, tag)) in tags.iter().flatten().enumerate() {
         let width = paint::text_width(painter, tag, bold_font(12.0), 1.0)
             + if index > 0 { 10.0 } else { 0.0 }
             + if icon.is_some() { 18.0 } else { 0.0 };
@@ -407,20 +413,21 @@ fn red_head(painter: &egui::Painter, head: Rect) {
             0.12 * (1.0 - (x - head.left()) / (wash_right - head.left())),
         )
     };
-    let mut mesh = egui::Mesh::default();
-    for point in [
-        pos2(head.left(), head.top() + PLATE_CUT),
-        pos2(head.left() + PLATE_CUT, head.top()),
-        pos2(wash_right, head.top()),
-        pos2(wash_right, head.bottom()),
-        pos2(head.left(), head.bottom()),
-    ] {
-        mesh.colored_vertex(point, wash(point.x));
-    }
-    for corner in 1..4 {
-        mesh.add_triangle(0, corner, corner + 1);
-    }
-    painter.add(mesh);
+    painter.add(paint::frame_mesh(|mesh| {
+        paint::reserve(mesh, 5, 3);
+        for point in [
+            pos2(head.left(), head.top() + PLATE_CUT),
+            pos2(head.left() + PLATE_CUT, head.top()),
+            pos2(wash_right, head.top()),
+            pos2(wash_right, head.bottom()),
+            pos2(head.left(), head.bottom()),
+        ] {
+            mesh.colored_vertex(point, wash(point.x));
+        }
+        for corner in 1..4 {
+            mesh.add_triangle(0, corner, corner + 1);
+        }
+    }));
     painter.rect_filled(
         Rect::from_min_max(
             pos2(head.left(), head.top() + PLATE_CUT),
@@ -528,7 +535,7 @@ fn countdown(
         Vec2::splat(size.digit * 0.6),
         &[(0.0, hexa(0xffcf38, 0.3)), (1.0, Color32::TRANSPARENT)],
     ));
-    let digits = format!("{seconds}");
+    let digits = paint::short(format_args!("{seconds}"));
     paint::text(
         painter,
         ring + vec2(0.0, 2.0),

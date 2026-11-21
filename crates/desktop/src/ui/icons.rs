@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use sloppy_core::sim::{Team, VehicleKind};
 
+use super::paint;
 use crate::assets::Asset;
 
 /// How a layer of an icon is painted.
@@ -643,25 +644,24 @@ impl Art {
     /// Paint icon `name` into `rect`, tinted (white keeps a coloured icon's colours).
     pub fn icon(&self, painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
         if let Some(texture) = self.texture(painter.ctx(), name) {
-            painter.image(
+            painter.add(paint::image(
                 texture,
                 rect,
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                 tint,
-            );
+            ));
         }
     }
 
     /// Paint icon `name` mirrored left to right.
     pub fn icon_flipped(&self, painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
         if let Some(texture) = self.texture(painter.ctx(), name) {
-            let mut mesh = egui::Mesh::with_texture(texture);
-            mesh.add_rect_with_uv(
+            painter.add(paint::image(
+                texture,
                 rect,
                 Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0)),
                 tint,
-            );
-            painter.add(egui::Shape::mesh(mesh));
+            ));
         }
     }
 
@@ -722,12 +722,12 @@ impl Art {
             height = rect.width() * scale / aspect;
         }
         let size = egui::vec2(height * aspect, height);
-        painter.image(
+        painter.add(paint::image(
             texture.id(),
             Rect::from_center_size(rect.center(), size),
             uv,
             Color32::WHITE,
-        );
+        ));
     }
 }
 

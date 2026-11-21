@@ -75,6 +75,7 @@ pub enum MeshKind {
     InnerEdge,
     Ring,
     Infinity,
+    Ray,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by
@@ -125,13 +126,203 @@ pub fn memo_mesh(
     Shape::Mesh(mesh)
 }
 
+/// The meshes of the last pass's shapes, for [`frame_mesh`] to fill again: what
+/// [`memo_mesh`] cannot keep, because its inputs change from frame to frame (a fading
+/// wash, a rotating wedge, a held stick's knob) or because a key and a lookup would
+/// cost more than building it (an icon's four vertices). Built from nothing, each was
+/// three allocations a frame: its vertices, its indices and the shape's `Arc`.
+///
+/// A shape owns its mesh alone while its pass is laid out, so egui moves a mesh on a
+/// zoomed or shrunk layer where it is (a mesh the pool still held was cloned to be
+/// moved: three allocations again, and a copy). A frame loop runs its passes through
+/// [`run_pass`], which keeps a finished pass's meshes before they are tessellated: each
+/// is free once egui has dropped its shape.
+#[derive(Default)]
+struct MeshPool {
+    /// The last pass's meshes, the first drawn on top: handed out in the order they
+    /// were drawn, a screen that draws the same shapes each frame meets each in the
+    /// mesh it filled before, already the right size.
+    spare: Vec<Arc<Mesh>>,
+    /// The layers with a transform, listed afresh each pass in a kept buffer.
+    transformed: Vec<egui::LayerId>,
+}
+
+/// The most meshes the pool keeps, several times what the busiest screen draws.
+const POOLED_MESHES: usize = 256;
+
+/// The largest mesh the pool keeps, in vertices: an icon has 4 and a radial gradient a
+/// few hundred. A larger one (a backdrop) is let go, not held to hand to an icon.
+const POOLED_VERTICES: usize = 2048;
+
+impl MeshPool {
+    /// A mesh nothing else holds, empty and untextured, with the buffers it had.
+    fn take(&mut self) -> Arc<Mesh> {
+        while let Some(mut mesh) = self.spare.pop() {
+            if let Some(free) = Arc::get_mut(&mut mesh) {
+                // Not `Mesh::clear`, which gives the vertices' buffer back.
+                free.indices.clear();
+                free.vertices.clear();
+                free.texture_id = egui::TextureId::default();
+                return mesh;
+            }
+            // Still drawn (a pass kept untessellated, a shape someone holds): let go.
+        }
+        Arc::default()
+    }
+
+    /// Keep the meshes `shapes` alone hold, in place of those kept before: a mesh
+    /// [`memo_mesh`] keeps or several shapes share is not the pool's to fill.
+    fn keep(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        self.spare.clear();
+        for clipped in shapes.iter().rev() {
+            self.keep_shape(&clipped.shape);
+        }
+    }
+
+    fn keep_shape(&mut self, shape: &Shape) {
+        match shape {
+            Shape::Vec(shapes) => {
+                for shape in shapes.iter().rev() {
+                    self.keep_shape(shape);
+                }
+            }
+            Shape::Mesh(mesh)
+                if self.spare.len() < POOLED_MESHES
+                    && Arc::strong_count(mesh) == 1
+                    && Arc::weak_count(mesh) == 0
+                    && mesh.vertices.capacity() <= POOLED_VERTICES =>
+            {
+                self.spare.push(Arc::clone(mesh));
+            }
+            _ => {}
+        }
+    }
+}
+
+thread_local! {
+    static POOL: RefCell<MeshPool> = RefCell::default();
+}
+
+/// The shape of the mesh `fill` builds, in a mesh kept from the last pass when one is
+/// free (see [`MeshPool`]). `fill` starts from an empty untextured mesh.
+pub fn frame_mesh(fill: impl FnOnce(&mut Mesh)) -> Shape {
+    let mut mesh = POOL.with_borrow_mut(MeshPool::take);
+    fill(Arc::get_mut(&mut mesh).expect("a taken mesh is held by nothing else"));
+    Shape::Mesh(mesh)
+}
+
+/// A pass of `build` for a frame loop to tessellate, as `Context::run_pass` runs one,
+/// with the pool looked after: kept meshes on transformed layers are drawn from copies
+/// ([`own_transformed_meshes`]) and the pass's meshes are kept for the next
+/// ([`MeshPool`]). A loop that calls `Context::run_pass` itself only goes without.
+pub fn run_pass(
+    context: &egui::Context,
+    input: egui::RawInput,
+    mut build: impl FnMut(&egui::Context),
+) -> egui::FullOutput {
+    let output = context.run_pass(input, |context| {
+        build(context);
+        own_transformed_meshes(context);
+    });
+    POOL.with_borrow_mut(|pool| pool.keep(&output.shapes));
+    output
+}
+
+/// As a pass ends, give every shape on a transformed layer (a zoomed HUD, Battle Setup
+/// fitted to its window) a mesh it holds alone. egui moves such a layer's shapes where
+/// they are, and clones a mesh something else holds to do it, as [`memo_mesh`] holds
+/// every one it draws: three allocations a frame, and the copy. Here the copy goes
+/// into a pooled mesh. Other layers' shapes keep drawing the kept mesh itself.
+fn own_transformed_meshes(context: &egui::Context) {
+    let mut layers = POOL.with_borrow_mut(|pool| std::mem::take(&mut pool.transformed));
+    layers.clear();
+    // egui keeps a layer's transform until it is set again, so some are not drawn now.
+    context.memory(|memory| layers.extend(memory.to_global.keys().copied()));
+    if !layers.is_empty() {
+        context.graphics_mut(|graphics| {
+            for &layer in &layers {
+                let Some(shapes) = graphics.get_mut(layer) else {
+                    continue;
+                };
+                for index in 0..shapes.next_idx().0 {
+                    shapes.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                        // egui moves such a shape after tessellating it, not before.
+                        if clipped.transform_after_tessellation
+                            == egui::emath::TSTransform::IDENTITY
+                        {
+                            own_meshes(&mut clipped.shape);
+                        }
+                    });
+                }
+            }
+        });
+    }
+    POOL.with_borrow_mut(|pool| pool.transformed = layers);
+}
+
+/// Replace each mesh of `shape` that something else holds with a pooled copy; one too
+/// large for the pool stays, for egui to clone.
+fn own_meshes(shape: &mut Shape) {
+    match shape {
+        Shape::Vec(shapes) => shapes.iter_mut().for_each(own_meshes),
+        Shape::Mesh(kept)
+            if (Arc::strong_count(kept) > 1 || Arc::weak_count(kept) > 0)
+                && kept.vertices.len() <= POOLED_VERTICES =>
+        {
+            let copy = frame_mesh(|copy| {
+                copy.texture_id = kept.texture_id;
+                copy.indices.extend_from_slice(&kept.indices);
+                copy.vertices.extend_from_slice(&kept.vertices);
+            });
+            *shape = copy;
+        }
+        _ => {}
+    }
+}
+
+/// A textured rectangle, as `Painter::image` draws one, in a pooled mesh.
+pub fn image(texture: egui::TextureId, rect: Rect, uv: Rect, tint: Color32) -> Shape {
+    frame_mesh(|mesh| {
+        mesh.texture_id = texture;
+        mesh.add_rect_with_uv(rect, uv, tint);
+    })
+}
+
+/// `shape` moved by `offset`. A mesh [`memo_mesh`] keeps is copied into a pooled one,
+/// where `Shape::translate` would clone it to move it; one the shape holds alone moves
+/// where it is.
+pub fn moved(mut shape: Shape, offset: Vec2) -> Shape {
+    if let Shape::Mesh(kept) = &shape
+        && Arc::strong_count(kept) > 1
+    {
+        return frame_mesh(|mesh| {
+            // As `Shape::translate` moves a mesh's vertices.
+            let transform = egui::emath::TSTransform::from_translation(offset);
+            mesh.texture_id = kept.texture_id;
+            mesh.indices.extend_from_slice(&kept.indices);
+            mesh.vertices
+                .extend(kept.vertices.iter().map(|vertex| egui::epaint::Vertex {
+                    pos: transform * vertex.pos,
+                    ..*vertex
+                }));
+        });
+    }
+    shape.translate(offset);
+    shape
+}
+
 /// An untextured mesh with room for `vertices` and `triangles`, so building it never
 /// grows its buffers.
 pub fn mesh_with_capacity(vertices: usize, triangles: usize) -> Mesh {
     let mut mesh = Mesh::default();
+    reserve(&mut mesh, vertices, triangles);
+    mesh
+}
+
+/// Room in `mesh` for `vertices` and `triangles` more.
+pub fn reserve(mesh: &mut Mesh, vertices: usize, triangles: usize) {
     mesh.reserve_vertices(vertices);
     mesh.reserve_triangles(triangles);
-    mesh
 }
 
 /// A vertical gradient over `rect` through `stops` (share of the height, colour).
@@ -516,18 +707,19 @@ fn each_plate_shape(
         let corner = rect.left_bottom();
         let reach = vec2(rect.width() * 0.7, rect.height() * 1.3);
         let steps = 10;
-        let mut mesh = mesh_with_capacity(steps as usize + 2, steps as usize);
-        mesh.colored_vertex(corner, fade(tint, 0.22));
-        for step in 0..=steps {
-            let angle = -std::f32::consts::FRAC_PI_2 * step as f32 / steps as f32;
-            let point = corner + vec2(angle.cos() * reach.x, angle.sin() * reach.y);
-            let clamped = pos2(point.x.min(rect.right()), point.y.max(rect.top()));
-            mesh.colored_vertex(clamped, Color32::TRANSPARENT);
-            if step > 0 {
-                mesh.add_triangle(0, step, step + 1);
+        add(frame_mesh(|mesh| {
+            reserve(mesh, steps as usize + 2, steps as usize);
+            mesh.colored_vertex(corner, fade(tint, 0.22));
+            for step in 0..=steps {
+                let angle = -std::f32::consts::FRAC_PI_2 * step as f32 / steps as f32;
+                let point = corner + vec2(angle.cos() * reach.x, angle.sin() * reach.y);
+                let clamped = pos2(point.x.min(rect.right()), point.y.max(rect.top()));
+                mesh.colored_vertex(clamped, Color32::TRANSPARENT);
+                if step > 0 {
+                    mesh.add_triangle(0, step, step + 1);
+                }
             }
-        }
-        add(Shape::mesh(mesh));
+        }));
     }
     // The sheen along the top and the shade along the bottom, inside the hairline.
     add(Shape::line_segment(
@@ -564,11 +756,24 @@ pub fn radial(
     })
 }
 
+/// [`radial`] for a gradient that changes every frame (a fading glow), built in a
+/// pooled mesh, not kept.
+pub fn frame_radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
+    frame_mesh(|mesh| fill_radial(mesh, center, radii, stops))
+}
+
 /// The mesh of [`radial`].
 pub fn radial_mesh(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Mesh {
+    let mut mesh = Mesh::default();
+    fill_radial(&mut mesh, center, radii, stops);
+    mesh
+}
+
+fn fill_radial(mesh: &mut Mesh, center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) {
     let segments = 48u32;
     let rings = stops.len().saturating_sub(1);
-    let mut mesh = mesh_with_capacity(
+    reserve(
+        mesh,
         1 + rings * segments as usize,
         (2 * rings).saturating_sub(1) * segments as usize,
     );
@@ -596,7 +801,6 @@ pub fn radial_mesh(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Mesh 
             mesh.add_triangle(b, b + segments, a + segments);
         }
     }
-    mesh
 }
 
 /// Text wrapped at `width`.
@@ -1528,31 +1732,31 @@ fn glint_shape(rect: Rect, radius: f32, progress: f32) -> Shape {
     };
     let from = (left - lean).max(0.0);
     let to = (left + band + lean).min(width);
-    let mut mesh = Mesh::default();
-    let mut x = from;
-    while x < to + COLUMN {
-        let x_clamped = x.min(to);
-        let cut = inset(x_clamped.min(width - x_clamped));
-        // The band leans right, so its top row is the band's unleant self further left.
-        let top = pos2(rect.left() + x_clamped, rect.top() + cut);
-        let bottom = pos2(rect.left() + x_clamped, rect.bottom() - cut);
-        let lean_at = |y: f32| GLINT_LEAN * (y - rect.center().y);
-        mesh.colored_vertex(top, fade(Color32::WHITE, white(x_clamped + lean_at(top.y))));
-        mesh.colored_vertex(
-            bottom,
-            fade(Color32::WHITE, white(x_clamped + lean_at(bottom.y))),
-        );
-        let count = mesh.vertices.len() as u32;
-        if count >= 4 {
-            mesh.add_triangle(count - 4, count - 3, count - 2);
-            mesh.add_triangle(count - 3, count - 1, count - 2);
+    frame_mesh(|mesh| {
+        let mut x = from;
+        while x < to + COLUMN {
+            let x_clamped = x.min(to);
+            let cut = inset(x_clamped.min(width - x_clamped));
+            // The band leans right, so its top row is the band's unleant self further left.
+            let top = pos2(rect.left() + x_clamped, rect.top() + cut);
+            let bottom = pos2(rect.left() + x_clamped, rect.bottom() - cut);
+            let lean_at = |y: f32| GLINT_LEAN * (y - rect.center().y);
+            mesh.colored_vertex(top, fade(Color32::WHITE, white(x_clamped + lean_at(top.y))));
+            mesh.colored_vertex(
+                bottom,
+                fade(Color32::WHITE, white(x_clamped + lean_at(bottom.y))),
+            );
+            let count = mesh.vertices.len() as u32;
+            if count >= 4 {
+                mesh.add_triangle(count - 4, count - 3, count - 2);
+                mesh.add_triangle(count - 3, count - 1, count - 2);
+            }
+            if x_clamped >= to {
+                break;
+            }
+            x += COLUMN;
         }
-        if x_clamped >= to {
-            break;
-        }
-        x += COLUMN;
-    }
-    Shape::mesh(mesh)
+    })
 }
 
 /// The dialogs' corner X (`.dialog-close`): a small steel key, a faint fill in a
@@ -1675,6 +1879,185 @@ mod tests {
         // No painter takes the font atlas here.
         output.textures_delta.clear();
         galley.expect("a pass ran")
+    }
+
+    /// A shape as [`frame_mesh`] draws one from `pool`: a vertex at `x`.
+    fn pooled(pool: &mut MeshPool, x: f32, texture: egui::TextureId) -> Shape {
+        let mut mesh = pool.take();
+        let fill = Arc::get_mut(&mut mesh).expect("free");
+        fill.texture_id = texture;
+        fill.vertices.push(egui::epaint::Vertex {
+            pos: pos2(x, 0.0),
+            uv: Pos2::ZERO,
+            color: Color32::WHITE,
+        });
+        Shape::Mesh(mesh)
+    }
+
+    fn clipped(shapes: impl IntoIterator<Item = Shape>) -> Vec<egui::epaint::ClippedShape> {
+        shapes
+            .into_iter()
+            .map(|shape| egui::epaint::ClippedShape::new(Rect::EVERYTHING, shape))
+            .collect()
+    }
+
+    fn mesh_of(shape: &Shape) -> &Arc<Mesh> {
+        match shape {
+            Shape::Mesh(mesh) => mesh,
+            _ => panic!("a mesh shape"),
+        }
+    }
+
+    #[test]
+    fn a_pass_s_meshes_are_filled_again_in_the_order_they_were_drawn() {
+        let mut pool = MeshPool::default();
+        let pass = clipped([
+            pooled(&mut pool, 1.0, egui::TextureId::User(7)),
+            // A group's meshes are kept too.
+            Shape::Vec(vec![
+                pooled(&mut pool, 2.0, egui::TextureId::default()),
+                Shape::Noop,
+            ]),
+        ]);
+        // While its pass is laid out a shape holds its mesh alone, so egui moves it in
+        // place on a transformed layer.
+        assert_eq!(Arc::strong_count(mesh_of(&pass[0].shape)), 1);
+        let first = {
+            let mesh = mesh_of(&pass[0].shape);
+            (Arc::as_ptr(mesh), mesh.vertices.as_ptr())
+        };
+        pool.keep(&pass);
+        assert_eq!(pool.spare.len(), 2);
+        // Tessellated: egui drops the pass's shapes.
+        drop(pass);
+        let again = pooled(&mut pool, 3.0, egui::TextureId::default());
+        let mesh = mesh_of(&again);
+        assert_eq!((Arc::as_ptr(mesh), mesh.vertices.as_ptr()), first);
+        assert_eq!(mesh.vertices.len(), 1);
+        assert_eq!(mesh.vertices[0].pos.x, 3.0);
+        assert_eq!(mesh.texture_id, egui::TextureId::default());
+        assert_eq!(pool.spare.len(), 1);
+    }
+
+    #[test]
+    fn a_mesh_something_else_holds_is_never_filled_again() {
+        let mut pool = MeshPool::default();
+        // Kept elsewhere (as `memo_mesh` keeps one) or shared by two shapes: not pooled.
+        let kept = Arc::new(Mesh::default());
+        let shared = pooled(&mut pool, 1.0, egui::TextureId::default());
+        let big = Shape::mesh(mesh_with_capacity(POOLED_VERTICES + 1, 1));
+        let pass = clipped([Shape::Mesh(Arc::clone(&kept)), shared.clone(), shared, big]);
+        pool.keep(&pass);
+        assert!(pool.spare.is_empty());
+        // A pass kept untessellated holds its meshes: the next gets ones of its own.
+        let held = clipped([pooled(&mut pool, 2.0, egui::TextureId::default())]);
+        pool.keep(&held);
+        assert_eq!(pool.spare.len(), 1);
+        let other = pooled(&mut pool, 3.0, egui::TextureId::default());
+        assert!(!Arc::ptr_eq(mesh_of(&other), mesh_of(&held[0].shape)));
+        assert_eq!(mesh_of(&held[0].shape).vertices[0].pos.x, 2.0);
+        // And the pool holds no more than its bound, nor a pass's meshes past the next.
+        let many = clipped(
+            (0..POOLED_MESHES + 3).map(|x| pooled(&mut pool, x as f32, Default::default())),
+        );
+        pool.keep(&many);
+        assert_eq!(pool.spare.len(), POOLED_MESHES);
+        pool.keep(&[]);
+        assert!(pool.spare.is_empty());
+    }
+
+    #[test]
+    fn a_kept_mesh_is_copied_only_onto_a_layer_drawn_through_a_transform() {
+        use egui::{LayerId, Order};
+        let context = egui::Context::default();
+        let stops = [(0.0, Color32::RED), (1.0, Color32::BLUE)];
+        let kept = Arc::new(radial_mesh(pos2(50.0, 40.0), vec2(10.0, 8.0), &stops));
+        let moved_layer = LayerId::new(Order::Middle, Id::unique("moved"));
+        let still_layer = LayerId::new(Order::Middle, Id::unique("still"));
+        let transform = egui::emath::TSTransform::new(vec2(7.0, -3.0), 1.5);
+        let meshes = |output: &egui::FullOutput| -> Vec<Arc<Mesh>> {
+            output
+                .shapes
+                .iter()
+                .map(|clipped| Arc::clone(mesh_of(&clipped.shape)))
+                .collect()
+        };
+        // Run a pass of `build` and leave no texture for a GPU to take.
+        let pass = |build: &dyn Fn(&egui::Context)| {
+            let mut output = run_pass(&context, egui::RawInput::default(), build);
+            output.textures_delta.clear();
+            output
+        };
+        let output = pass(&|context| {
+            context.set_transform_layer(moved_layer, transform);
+            for layer in [moved_layer, still_layer] {
+                context
+                    .layer_painter(layer)
+                    .add(Shape::Mesh(Arc::clone(&kept)));
+            }
+        });
+        let drawn = meshes(&output);
+        let (still, moved): (Vec<_>, Vec<_>) =
+            drawn.iter().partition(|mesh| Arc::ptr_eq(mesh, &kept));
+        // The still layer draws the kept mesh itself; the moved layer a copy, moved as
+        // egui moves a mesh, with the kept one as it was.
+        assert_eq!((still.len(), moved.len()), (1, 1));
+        let mut expected = (*kept).clone();
+        expected.transform(transform);
+        assert_eq!(**moved[0], expected);
+        assert_eq!(
+            *kept,
+            radial_mesh(pos2(50.0, 40.0), vec2(10.0, 8.0), &stops)
+        );
+        drop((still, moved));
+        drop((drawn, output));
+        // egui remembers the layer's transform, but a pass that does not draw on it
+        // copies nothing.
+        let output = pass(&|context| {
+            context
+                .layer_painter(still_layer)
+                .add(Shape::Mesh(Arc::clone(&kept)));
+        });
+        assert!(context.layer_transform_to_global(moved_layer).is_some());
+        let drawn = meshes(&output);
+        assert_eq!(drawn.len(), 1);
+        assert!(Arc::ptr_eq(&drawn[0], &kept));
+    }
+
+    #[test]
+    fn pooled_meshes_draw_what_egui_and_the_kept_builders_do() {
+        let rect = Rect::from_min_size(pos2(3.0, 4.0), vec2(20.0, 10.0));
+        let stops = [
+            (0.0, Color32::RED),
+            (0.4, Color32::GREEN),
+            (1.0, Color32::BLUE),
+        ];
+        let Shape::Mesh(drawn) = frame_radial(rect.center(), rect.size(), &stops) else {
+            panic!("a radial gradient is a mesh");
+        };
+        assert_eq!(*drawn, radial_mesh(rect.center(), rect.size(), &stops));
+        let uv = Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0));
+        let texture = egui::TextureId::User(3);
+        let Shape::Mesh(drawn) = image(texture, rect, uv, Color32::GOLD) else {
+            panic!("an image is a mesh");
+        };
+        let Shape::Mesh(egui_draws) = Shape::image(texture, rect, uv, Color32::GOLD) else {
+            panic!("egui's image is a mesh");
+        };
+        assert_eq!(*drawn, *egui_draws);
+        // A kept mesh moved is the mesh egui's own translation gives, and stays as kept.
+        let kept = Arc::new(radial_mesh(rect.center(), rect.size(), &stops));
+        let offset = vec2(17.5, -3.25);
+        let mut translated = Shape::Mesh(Arc::new((*kept).clone()));
+        translated.translate(offset);
+        let Shape::Mesh(translated) = translated else {
+            panic!("a translated mesh is a mesh");
+        };
+        let Shape::Mesh(drawn) = moved(Shape::Mesh(Arc::clone(&kept)), offset) else {
+            panic!("a moved mesh is a mesh");
+        };
+        assert_eq!(*drawn, *translated);
+        assert_eq!(*kept, radial_mesh(rect.center(), rect.size(), &stops));
     }
 
     #[test]

@@ -6,7 +6,7 @@
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{
-    Align2, Color32, FontId, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Sense, Shape, Stroke,
+    Align2, Color32, FontId, Id, LayerId, Order, Painter, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, Ui, pos2, vec2,
 };
 use sloppy_core::net::multiplayer_simulation::TEAM_SLOTS;
@@ -1457,26 +1457,27 @@ fn team_stripe(painter: &Painter, rect: Rect, color: Color32) {
     };
     let left = pos2(rect.left() + radius, rect.top() + radius);
     let right = pos2(rect.right() - radius, rect.top() + radius);
-    let mut edges = Vec::with_capacity(2 * ARC_STEPS + 2);
-    for step in 0..=ARC_STEPS {
-        let t = step as f32 / ARC_STEPS as f32;
-        edges.push(corner(left, std::f32::consts::PI * (1.0 + 0.5 * t)));
-    }
-    for step in 0..=ARC_STEPS {
-        let t = step as f32 / ARC_STEPS as f32;
-        edges.push(corner(right, std::f32::consts::PI * (1.5 + 0.5 * t)));
-    }
-    let mut mesh = Mesh::default();
-    for (index, (outer, inner)) in edges.into_iter().enumerate() {
-        mesh.colored_vertex(outer, color);
-        mesh.colored_vertex(inner, color);
-        if index > 0 {
-            let base = (index as u32 - 1) * 2;
-            mesh.add_triangle(base, base + 1, base + 2);
-            mesh.add_triangle(base + 1, base + 3, base + 2);
+    // Down the left corner, then the right: the two edges' points at each step.
+    let edges = [(left, 1.0), (right, 1.5)]
+        .into_iter()
+        .flat_map(|(center, from)| {
+            (0..=ARC_STEPS).map(move |step| {
+                let t = step as f32 / ARC_STEPS as f32;
+                corner(center, std::f32::consts::PI * (from + 0.5 * t))
+            })
+        });
+    painter.add(paint::frame_mesh(|mesh| {
+        paint::reserve(mesh, 4 * ARC_STEPS + 4, 4 * ARC_STEPS + 2);
+        for (index, (outer, inner)) in edges.enumerate() {
+            mesh.colored_vertex(outer, color);
+            mesh.colored_vertex(inner, color);
+            if index > 0 {
+                let base = (index as u32 - 1) * 2;
+                mesh.add_triangle(base, base + 1, base + 2);
+                mesh.add_triangle(base + 1, base + 3, base + 2);
+            }
         }
-    }
-    painter.add(Shape::mesh(mesh));
+    }));
 }
 
 /// Both teams' players, with the seats bots or nobody fill.

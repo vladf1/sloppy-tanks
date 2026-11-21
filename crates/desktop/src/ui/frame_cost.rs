@@ -7,7 +7,10 @@
 //! The hash covers every measured frame's clip rects, textures, indices and vertices, so
 //! equal hashes from two builds of the same profile mean they drew the same pixels.
 //! `SLOPPY_FRAME_COST_ONLY=<label>` runs one scenario and `SLOPPY_FRAME_COST_FRAMES=<n>`
-//! measures more frames (for a profiler). `SLOPPY_ALLOC_TRACE=<label>` prints where the
+//! measures more frames (for a profiler). `SLOPPY_FRAME_COST_SIZE=<width>x<height>` lays
+//! the screens out at another size than 1280x800, the one size at which neither Battle
+//! Setup nor the HUD is drawn through a layer transform (1920x1080 zooms the HUD and
+//! offsets Battle Setup, as most desktop windows do). `SLOPPY_ALLOC_TRACE=<label>` prints where the
 //! scenario's allocations of one frame come from, best on the `desktop-check` profile,
 //! whose backtraces name the shell's lines (`SLOPPY_ALLOC_TRACE_CALLERS=1` names the
 //! callers of `paint.rs` instead).
@@ -129,6 +132,28 @@ fn report_traces() {
 static ALLOCATOR: Counting = Counting;
 
 const SIZE: [f32; 2] = [1280.0, 800.0];
+
+/// The longest side `SLOPPY_FRAME_COST_SIZE` takes, in points: past any screen there is.
+const LONGEST_SIDE: f32 = 16_384.0;
+
+/// `SLOPPY_FRAME_COST_SIZE`: the screen's size in points, as `<width>x<height>`; unset,
+/// [`SIZE`]. Anything else it holds is refused: a screen of no size, or one too large to
+/// be a screen, measures nothing (and Battle Setup's backdrop would never finish tiling
+/// one wide enough).
+fn size() -> [f32; 2] {
+    let Ok(size) = std::env::var("SLOPPY_FRAME_COST_SIZE") else {
+        return SIZE;
+    };
+    let side = |points: &str| {
+        points
+            .parse::<f32>()
+            .ok()
+            .filter(|points| *points > 0.0 && *points <= LONGEST_SIDE)
+    };
+    size.split_once('x')
+        .and_then(|(width, height)| Some([side(width)?, side(height)?]))
+        .unwrap_or_else(|| panic!("SLOPPY_FRAME_COST_SIZE is <width>x<height> in points: {size}"))
+}
 const SCALE: f32 = 2.0;
 const WARM_UP: u32 = 60;
 const FRAMES: u32 = 600;
@@ -174,16 +199,26 @@ fn hash_primitives(primitives: &[egui::ClippedPrimitive], hasher: &mut impl Hash
 
 /// Thumbs on both sticks, each knob circling at `THUMB_REACH` stick radii, as in a
 /// fight: the knob's shapes move every frame.
-fn move_thumbs(touch: &mut TouchView, frame: u32, since: std::time::Instant) {
+fn move_thumbs(touch: &mut TouchView, frame: u32, since: std::time::Instant, size: [f32; 2]) {
     const THUMB_REACH: f32 = 0.7;
     let angle = frame as f32 * 0.05;
     let knob = (THUMB_REACH * angle.cos(), THUMB_REACH * angle.sin());
-    touch.input.drive = Some((1, (150.0, 640.0)));
+    // Where the thumbs rest at the usual size; at another, in the middle of that
+    // screen's sticks, so both are on it and drawn.
+    let (drive, fire) = if size == SIZE {
+        ((150.0, 640.0), (1130.0, 640.0))
+    } else {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+        let layout = crate::touch::TouchLayout::new(screen, screen, crate::touch::phone());
+        let middle = |stick: egui::Rect| (stick.center().x, stick.center().y);
+        (middle(layout.stick), middle(layout.fire))
+    };
+    touch.input.drive = Some((1, drive));
     touch.input.knob = knob;
     touch.input.push = (f64::from(knob.0), f64::from(knob.1));
     touch.input.fire = Some(FireFinger {
         id: 2,
-        origin: (1130.0, 640.0),
+        origin: fire,
         since,
         knob: (knob.1, knob.0),
         stage: FireStage::Aiming,
@@ -235,6 +270,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         scenario.state.damage_ring,
     );
     let since = std::time::Instant::now();
+    let size = size();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut micros = Vec::with_capacity(frames as usize);
     let (mut allocations, mut bytes, mut texture_sets, mut vertices) = (0, 0, 0, 0);
@@ -243,7 +279,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(SIZE[0], SIZE[1]),
+                egui::vec2(size[0], size[1]),
             )),
             time: Some(10.0 + f64::from(frame) / 60.0),
             ..Default::default()
@@ -259,7 +295,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
             scenario.state.tick(1.0 / 60.0);
         }
         if thumbs && let Some(touch) = &mut scenario.state.touch {
-            move_thumbs(touch, frame, since);
+            move_thumbs(touch, frame, since, size);
         }
         let start_allocations = ALLOCATIONS.load(Ordering::Relaxed);
         let start_bytes = BYTES.load(Ordering::Relaxed);
@@ -268,7 +304,8 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         TRACING.store(traced, Ordering::Relaxed);
         let start = std::time::Instant::now();
         context.set_pixels_per_point(SCALE);
-        let mut output = context.run_pass(input, |context| {
+        // As the app's frame loop runs its passes (`overlay.rs`).
+        let mut output = super::paint::run_pass(&context, input, |context| {
             if let Some(menu) = &mut room_menu {
                 super::room_menu::draw(context, menu, &mut scenario.state, &view, 0.0);
             } else {

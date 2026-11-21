@@ -214,7 +214,7 @@ impl Overlay {
         if let Some(viewport) = input.viewports.get_mut(&input.viewport_id) {
             viewport.native_pixels_per_point = Some(canvas_ratio as f32);
         }
-        let mut output = self.context.run_pass(input, build);
+        let mut output = crate::ui::paint::run_pass(&self.context, input, build);
         if let Some(update) = output.platform_output.accesskit_update.take() {
             crate::automation::seen(&self.context, &update);
         }

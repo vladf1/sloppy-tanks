@@ -555,7 +555,9 @@ fn snapshots() {
                 ..Default::default()
             };
             context.set_pixels_per_point(SCALE);
-            output = Some(context.run_pass(input, |context| {
+            // As the app's frame loop runs its passes (`overlay.rs`), so each scenario
+            // fills the meshes the one before drew.
+            output = Some(super::paint::run_pass(&context, input, |context| {
                 if let Some(menu) = &mut room_menu {
                     super::room_menu::draw(context, menu, &mut scenario.state, &view, 0.0);
                 } else {

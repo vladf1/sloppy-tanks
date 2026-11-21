@@ -3045,7 +3045,7 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
             screen.center() + vec2(dx * reach * screen.width(), dy * reach * screen.height());
         let radii = vec2(screen.width() * 0.34, screen.height() * 0.44);
         // It fades every frame, so it is built, not kept.
-        let blob = Shape::mesh(paint::radial_mesh(
+        let blob = paint::frame_radial(
             point,
             radii,
             &[
@@ -3053,7 +3053,7 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
                 (0.42, fade(hexa(0xff2a3a, 0.3), alpha)),
                 (0.72, Color32::TRANSPARENT),
             ],
-        ));
+        );
         painter.with_clip_rect(screen).add(blob);
         return;
     };
@@ -3074,44 +3074,50 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
     ];
     let spread = 48f32.to_radians();
     let steps = 24;
-    let mut mesh = Mesh::default();
-    for step in 0..=steps {
-        let t = step as f32 / steps as f32;
-        let theta = angle - spread + 2.0 * spread * t;
-        let weight = (1.0 - (2.0 * t - 1.0).abs()) * alpha * bright.min(1.6);
-        let direction = vec2(theta.sin(), -theta.cos());
-        for &(share, color) in &stops {
-            mesh.colored_vertex(center + direction * radius * share, fade(color, weight));
+    painter.add(paint::frame_mesh(|mesh| {
+        let rings = stops.len() as u32;
+        paint::reserve(
+            mesh,
+            (steps as usize + 1) * stops.len(),
+            steps as usize * (stops.len() - 1) * 2,
+        );
+        for step in 0..=steps {
+            let t = step as f32 / steps as f32;
+            let theta = angle - spread + 2.0 * spread * t;
+            let weight = (1.0 - (2.0 * t - 1.0).abs()) * alpha * bright.min(1.6);
+            let direction = vec2(theta.sin(), -theta.cos());
+            for &(share, color) in &stops {
+                mesh.colored_vertex(center + direction * radius * share, fade(color, weight));
+            }
         }
-    }
-    let rings = stops.len() as u32;
-    for step in 0..steps as u32 {
-        for ring in 0..rings - 1 {
-            let a = step * rings + ring;
-            let b = a + 1;
-            let c = a + rings;
-            let d = c + 1;
-            mesh.add_triangle(a, b, c);
-            mesh.add_triangle(b, d, c);
+        for step in 0..steps as u32 {
+            for ring in 0..rings - 1 {
+                let a = step * rings + ring;
+                let b = a + 1;
+                let c = a + rings;
+                let d = c + 1;
+                mesh.add_triangle(a, b, c);
+                mesh.add_triangle(b, d, c);
+            }
         }
-    }
-    painter.add(Shape::mesh(mesh));
+    }));
     // The pointer at the wedge's peak.
     let direction = vec2(angle.sin(), -angle.cos());
     let side = direction.rot90() * 10.0;
     let base = center + direction * (radius + 1.0);
     let tip = center + direction * (radius + 13.0);
-    let mut pointer = Mesh::default();
-    pointer.colored_vertex(tip, fade(hex(0xffb3a8), alpha));
-    pointer.colored_vertex(base + side, fade(hex(0xe0162e), alpha));
-    pointer.colored_vertex(base - side, fade(hex(0xe0162e), alpha));
-    pointer.add_triangle(0, 1, 2);
     painter.circle_filled(
         base + direction * 6.0,
         9.0,
         fade(hexa(0xff2a3a, 0.25), alpha),
     );
-    painter.add(Shape::mesh(pointer));
+    painter.add(paint::frame_mesh(|pointer| {
+        paint::reserve(pointer, 3, 1);
+        pointer.colored_vertex(tip, fade(hex(0xffb3a8), alpha));
+        pointer.colored_vertex(base + side, fade(hex(0xe0162e), alpha));
+        pointer.colored_vertex(base - side, fade(hex(0xe0162e), alpha));
+        pointer.add_triangle(0, 1, 2);
+    }));
 }
 
 #[cfg(test)]

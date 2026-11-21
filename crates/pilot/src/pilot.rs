@@ -89,6 +89,10 @@ pub struct Pilot {
     /// Counts the clients made; part of every socket id this pilot reports.
     generation: u32,
     actions: Vec<ClientAction>,
+    /// What [`Self::collect`] drains from the client, kept so the client's queues keep
+    /// their buffers: moved out whole, the queue allocated again for the next input.
+    drained_actions: Vec<ClientAction>,
+    drained_notices: Vec<ClientNotice>,
     cockpit: Cockpit,
     /// The next frame's controls, decided from the last frame.
     input: LocalInput,
@@ -111,6 +115,8 @@ impl Pilot {
             client,
             generation: 1,
             actions: Vec::new(),
+            drained_actions: Vec::new(),
+            drained_notices: Vec::new(),
             cockpit,
             input: LocalInput::default(),
             phase: None,
@@ -202,6 +208,12 @@ impl Pilot {
         std::mem::take(&mut self.actions)
     }
 
+    /// [`Self::take_actions`] one by one, for a runner that performs them as they come:
+    /// the pilot keeps their buffer for the next frame's.
+    pub fn drain_actions(&mut self) -> std::vec::Drain<'_, ClientAction> {
+        self.actions.drain(..)
+    }
+
     /// The actions [`Self::take_actions`] would move out, for a runner that serializes
     /// them where they are and then [clears](Self::clear_actions) them, keeping their
     /// buffer for the next frame.
@@ -283,20 +295,24 @@ impl Pilot {
 
     /// Answers the client's notices and moves its actions out, until both are quiet.
     fn collect(&mut self, now_ms: f64) {
+        let mut actions = std::mem::take(&mut self.drained_actions);
+        let mut notices = std::mem::take(&mut self.drained_notices);
         for _ in 0..MAX_NOTICE_PASSES {
-            let notices = self.client.take_notices();
-            let actions = self.client.take_actions();
+            self.client.take_notices_into(&mut notices);
+            self.client.take_actions_into(&mut actions);
             if notices.is_empty() && actions.is_empty() {
-                return;
+                break;
             }
-            for action in actions {
+            for action in actions.drain(..) {
                 let action = self.translate(action);
                 self.actions.push(action);
             }
-            for notice in notices {
+            for notice in notices.drain(..) {
                 self.notice(notice, now_ms);
             }
         }
+        self.drained_actions = actions;
+        self.drained_notices = notices;
     }
 
     fn translate(&mut self, action: ClientAction) -> ClientAction {

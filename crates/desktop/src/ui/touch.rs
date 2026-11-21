@@ -126,11 +126,12 @@ fn knob_mesh_place(knob: Pos2, held: bool) -> Pos2 {
 }
 
 /// `shape`, built at [`knob_mesh_place`], drawn at `knob`.
-fn at_knob(painter: &Painter, knob: Pos2, held: bool, mut shape: Shape) {
-    if held {
-        shape.translate(knob.to_vec2());
-    }
-    painter.add(shape);
+fn at_knob(painter: &Painter, knob: Pos2, held: bool, shape: Shape) {
+    painter.add(if held {
+        paint::moved(shape, knob.to_vec2())
+    } else {
+        shape
+    });
 }
 
 /// A disc of `radius` filled with a radial gradient centred on `light`, which need not

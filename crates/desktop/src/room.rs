@@ -328,7 +328,10 @@ impl RoomSession {
             match event {
                 SocketEvent::Opened(id) => self.game.socket_opened(id, now),
                 SocketEvent::Text(id, text) => self.game.socket_message(id, &text, now),
-                SocketEvent::Binary(id, bytes) => self.game.socket_binary(id, &bytes, now),
+                SocketEvent::Binary(id, bytes) => {
+                    self.game.socket_binary(id, &bytes, now);
+                    self.sockets.recycle(bytes);
+                }
                 SocketEvent::Closed(id, code) => self.game.socket_closed(id, code, now),
             }
             self.pump();

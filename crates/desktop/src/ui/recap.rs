@@ -5,8 +5,7 @@
 //! with the MVP and the viewer's row.
 
 use egui::{
-    Align2, Color32, CornerRadius, Mesh, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2,
-    pos2, vec2,
+    Align2, Color32, CornerRadius, Painter, Pos2, Rect, Shape, Stroke, StrokeKind, Vec2, pos2, vec2,
 };
 
 use super::icons::Art;
@@ -102,16 +101,25 @@ fn banner_ground(painter: &Painter, banner: Rect, outcome: Outcome, light: Color
         for ray in 0..24 {
             let angle = ray as f32 * std::f32::consts::TAU / 24.0;
             let next = angle + 5.0_f32.to_radians();
-            let mut mesh = paint::mesh_with_capacity(3, 1);
-            mesh.colored_vertex(center, hexa(0xffcf38, 0.14 * strength));
-            for edge in [angle, next] {
-                mesh.colored_vertex(
-                    center + vec2(edge.cos(), edge.sin()) * RAY_REACH,
-                    Color32::TRANSPARENT,
-                );
-            }
-            mesh.add_triangle(0, 1, 2);
-            shapes.push(Shape::mesh(mesh));
+            // The same every frame, and drawn through each of the banner's clips: kept.
+            let key = paint::key_floats([center.x, center.y, angle, strength]);
+            shapes.push(paint::memo_mesh(
+                painter.ctx(),
+                paint::MeshKind::Ray,
+                key,
+                || {
+                    let mut mesh = paint::mesh_with_capacity(3, 1);
+                    mesh.colored_vertex(center, hexa(0xffcf38, 0.14 * strength));
+                    for edge in [angle, next] {
+                        mesh.colored_vertex(
+                            center + vec2(edge.cos(), edge.sin()) * RAY_REACH,
+                            Color32::TRANSPARENT,
+                        );
+                    }
+                    mesh.add_triangle(0, 1, 2);
+                    mesh
+                },
+            ));
         }
     }
     in_banner(painter, banner, &shapes);
@@ -175,19 +183,20 @@ fn angled_gradient(rect: Rect, degrees: f32, stops: &[(f32, Color32)]) -> Shape 
         .collect();
     xs.push(rect.left() + BANNER_CUT);
     xs.sort_unstable_by(f32::total_cmp);
-    let mut mesh = Mesh::default();
-    for (index, &x) in xs.iter().enumerate() {
-        let top = pos2(x, rect.top() + (BANNER_CUT - (x - rect.left())).max(0.0));
-        let bottom = pos2(x, rect.bottom());
-        mesh.colored_vertex(top, color_at(top));
-        mesh.colored_vertex(bottom, color_at(bottom));
-        if index > 0 {
-            let base = (index as u32 - 1) * 2;
-            mesh.add_triangle(base, base + 1, base + 2);
-            mesh.add_triangle(base + 1, base + 3, base + 2);
+    paint::frame_mesh(|mesh| {
+        paint::reserve(mesh, 2 * xs.len(), 2 * xs.len().saturating_sub(1));
+        for (index, &x) in xs.iter().enumerate() {
+            let top = pos2(x, rect.top() + (BANNER_CUT - (x - rect.left())).max(0.0));
+            let bottom = pos2(x, rect.bottom());
+            mesh.colored_vertex(top, color_at(top));
+            mesh.colored_vertex(bottom, color_at(bottom));
+            if index > 0 {
+                let base = (index as u32 - 1) * 2;
+                mesh.add_triangle(base, base + 1, base + 2);
+                mesh.add_triangle(base + 1, base + 3, base + 2);
+            }
         }
-    }
-    Shape::mesh(mesh)
+    })
 }
 
 /// The rule under the banner (`.results-banner::after`): gold fading by 90% for a win,
