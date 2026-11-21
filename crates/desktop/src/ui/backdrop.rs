@@ -337,20 +337,21 @@ fn beams(painter: &Painter, screen: Rect, time: f64) {
         // Up the beam's axis, turned clockwise by `angle`, and across it.
         let up = vec2(angle.sin(), -angle.cos());
         let side = vec2(angle.cos(), angle.sin());
-        let mut mesh = Mesh::default();
-        for (along, alpha) in [(0.0, 0.25), (0.45, 0.063), (0.8, 0.0), (1.0, 0.0)] {
-            let half = BEAM_WIDTH * (BEAM_FOOT_SHARE + (1.0 - BEAM_FOOT_SHARE) * along) / 2.0;
-            let center = foot + up * length * along;
-            let color = hexa(0xbfe3ff, alpha * BEAM_OPACITY);
-            mesh.colored_vertex(center - side * half, color);
-            mesh.colored_vertex(center + side * half, color);
-        }
-        for row in 0..3 {
-            let a = row * 2;
-            mesh.add_triangle(a, a + 1, a + 2);
-            mesh.add_triangle(a + 1, a + 3, a + 2);
-        }
-        painter.add(Shape::mesh(mesh));
+        painter.add(paint::frame_mesh(|mesh| {
+            paint::reserve(mesh, 8, 6);
+            for (along, alpha) in [(0.0, 0.25), (0.45, 0.063), (0.8, 0.0), (1.0, 0.0)] {
+                let half = BEAM_WIDTH * (BEAM_FOOT_SHARE + (1.0 - BEAM_FOOT_SHARE) * along) / 2.0;
+                let center = foot + up * length * along;
+                let color = hexa(0xbfe3ff, alpha * BEAM_OPACITY);
+                mesh.colored_vertex(center - side * half, color);
+                mesh.colored_vertex(center + side * half, color);
+            }
+            for row in 0..3 {
+                let a = row * 2;
+                mesh.add_triangle(a, a + 1, a + 2);
+                mesh.add_triangle(a + 1, a + 3, a + 2);
+            }
+        }));
     }
 }
 

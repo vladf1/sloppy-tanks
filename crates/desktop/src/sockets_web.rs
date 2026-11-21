@@ -26,6 +26,14 @@ pub enum SocketEvent {
 
 type Events = Rc<RefCell<VecDeque<SocketEvent>>>;
 
+/// Buffers of binary messages the room has read ([`Sockets::recycle`]), for the next to
+/// arrive in: the server sends a snapshot every tick, and each took an allocation of
+/// its own size, freed a frame later.
+type Spare = Rc<RefCell<Vec<Vec<u8>>>>;
+
+/// The buffers kept: the messages that queue between two frames.
+const SPARE_BUFFERS: usize = 4;
+
 /// A socket and the handlers the browser calls, kept until its close arrives.
 struct Socket {
     socket: WebSocket,
@@ -51,6 +59,7 @@ pub struct Sockets {
     /// Sockets the room closed, until the browser reports them closed.
     closing: HashMap<u32, Socket>,
     events: Events,
+    spare: Spare,
 }
 
 impl Sockets {
@@ -68,12 +77,17 @@ impl Sockets {
             events.borrow_mut().push_back(SocketEvent::Opened(id));
         });
         let events = self.events.clone();
+        let spare = self.spare.clone();
         let message = Closure::<dyn FnMut(MessageEvent)>::new(move |message: MessageEvent| {
             let data = message.data();
             let event = if let Some(text) = data.as_string() {
                 SocketEvent::Text(id, text)
             } else if let Ok(buffer) = data.dyn_into::<js_sys::ArrayBuffer>() {
-                SocketEvent::Binary(id, js_sys::Uint8Array::new(&buffer).to_vec())
+                let array = js_sys::Uint8Array::new(&buffer);
+                let mut bytes = spare.borrow_mut().pop().unwrap_or_default();
+                bytes.resize(array.length() as usize, 0);
+                array.copy_to(&mut bytes);
+                SocketEvent::Binary(id, bytes)
             } else {
                 return;
             };
@@ -127,6 +141,15 @@ impl Sockets {
             self.closing.remove(&id);
         }
         Some(event)
+    }
+
+    /// Take back the buffer of a binary message the room has read, for a later one.
+    pub fn recycle(&mut self, mut bytes: Vec<u8>) {
+        let mut spare = self.spare.borrow_mut();
+        if spare.len() < SPARE_BUFFERS {
+            bytes.clear();
+            spare.push(bytes);
+        }
     }
 
     /// Close every socket; the browser sends what they hold, the room's leave among it.

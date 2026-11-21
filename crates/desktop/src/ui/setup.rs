@@ -4203,9 +4203,10 @@ fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Ac
             rect.min + vec2(3.0 + index as f32 * button, 3.0),
             Vec2::splat(button),
         );
-        let response = ui
-            .interact(cell, Id::unique(("setup corner", index)), Sense::click())
-            .on_hover_text(tip);
+        let response = paint::on_hover_text_with(
+            ui.interact(cell, Id::unique(("setup corner", index)), Sense::click()),
+            || tip.to_owned(),
+        );
         paint::labelled(&response, true, tip);
         if response.hovered() {
             painter.rect_filled(cell.shrink(1.0), 7, hexa(0xffffff, 0.08));

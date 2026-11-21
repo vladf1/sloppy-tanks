@@ -282,6 +282,10 @@ impl Preferences {
 
     /// Keep the view the player chose (`savedCameraPreferences`).
     pub fn save_camera(&mut self, camera: sloppy_web::CameraPreferences) {
+        // A zoom held at its limit asks every frame and changes nothing: no file to write.
+        if self.first_person == camera.first_person && self.zoom == Some(camera.zoom) {
+            return;
+        }
         self.first_person = camera.first_person;
         self.zoom = Some(camera.zoom);
         self.save();

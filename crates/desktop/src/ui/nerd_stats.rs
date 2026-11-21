@@ -148,9 +148,10 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
             // The header stays while the rows scroll, including the full 44px close target.
             let close =
                 Rect::from_min_size(pos2(rect.right() - 44.0, rect.top()), vec2(44.0, 44.0));
-            let response = ui
-                .interact(close, Id::unique("nerd stats close"), Sense::click())
-                .on_hover_text("Hide (N)");
+            let response = paint::on_hover_text_with(
+                ui.interact(close, Id::unique("nerd stats close"), Sense::click()),
+                || "Hide (N)".to_owned(),
+            );
             paint::labelled(&response, true, "Hide Stats for Nerds");
             if response.hovered() {
                 painter.rect_filled(close, 6, hexa(0xffffff, 0.12));
@@ -211,7 +212,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                             painter,
                             pos2(x + 13.0, head.center().y),
                             Align2::LEFT_CENTER,
-                            &section.title.to_uppercase(),
+                            &paint::upper(section.title),
                             bold_font(10.5),
                             color,
                             1.5,
@@ -237,7 +238,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                                     0.0,
                                 );
                             }
-                            response.on_hover_text(row.hint.as_ref());
+                            paint::on_hover_text_with(response, || row.hint.to_string());
                         }
                     }
                 });

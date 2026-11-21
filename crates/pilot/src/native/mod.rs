@@ -193,7 +193,7 @@ async fn run(options: Options) -> Result<(), String> {
                 }
                 for (index, pilot) in pilots.iter_mut().enumerate().take(started_pilots) {
                     pilot.tick(at);
-                    perform(&mut sockets, index, pilot.take_actions());
+                    perform(&mut sockets, index, pilot.drain_actions());
                 }
                 if options.status_seconds > 0.0 && at >= next_status {
                     next_status = at + options.status_seconds * 1000.0;
@@ -235,7 +235,7 @@ async fn run(options: Options) -> Result<(), String> {
     for (index, pilot) in pilots.iter_mut().enumerate().take(started_pilots) {
         if pilot.ended().is_none() {
             pilot.leave(at);
-            perform(&mut sockets, index, pilot.take_actions());
+            perform(&mut sockets, index, pilot.drain_actions());
         }
     }
     let reports: Vec<PilotReport> = pilots.iter().map(|pilot| pilot.report(at)).collect();
@@ -253,7 +253,7 @@ async fn run(options: Options) -> Result<(), String> {
     Ok(())
 }
 
-fn perform(sockets: &mut Sockets, index: usize, actions: Vec<ClientAction>) {
+fn perform(sockets: &mut Sockets, index: usize, actions: impl Iterator<Item = ClientAction>) {
     for action in actions {
         match action {
             ClientAction::OpenSocket { socket, url } => sockets.open(index, socket, url),

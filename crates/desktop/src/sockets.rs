@@ -136,6 +136,10 @@ impl Sockets {
         Some(event)
     }
 
+    /// A binary message the room has read. Nothing to keep here: its bytes are the
+    /// socket's own, where a page's sockets take their buffer back for the next one.
+    pub fn recycle(&mut self, _bytes: Bytes) {}
+
     /// Close every socket and wait a moment for them to send what they hold, the
     /// room's leave among it, before the app quits.
     pub fn close_all_and_wait(&mut self) {
