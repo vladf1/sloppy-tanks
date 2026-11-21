@@ -156,6 +156,7 @@ pub fn vehicle_card(
     };
     let scale = class_scale * if hovered { 1.05 } else { 1.0 };
     painter.add(paint::radial(
+        painter.ctx(),
         pos2(stage.center().x, stage.bottom() - stage.height() * 0.12),
         vec2(stage.height() * 1.2 * scale, stage.height() * 0.16),
         &[(0.0, hexa(0x020a14, 0.55)), (1.0, Color32::TRANSPARENT)],
@@ -258,6 +259,7 @@ fn showroom(painter: &Painter, rect: Rect, selected: bool, hovered: bool) -> Rec
     };
     painter.rect_filled(rect, CornerRadius::same(10), bottom);
     painter.add(paint::vgradient(
+        painter.ctx(),
         rect.shrink2(vec2(0.0, 10.0)),
         &[(0.0, top), (1.0, bottom)],
     ));
@@ -272,6 +274,7 @@ fn showroom(painter: &Painter, rect: Rect, selected: bool, hovered: bool) -> Rec
         top,
     );
     painter.add(paint::radial(
+        painter.ctx(),
         pos2(rect.center().x, rect.top() + rect.height() * 0.42),
         vec2(rect.width() * 0.6, rect.height() * 0.55),
         &[(0.0, spot), (0.7, Color32::TRANSPARENT)],
@@ -397,6 +400,7 @@ fn map_card(
     let tint = hex(map.tint);
     let clip = painter.with_clip_rect(rect.shrink(1.0));
     clip.add(paint::vgradient(
+        clip.ctx(),
         rect,
         &[(0.3, Color32::TRANSPARENT), (1.0, fade(tint, 0.5))],
     ));
@@ -446,6 +450,7 @@ fn map_card(
             let scrim = hex(0x0b1b36);
             let from_right = |inset: f32| ((rect.width() - inset) / rect.width()).max(0.0);
             clip.add(paint::hgradient(
+                clip.ctx(),
                 rect,
                 &[
                     (0.0, scrim),
@@ -707,12 +712,14 @@ fn battle_scene(clip: &Painter, rect: Rect, team: bool) {
     };
     for &(x, y, radius_x, radius_y, color, opacity) in glows {
         clip.add(paint::radial(
+            clip.ctx(),
             rect.min + vec2(rect.width() * x, rect.height() * y),
             vec2(rect.width() * radius_x, rect.height() * radius_y),
             &[(0.0, hexa(color, opacity)), (0.7, Color32::TRANSPARENT)],
         ));
     }
     clip.add(paint::vgradient(
+        clip.ctx(),
         rect,
         &[(0.55, Color32::TRANSPARENT), (1.0, hexa(0x050c1a, 0.6))],
     ));
@@ -1071,6 +1078,7 @@ fn folder_tab(painter: &Painter, rect: Rect, open: bool, edge: Color32) {
         // The open folder's glow under its lit edge.
         if edge == GOLD {
             painter.with_clip_rect(rect).add(paint::radial(
+                painter.ctx(),
                 rect.center_top(),
                 vec2(rect.width() * 0.32, 22.0),
                 &[(0.0, hexa(0xffcf38, 0.25)), (1.0, Color32::TRANSPARENT)],
@@ -1089,10 +1097,12 @@ fn folder_tab(painter: &Painter, rect: Rect, open: bool, edge: Color32) {
     } else {
         painter.rect_filled(rect, radius, hex(0x0d1f3c));
         painter.add(paint::vgradient(
+            painter.ctx(),
             rect.shrink2(vec2(0.0, 14.0)),
             &[(0.0, hex(0x0f2342)), (1.0, hex(0x0a1830))],
         ));
         painter.add(paint::vgradient(
+            painter.ctx(),
             Rect::from_min_max(pos2(rect.left(), rect.bottom() - 10.0), rect.max),
             &[(0.0, Color32::TRANSPARENT), (1.0, hexa(0, 0.35))],
         ));
@@ -1442,7 +1452,7 @@ fn status_line(painter: &Painter, right: egui::Pos2, state: &UiState, time: f64)
         }
         .as_shape(fill, 2),
     );
-    clip.add(paint::hgradient(fill, &stops));
+    clip.add(paint::hgradient(clip.ctx(), fill, &stops));
     let text_right = track.left() - STATUS_TRACK_GAP;
     let text_width = paint::text_width(painter, status, bold_font(12.0), STATUS_SPACING);
     let dot = pos2(
@@ -2239,6 +2249,7 @@ fn stack_tank_card(
     let scale = tank.scale * if hovered { 1.05 } else { 1.0 };
     let tank_height = stage.height() * scale;
     painter.add(paint::radial(
+        painter.ctx(),
         pos2(stage.center().x, stage.center().y + tank_height * 0.38),
         vec2(tank_height * 1.1, tank_height * 0.16),
         &[(0.0, hexa(0x020a14, 0.55)), (1.0, Color32::TRANSPARENT)],
@@ -2330,7 +2341,11 @@ fn spec_bars(
         } else {
             (super::theme::GOLD_HOT, GOLD)
         };
-        painter.add(paint::hgradient(fill, &[(0.0, from), (1.0, to)]));
+        painter.add(paint::hgradient(
+            painter.ctx(),
+            fill,
+            &[(0.0, from), (1.0, to)],
+        ));
     }
 }
 

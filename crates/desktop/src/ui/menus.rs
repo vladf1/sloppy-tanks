@@ -750,6 +750,7 @@ fn tabs<T: Copy + PartialEq>(
         paint::labelled_choice(&response, true, selected, label);
         if selected {
             painter.add(paint::vgradient(
+                painter.ctx(),
                 rect,
                 &[(0.2, Color32::TRANSPARENT), (1.0, hexa(0xffcf38, 0.15))],
             ));
@@ -863,6 +864,7 @@ pub fn pause(
                 let dot = pos2(origin.x + 4.0, line_y);
                 if standing.tone != StandingTone::Level {
                     painter.add(paint::radial(
+                        painter.ctx(),
                         dot,
                         Vec2::splat(12.0),
                         &[
@@ -1186,6 +1188,7 @@ fn slider(
     let share = ((*value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0) as f32;
     painter.rect_filled(track, 3, hex(0x5d7898));
     painter.add(paint::hgradient(
+        painter.ctx(),
         Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
         &[(0.0, hex(0xff9d1c)), (1.0, GOLD)],
     ));
@@ -1388,6 +1391,7 @@ pub fn settings(
                     pos2(origin.x + width, viewport.bottom()),
                 );
                 ui.painter().add(paint::vgradient(
+                    ui.ctx(),
                     band,
                     &[(0.0, Color32::TRANSPARENT), (1.0, plate)],
                 ));

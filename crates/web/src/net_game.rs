@@ -180,6 +180,8 @@ pub struct NetGame {
     /// The sounds drained events play, on the frame clock.
     sounds: SoundPlanner,
     notices: Vec<RoomNotice>,
+    /// The client's notices being turned into `notices`, kept between drains.
+    client_notices: Vec<ClientNotice>,
     /// What the room menu said so far, for the words of the next notices.
     room_text: RoomText,
     /// How long the viewer's effects have run, which their timer rings drain from.
@@ -728,6 +730,7 @@ impl NetGame {
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             notices: Vec::new(),
+            client_notices: Vec::new(),
             room_text: RoomText::new(config.invite),
             effect_timers: EffectTimers::default(),
             frame_index: 0,
@@ -775,11 +778,26 @@ impl NetGame {
         self.client.take_actions()
     }
 
+    /// [`take_room_actions`](Self::take_room_actions) into `out`, which is emptied first
+    /// and whose buffer the client keeps for the next ones, so a shell that drains every
+    /// frame allocates nothing for the inputs it sends.
+    pub fn take_room_actions_into(&mut self, out: &mut Vec<ClientAction>) {
+        self.client.take_actions_into(out);
+    }
+
     /// UI notices, in order. Arena preparation and baseline requests are handled here
     /// and surface as `Prepare` and `BaselineShown`.
     pub fn take_room_notices(&mut self) -> Vec<RoomNotice> {
         self.drain_client_notices();
         std::mem::take(&mut self.notices)
+    }
+
+    /// [`take_room_notices`](Self::take_room_notices) into `out`, as
+    /// [`take_room_actions_into`](Self::take_room_actions_into).
+    pub fn take_room_notices_into(&mut self, out: &mut Vec<RoomNotice>) {
+        self.drain_client_notices();
+        out.clear();
+        std::mem::swap(&mut self.notices, out);
     }
 
     /// Create up to `budget` background-compiled pipelines for the arena `Prepare` asked
@@ -931,7 +949,9 @@ impl NetGame {
     /// Turn client notices into page notices; arena and baseline requests go to the
     /// presentation here.
     fn drain_client_notices(&mut self) {
-        for notice in self.client.take_notices() {
+        let mut notices = std::mem::take(&mut self.client_notices);
+        self.client.take_notices_into(&mut notices);
+        for notice in notices.drain(..) {
             match notice {
                 ClientNotice::ClearInput => self.commands.clear(),
                 ClientNotice::PrepareArena {
@@ -956,6 +976,7 @@ impl NetGame {
                 self.notice(notice);
             }
         }
+        self.client_notices = notices;
     }
 
     /// Build the round's arena from the replicated scene and start compiling it.

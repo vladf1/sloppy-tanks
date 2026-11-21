@@ -69,6 +69,12 @@ pub enum MeshKind {
     GradientPolygon,
     LoadedAmmoFace,
     LoadedAmmoGlow,
+    VerticalGradient,
+    HorizontalGradient,
+    Radial,
+    InnerEdge,
+    Ring,
+    Infinity,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by
@@ -129,8 +135,11 @@ pub fn mesh_with_capacity(vertices: usize, triangles: usize) -> Mesh {
 }
 
 /// A vertical gradient over `rect` through `stops` (share of the height, colour).
-pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
-    Shape::mesh(vgradient_mesh(rect, stops))
+pub fn vgradient(context: &egui::Context, rect: Rect, stops: &[(f32, Color32)]) -> Shape {
+    let key = key_floats([rect.min.x, rect.min.y, rect.max.x, rect.max.y]).chain(key_stops(stops));
+    memo_mesh(context, MeshKind::VerticalGradient, key, || {
+        vgradient_mesh(rect, stops)
+    })
 }
 
 /// The mesh of [`vgradient`].
@@ -323,7 +332,15 @@ fn curve_feather(outline: &[Pos2], feather: f32) -> Vec<Vec2> {
 }
 
 /// A horizontal gradient over `rect` through `stops` (share of the width, colour).
-pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
+pub fn hgradient(context: &egui::Context, rect: Rect, stops: &[(f32, Color32)]) -> Shape {
+    let key = key_floats([rect.min.x, rect.min.y, rect.max.x, rect.max.y]).chain(key_stops(stops));
+    memo_mesh(context, MeshKind::HorizontalGradient, key, || {
+        hgradient_mesh(rect, stops)
+    })
+}
+
+/// The mesh of [`hgradient`].
+fn hgradient_mesh(rect: Rect, stops: &[(f32, Color32)]) -> Mesh {
     let mut mesh = mesh_with_capacity(2 * stops.len(), 2 * stops.len().saturating_sub(1));
     for (index, &(share, color)) in stops.iter().enumerate() {
         let x = rect.left() + rect.width() * share;
@@ -335,7 +352,7 @@ pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
             mesh.add_triangle(base + 1, base + 3, base + 2);
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// How wide a slanted edge of [`gradient_polygon`] fades out, centred on the edge: a
@@ -535,8 +552,16 @@ fn each_plate_shape(
 
 /// A radial gradient: an ellipse of `radii` round `center` through `stops` (share of
 /// the radii, colour), the first stop at the centre.
-pub fn radial(center: Pos2, radii: Vec2, stops: &[(f32, Color32)]) -> Shape {
-    Shape::mesh(radial_mesh(center, radii, stops))
+pub fn radial(
+    context: &egui::Context,
+    center: Pos2,
+    radii: Vec2,
+    stops: &[(f32, Color32)],
+) -> Shape {
+    let key = key_floats([center.x, center.y, radii.x, radii.y]).chain(key_stops(stops));
+    memo_mesh(context, MeshKind::Radial, key, || {
+        radial_mesh(center, radii, stops)
+    })
 }
 
 /// The mesh of [`radial`].
@@ -1010,20 +1035,66 @@ pub fn kbd_width(painter: &Painter, label: &str, size: f32) -> f32 {
 }
 
 /// An arc of `radius` from `start` (radians clockwise from straight up) over `sweep`.
+/// A whole ring (a ready key's rim) stays the same from frame to frame, so its stroke is
+/// kept; a part one is mostly a countdown, different every frame.
 pub fn arc(painter: &Painter, center: Pos2, radius: f32, start: f32, sweep: f32, stroke: Stroke) {
     if sweep.abs() < 1e-3 {
         return;
     }
-    let steps = ((sweep.abs() / std::f32::consts::TAU) * 64.0)
-        .ceil()
-        .max(2.0) as usize;
-    let points = (0..=steps)
-        .map(|step| {
+    let points = move || {
+        let steps = ((sweep.abs() / std::f32::consts::TAU) * 64.0)
+            .ceil()
+            .max(2.0) as usize;
+        (0..=steps).map(move |step| {
             let angle = start + sweep * step as f32 / steps as f32;
             center + vec2(angle.sin(), -angle.cos()) * radius
         })
-        .collect();
-    painter.add(Shape::line(points, stroke));
+    };
+    if sweep.abs() < std::f32::consts::TAU {
+        painter.add(Shape::line(points().collect(), stroke));
+        return;
+    }
+    let feathering = feathering(painter);
+    let key = key_floats([
+        center.x,
+        center.y,
+        radius,
+        start,
+        sweep,
+        stroke.width,
+        feathering,
+    ])
+    .chain([u32::from_le_bytes(stroke.color.to_array())]);
+    painter.add(memo_mesh(painter.ctx(), MeshKind::Ring, key, || {
+        line_mesh(&points().collect::<Vec<_>>(), false, stroke, feathering)
+    }));
+}
+
+/// The width of the soft edge egui's tessellator gives a line drawn with `painter`.
+pub fn feathering(painter: &Painter) -> f32 {
+    painter.ctx().tessellation_options(|options| {
+        if options.feathering {
+            options.feathering_size_in_pixels * (1.0 / painter.pixels_per_point())
+        } else {
+            0.0
+        }
+    })
+}
+
+/// The mesh egui's tessellator makes of a line through `points` (`closed` back to the
+/// first) with a soft edge of `feathering`, the same triangles a `Shape::line` or
+/// `Shape::closed_line` draws, for a line kept by [`memo_mesh`].
+pub fn line_mesh(points: &[Pos2], closed: bool, stroke: Stroke, feathering: f32) -> Mesh {
+    let mut path = egui::epaint::tessellator::Path::default();
+    let mut mesh = Mesh::default();
+    if closed {
+        path.add_line_loop(points);
+        path.fill_and_stroke(feathering, Color32::TRANSPARENT, &stroke.into(), &mut mesh);
+    } else {
+        path.add_open_points(points);
+        path.stroke_open(feathering, &stroke.into(), &mut mesh);
+    }
+    mesh
 }
 
 /// A timer ring: a dark track and the share left drawn clockwise from the top.

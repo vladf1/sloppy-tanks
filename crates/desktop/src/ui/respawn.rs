@@ -50,6 +50,7 @@ pub fn card(
     let backdrop =
         context.layer_painter(LayerId::new(Order::Background, Id::unique("respawn glow")));
     backdrop.with_clip_rect(screen).add(paint::radial(
+        backdrop.ctx(),
         pos2(screen.center().x, screen.bottom()),
         vec2(screen.width() * 0.9, screen.height() * 0.6),
         &[(0.0, hexa(0x3a050c, 0.33)), (0.7, Color32::TRANSPARENT)],
@@ -90,6 +91,7 @@ pub fn card(
             if rise < 1.0 {
                 let x = rect.left() + rect.width() * rise * 1.2 - 80.0;
                 painter.with_clip_rect(rect).add(paint::hgradient(
+                    painter.ctx(),
                     Rect::from_min_size(pos2(x, rect.top()), vec2(160.0, 2.0)),
                     &[
                         (0.0, Color32::TRANSPARENT),
@@ -322,6 +324,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, line_right: f32, s
         let chip = Rect::from_min_size(pos2(x, y), vec2(text_width + 36.0, 25.0));
         painter.rect_filled(chip, 7, hex(0x2c1219));
         painter.add(paint::vgradient(
+            painter.ctx(),
             chip.shrink2(vec2(0.0, 6.0)),
             &[(0.0, hex(0x3a1420)), (1.0, hex(0x22101a))],
         ));
@@ -503,17 +506,24 @@ fn countdown(
     );
     // The face inside the band, lit from above its middle, shaded under its top edge.
     let face = radius - RING_BAND;
-    lit_disc(
-        painter,
+    painter.add(lit_disc(
+        painter.ctx(),
         ring,
         face,
         ring - vec2(0.0, face * 0.4),
         face.hypot(face * 1.4),
         &[(0.0, hex(0x1d3a66)), (1.0, hex(0x07122a))],
-    );
-    painter.add(inner_edge(ring, face, 5.0, hexa(0x000000, 0.35)));
+    ));
+    painter.add(inner_edge(
+        painter.ctx(),
+        ring,
+        face,
+        5.0,
+        hexa(0x000000, 0.35),
+    ));
     // The seconds over a dark gold drop and a soft gold glow.
     painter.add(paint::radial(
+        painter.ctx(),
         ring,
         Vec2::splat(size.digit * 0.6),
         &[(0.0, hexa(0xffcf38, 0.3)), (1.0, Color32::TRANSPARENT)],
@@ -568,6 +578,7 @@ fn countdown(
     painter.rect_filled(rule, 2, hexa(0xffffff, 0.12));
     let fill = rule.width() * share;
     painter.add(paint::hgradient(
+        painter.ctx(),
         Rect::from_min_max(pos2(rule.right() - fill, rule.top()), rule.max),
         &[(0.0, GOLD_DEEP), (1.0, GOLD_HOT)],
     ));

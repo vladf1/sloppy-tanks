@@ -100,7 +100,13 @@ pub fn controls(
 
 /// A soft round shadow under a thumb control.
 fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
-    painter.add(paint::radial(
+    painter.add(shadow(painter.ctx(), center, radius));
+}
+
+/// The shape of [`drop_shadow`].
+fn shadow(context: &egui::Context, center: Pos2, radius: f32) -> Shape {
+    paint::radial(
+        context,
         center + vec2(0.0, 5.0),
         Vec2::splat(radius + 12.0),
         &[
@@ -108,28 +114,41 @@ fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
             (radius / (radius + 12.0), hexa(0x000000, 0.3)),
             (1.0, Color32::TRANSPARENT),
         ],
-    ));
+    )
+}
+
+/// Where a knob's meshes are kept: a resting knob's where it rests, and a held one's
+/// round the origin, moved to the knob by [`at_knob`]. A held knob follows the thumb,
+/// so a mesh kept where it stood would be built again every frame it moves, where
+/// moving a copy skips its trigonometry and colours.
+fn knob_mesh_place(knob: Pos2, held: bool) -> Pos2 {
+    if held { Pos2::ZERO } else { knob }
+}
+
+/// `shape`, built at [`knob_mesh_place`], drawn at `knob`.
+fn at_knob(painter: &Painter, knob: Pos2, held: bool, mut shape: Shape) {
+    if held {
+        shape.translate(knob.to_vec2());
+    }
+    painter.add(shape);
 }
 
 /// A disc of `radius` filled with a radial gradient centred on `light`, which need not
 /// be its centre (`radial-gradient(circle at …)`): `stops` are shares of `reach`, where
 /// the gradient ends. Its edge fades over a point, as egui's own shapes do.
 pub(super) fn lit_disc(
-    painter: &Painter,
+    context: &egui::Context,
     center: Pos2,
     radius: f32,
     light: Pos2,
     reach: f32,
     stops: &[(f32, Color32)],
-) {
+) -> Shape {
     let key = paint::key_floats([center.x, center.y, radius, light.x, light.y, reach])
         .chain(paint::key_stops(stops));
-    painter.add(paint::memo_mesh(
-        painter.ctx(),
-        paint::MeshKind::LitDisc,
-        key,
-        || lit_disc_mesh(center, radius, light, reach, stops),
-    ));
+    paint::memo_mesh(context, paint::MeshKind::LitDisc, key, || {
+        lit_disc_mesh(center, radius, light, reach, stops)
+    })
 }
 
 /// The mesh of [`lit_disc`].
@@ -195,7 +214,22 @@ fn lit_disc_mesh(
 /// An inset shade along a disc's top edge (`depth` above zero) or bottom edge (below):
 /// `color` at the rim, fading out `depth` in, like a CSS `inset` box shadow moved
 /// vertically.
-pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) -> Shape {
+pub(super) fn inner_edge(
+    context: &egui::Context,
+    center: Pos2,
+    radius: f32,
+    depth: f32,
+    color: Color32,
+) -> Shape {
+    let key = paint::key_floats([center.x, center.y, radius, depth])
+        .chain([u32::from_le_bytes(color.to_array())]);
+    paint::memo_mesh(context, paint::MeshKind::InnerEdge, key, || {
+        inner_edge_mesh(center, radius, depth, color)
+    })
+}
+
+/// The mesh of [`inner_edge`].
+fn inner_edge_mesh(center: Pos2, radius: f32, depth: f32, color: Color32) -> Mesh {
     const STEPS: u32 = 32;
     let mut mesh = paint::mesh_with_capacity(2 * (STEPS as usize + 1), 2 * STEPS as usize);
     for step in 0..=STEPS {
@@ -214,7 +248,7 @@ pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) 
             mesh.add_triangle(base + 1, base + 3, base + 2);
         }
     }
-    Shape::mesh(mesh)
+    mesh
 }
 
 /// The drive stick's look: a blue knob whose rim lights toward the drive.
@@ -284,6 +318,7 @@ fn stick(
     // light over the navy there.
     let corner = (base_radius - 2.0) * std::f32::consts::SQRT_2 / base_radius;
     painter.add(paint::radial(
+        painter.ctx(),
         base,
         Vec2::splat(base_radius),
         &[
@@ -347,7 +382,9 @@ fn stick(
         }
     }
     let knob = base + vec2(x, y) * STICK_RADIUS / push.max(1.0);
-    drop_shadow(painter, knob, KNOB_RADIUS);
+    let context = painter.ctx();
+    let place = knob_mesh_place(knob, held);
+    at_knob(painter, knob, held, shadow(context, place, KNOB_RADIUS));
     painter.circle_filled(knob, KNOB_RADIUS + 3.0, hexa(0x06102a, 0.4));
     if held {
         painter.circle_filled(knob, KNOB_RADIUS + 8.0, hexa(look.glow, 0.18));
@@ -356,22 +393,28 @@ fn stick(
     // farthest corner): lit across its upper half, dark only toward the rim, with a
     // light edge along its top and a shade along its bottom.
     let face = KNOB_RADIUS - KNOB_RIM;
-    let light = knob - vec2(0.0, face * (1.0 - 2.0 * KNOB_LIGHT_TOP));
+    let light = place - vec2(0.0, face * (1.0 - 2.0 * KNOB_LIGHT_TOP));
     let reach = face.hypot(face * (1.0 + (1.0 - 2.0 * KNOB_LIGHT_TOP)));
-    lit_disc(
+    let stops = [
+        (0.0, hex(look.knob[0])),
+        (0.45, hex(look.knob[1])),
+        (0.8, hex(look.knob[2])),
+    ];
+    let cap = lit_disc(context, place, KNOB_RADIUS, light, reach, &stops);
+    at_knob(painter, knob, held, cap);
+    let (lit, shaded) = (hexa(0xffffff, 0.28), hexa(0x000000, 0.3));
+    at_knob(
         painter,
         knob,
-        KNOB_RADIUS,
-        light,
-        reach,
-        &[
-            (0.0, hex(look.knob[0])),
-            (0.45, hex(look.knob[1])),
-            (0.8, hex(look.knob[2])),
-        ],
+        held,
+        inner_edge(context, place, face, 3.0, lit),
     );
-    painter.add(inner_edge(knob, face, 3.0, hexa(0xffffff, 0.28)));
-    painter.add(inner_edge(knob, face, -7.0, hexa(0x000000, 0.3)));
+    at_knob(
+        painter,
+        knob,
+        held,
+        inner_edge(context, place, face, -7.0, shaded),
+    );
     if look.sight {
         // A gun sight on the knob: a gold ring and four ticks toward its centre.
         let sight = Stroke::new(1.6, if held { GOLD_HOT } else { GOLD });
@@ -435,11 +478,13 @@ fn mine_key(painter: &Painter, art: &Art, center: Pos2, radius: f32, cooldown: f
         painter.circle_stroke(center, radius - 0.5, Stroke::new(1.0, hexa(0xbfe2ff, 0.27)));
     } else {
         painter.add(paint::radial(
+            painter.ctx(),
             center,
             Vec2::splat(face),
             &[(0.0, hex(0x183460)), (1.0, hex(0x0b1a33))],
         ));
         painter.add(paint::radial(
+            painter.ctx(),
             center - vec2(0.0, radius * 0.56),
             vec2(radius * 0.6, radius * 0.4),
             &[(0.0, hexa(0xffffff, 0.12)), (1.0, Color32::TRANSPARENT)],
@@ -460,16 +505,13 @@ fn mine_key(painter: &Painter, art: &Art, center: Pos2, radius: f32, cooldown: f
         icon,
         if cooling { hex(0x6d84a0) } else { GOLD_HOT },
     );
-    let label = if cooling {
-        format!("{cooldown:.1}s")
-    } else {
-        "MINE".to_owned()
-    };
+    let seconds = paint::short(format_args!("{cooldown:.1}s"));
+    let label = if cooling { &*seconds } else { "MINE" };
     paint::text(
         painter,
         center + vec2(0.0, 15.0 * scale),
         Align2::CENTER_CENTER,
-        &label,
+        label,
         bold_font((12.0 * scale).max(10.0)),
         if cooling {
             hex(0xa1b4c6)
@@ -483,11 +525,13 @@ fn mine_key(painter: &Painter, art: &Art, center: Pos2, radius: f32, cooldown: f
 fn zoom_key(painter: &Painter, center: Pos2, label: &str) {
     drop_shadow(painter, center, ZOOM_RADIUS);
     painter.add(paint::radial(
+        painter.ctx(),
         center,
         Vec2::splat(ZOOM_RADIUS),
         &[(0.0, hex(0x183460)), (1.0, hex(0x0b1a33))],
     ));
     painter.add(paint::radial(
+        painter.ctx(),
         center - vec2(0.0, ZOOM_RADIUS * 0.56),
         vec2(ZOOM_RADIUS * 0.6, ZOOM_RADIUS * 0.4),
         &[(0.0, hexa(0xffffff, 0.12)), (1.0, Color32::TRANSPARENT)],

@@ -23,6 +23,7 @@ use sloppy_core::sim::MatchPhase;
 
 use super::snapshots::{Scenario, scenarios};
 use super::{View, touch::TouchView};
+use crate::input::{FireFinger, FireStage};
 use crate::preferences::{Preferences, TouchSetting};
 
 struct Counting;
@@ -171,8 +172,27 @@ fn hash_primitives(primitives: &[egui::ClippedPrimitive], hasher: &mut impl Hash
     }
 }
 
+/// Thumbs on both sticks, each knob circling at `THUMB_REACH` stick radii, as in a
+/// fight: the knob's shapes move every frame.
+fn move_thumbs(touch: &mut TouchView, frame: u32, since: std::time::Instant) {
+    const THUMB_REACH: f32 = 0.7;
+    let angle = frame as f32 * 0.05;
+    let knob = (THUMB_REACH * angle.cos(), THUMB_REACH * angle.sin());
+    touch.input.drive = Some((1, (150.0, 640.0)));
+    touch.input.knob = knob;
+    touch.input.push = (f64::from(knob.0), f64::from(knob.1));
+    touch.input.fire = Some(FireFinger {
+        id: 2,
+        origin: (1130.0, 640.0),
+        since,
+        knob: (knob.1, knob.0),
+        stage: FireStage::Aiming,
+    });
+}
+
 /// Run `scenario` for the warm-up and then the measured frames, and print its costs.
-fn measure(label: &str, mut scenario: Scenario, touch: bool) {
+/// With `thumbs`, both sticks are held and moving.
+fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
     if !wanted(label) {
         return;
     }
@@ -214,6 +234,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool) {
         scenario.state.hit_flash,
         scenario.state.damage_ring,
     );
+    let since = std::time::Instant::now();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut micros = Vec::with_capacity(frames as usize);
     let (mut allocations, mut bytes, mut texture_sets, mut vertices) = (0, 0, 0, 0);
@@ -236,6 +257,9 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool) {
             (state.hit_flash, state.damage_ring) = (feedback.3, feedback.4);
         } else if scenario.phase == MatchPhase::Playing {
             scenario.state.tick(1.0 / 60.0);
+        }
+        if thumbs && let Some(touch) = &mut scenario.state.touch {
+            move_thumbs(touch, frame, since);
         }
         let start_allocations = ALLOCATIONS.load(Ordering::Relaxed);
         let start_bytes = BYTES.load(Ordering::Relaxed);
@@ -319,15 +343,17 @@ fn frame_cost() {
             .expect("a snapshot scenario")
     };
     for name in DESKTOP {
-        measure(name, take(name), false);
+        measure(name, take(name), false, false);
     }
     // A tablet's touch controls (Settings' Touch controls on), then the phone edition.
     crate::touch::set_setting(TouchSetting::On);
     for name in TOUCH {
-        measure(&format!("touch {name}"), take(name), true);
+        measure(&format!("touch {name}"), take(name), true, false);
     }
+    measure("touch hud thumbs", take("hud"), true, true);
     crate::touch::detect(true);
     for name in TOUCH.iter().chain(&["battle-setup-ready"]) {
-        measure(&format!("phone {name}"), take(name), true);
+        measure(&format!("phone {name}"), take(name), true, false);
     }
+    measure("phone hud thumbs", take("hud"), true, true);
 }

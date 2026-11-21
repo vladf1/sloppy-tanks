@@ -72,11 +72,13 @@ fn banner_ground(painter: &Painter, banner: Rect, outcome: Outcome, light: Color
     let mut shapes = Vec::new();
     if won {
         shapes.push(paint::radial(
+            painter.ctx(),
             banner.min,
             vec2(banner.width() * 0.7, banner.height() * 1.9),
             &[(0.0, fade(light, 0.34)), (0.7, Color32::TRANSPARENT)],
         ));
         shapes.push(paint::radial(
+            painter.ctx(),
             pos2(banner.left() + banner.width() * 0.06, banner.top()),
             vec2(banner.width() * 0.4, banner.height() * 1.4),
             &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
@@ -205,7 +207,7 @@ fn banner_rule(painter: &Painter, banner: Rect, outcome: Outcome, light: Color32
             (1.0, Color32::TRANSPARENT),
         ]
     };
-    painter.add(paint::hgradient(rule, &stops));
+    painter.add(paint::hgradient(painter.ctx(), rule, &stops));
 }
 
 /// The outcome's title colour: gold for a win or a lead held, the team's pale tone or red
@@ -666,6 +668,7 @@ fn recap_body(
         hexa(0xffcf38, 0.33),
     );
     painter.with_clip_rect(hero.shrink(1.0)).add(paint::radial(
+        painter.ctx(),
         hero.left_center(),
         vec2(hero.width() * 0.7, hero.height() * 0.9),
         &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
@@ -981,6 +984,7 @@ impl HeroLines {
             let track = Rect::from_min_size(pos2(left, top), vec2(width, 6.0));
             painter.rect_filled(track, 3, hexa(0xffffff, 0.09));
             painter.add(paint::hgradient(
+                painter.ctx(),
                 Rect::from_min_size(
                     track.min,
                     vec2(track.width() * share.clamp(0.0, 1.0) as f32, 6.0),
@@ -1038,6 +1042,7 @@ fn board_tag(painter: &Painter, right: Pos2, text: &str, mvp: bool, yours: bool)
     if mvp {
         painter.rect_filled(rect.expand(2.0), 5, hexa(0xffb21c, 0.2));
         painter.add(paint::vgradient(
+            painter.ctx(),
             rect,
             &[(0.0, GOLD_HOT), (1.0, hex(0xff9d1c))],
         ));
@@ -1130,6 +1135,7 @@ fn board(
             hex(0x0b1830),
         );
         painter.add(paint::hgradient(
+            painter.ctx(),
             header.shrink2(vec2(6.0, 0.0)),
             &[
                 (0.0, paint::mix(hex(0x07122a), side, 0.45)),
@@ -1186,6 +1192,7 @@ fn board(
             let yours = row.id == viewer;
             if yours {
                 painter.add(paint::hgradient(
+                    painter.ctx(),
                     line,
                     &[
                         (0.0, hexa(0xffcf38, 0.25)),
