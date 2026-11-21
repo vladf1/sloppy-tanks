@@ -23,7 +23,12 @@ use super::theme::{self, GOLD, bold_font, display_font};
 /// that first press is hit-tested against the frame before it, which had no drag area
 /// yet. A phone's first drag of Battle Setup did nothing until the finger tried again.
 pub fn vertical_scroll() -> egui::ScrollArea {
-    let drag = if crate::touch::screen() {
+    vertical_scroll_for(crate::touch::screen())
+}
+
+/// [`vertical_scroll`] where the device plays by `touch`, or not.
+fn vertical_scroll_for(touch: bool) -> egui::ScrollArea {
+    let drag = if touch {
         DragScroll::Always
     } else {
         DragScroll::OnTouch
@@ -1872,6 +1877,83 @@ pub fn button_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The offset a finger leaves an overflowing scroll area at after one upward drag,
+    /// pressed, moved and lifted a frame apart, as egui-winit sends a touch (a touch event
+    /// and the pointer it emulates), the first touch the context sees once the area has
+    /// shown for two frames.
+    fn first_drag_offset(scroll: impl Fn() -> egui::ScrollArea) -> f32 {
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 600.0));
+        let context = egui::Context::default();
+        let device_id = egui::TouchDeviceId(1);
+        let id = egui::TouchId(7);
+        let finger = |phase, pos: Pos2| egui::Event::Touch {
+            device_id,
+            id,
+            phase,
+            pos,
+            force: None,
+        };
+        let (start, end) = (pos2(200.0, 400.0), pos2(200.0, 200.0));
+        let press = |pressed, pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let frames = [
+            vec![],
+            vec![],
+            vec![
+                finger(egui::TouchPhase::Start, start),
+                egui::Event::PointerMoved(start),
+                press(true, start),
+            ],
+            vec![
+                finger(egui::TouchPhase::Move, end),
+                egui::Event::PointerMoved(end),
+            ],
+            vec![
+                finger(egui::TouchPhase::End, end),
+                press(false, end),
+                egui::Event::PointerGone,
+            ],
+        ];
+        let mut offset = 0.0;
+        for (index, events) in frames.into_iter().enumerate() {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                time: Some(index as f64 / 60.0),
+                events,
+                ..Default::default()
+            };
+            let mut output = context.run_pass(input, |context| {
+                egui::Area::new(Id::unique("menu"))
+                    .fixed_pos(Pos2::ZERO)
+                    .show(context, |ui| {
+                        offset = scroll()
+                            .max_height(screen.height())
+                            .show(ui, |ui| {
+                                ui.allocate_exact_size(vec2(400.0, 1500.0), Sense::hover());
+                            })
+                            .state
+                            .clamped_offset()
+                            .y;
+                    });
+            });
+            // No painter takes the font atlas here.
+            output.textures_delta.clear();
+        }
+        offset
+    }
+
+    #[test]
+    fn a_touch_screen_scrolls_on_the_first_drag() {
+        // egui's own default waits for a touch before it adds its drag area, so the
+        // first drag is lost; a touch device's scroll areas have it from the start.
+        assert_eq!(first_drag_offset(egui::ScrollArea::vertical), 0.0);
+        assert!(first_drag_offset(|| vertical_scroll_for(true)) >= 150.0);
+    }
 
     #[test]
     fn short_text_writes_as_format_and_capitals_as_str_does() {
