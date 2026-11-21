@@ -34,6 +34,10 @@ type Spare = Rc<RefCell<Vec<Vec<u8>>>>;
 /// The buffers kept: the messages that queue between two frames.
 const SPARE_BUFFERS: usize = 4;
 
+/// The largest buffer kept. A snapshot is a few hundred bytes to a few kilobytes; a
+/// baseline's buffer, or one of a frame too long to read, is freed for other uses.
+const SPARE_BYTES: usize = 64 * 1024;
+
 /// A socket and the handlers the browser calls, kept until its close arrives.
 struct Socket {
     socket: WebSocket,
@@ -146,7 +150,7 @@ impl Sockets {
     /// Take back the buffer of a binary message the room has read, for a later one.
     pub fn recycle(&mut self, mut bytes: Vec<u8>) {
         let mut spare = self.spare.borrow_mut();
-        if spare.len() < SPARE_BUFFERS {
+        if spare.len() < SPARE_BUFFERS && bytes.capacity() <= SPARE_BYTES {
             bytes.clear();
             spare.push(bytes);
         }

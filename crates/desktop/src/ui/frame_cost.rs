@@ -7,7 +7,10 @@
 //! The hash covers every measured frame's clip rects, textures, indices and vertices, so
 //! equal hashes from two builds of the same profile mean they drew the same pixels.
 //! `SLOPPY_FRAME_COST_ONLY=<label>` runs one scenario and `SLOPPY_FRAME_COST_FRAMES=<n>`
-//! measures more frames (for a profiler). `SLOPPY_ALLOC_TRACE=<label>` prints where the
+//! measures more frames (for a profiler). `SLOPPY_FRAME_COST_SIZE=<width>x<height>` lays
+//! the screens out at another size than 1280x800, the one size at which neither Battle
+//! Setup nor the HUD is drawn through a layer transform (1920x1080 zooms the HUD and
+//! offsets Battle Setup, as most desktop windows do). `SLOPPY_ALLOC_TRACE=<label>` prints where the
 //! scenario's allocations of one frame come from, best on the `desktop-check` profile,
 //! whose backtraces name the shell's lines (`SLOPPY_ALLOC_TRACE_CALLERS=1` names the
 //! callers of `paint.rs` instead).
@@ -129,6 +132,17 @@ fn report_traces() {
 static ALLOCATOR: Counting = Counting;
 
 const SIZE: [f32; 2] = [1280.0, 800.0];
+
+/// `SLOPPY_FRAME_COST_SIZE`: the screen's size in points, as `<width>x<height>`.
+fn size() -> [f32; 2] {
+    std::env::var("SLOPPY_FRAME_COST_SIZE")
+        .ok()
+        .and_then(|size| {
+            let (width, height) = size.split_once('x')?;
+            Some([width.parse().ok()?, height.parse().ok()?])
+        })
+        .unwrap_or(SIZE)
+}
 const SCALE: f32 = 2.0;
 const WARM_UP: u32 = 60;
 const FRAMES: u32 = 600;
@@ -235,6 +249,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         scenario.state.damage_ring,
     );
     let since = std::time::Instant::now();
+    let size = size();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut micros = Vec::with_capacity(frames as usize);
     let (mut allocations, mut bytes, mut texture_sets, mut vertices) = (0, 0, 0, 0);
@@ -243,7 +258,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         let input = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
-                egui::vec2(SIZE[0], SIZE[1]),
+                egui::vec2(size[0], size[1]),
             )),
             time: Some(10.0 + f64::from(frame) / 60.0),
             ..Default::default()
@@ -278,6 +293,8 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         let textures = output.textures_delta.set.len();
         // No GPU here to apply them to.
         output.textures_delta.clear();
+        // As the app's frame loop does (`overlay.rs`).
+        super::paint::keep_meshes(&output.shapes);
         let primitives = context.tessellate(output.shapes, SCALE);
         let elapsed = start.elapsed();
         TRACING.store(false, Ordering::Relaxed);

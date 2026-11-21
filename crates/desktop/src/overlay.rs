@@ -224,6 +224,7 @@ impl Overlay {
         }
         self.input
             .handle_platform_output(&self.window, output.platform_output);
+        crate::ui::paint::keep_meshes(&output.shapes);
         Painted {
             primitives: self
                 .context

@@ -572,6 +572,9 @@ fn snapshots() {
             }
         }
         let output = output.expect("a pass ran");
+        // As the app's frame loop does (`overlay.rs`), so the next scenario fills this
+        // one's meshes.
+        super::paint::keep_meshes(&output.shapes);
         let primitives = context.tessellate(output.shapes, SCALE);
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("snapshot"),

@@ -49,6 +49,9 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 #[derive(Default)]
 struct MeshMemo {
     pass: u64,
+    /// Whether a layer was drawn through a transform as this pass began (a zoomed HUD,
+    /// Battle Setup fitted to its window): [`memo_mesh`] then draws copies.
+    transformed: bool,
     meshes: HashMap<Box<[u32]>, (Arc<Mesh>, u64)>,
     /// The key being looked up, kept to look up the next without allocating.
     key: Vec<u32>,
@@ -75,6 +78,7 @@ pub enum MeshKind {
     InnerEdge,
     Ring,
     Infinity,
+    Ray,
 }
 
 /// The words of a mesh's key: a builder's float inputs by their bits and colours by
@@ -92,6 +96,11 @@ pub fn key_stops(stops: &[(f32, Color32)]) -> impl Iterator<Item = u32> + '_ {
 /// The mesh `build` makes from the inputs `key` holds, built only when no pass drew it
 /// last time: a mesh not drawn in a pass is let go at the next. `build` must not draw
 /// kept meshes itself.
+///
+/// egui moves a transformed layer's shapes where they are, and a mesh the memo also
+/// holds it clones first: three allocations a frame again, and the copy. So while any
+/// layer is transformed the shape is a copy in a pooled mesh ([`frame_mesh`]), which it
+/// holds alone; a mesh too large for the pool is drawn as kept.
 pub fn memo_mesh(
     context: &egui::Context,
     kind: MeshKind,
@@ -99,20 +108,22 @@ pub fn memo_mesh(
     build: impl FnOnce() -> Mesh,
 ) -> Shape {
     let pass = context.cumulative_pass_nr();
-    let kept = MESHES.with_borrow_mut(|memo| {
+    let (kept, transformed) = MESHES.with_borrow_mut(|memo| {
         if memo.pass != pass {
             let last = memo.pass;
             memo.meshes.retain(|_, (_, used)| *used == last);
             memo.pass = pass;
+            memo.transformed = context.memory(|memory| !memory.to_global.is_empty());
         }
         memo.key.clear();
         memo.key.push(kind as u32);
         memo.key.extend(key);
         let (meshes, key) = (&mut memo.meshes, &memo.key);
-        meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
+        let kept = meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
             *used = pass;
             Arc::clone(mesh)
-        })
+        });
+        (kept, memo.transformed)
     });
     let mesh = kept.unwrap_or_else(|| {
         let mesh = Arc::new(build());
@@ -122,58 +133,84 @@ pub fn memo_mesh(
         });
         mesh
     });
+    if transformed && mesh.vertices.len() <= POOLED_VERTICES {
+        return frame_mesh(|copy| {
+            copy.texture_id = mesh.texture_id;
+            copy.indices.extend_from_slice(&mesh.indices);
+            copy.vertices.extend_from_slice(&mesh.vertices);
+        });
+    }
     Shape::Mesh(mesh)
 }
 
-/// The meshes [`frame_mesh`] draws, kept to be filled again: what [`memo_mesh`] cannot
-/// keep, because its inputs change from frame to frame (a fading wash, a rotating
-/// wedge, a held stick's knob) or because a key and a lookup would cost more than
-/// building it (an icon's four vertices). egui lets go of a frame's shapes once it has
-/// tessellated them, and a mesh nothing else holds is built over in place, so these
-/// allocate nothing after their first frames. Built from nothing, each was three
-/// allocations a frame: its vertices, its indices and the shape's `Arc`.
+/// The meshes of the last pass's shapes, for [`frame_mesh`] to fill again: what
+/// [`memo_mesh`] cannot keep, because its inputs change from frame to frame (a fading
+/// wash, a rotating wedge, a held stick's knob) or because a key and a lookup would
+/// cost more than building it (an icon's four vertices). Built from nothing, each was
+/// three allocations a frame: its vertices, its indices and the shape's `Arc`.
+///
+/// A shape owns its mesh alone while its pass is laid out, so egui moves a mesh on a
+/// zoomed or shrunk layer where it is (a mesh the pool still held was cloned to be
+/// moved: three allocations again, and a copy). The frame loop hands a finished pass's
+/// shapes to [`keep_meshes`] before it tessellates them, and each mesh is free once
+/// egui has dropped its shape.
 #[derive(Default)]
 struct MeshPool {
-    meshes: Vec<Arc<Mesh>>,
-    /// Where the next free mesh is looked for: after the one handed out last, so a
-    /// screen that draws the same shapes each frame meets each in the mesh it filled
-    /// before, already the right size.
-    next: usize,
+    /// The last pass's meshes, the first drawn on top: handed out in the order they
+    /// were drawn, a screen that draws the same shapes each frame meets each in the
+    /// mesh it filled before, already the right size.
+    spare: Vec<Arc<Mesh>>,
 }
 
-/// The most meshes the pool keeps, several times what the busiest screen draws. Past
-/// it a mesh still held replaces its slot instead of adding one, so shapes a caller
-/// keeps across frames cannot grow the pool without bound.
+/// The most meshes the pool keeps, several times what the busiest screen draws.
 const POOLED_MESHES: usize = 256;
+
+/// The largest mesh the pool keeps, in vertices: an icon has 4 and a radial gradient a
+/// few hundred. A larger one (a backdrop) is let go, not held to hand to an icon.
+const POOLED_VERTICES: usize = 2048;
 
 impl MeshPool {
     /// A mesh nothing else holds, empty and untextured, with the buffers it had.
-    fn free(&mut self) -> &mut Arc<Mesh> {
-        if self.next >= self.meshes.len() {
-            self.next = 0;
-        }
-        let mut at = self.next;
-        let free = self
-            .meshes
-            .get_mut(at)
-            .is_some_and(|mesh| Arc::get_mut(mesh).is_some());
-        if !free {
-            // Still drawn (this frame's, when the pool is smaller than the screen needs).
-            if self.meshes.len() < POOLED_MESHES {
-                at = self.meshes.len();
-                self.meshes.push(Arc::default());
-            } else {
-                self.meshes[at] = Arc::default();
+    fn take(&mut self) -> Arc<Mesh> {
+        while let Some(mut mesh) = self.spare.pop() {
+            if let Some(free) = Arc::get_mut(&mut mesh) {
+                // Not `Mesh::clear`, which gives the vertices' buffer back.
+                free.indices.clear();
+                free.vertices.clear();
+                free.texture_id = egui::TextureId::default();
+                return mesh;
             }
+            // Still drawn (a pass kept untessellated, a shape someone holds): let go.
         }
-        self.next = at + 1;
-        let slot = &mut self.meshes[at];
-        let mesh = Arc::get_mut(slot).expect("held by the pool alone");
-        // Not `Mesh::clear`, which gives the vertices' buffer back.
-        mesh.indices.clear();
-        mesh.vertices.clear();
-        mesh.texture_id = egui::TextureId::default();
-        slot
+        Arc::default()
+    }
+
+    /// Keep the meshes `shapes` alone hold, in place of those kept before: a mesh
+    /// [`memo_mesh`] keeps or several shapes share is not the pool's to fill.
+    fn keep(&mut self, shapes: &[egui::epaint::ClippedShape]) {
+        self.spare.clear();
+        for clipped in shapes.iter().rev() {
+            self.keep_shape(&clipped.shape);
+        }
+    }
+
+    fn keep_shape(&mut self, shape: &Shape) {
+        match shape {
+            Shape::Vec(shapes) => {
+                for shape in shapes.iter().rev() {
+                    self.keep_shape(shape);
+                }
+            }
+            Shape::Mesh(mesh)
+                if self.spare.len() < POOLED_MESHES
+                    && Arc::strong_count(mesh) == 1
+                    && Arc::weak_count(mesh) == 0
+                    && mesh.vertices.capacity() <= POOLED_VERTICES =>
+            {
+                self.spare.push(Arc::clone(mesh));
+            }
+            _ => {}
+        }
     }
 }
 
@@ -181,15 +218,19 @@ thread_local! {
     static POOL: RefCell<MeshPool> = RefCell::default();
 }
 
-/// The shape of the mesh `fill` builds, in a mesh kept from an earlier frame when one is
-/// free (see [`MeshPool`]). `fill` starts from an empty untextured mesh and must not
-/// draw pooled meshes itself.
+/// The shape of the mesh `fill` builds, in a mesh kept from the last pass when one is
+/// free (see [`MeshPool`]). `fill` starts from an empty untextured mesh.
 pub fn frame_mesh(fill: impl FnOnce(&mut Mesh)) -> Shape {
-    POOL.with_borrow_mut(|pool| {
-        let slot = pool.free();
-        fill(Arc::get_mut(slot).expect("held by the pool alone"));
-        Shape::Mesh(Arc::clone(slot))
-    })
+    let mut mesh = POOL.with_borrow_mut(MeshPool::take);
+    fill(Arc::get_mut(&mut mesh).expect("a taken mesh is held by nothing else"));
+    Shape::Mesh(mesh)
+}
+
+/// Keep a finished pass's meshes for the next pass's [`frame_mesh`]. Call with the
+/// pass's shapes before tessellating them; a frame loop that does not only goes
+/// without the pool.
+pub fn keep_meshes(shapes: &[egui::epaint::ClippedShape]) {
+    POOL.with_borrow_mut(|pool| pool.keep(shapes));
 }
 
 /// A textured rectangle, as `Painter::image` draws one, in a pooled mesh.
@@ -201,10 +242,13 @@ pub fn image(texture: egui::TextureId, rect: Rect, uv: Rect, tint: Color32) -> S
 }
 
 /// `shape` moved by `offset`. A mesh [`memo_mesh`] keeps is copied into a pooled one,
-/// where `Shape::translate` would clone it to move it.
+/// where `Shape::translate` would clone it to move it; one the shape holds alone moves
+/// where it is.
 pub fn moved(mut shape: Shape, offset: Vec2) -> Shape {
-    match &shape {
-        Shape::Mesh(kept) => frame_mesh(|mesh| {
+    if let Shape::Mesh(kept) = &shape
+        && Arc::strong_count(kept) > 1
+    {
+        return frame_mesh(|mesh| {
             // As `Shape::translate` moves a mesh's vertices.
             let transform = egui::emath::TSTransform::from_translation(offset);
             mesh.texture_id = kept.texture_id;
@@ -214,12 +258,10 @@ pub fn moved(mut shape: Shape, offset: Vec2) -> Shape {
                     pos: transform * vertex.pos,
                     ..*vertex
                 }));
-        }),
-        _ => {
-            shape.translate(offset);
-            shape
-        }
+        });
     }
+    shape.translate(offset);
+    shape
 }
 
 /// An untextured mesh with room for `vertices` and `triangles`, so building it never
@@ -1793,49 +1835,88 @@ mod tests {
     }
 
     /// A shape as [`frame_mesh`] draws one from `pool`: a vertex at `x`.
-    fn pooled(pool: &mut MeshPool, x: f32, texture: egui::TextureId) -> Arc<Mesh> {
-        let slot = pool.free();
-        let mesh = Arc::get_mut(slot).expect("free");
-        mesh.texture_id = texture;
-        mesh.vertices.push(egui::epaint::Vertex {
+    fn pooled(pool: &mut MeshPool, x: f32, texture: egui::TextureId) -> Shape {
+        let mut mesh = pool.take();
+        let fill = Arc::get_mut(&mut mesh).expect("free");
+        fill.texture_id = texture;
+        fill.vertices.push(egui::epaint::Vertex {
             pos: pos2(x, 0.0),
             uv: Pos2::ZERO,
             color: Color32::WHITE,
         });
-        Arc::clone(slot)
+        Shape::Mesh(mesh)
     }
 
-    #[test]
-    fn a_pooled_mesh_is_filled_again_only_once_its_shape_is_let_go() {
-        let mut pool = MeshPool::default();
-        let first = pooled(&mut pool, 1.0, egui::TextureId::User(7));
-        // Still drawn, so the next shape takes a mesh of its own.
-        let second = pooled(&mut pool, 2.0, egui::TextureId::default());
-        assert_eq!(
-            (first.vertices[0].pos.x, second.vertices[0].pos.x),
-            (1.0, 2.0)
-        );
-        let kept = (Arc::as_ptr(&first), first.vertices.as_ptr());
-        drop((first, second));
-        // Let go, the first is emptied and filled in place, in the buffer it had.
-        let third = pooled(&mut pool, 3.0, egui::TextureId::default());
-        assert_eq!((Arc::as_ptr(&third), third.vertices.as_ptr()), kept);
-        assert_eq!(third.vertices.len(), 1);
-        assert_eq!(third.texture_id, egui::TextureId::default());
-        assert_eq!(pool.meshes.len(), 2);
+    fn clipped(shapes: impl IntoIterator<Item = Shape>) -> Vec<egui::epaint::ClippedShape> {
+        shapes
+            .into_iter()
+            .map(|shape| egui::epaint::ClippedShape::new(Rect::EVERYTHING, shape))
+            .collect()
     }
 
-    #[test]
-    fn shapes_kept_past_the_pool_keep_their_meshes_without_growing_it() {
-        let mut pool = MeshPool::default();
-        let held: Vec<Arc<Mesh>> = (0..POOLED_MESHES + 3)
-            .map(|index| pooled(&mut pool, index as f32, egui::TextureId::default()))
-            .collect();
-        assert_eq!(pool.meshes.len(), POOLED_MESHES);
-        for (index, mesh) in held.iter().enumerate() {
-            assert_eq!(mesh.vertices.len(), 1);
-            assert_eq!(mesh.vertices[0].pos.x, index as f32);
+    fn mesh_of(shape: &Shape) -> &Arc<Mesh> {
+        match shape {
+            Shape::Mesh(mesh) => mesh,
+            _ => panic!("a mesh shape"),
         }
+    }
+
+    #[test]
+    fn a_pass_s_meshes_are_filled_again_in_the_order_they_were_drawn() {
+        let mut pool = MeshPool::default();
+        let pass = clipped([
+            pooled(&mut pool, 1.0, egui::TextureId::User(7)),
+            // A group's meshes are kept too.
+            Shape::Vec(vec![
+                pooled(&mut pool, 2.0, egui::TextureId::default()),
+                Shape::Noop,
+            ]),
+        ]);
+        // While its pass is laid out a shape holds its mesh alone, so egui moves it in
+        // place on a transformed layer.
+        assert_eq!(Arc::strong_count(mesh_of(&pass[0].shape)), 1);
+        let first = {
+            let mesh = mesh_of(&pass[0].shape);
+            (Arc::as_ptr(mesh), mesh.vertices.as_ptr())
+        };
+        pool.keep(&pass);
+        assert_eq!(pool.spare.len(), 2);
+        // Tessellated: egui drops the pass's shapes.
+        drop(pass);
+        let again = pooled(&mut pool, 3.0, egui::TextureId::default());
+        let mesh = mesh_of(&again);
+        assert_eq!((Arc::as_ptr(mesh), mesh.vertices.as_ptr()), first);
+        assert_eq!(mesh.vertices.len(), 1);
+        assert_eq!(mesh.vertices[0].pos.x, 3.0);
+        assert_eq!(mesh.texture_id, egui::TextureId::default());
+        assert_eq!(pool.spare.len(), 1);
+    }
+
+    #[test]
+    fn a_mesh_something_else_holds_is_never_filled_again() {
+        let mut pool = MeshPool::default();
+        // Kept elsewhere (as `memo_mesh` keeps one) or shared by two shapes: not pooled.
+        let kept = Arc::new(Mesh::default());
+        let shared = pooled(&mut pool, 1.0, egui::TextureId::default());
+        let big = Shape::mesh(mesh_with_capacity(POOLED_VERTICES + 1, 1));
+        let pass = clipped([Shape::Mesh(Arc::clone(&kept)), shared.clone(), shared, big]);
+        pool.keep(&pass);
+        assert!(pool.spare.is_empty());
+        // A pass kept untessellated holds its meshes: the next gets ones of its own.
+        let held = clipped([pooled(&mut pool, 2.0, egui::TextureId::default())]);
+        pool.keep(&held);
+        assert_eq!(pool.spare.len(), 1);
+        let other = pooled(&mut pool, 3.0, egui::TextureId::default());
+        assert!(!Arc::ptr_eq(mesh_of(&other), mesh_of(&held[0].shape)));
+        assert_eq!(mesh_of(&held[0].shape).vertices[0].pos.x, 2.0);
+        // And the pool holds no more than its bound, nor a pass's meshes past the next.
+        let many = clipped(
+            (0..POOLED_MESHES + 3).map(|x| pooled(&mut pool, x as f32, Default::default())),
+        );
+        pool.keep(&many);
+        assert_eq!(pool.spare.len(), POOLED_MESHES);
+        pool.keep(&[]);
+        assert!(pool.spare.is_empty());
     }
 
     #[test]
