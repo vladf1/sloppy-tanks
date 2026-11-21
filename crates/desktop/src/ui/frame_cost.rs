@@ -133,15 +133,22 @@ static ALLOCATOR: Counting = Counting;
 
 const SIZE: [f32; 2] = [1280.0, 800.0];
 
-/// `SLOPPY_FRAME_COST_SIZE`: the screen's size in points, as `<width>x<height>`.
+/// `SLOPPY_FRAME_COST_SIZE`: the screen's size in points, as `<width>x<height>`; unset,
+/// [`SIZE`]. Anything else it holds is refused: a screen of no or endless size measures
+/// nothing (and Battle Setup's backdrop would never finish tiling it).
 fn size() -> [f32; 2] {
-    std::env::var("SLOPPY_FRAME_COST_SIZE")
-        .ok()
-        .and_then(|size| {
-            let (width, height) = size.split_once('x')?;
-            Some([width.parse().ok()?, height.parse().ok()?])
-        })
-        .unwrap_or(SIZE)
+    let Ok(size) = std::env::var("SLOPPY_FRAME_COST_SIZE") else {
+        return SIZE;
+    };
+    let side = |points: &str| {
+        points
+            .parse::<f32>()
+            .ok()
+            .filter(|points| points.is_finite() && *points > 0.0)
+    };
+    size.split_once('x')
+        .and_then(|(width, height)| Some([side(width)?, side(height)?]))
+        .unwrap_or_else(|| panic!("SLOPPY_FRAME_COST_SIZE is <width>x<height> in points: {size}"))
 }
 const SCALE: f32 = 2.0;
 const WARM_UP: u32 = 60;
@@ -188,16 +195,26 @@ fn hash_primitives(primitives: &[egui::ClippedPrimitive], hasher: &mut impl Hash
 
 /// Thumbs on both sticks, each knob circling at `THUMB_REACH` stick radii, as in a
 /// fight: the knob's shapes move every frame.
-fn move_thumbs(touch: &mut TouchView, frame: u32, since: std::time::Instant) {
+fn move_thumbs(touch: &mut TouchView, frame: u32, since: std::time::Instant, size: [f32; 2]) {
     const THUMB_REACH: f32 = 0.7;
     let angle = frame as f32 * 0.05;
     let knob = (THUMB_REACH * angle.cos(), THUMB_REACH * angle.sin());
-    touch.input.drive = Some((1, (150.0, 640.0)));
+    // Where the thumbs rest at the usual size; at another, in the middle of that
+    // screen's sticks, so both are on it and drawn.
+    let (drive, fire) = if size == SIZE {
+        ((150.0, 640.0), (1130.0, 640.0))
+    } else {
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+        let layout = crate::touch::TouchLayout::new(screen, screen, crate::touch::phone());
+        let middle = |stick: egui::Rect| (stick.center().x, stick.center().y);
+        (middle(layout.stick), middle(layout.fire))
+    };
+    touch.input.drive = Some((1, drive));
     touch.input.knob = knob;
     touch.input.push = (f64::from(knob.0), f64::from(knob.1));
     touch.input.fire = Some(FireFinger {
         id: 2,
-        origin: (1130.0, 640.0),
+        origin: fire,
         since,
         knob: (knob.1, knob.0),
         stage: FireStage::Aiming,
@@ -274,7 +291,7 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
             scenario.state.tick(1.0 / 60.0);
         }
         if thumbs && let Some(touch) = &mut scenario.state.touch {
-            move_thumbs(touch, frame, since);
+            move_thumbs(touch, frame, since, size);
         }
         let start_allocations = ALLOCATIONS.load(Ordering::Relaxed);
         let start_bytes = BYTES.load(Ordering::Relaxed);
