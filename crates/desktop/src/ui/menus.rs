@@ -1363,7 +1363,7 @@ pub fn settings(
                 vec2(width + 2.0 * side, rows_room),
             );
             let mut body = ui.new_child(egui::UiBuilder::new().max_rect(plate));
-            let shown = egui::ScrollArea::vertical()
+            let shown = paint::vertical_scroll()
                 .id_salt("settings")
                 .max_height(rows_room)
                 .auto_shrink([false, true])

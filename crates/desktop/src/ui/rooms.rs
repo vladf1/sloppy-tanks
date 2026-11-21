@@ -912,7 +912,7 @@ pub fn multiplayer(
         empty_rooms(ui, art, rows, state, time);
     } else {
         let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(rows));
-        egui::ScrollArea::vertical()
+        paint::vertical_scroll()
             .id_salt("open rooms")
             .max_height(rows.height())
             .auto_shrink([false, false])

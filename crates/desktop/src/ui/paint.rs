@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use egui::scroll_area::{DragScroll, ScrollSource};
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
     Align2, Color32, FontId, Galley, Id, Mesh, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
@@ -16,6 +17,22 @@ use sloppy_web::hud::BOT_TAG;
 
 use super::icons::Art;
 use super::theme::{self, GOLD, bold_font, display_font};
+
+/// A vertical scroll area that a finger drags from the first touch on a touch screen.
+/// egui's default drag (`DragScroll::OnTouch`) waits for egui's first touch event, and
+/// that first press is hit-tested against the frame before it, which had no drag area
+/// yet. A phone's first drag of Battle Setup did nothing until the finger tried again.
+pub fn vertical_scroll() -> egui::ScrollArea {
+    let drag = if crate::touch::screen() {
+        DragScroll::Always
+    } else {
+        DragScroll::OnTouch
+    };
+    egui::ScrollArea::vertical().scroll_source(ScrollSource {
+        drag,
+        ..ScrollSource::default()
+    })
+}
 
 /// `#rrggbb`.
 pub fn hex(rgb: u32) -> Color32 {

@@ -171,7 +171,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                 pos2(rect.right() - PANEL_PADDING, rect.bottom() - PANEL_PADDING),
             );
             let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
-            egui::ScrollArea::vertical()
+            paint::vertical_scroll()
                 .id_salt("nerd stats rows")
                 .max_height(body.height())
                 .auto_shrink([false, true])

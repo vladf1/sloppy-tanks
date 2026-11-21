@@ -2713,7 +2713,7 @@ fn stacked_setup(
             .fixed_pos(screen.min)
             .order(Order::Middle)
             .show(context, |ui| {
-                egui::ScrollArea::vertical()
+                paint::vertical_scroll()
                     .max_height(screen.height())
                     .min_scrolled_height(screen.height())
                     .show(ui, |ui| {
@@ -3525,7 +3525,7 @@ fn phone_setup(
         .fixed_pos(screen.min)
         .order(Order::Middle)
         .show(context, |ui| {
-            egui::ScrollArea::vertical()
+            paint::vertical_scroll()
                 .max_height(screen.height())
                 .min_scrolled_height(screen.height())
                 .show(ui, |ui| {
