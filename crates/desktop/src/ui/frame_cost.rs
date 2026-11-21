@@ -283,7 +283,8 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         TRACING.store(traced, Ordering::Relaxed);
         let start = std::time::Instant::now();
         context.set_pixels_per_point(SCALE);
-        let mut output = context.run_pass(input, |context| {
+        // As the app's frame loop runs its passes (`overlay.rs`).
+        let mut output = super::paint::run_pass(&context, input, |context| {
             if let Some(menu) = &mut room_menu {
                 super::room_menu::draw(context, menu, &mut scenario.state, &view, 0.0);
             } else {
@@ -293,8 +294,6 @@ fn measure(label: &str, mut scenario: Scenario, touch: bool, thumbs: bool) {
         let textures = output.textures_delta.set.len();
         // No GPU here to apply them to.
         output.textures_delta.clear();
-        // As the app's frame loop does (`overlay.rs`).
-        super::paint::keep_meshes(&output.shapes);
         let primitives = context.tessellate(output.shapes, SCALE);
         let elapsed = start.elapsed();
         TRACING.store(false, Ordering::Relaxed);

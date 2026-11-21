@@ -49,9 +49,6 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 #[derive(Default)]
 struct MeshMemo {
     pass: u64,
-    /// Whether a layer was drawn through a transform as this pass began (a zoomed HUD,
-    /// Battle Setup fitted to its window): [`memo_mesh`] then draws copies.
-    transformed: bool,
     meshes: HashMap<Box<[u32]>, (Arc<Mesh>, u64)>,
     /// The key being looked up, kept to look up the next without allocating.
     key: Vec<u32>,
@@ -96,11 +93,6 @@ pub fn key_stops(stops: &[(f32, Color32)]) -> impl Iterator<Item = u32> + '_ {
 /// The mesh `build` makes from the inputs `key` holds, built only when no pass drew it
 /// last time: a mesh not drawn in a pass is let go at the next. `build` must not draw
 /// kept meshes itself.
-///
-/// egui moves a transformed layer's shapes where they are, and a mesh the memo also
-/// holds it clones first: three allocations a frame again, and the copy. So while any
-/// layer is transformed the shape is a copy in a pooled mesh ([`frame_mesh`]), which it
-/// holds alone; a mesh too large for the pool is drawn as kept.
 pub fn memo_mesh(
     context: &egui::Context,
     kind: MeshKind,
@@ -108,22 +100,20 @@ pub fn memo_mesh(
     build: impl FnOnce() -> Mesh,
 ) -> Shape {
     let pass = context.cumulative_pass_nr();
-    let (kept, transformed) = MESHES.with_borrow_mut(|memo| {
+    let kept = MESHES.with_borrow_mut(|memo| {
         if memo.pass != pass {
             let last = memo.pass;
             memo.meshes.retain(|_, (_, used)| *used == last);
             memo.pass = pass;
-            memo.transformed = context.memory(|memory| !memory.to_global.is_empty());
         }
         memo.key.clear();
         memo.key.push(kind as u32);
         memo.key.extend(key);
         let (meshes, key) = (&mut memo.meshes, &memo.key);
-        let kept = meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
+        meshes.get_mut(key.as_slice()).map(|(mesh, used)| {
             *used = pass;
             Arc::clone(mesh)
-        });
-        (kept, memo.transformed)
+        })
     });
     let mesh = kept.unwrap_or_else(|| {
         let mesh = Arc::new(build());
@@ -133,13 +123,6 @@ pub fn memo_mesh(
         });
         mesh
     });
-    if transformed && mesh.vertices.len() <= POOLED_VERTICES {
-        return frame_mesh(|copy| {
-            copy.texture_id = mesh.texture_id;
-            copy.indices.extend_from_slice(&mesh.indices);
-            copy.vertices.extend_from_slice(&mesh.vertices);
-        });
-    }
     Shape::Mesh(mesh)
 }
 
@@ -151,15 +134,17 @@ pub fn memo_mesh(
 ///
 /// A shape owns its mesh alone while its pass is laid out, so egui moves a mesh on a
 /// zoomed or shrunk layer where it is (a mesh the pool still held was cloned to be
-/// moved: three allocations again, and a copy). The frame loop hands a finished pass's
-/// shapes to [`keep_meshes`] before it tessellates them, and each mesh is free once
-/// egui has dropped its shape.
+/// moved: three allocations again, and a copy). A frame loop runs its passes through
+/// [`run_pass`], which keeps a finished pass's meshes before they are tessellated: each
+/// is free once egui has dropped its shape.
 #[derive(Default)]
 struct MeshPool {
     /// The last pass's meshes, the first drawn on top: handed out in the order they
     /// were drawn, a screen that draws the same shapes each frame meets each in the
     /// mesh it filled before, already the right size.
     spare: Vec<Arc<Mesh>>,
+    /// The layers with a transform, listed afresh each pass in a kept buffer.
+    transformed: Vec<egui::LayerId>,
 }
 
 /// The most meshes the pool keeps, several times what the busiest screen draws.
@@ -226,11 +211,73 @@ pub fn frame_mesh(fill: impl FnOnce(&mut Mesh)) -> Shape {
     Shape::Mesh(mesh)
 }
 
-/// Keep a finished pass's meshes for the next pass's [`frame_mesh`]. Call with the
-/// pass's shapes before tessellating them; a frame loop that does not only goes
-/// without the pool.
-pub fn keep_meshes(shapes: &[egui::epaint::ClippedShape]) {
-    POOL.with_borrow_mut(|pool| pool.keep(shapes));
+/// A pass of `build` for a frame loop to tessellate, as `Context::run_pass` runs one,
+/// with the pool looked after: kept meshes on transformed layers are drawn from copies
+/// ([`own_transformed_meshes`]) and the pass's meshes are kept for the next
+/// ([`MeshPool`]). A loop that calls `Context::run_pass` itself only goes without.
+pub fn run_pass(
+    context: &egui::Context,
+    input: egui::RawInput,
+    mut build: impl FnMut(&egui::Context),
+) -> egui::FullOutput {
+    let output = context.run_pass(input, |context| {
+        build(context);
+        own_transformed_meshes(context);
+    });
+    POOL.with_borrow_mut(|pool| pool.keep(&output.shapes));
+    output
+}
+
+/// As a pass ends, give every shape on a transformed layer (a zoomed HUD, Battle Setup
+/// fitted to its window) a mesh it holds alone. egui moves such a layer's shapes where
+/// they are, and clones a mesh something else holds to do it, as [`memo_mesh`] holds
+/// every one it draws: three allocations a frame, and the copy. Here the copy goes
+/// into a pooled mesh. Other layers' shapes keep drawing the kept mesh itself.
+fn own_transformed_meshes(context: &egui::Context) {
+    let mut layers = POOL.with_borrow_mut(|pool| std::mem::take(&mut pool.transformed));
+    layers.clear();
+    // egui keeps a layer's transform until it is set again, so some are not drawn now.
+    context.memory(|memory| layers.extend(memory.to_global.keys().copied()));
+    if !layers.is_empty() {
+        context.graphics_mut(|graphics| {
+            for &layer in &layers {
+                let Some(shapes) = graphics.get_mut(layer) else {
+                    continue;
+                };
+                for index in 0..shapes.next_idx().0 {
+                    shapes.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                        // egui moves such a shape after tessellating it, not before.
+                        if clipped.transform_after_tessellation
+                            == egui::emath::TSTransform::IDENTITY
+                        {
+                            own_meshes(&mut clipped.shape);
+                        }
+                    });
+                }
+            }
+        });
+    }
+    POOL.with_borrow_mut(|pool| pool.transformed = layers);
+}
+
+/// Replace each mesh of `shape` that something else holds with a pooled copy; one too
+/// large for the pool stays, for egui to clone.
+fn own_meshes(shape: &mut Shape) {
+    match shape {
+        Shape::Vec(shapes) => shapes.iter_mut().for_each(own_meshes),
+        Shape::Mesh(kept)
+            if (Arc::strong_count(kept) > 1 || Arc::weak_count(kept) > 0)
+                && kept.vertices.len() <= POOLED_VERTICES =>
+        {
+            let copy = frame_mesh(|copy| {
+                copy.texture_id = kept.texture_id;
+                copy.indices.extend_from_slice(&kept.indices);
+                copy.vertices.extend_from_slice(&kept.vertices);
+            });
+            *shape = copy;
+        }
+        _ => {}
+    }
 }
 
 /// A textured rectangle, as `Painter::image` draws one, in a pooled mesh.
@@ -1917,6 +1964,64 @@ mod tests {
         assert_eq!(pool.spare.len(), POOLED_MESHES);
         pool.keep(&[]);
         assert!(pool.spare.is_empty());
+    }
+
+    #[test]
+    fn a_kept_mesh_is_copied_only_onto_a_layer_drawn_through_a_transform() {
+        use egui::{LayerId, Order};
+        let context = egui::Context::default();
+        let stops = [(0.0, Color32::RED), (1.0, Color32::BLUE)];
+        let kept = Arc::new(radial_mesh(pos2(50.0, 40.0), vec2(10.0, 8.0), &stops));
+        let moved_layer = LayerId::new(Order::Middle, Id::unique("moved"));
+        let still_layer = LayerId::new(Order::Middle, Id::unique("still"));
+        let transform = egui::emath::TSTransform::new(vec2(7.0, -3.0), 1.5);
+        let meshes = |output: &egui::FullOutput| -> Vec<Arc<Mesh>> {
+            output
+                .shapes
+                .iter()
+                .map(|clipped| Arc::clone(mesh_of(&clipped.shape)))
+                .collect()
+        };
+        // Run a pass of `build` and leave no texture for a GPU to take.
+        let pass = |build: &dyn Fn(&egui::Context)| {
+            let mut output = run_pass(&context, egui::RawInput::default(), build);
+            output.textures_delta.clear();
+            output
+        };
+        let output = pass(&|context| {
+            context.set_transform_layer(moved_layer, transform);
+            for layer in [moved_layer, still_layer] {
+                context
+                    .layer_painter(layer)
+                    .add(Shape::Mesh(Arc::clone(&kept)));
+            }
+        });
+        let drawn = meshes(&output);
+        let (still, moved): (Vec<_>, Vec<_>) =
+            drawn.iter().partition(|mesh| Arc::ptr_eq(mesh, &kept));
+        // The still layer draws the kept mesh itself; the moved layer a copy, moved as
+        // egui moves a mesh, with the kept one as it was.
+        assert_eq!((still.len(), moved.len()), (1, 1));
+        let mut expected = (*kept).clone();
+        expected.transform(transform);
+        assert_eq!(**moved[0], expected);
+        assert_eq!(
+            *kept,
+            radial_mesh(pos2(50.0, 40.0), vec2(10.0, 8.0), &stops)
+        );
+        drop((still, moved));
+        drop((drawn, output));
+        // egui remembers the layer's transform, but a pass that does not draw on it
+        // copies nothing.
+        let output = pass(&|context| {
+            context
+                .layer_painter(still_layer)
+                .add(Shape::Mesh(Arc::clone(&kept)));
+        });
+        assert!(context.layer_transform_to_global(moved_layer).is_some());
+        let drawn = meshes(&output);
+        assert_eq!(drawn.len(), 1);
+        assert!(Arc::ptr_eq(&drawn[0], &kept));
     }
 
     #[test]

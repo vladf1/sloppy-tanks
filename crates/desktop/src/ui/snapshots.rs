@@ -555,7 +555,9 @@ fn snapshots() {
                 ..Default::default()
             };
             context.set_pixels_per_point(SCALE);
-            output = Some(context.run_pass(input, |context| {
+            // As the app's frame loop runs its passes (`overlay.rs`), so each scenario
+            // fills the meshes the one before drew.
+            output = Some(super::paint::run_pass(&context, input, |context| {
                 if let Some(menu) = &mut room_menu {
                     super::room_menu::draw(context, menu, &mut scenario.state, &view, 0.0);
                 } else {
@@ -572,9 +574,6 @@ fn snapshots() {
             }
         }
         let output = output.expect("a pass ran");
-        // As the app's frame loop does (`overlay.rs`), so the next scenario fills this
-        // one's meshes.
-        super::paint::keep_meshes(&output.shapes);
         let primitives = context.tessellate(output.shapes, SCALE);
         let target = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("snapshot"),
