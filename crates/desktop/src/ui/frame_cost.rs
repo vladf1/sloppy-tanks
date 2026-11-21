@@ -133,9 +133,13 @@ static ALLOCATOR: Counting = Counting;
 
 const SIZE: [f32; 2] = [1280.0, 800.0];
 
+/// The longest side `SLOPPY_FRAME_COST_SIZE` takes, in points: past any screen there is.
+const LONGEST_SIDE: f32 = 16_384.0;
+
 /// `SLOPPY_FRAME_COST_SIZE`: the screen's size in points, as `<width>x<height>`; unset,
-/// [`SIZE`]. Anything else it holds is refused: a screen of no or endless size measures
-/// nothing (and Battle Setup's backdrop would never finish tiling it).
+/// [`SIZE`]. Anything else it holds is refused: a screen of no size, or one too large to
+/// be a screen, measures nothing (and Battle Setup's backdrop would never finish tiling
+/// one wide enough).
 fn size() -> [f32; 2] {
     let Ok(size) = std::env::var("SLOPPY_FRAME_COST_SIZE") else {
         return SIZE;
@@ -144,7 +148,7 @@ fn size() -> [f32; 2] {
         points
             .parse::<f32>()
             .ok()
-            .filter(|points| points.is_finite() && *points > 0.0)
+            .filter(|points| *points > 0.0 && *points <= LONGEST_SIDE)
     };
     size.split_once('x')
         .and_then(|(width, height)| Some([side(width)?, side(height)?]))
