@@ -14,7 +14,7 @@ function run(command, args) {
 const NODE_MAJOR = 22;
 
 // `bun run` puts a node -> bun shim first on PATH. Wrangler needs actual Node
-// because Miniflare uses Undici's dispatcher, which Bun 1.4.4 does not implement.
+// because Miniflare uses Undici's dispatcher, which Bun 1.4.5 does not implement.
 // Take the first real Node new enough, so an old default (nvm's, say) fails here
 // with instructions rather than inside Wrangler after the build.
 const bun = realpathSync(process.execPath);
