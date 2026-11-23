@@ -6,7 +6,9 @@ import { readRooms, type RoomListing } from "./room-listing";
 export const ENVIRONMENTS = ["production", "dev", "app-store"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
-/** Game servers announce at least every 15 s, so an entry outlives two missed announcements. */
+/** Game servers announce at least every 30 s (ANNOUNCE_INTERVAL in
+ * `crates/server/src/directory.rs`) and retry a failed send every 2 s, so an entry outlives
+ * a missed announcement. */
 export const ENTRY_TTL_MS = 45_000;
 /** Far above a busy server's listing (about 67 KB at MAX_LISTED_ROOMS full rooms, 3 KB at
  * a server's default ten); bounds what one caller can make the directory store. */

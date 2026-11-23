@@ -126,8 +126,9 @@ that lists the server (`production`, `dev` or `app-store`), the server PUTs the 
 `url`, to `/servers?environment=` there as JSON. A room entering or leaving the list
 (its first player joining, its last leaving, or the room ending) sends it at once.
 Otherwise it compares the rooms every 2 seconds and sends the listing when they changed
-since the directory last accepted it, or 15 seconds after that, so the directory knows the
-server is still up; the load figures alone never trigger a send. Each request has 5
+since the directory last accepted it, or 30 seconds after that, so the directory knows the
+server is still up; the load figures and a playing round's remaining time alone never
+trigger a send, so the directory's clock for a round is at most 30 seconds old. Each request has 5
 seconds. A failing directory is retried at
 every check and logged only when announcing starts failing or works again. The
 directory takes the server's address from the request's source IP, so the server

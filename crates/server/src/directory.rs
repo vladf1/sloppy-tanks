@@ -24,8 +24,10 @@ use crate::server::Log;
 /// How often the listing is compared with the last one the directory accepted.
 pub const ANNOUNCE_CHECK: Duration = Duration::from_secs(2);
 /// An unchanged listing is sent again this often, so the directory knows the server is
-/// still up.
-pub const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(15);
+/// still up. Each announcement is a billed request to the directory's Durable Object, and
+/// the directory keeps an entry for 45 s (`ENTRY_TTL_MS` in `directory/listing.ts`), so
+/// one failed send is retried at the next checks before the entry lapses.
+pub const ANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 /// One announcement, from resolving the directory's host to its answer.
 pub const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -98,8 +100,9 @@ impl DirectoryOptions {
     }
 }
 
-/// What one announcement says: the rooms, whose changes are news, and the whole JSON body,
-/// whose load figures change at every reading and only ride along.
+/// What one announcement says: the rooms, whose changes are news (all but a round's
+/// remaining `time`, see [`same_news`]), and the whole JSON body, whose load figures change
+/// at every reading and only ride along.
 pub struct Announcement {
     pub rooms: Vec<RoomListing>,
     pub body: String,
@@ -129,7 +132,7 @@ pub async fn announce(
         let Announcement { rooms, body } = listing();
         if accepted
             .as_ref()
-            .is_some_and(|(last, at)| *last == rooms && at.elapsed() < options.interval)
+            .is_some_and(|(last, at)| same_news(last, &rooms) && at.elapsed() < options.interval)
         {
             continue;
         }
@@ -156,6 +159,21 @@ pub async fn announce(
             accepted = Some((rooms, Instant::now()));
         }
     }
+}
+
+/// Whether `rooms` tells the directory nothing new after `last`. A playing room's `time`
+/// falls every second; sending for that alone would announce every check through a whole
+/// round, so the directory's clock is as of the latest announcement, at most
+/// ANNOUNCE_INTERVAL old.
+fn same_news(last: &[RoomListing], rooms: &[RoomListing]) -> bool {
+    last.len() == rooms.len()
+        && last.iter().zip(rooms).all(|(last, room)| {
+            *room
+                == RoomListing {
+                    time: room.time,
+                    ..last.clone()
+                }
+        })
 }
 
 /// Mozilla's root certificates are compiled in: the server image has no CA store.
@@ -262,5 +280,41 @@ mod tests {
         ] {
             assert!(DirectoryUrl::parse(invalid).is_err(), "{invalid}");
         }
+    }
+
+    #[test]
+    fn a_round_clock_alone_is_no_news() {
+        let room = RoomListing {
+            room: "ABCDEFGH".into(),
+            content_version: "11aac2382af5a93fd5d30531".into(),
+            map_mode: "village".into(),
+            difficulty: "normal".into(),
+            humans_only: false,
+            round_minutes: 10,
+            players: 2,
+            reserved: 2,
+            phase: sloppy_core::net::room_list::RoomPhase::Playing,
+            round_id: 3,
+            time: 540,
+            scores: [1, 0],
+        };
+        let last = [room.clone()];
+        let later = RoomListing {
+            time: 512,
+            ..room.clone()
+        };
+        assert!(same_news(&last, std::slice::from_ref(&later)));
+        let scored = RoomListing {
+            scores: [2, 0],
+            ..later.clone()
+        };
+        assert!(!same_news(&last, &[scored]));
+        let joined = RoomListing {
+            players: 3,
+            ..later.clone()
+        };
+        assert!(!same_news(&last, &[joined]));
+        assert!(!same_news(&last, &[later.clone(), later]));
+        assert!(!same_news(&last, &[]));
     }
 }
