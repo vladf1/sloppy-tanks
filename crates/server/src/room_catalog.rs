@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use sloppy_core::net::room_list::{MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, RoomListing};
+use sloppy_core::net::room_list::{MAX_LISTED_ROOMS, ROOM_LIST_TTL_MS, RoomListing, RoomPhase};
 use sloppy_core::sim::map_options::{MapId, is_extra_level};
 
 struct ListedRoom {
@@ -55,7 +55,9 @@ impl RoomCatalog {
     }
 
     /// Rooms on standard maps, plus rooms on extra levels when asked for; the fullest
-    /// rooms first, then by code.
+    /// rooms first, then by code. A playing room's remaining time is counted down from when
+    /// it last published, which may be 20 seconds back, so every listing reads the clock as
+    /// of `now_ms` (the directory counts on that, `same_news` in `directory.rs`).
     pub fn list(&mut self, now_ms: u64, extra_levels: bool) -> Vec<RoomListing> {
         self.prune(now_ms);
         let mut rooms: Vec<RoomListing> = self
@@ -64,7 +66,16 @@ impl RoomCatalog {
             .filter(|room| {
                 extra_levels || !MapId::parse(&room.entry.map_mode).is_some_and(is_extra_level)
             })
-            .map(|room| room.entry.clone())
+            .map(|room| {
+                let mut entry = room.entry.clone();
+                if entry.phase == RoomPhase::Playing {
+                    let elapsed = now_ms.saturating_sub(room.updated_ms) / 1000;
+                    entry.time = entry
+                        .time
+                        .saturating_sub(u32::try_from(elapsed).unwrap_or(u32::MAX));
+                }
+                entry
+            })
             .collect();
         rooms.sort_by(|a, b| b.players.cmp(&a.players).then_with(|| a.room.cmp(&b.room)));
         rooms
@@ -74,7 +85,6 @@ impl RoomCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::net::room_list::RoomPhase;
 
     fn entry() -> RoomListing {
         RoomListing {
@@ -127,6 +137,38 @@ mod tests {
         assert_eq!(codes, ["BCDEFGHJ"]);
         assert_eq!(catalog.list(ROOM_LIST_TTL_MS, false).len(), 1);
         assert_eq!(catalog.list(ROOM_LIST_TTL_MS + 1, false).len(), 0);
+    }
+
+    #[test]
+    fn a_playing_rooms_clock_reads_as_of_the_listing() {
+        let mut catalog = RoomCatalog::default();
+        catalog.update(entry(), 1_000);
+        catalog.update(
+            RoomListing {
+                room: "BCDEFGHJ".into(),
+                phase: RoomPhase::Lobby,
+                time: 600,
+                ..entry()
+            },
+            1_000,
+        );
+        let times = |catalog: &mut RoomCatalog, now| {
+            catalog
+                .list(now, false)
+                .into_iter()
+                .map(|room| room.time)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(times(&mut catalog, 1_000), [280, 600]);
+        assert_eq!(times(&mut catalog, 20_999), [261, 600]);
+        catalog.update(
+            RoomListing {
+                time: 260,
+                ..entry()
+            },
+            21_000,
+        );
+        assert_eq!(times(&mut catalog, 21_000)[0], 260);
     }
 
     #[test]
