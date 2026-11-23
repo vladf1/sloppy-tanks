@@ -6,7 +6,9 @@ import { readRooms, type RoomListing } from "./room-listing";
 export const ENVIRONMENTS = ["production", "dev", "app-store"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
-/** Game servers announce at least every 15 s, so an entry outlives two missed announcements. */
+/** Game servers announce at least every 30 s (ANNOUNCE_INTERVAL in
+ * `crates/server/src/directory.rs`) and retry a failed send every 2 s, so an entry outlives
+ * a missed announcement. */
 export const ENTRY_TTL_MS = 45_000;
 /** Far above a busy server's listing (about 67 KB at MAX_LISTED_ROOMS full rooms, 3 KB at
  * a server's default ten); bounds what one caller can make the directory store. */
@@ -188,6 +190,20 @@ export function parseAnnouncement(body: string): Announcement | undefined {
 
 function fail(field: string): never {
   throw new Error(`Invalid announcement: ${field}`);
+}
+
+/**
+ * `rooms` as of `now`, from an announcement that arrived at `arrived`: a server sends no
+ * news for a round's clock alone (`same_news` in `crates/server/src/directory.rs`), so a
+ * playing room's remaining time counts down here from the announcement's age.
+ */
+export function roomsAt(rooms: RoomListing[], arrived: number, now: number): RoomListing[] {
+  const elapsed = Math.max(0, now - arrived) / 1000;
+  return rooms.map((room) =>
+    room.phase === "playing"
+      ? { ...room, time: Math.max(0, Math.ceil(room.time - elapsed)) }
+      : room,
+  );
 }
 
 /**
