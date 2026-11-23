@@ -193,20 +193,6 @@ function fail(field: string): never {
 }
 
 /**
- * `rooms` as of `now`, from an announcement that arrived at `arrived`: a server sends no
- * news for a round's clock alone (`same_news` in `crates/server/src/directory.rs`), so a
- * playing room's remaining time counts down here from the announcement's age.
- */
-export function roomsAt(rooms: RoomListing[], arrived: number, now: number): RoomListing[] {
-  const elapsed = Math.max(0, now - arrived) / 1000;
-  return rooms.map((room) =>
-    room.phase === "playing"
-      ? { ...room, time: Math.max(0, Math.ceil(room.time - elapsed)) }
-      : room,
-  );
-}
-
-/**
  * The listing the page reads, fewest rooms first: the page creates rooms on the first compatible
  * server, so this order is the whole of the matchmaking. Ties go by url to keep the order stable.
  * A client that names its `contentVersion` gets only that version's servers, the only ones it

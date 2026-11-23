@@ -57,7 +57,7 @@ impl RoomCatalog {
     /// Rooms on standard maps, plus rooms on extra levels when asked for; the fullest
     /// rooms first, then by code. A playing room's remaining time is counted down from when
     /// it last published, which may be 20 seconds back, so every listing reads the clock as
-    /// of `now_ms` (the directory counts on that, `same_news` in `directory.rs`).
+    /// of `now_ms`.
     pub fn list(&mut self, now_ms: u64, extra_levels: bool) -> Vec<RoomListing> {
         self.prune(now_ms);
         let mut rooms: Vec<RoomListing> = self

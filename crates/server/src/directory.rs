@@ -162,8 +162,9 @@ pub async fn announce(
 }
 
 /// Whether `rooms` tells the directory nothing new after `last`. A playing room's `time`
-/// falls every second, and the directory counts it down from the announcement's age
-/// (`listServers` in `directory/listing.ts`), so the clock alone sends nothing.
+/// falls every second; sending for that alone would announce every check through a whole
+/// round, so the directory's clock is as of the latest announcement, at most
+/// ANNOUNCE_INTERVAL old.
 fn same_news(last: &[RoomListing], rooms: &[RoomListing]) -> bool {
     last.len() == rooms.len()
         && last.iter().zip(rooms).all(|(last, room)| {

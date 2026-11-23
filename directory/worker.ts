@@ -41,7 +41,6 @@ import {
   parseAnnouncement,
   parseEnvironment,
   readBody,
-  roomsAt,
   serverUrl,
   type Announcement,
   type ListedServer,
@@ -248,17 +247,17 @@ export class Directory extends DurableObject<Env> {
 
   servers(which: { contentVersion?: string; all?: boolean }): ListedServer[] {
     this.dropExpired();
-    const now = Date.now();
     const rows = this.ctx.storage.sql
       .exec<{ url: string; seen: number; announcement: string }>(
         "SELECT url, seen, announcement FROM servers",
       )
       .toArray();
     return listServers(
-      rows.map(({ url, seen, announcement }) => {
-        const announced = JSON.parse(announcement) as Announcement;
-        return { ...announced, rooms: roomsAt(announced.rooms, seen, now), seen, url };
-      }),
+      rows.map(({ url, seen, announcement }) => ({
+        ...(JSON.parse(announcement) as Announcement),
+        seen,
+        url,
+      })),
       which,
     );
   }

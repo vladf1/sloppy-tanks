@@ -12,7 +12,6 @@ import {
   announcedVersion,
   machineOf,
   MAX_UNFILTERED_SERVERS,
-  roomsAt,
   type ListedServer,
 } from "../directory/listing";
 import { parseDeployment, readDeployment } from "../directory/deployment";
@@ -171,23 +170,6 @@ test("a client that names its content version gets only that version's servers",
   assert.equal(listServers(servers).length, MAX_UNFILTERED_SERVERS);
   // The overview sees every server.
   assert.equal(listServers(servers, { all: true }).length, 20);
-});
-
-test("a playing room's clock counts down from when its announcement arrived", () => {
-  const rooms = [
-    room("PLAYING1", { phase: "playing", time: 300 }),
-    room("LOBBY001", { phase: "lobby", time: 600 }),
-    room("RESULTS1", { phase: "results", time: 0 }),
-    room("ENDING01", { phase: "playing", time: 10 }),
-  ];
-  const later = roomsAt(rooms, 1_000_000, 1_027_400);
-  assert.deepEqual(
-    later.map((entry) => entry.time),
-    [273, 600, 0, 0],
-  );
-  assert.equal(rooms[0].time, 300, "the stored announcement is left alone");
-  // A clock that reads earlier than the arrival counts nothing down.
-  assert.equal(roomsAt(rooms, 1_000_000, 999_000)[0].time, 300);
 });
 
 /** A body of `chunks` chunks of `chunkBytes` bytes each that counts how many the reader
