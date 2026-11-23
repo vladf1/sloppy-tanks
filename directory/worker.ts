@@ -21,16 +21,10 @@
  *   MAX_TRACE_BYTES, replacing that id's earlier upload; `GET /traces` lists the latest
  *   MAX_TRACES, newest first. A debugging aid for devices with no inspector at hand.
  *
- * Each environment is one Durable Object that holds its servers' latest announcements in
- * memory. Every request first drops the entries older than ENTRY_TTL_MS, so the list holds
- * the servers seen in the last 45 s with no timers or alarms: the object can hibernate
- * between requests, which keeps its duration billing near zero. Hibernating discards memory,
- * so a SQL table keeps each server too, written only when a server appears, when its rooms
- * change in what players choose them by (`matchmaking`), at most every STORED_REFRESH_MS
- * otherwise, and when it leaves: Cloudflare
- * bills every row written (100,000 a day on the free plan), and rewriting the row at each
- * announcement used them up.
- * There is no authentication.
+ * Each environment is one Durable Object with a SQL table of servers and their latest
+ * announcements. Every request first deletes the rows older than ENTRY_TTL_MS, so the list holds the servers
+ * seen in the last 45 s with no timers, alarms or in-memory state: the object hibernates between
+ * requests, which keeps its duration billing near zero. There is no authentication.
  *
  * Deploy with `bun run directory:deploy`.
  */
@@ -38,7 +32,6 @@ import { DurableObject } from "cloudflare:workers";
 import {
   ENTRY_TTL_MS,
   ENVIRONMENTS,
-  roomsAt,
   MAX_BODY_BYTES,
   MAX_ENTRIES_PER_MACHINE,
   announcedVersion,
@@ -48,6 +41,7 @@ import {
   parseAnnouncement,
   parseEnvironment,
   readBody,
+  roomsAt,
   serverUrl,
   type Announcement,
   type ListedServer,
@@ -63,10 +57,6 @@ const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
  * keepalive requests the browser caps at 64 KB; the largest traces stored are 60 KB. */
 const MAX_TRACE_BYTES = 256 * 1024;
 const MAX_TRACES = 40;
-/** How stale a listed server's stored row may grow. A server that keeps announcing has its
- * row rewritten this often, so after a wake from hibernation its stored `seen` is at most
- * this (and one announcement interval) behind the last announcement. */
-const STORED_REFRESH_MS = 120_000;
 // Any page may read the listing, and it changes with every announcement.
 const HEADERS = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
 
@@ -197,34 +187,9 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** A listed server: when it was last seen and leaves the list, its latest announcement
- * known here and when that arrived, and when its row was stored with which rooms. */
-interface Entry {
-  seen: number;
-  expires: number;
-  announcement: Announcement;
-  arrived: number;
-  stored: number;
-  storedRooms: string;
-}
-
-/** What players choose a room by: every room's listing but its clock and scores, in code
- * order (the server lists the fullest first). A change stores the server's row, so a wake
- * from hibernation shows no room that has ended or filled as open, nor misses one that
- * opened; the clock counts down here (`roomsAt`) and scores change at every kill. */
-function matchmaking(announcement: Announcement): string {
-  return JSON.stringify(
-    announcement.rooms
-      .map(({ time: _time, scores: _scores, ...room }) => room)
-      .sort((a, b) => (a.room < b.room ? -1 : a.room > b.room ? 1 : 0)),
-  );
-}
-
-/** One environment's servers: the latest announcement of each in memory, and a row each in
- * SQLite storage to restore them after hibernation. */
+/** One environment's servers: a row each in its SQLite storage, holding the latest
+ * announcement and when it arrived. */
 export class Directory extends DurableObject<Env> {
-  private readonly entries = new Map<string, Entry>();
-
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS servers (
@@ -238,26 +203,6 @@ export class Directory extends DurableObject<Env> {
       agent TEXT NOT NULL,
       trace TEXT NOT NULL
     )`);
-    // A live server's row is rewritten at least every STORED_REFRESH_MS, so a restored one
-    // stays listed that much longer than a heartbeat would keep it: a live server stays until
-    // it announces again, and one that went quiet before the wake leaves at most
-    // STORED_REFRESH_MS later than it would have without it.
-    const rows = ctx.storage.sql
-      .exec<{ url: string; seen: number; announcement: string }>(
-        "SELECT url, seen, announcement FROM servers",
-      )
-      .toArray();
-    for (const row of rows) {
-      const announcement = JSON.parse(row.announcement) as Announcement;
-      this.entries.set(row.url, {
-        seen: row.seen,
-        expires: row.seen + STORED_REFRESH_MS + ENTRY_TTL_MS,
-        announcement,
-        arrived: row.seen,
-        stored: row.seen,
-        storedRooms: matchmaking(announcement),
-      });
-    }
   }
 
   addTrace(id: string, agent: string, trace: string): void {
@@ -282,71 +227,44 @@ export class Directory extends DurableObject<Env> {
       .toArray();
   }
 
-  /** Keeps the announcement, unless it would give its machine more than
-   * MAX_ENTRIES_PER_MACHINE entries, and stores its row when the server is new, its rooms
-   * changed in what players choose them by, or its row is STORED_REFRESH_MS old. */
+  /** Stores the announcement, unless it would give its machine more than
+   * MAX_ENTRIES_PER_MACHINE entries. */
   announce(url: string, announcement: Announcement): boolean {
-    const now = Date.now();
-    this.dropExpired(now);
+    this.dropExpired();
     const machine = machineOf(url);
-    let others = 0;
-    for (const listed of this.entries.keys()) {
-      if (listed !== url && machineOf(listed) === machine) others++;
-    }
+    const others = this.ctx.storage.sql
+      .exec<{ url: string }>("SELECT url FROM servers")
+      .toArray()
+      .filter((row) => row.url !== url && machineOf(row.url) === machine).length;
     if (others >= MAX_ENTRIES_PER_MACHINE) return false;
-    const entry = this.entries.get(url);
-    const rooms = matchmaking(announcement);
-    let { stored, storedRooms } = entry ?? { stored: now, storedRooms: rooms };
-    if (!entry) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO servers (url, seen, announcement) VALUES (?, ?, ?)",
-        url,
-        now,
-        JSON.stringify(announcement),
-      );
-    } else if (rooms !== entry.storedRooms || now - entry.stored >= STORED_REFRESH_MS) {
-      // Leaves the key and its index alone: one row written rather than an INSERT's two.
-      this.ctx.storage.sql.exec(
-        "UPDATE servers SET seen = ?, announcement = ? WHERE url = ?",
-        now,
-        JSON.stringify(announcement),
-        url,
-      );
-      stored = now;
-      storedRooms = rooms;
-    }
-    this.entries.set(url, {
-      seen: now,
-      expires: now + ENTRY_TTL_MS,
-      announcement,
-      arrived: now,
-      stored,
-      storedRooms,
-    });
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO servers (url, seen, announcement) VALUES (?, ?, ?)",
+      url,
+      Date.now(),
+      JSON.stringify(announcement),
+    );
     return true;
   }
 
   servers(which: { contentVersion?: string; all?: boolean }): ListedServer[] {
+    this.dropExpired();
     const now = Date.now();
-    this.dropExpired(now);
+    const rows = this.ctx.storage.sql
+      .exec<{ url: string; seen: number; announcement: string }>(
+        "SELECT url, seen, announcement FROM servers",
+      )
+      .toArray();
     return listServers(
-      [...this.entries].map(([url, { seen, announcement, arrived }]) => ({
-        ...announcement,
-        rooms: roomsAt(announcement.rooms, arrived, now),
-        seen,
-        url,
-      })),
+      rows.map(({ url, seen, announcement }) => {
+        const announced = JSON.parse(announcement) as Announcement;
+        return { ...announced, rooms: roomsAt(announced.rooms, seen, now), seen, url };
+      }),
       which,
     );
   }
 
   /** A server leaves the list ENTRY_TTL_MS after its last announcement. */
-  private dropExpired(now: number): void {
-    for (const [url, { expires }] of this.entries) {
-      if (now > expires) {
-        this.entries.delete(url);
-        this.ctx.storage.sql.exec("DELETE FROM servers WHERE url = ?", url);
-      }
-    }
+  private dropExpired(): void {
+    this.ctx.storage.sql.exec("DELETE FROM servers WHERE seen < ?", Date.now() - ENTRY_TTL_MS);
   }
 }
